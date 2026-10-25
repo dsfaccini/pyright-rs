@@ -5,7 +5,8 @@ The goal: `pyright-rs --outputjson` prints the same output as pyright on the sam
 
 ## the spec
 
-The spec is pyright at commit `f2e1a5344576ae07730fcca2c4497a9453a7ab11` (1.1.414), checked out at `~/pyright`.
+The spec is pyright release 1.1.414, commit `a28cce4077d87b80bead12de809f79845e39c8ba`, checked out at `~/pyright`.
+This is the pyright that pydantic-ai CI installs from PyPI.
 When the Rust output differs from pyright's, treat the Rust code as wrong.
 Port pyright's quirks too, even where pyright's output looks wrong.
 
