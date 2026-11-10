@@ -65,7 +65,7 @@ index 0832d1a07..b251b9c5d 100644
                      this._writableData.bindDiagnostics = bindDiagnostics;
  
 diff --git a/packages/pyright-internal/src/analyzer/typeEvaluator.ts b/packages/pyright-internal/src/analyzer/typeEvaluator.ts
-index b7e8a3b69..4dd4cf184 100644
+index b7e8a3b69..d74915fd0 100644
 --- a/packages/pyright-internal/src/analyzer/typeEvaluator.ts
 +++ b/packages/pyright-internal/src/analyzer/typeEvaluator.ts
 @@ -227,6 +227,7 @@ import {
@@ -76,24 +76,32 @@ index b7e8a3b69..4dd4cf184 100644
      SymbolDeclInfo,
      TypeEvaluator,
      TypeResult,
-@@ -1088,6 +1089,25 @@ export function createTypeEvaluator(
+@@ -1088,6 +1089,33 @@ export function createTypeEvaluator(
      }
  
      // Reads the type of the node from the cache.
 +    // Reads the main type cache without evaluating anything. Function return
-+    // types that are not already known print as Unknown.
-+    function oracleReadTypeCacheEntry(node: ParseNode): OracleTypeCacheEntry | undefined {
++    // types that are not already known print as Unknown. Nothing is evaluated
++    // while the caller reads, so `printed` can memoize by type object.
++    function oracleReadTypeCacheEntry(node: ParseNode, printed: Map<Type, string>): OracleTypeCacheEntry | undefined {
 +        const cacheEntry = typeCache.get(node.id);
 +        if (!cacheEntry) {
 +            return undefined;
 +        }
 +
-+        return {
-+            printedType: TypePrinter.printType(
-+                cacheEntry.typeResult.type,
++        const type = cacheEntry.typeResult.type;
++        let printedType = printed.get(type);
++        if (printedType === undefined) {
++            printedType = TypePrinter.printType(
++                type,
 +                evaluatorOptions.printTypeFlags,
-+                (type) => FunctionType.getEffectiveReturnType(type) ?? UnknownType.create()
-+            ),
++                (functionType) => FunctionType.getEffectiveReturnType(functionType) ?? UnknownType.create()
++            );
++            printed.set(type, printedType);
++        }
++
++        return {
++            printedType,
 +            isIncomplete: !!cacheEntry.typeResult.isIncomplete,
 +            flags: cacheEntry.flags,
 +        };
@@ -102,7 +110,7 @@ index b7e8a3b69..4dd4cf184 100644
      function getCachedType(node: ExpressionNode | DecoratorNode): Type | undefined {
          // Prefer the ordinary runtime type when both caches contain an entry for this node.
          // Fall back to the contextual cache so TypeForm-only evaluations remain discoverable.
-@@ -30481,6 +30501,7 @@ export function createTypeEvaluator(
+@@ -30481,6 +30509,7 @@ export function createTypeEvaluator(
          getTypeResult,
          getTypeResultForDecorator,
          getCachedType,
@@ -111,7 +119,7 @@ index b7e8a3b69..4dd4cf184 100644
          getTypeOfAnnotation,
          getTypeOfClass,
 diff --git a/packages/pyright-internal/src/analyzer/typeEvaluatorTypes.ts b/packages/pyright-internal/src/analyzer/typeEvaluatorTypes.ts
-index 2733db66f..9c0f07de0 100644
+index 2733db66f..3f91ed86f 100644
 --- a/packages/pyright-internal/src/analyzer/typeEvaluatorTypes.ts
 +++ b/packages/pyright-internal/src/analyzer/typeEvaluatorTypes.ts
 @@ -651,6 +651,13 @@ export const enum AssignTypeFlags {
@@ -132,16 +140,16 @@ index 2733db66f..9c0f07de0 100644
      getTypeResult: (node: ExpressionNode) => TypeResult | undefined;
      getTypeResultForDecorator: (node: DecoratorNode) => TypeResult | undefined;
      getCachedType: (node: ExpressionNode) => Type | undefined;
-+    oracleReadTypeCacheEntry: (node: ParseNode) => OracleTypeCacheEntry | undefined;
++    oracleReadTypeCacheEntry: (node: ParseNode, printed: Map<Type, string>) => OracleTypeCacheEntry | undefined;
      getTypeOfExpression: (node: ExpressionNode, flags?: EvalFlags, context?: InferenceContext) => TypeResult;
      getTypeOfAnnotation: (node: ExpressionNode, options?: ExpectedTypeOptions) => Type;
      getTypeOfClass: (node: ClassNode) => ClassTypeResult | undefined;
 diff --git a/packages/pyright-internal/src/oracle/oracleDumper.ts b/packages/pyright-internal/src/oracle/oracleDumper.ts
 new file mode 100644
-index 000000000..edfced8d4
+index 000000000..1ce4d4913
 --- /dev/null
 +++ b/packages/pyright-internal/src/oracle/oracleDumper.ts
-@@ -0,0 +1,935 @@
+@@ -0,0 +1,942 @@
 +/*
 + * oracleDumper.ts
 + *
@@ -158,6 +166,7 @@ index 000000000..edfced8d4
 +import { Scope } from '../analyzer/scope';
 +import type { SourceFile } from '../analyzer/sourceFile';
 +import type { TypeEvaluator } from '../analyzer/typeEvaluatorTypes';
++import type { Type } from '../analyzer/types';
 +import { Diagnostic } from '../common/diagnostic';
 +import { TextRangeCollection } from '../common/textRangeCollection';
 +import { BaseUri } from '../common/uri/baseUri';
@@ -290,6 +299,7 @@ index 000000000..edfced8d4
 +
 +    guarded('final dump', () => {
 +        const reader = program.analyzerNodeInfoReader;
++        const printed = new Map<Type, string>();
 +        for (const fileInfo of program.getSourceFileInfoList()) {
 +            const sourceFile = fileInfo.sourceFile;
 +            if (sourceFile.isParseRequired()) {
@@ -303,7 +313,7 @@ index 000000000..edfced8d4
 +
 +            const uri = sourceFile.getUri();
 +            if (s.stages.has('types') && program.evaluator) {
-+                writeDump(s, 'types', uri, dumpTypes(parserOutput.parseTree, program.evaluator, reader));
++                writeDump(s, 'types', uri, dumpTypes(parserOutput.parseTree, program.evaluator, reader, printed));
 +            }
 +            if (s.stages.has('diag')) {
 +                writeDump(s, 'diag', uri, dumpDiagnostics(sourceFile.getOracleDiagnosticLists()));
@@ -1026,11 +1036,16 @@ index 000000000..edfced8d4
 +// ---------------------------------------------------------------------------
 +// types stage.
 +
-+function dumpTypes(root: ParseNode, evaluator: TypeEvaluator, reader: AnalyzerNodeInfo.AnalyzerNodeInfoReader) {
++function dumpTypes(
++    root: ParseNode,
++    evaluator: TypeEvaluator,
++    reader: AnalyzerNodeInfo.AnalyzerNodeInfoReader,
++    printed: Map<Type, string>
++) {
 +    const lines: string[] = [];
 +    const walk = walkTree(root, (node) => AnalyzerNodeInfo.getStringAnnotation(node, reader));
 +    for (const node of walk) {
-+        const entry = evaluator.oracleReadTypeCacheEntry(node);
++        const entry = evaluator.oracleReadTypeCacheEntry(node, printed);
 +        if (!entry) {
 +            continue;
 +        }
