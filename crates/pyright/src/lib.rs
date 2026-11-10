@@ -2,6 +2,7 @@
 
 pub mod analyzer;
 pub mod common;
+pub mod jsrt_pending;
 pub mod localization;
 pub mod oracle;
 pub mod parser;
