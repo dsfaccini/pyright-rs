@@ -14,6 +14,8 @@ Environment:
                    It must not exist yet.
   ORACLE_GATES     1 runs the reference gates (default: 1 when ORACLE_CHECKER is unset).
   ORACLE_TYPESHED  the checker's bundled typeshed directory, used by {typeshed}
+  PYRIGHT_RS_MODULE_PATH  where pyright-rs looks for typeshed-fallback (default: the
+                   fork's packages/pyright/dist, the reference runs' typeshed)
                    (default: the fork's dist/typeshed-fallback).
 
 Output in ORACLE_OUT:
@@ -56,6 +58,9 @@ def run_checker(checker, args, cwd, out_dir, stem, dump_dir):
     env.pop("PYRIGHT_ORACLE_STAGES", None)
     if dump_dir is not None:
         env["PYRIGHT_ORACLE_DUMP"] = str(dump_dir)
+    # pyright-rs finds typeshed through PYRIGHT_RS_MODULE_PATH. Point it at the fork's
+    # bundled copy, so the stdlib resolves to the same files as the reference run.
+    env.setdefault("PYRIGHT_RS_MODULE_PATH", str(FORK / "packages/pyright/dist"))
     argv = ["/usr/bin/time", "-v", "-o", str(out_dir / f"{stem}.time.txt"), *checker, *args]
     with open(out_dir / f"{stem}.stdout", "wb") as stdout, open(out_dir / f"{stem}.stderr.txt", "wb") as stderr:
         proc = subprocess.run(argv, cwd=cwd, env=env, stdout=stdout, stderr=stderr)
