@@ -27,7 +27,7 @@ Tokenizer and parser: milestone 1, first half (`PLAN.md` step 4).
 `crates/pyright/src/parser/parser.rs`, from `parser/parser.ts`.
 
 - `ParseOptions::new()` has the TypeScript defaults (`python_version: LATEST_STABLE_PYTHON_VERSION`, every flag false); set fields directly.
-- `Parser::new().parse_source_file(file_contents: JsString, parse_options, diag_sink: P<DiagnosticSink>, content_hash: Option<StringFingerprint>) -> ParseFileResults`. `None` hashes the text, as the TypeScript does.
+- `Parser::new().parse_source_file(file_contents: JsString, parse_options, diag_sink: P<DiagnosticSink>, content_hash: Option<StringFingerprint>) -> ParseFileResults`. `None` computes `get_string_fingerprint(text)`, as the TypeScript does.
 - `parse_text_expression(file_contents, text_offset, text_length, parse_options, parse_text_mode, initial_paren_depth: i32, typing_symbol_aliases: Option<&JsMap<String, String>>, owner_key: Option<ParseTreeKey>) -> ParseExpressionTextResults`: the four TypeScript overloads in one; pass `0` for the omitted `initialParenDepth`. `parse_tree` is a `FunctionAnnotationNode` for `ParseTextMode::FunctionAnnotation`.
 - `ParseFileResults { text, content_hash, parser_output, tokenizer_output: P<TokenizerOutput> }`; `ParserOutput.lines` and `ParseExpressionTextResults.lines` are `&'static TextRangeCollection<TextRange>` borrowed from the arena tokenizer output.
 - `ParserOutput.future_imports: JsSet<String>`, `typing_symbol_aliases: JsMap<String, String>`, `imported_modules: Vec<ModuleImport>` with `imported_symbols: Option<JsSet<String>>`.

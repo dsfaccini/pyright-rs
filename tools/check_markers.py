@@ -1,8 +1,9 @@
 """Checks the `// <path>.ts:<line>` markers in the Rust port.
 
 Each marker must point at a TypeScript line that declares the item that follows
-the marker: the Rust name, lowercased without underscores, must appear in the
-TypeScript line, lowercased without underscores or spaces.
+the marker: the Rust name must appear in the TypeScript line, both lowercased
+and reduced to letters and digits (so `fn lazy_import_python_3_15` matches
+`test('LazyImport - Python 3.15'`).
 
     uv run tools/check_markers.py [rust files...]   (default: every file under crates/pyright/src)
 
@@ -26,7 +27,7 @@ ALIASES = {"new": ["constructor"]}
 
 
 def normalize(text: str) -> str:
-    return re.sub(r"[_\s]", "", text).lower()
+    return re.sub(r"[^0-9a-z]", "", text.lower())
 
 
 def candidates(rust_name: str) -> list[str]:
