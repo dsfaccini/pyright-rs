@@ -12,7 +12,6 @@ use std::ops::{BitAnd, BitAndAssign, BitOr, BitOrAssign, Deref, Not};
 use jsrt::{JsSet, P};
 
 use crate::common::debug::{assert, fail};
-use crate::jsrt_pending::NumberValue;
 use crate::parser::parse_nodes::{
     ArgCategory, CallNode, ExpressionNode, ImportFromNode, MatchNode, NameNode, ParseNode,
     ParseNodeDetails as D, ParseNodeType, SuiteNode,
@@ -472,14 +471,6 @@ pub fn is_code_flow_supported_for_reference(reference: ExpressionNode) -> bool {
     false
 }
 
-/// JS `value.toString()` of a number literal's value.
-fn number_value_to_string(value: &NumberValue) -> String {
-    match value {
-        NumberValue::Number(n) => jsrt::number::number_to_string(*n),
-        NumberValue::BigInt(b) => b.0.clone(),
-    }
-}
-
 // analyzer/codeFlowTypes.ts:216
 pub fn create_key_for_reference(reference: CodeFlowReferenceExpressionNode) -> String {
     let key;
@@ -502,7 +493,7 @@ pub fn create_key_for_reference(reference: CodeFlowReferenceExpressionNode) -> S
             drop(items);
             match &expr.get().d {
                 D::Number(n) => {
-                    key = format!("{}[{}]", left_key, number_value_to_string(&n.value));
+                    key = format!("{}[{}]", left_key, n.value.to_js_string());
                 }
                 D::StringList(val_expr) => {
                     let strings = val_expr.strings.borrow();
@@ -522,7 +513,7 @@ pub fn create_key_for_reference(reference: CodeFlowReferenceExpressionNode) -> S
                     let D::Number(n) = &u.expr.get().get().d else {
                         unreachable!()
                     };
-                    key = format!("{}[-{}]", left_key, number_value_to_string(&n.value));
+                    key = format!("{}[-{}]", left_key, n.value.to_js_string());
                 }
                 _ => {
                     fail(Some("createKeyForReference received unexpected index type"));

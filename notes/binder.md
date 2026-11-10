@@ -43,7 +43,6 @@ node_info_context.publish(session);
 
 - `crates/pyright/src/analyzer/analyzer_file_info.rs`: infra's WIP copied, plus `AnalyzerFileInfo.builtins_scope: Option<P<Scope>>` and `ImportLookupResult.symbol_table: SymbolTable`. Infra keeps those two fields and takes its own file otherwise.
 - `crates/pyright/src/analyzer/source_file.rs`: SHIM `IPythonMode` enum. Take infra's version.
-- `crates/pyright/src/parser/parse_tree_utils.rs`: frontend's `getChildNodes` (commit c73b668 on `frontend`), copied verbatim.
 - `crates/pyright/src/analyzer/mod.rs`: `pub mod declaration_utils;`, `pub mod types;`.
 - `crates/pyright/src/analyzer/declaration_utils.rs` (new): only `hasTypeForDeclaration` and `areDeclarationsSame`, which `symbol.ts` calls. The evaluator step ports the rest.
 - `crates/pyright/src/analyzer/types.rs` (new): placeholder `Type` (for `SynthesizedTypeInfo`) and `TypeVarScopeId`. The evaluator step replaces it.
