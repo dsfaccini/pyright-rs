@@ -23,6 +23,7 @@ Every porting agent follows this file. Change a rule here first, then in the cod
 - Functions, methods, fields and locals become snake_case. Keep a leading underscore: `_readIndent` becomes `_read_indent`.
 - Module-level constants become SCREAMING_SNAKE_CASE.
 - A Rust keyword gets a trailing underscore: `type` becomes `type_`.
+- A method named `clone` gets a trailing underscore: `clone` becomes `clone_`. On a `P<T>`, `.clone()` resolves to `P`'s `Clone` and copies the handle, as assigning a JS reference does; it never reaches a method `T::clone`.
 
 ## order of evaluation
 
