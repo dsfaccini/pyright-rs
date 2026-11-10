@@ -6,6 +6,8 @@
 //! realpath alias index (it only bridges invalidation between symlink twins
 //! when files change, which never happens in a CLI run) and the cache manager
 //! (`_handleMemoryHighUsage`; reference runs never empty the type cache).
+//! The evaluator is created only where the constructor, `setConfigOptions` and
+//! `setImportResolver` create it; the CLI never empties the cache.
 
 use std::cell::{Cell, OnceCell, RefCell};
 use std::rc::Rc;
@@ -28,6 +30,8 @@ use crate::analyzer::import_resolver::{ImportResolver, ImportedModuleDescriptor,
 use crate::analyzer::import_result::{ImportResult, ImportType};
 use crate::analyzer::source_file::{IPythonMode, SourceFile};
 use crate::analyzer::source_file_info::{OptionalArguments, SourceFileInfo, is_user_code};
+use crate::analyzer::type_evaluator::{EvaluatorOptions, TypeEvaluator, create_type_evaluator};
+use crate::analyzer::type_printer::get_print_type_flags;
 use crate::common::config_options::{ConfigOptions, DiagnosticLevel, match_file_specs};
 use crate::common::console::ConsoleInterface;
 use crate::common::debug::{assert, fail};
@@ -86,6 +90,7 @@ pub struct Program {
     look_up_import: OnceCell<ImportLookup>,
     self_handle: OnceCell<P<Program>>,
     analyzer_node_info_context: P<AnalyzerNodeInfoContextImpl>,
+    evaluator: Cell<Option<P<TypeEvaluator>>>,
     pub service_provider: ServiceProvider,
 }
 
@@ -109,6 +114,7 @@ impl Program {
             look_up_import: OnceCell::new(),
             self_handle: OnceCell::new(),
             analyzer_node_info_context: AnalyzerNodeInfoContextImpl::new(),
+            evaluator: Cell::new(None),
             service_provider,
         });
 
@@ -116,6 +122,7 @@ impl Program {
             Rc::new(move |file_uri_or_module, options| program.look_up_import_impl(file_uri_or_module, options));
         let _ = program.look_up_import.set(look_up_import);
         let _ = program.self_handle.set(program);
+        program.create_new_evaluator();
         program
     }
 
@@ -127,6 +134,11 @@ impl Program {
     // analyzer/program.ts:213
     pub fn root_path(&self) -> Uri {
         self.config_options.get().project_root
+    }
+
+    // analyzer/program.ts:217
+    pub fn evaluator(&self) -> Option<P<TypeEvaluator>> {
+        self.evaluator.get()
     }
 
     // analyzer/program.ts:221
@@ -158,11 +170,19 @@ impl Program {
     pub fn set_config_options(&self, config_options: P<ConfigOptions>) {
         self.config_options.set(config_options);
         self.import_resolver.get().set_config_options(config_options);
+
+        // Create a new evaluator with the updated config options.
+        self.create_new_evaluator();
     }
 
     // analyzer/program.ts:335
     pub fn set_import_resolver(&self, import_resolver: P<ImportResolver>) {
         self.import_resolver.set(import_resolver);
+
+        // Create a new evaluator with the updated import resolver.
+        // Otherwise, lookup import passed to type evaluator might use
+        // older import resolver when resolving imports after parsing.
+        self.create_new_evaluator();
     }
 
     // analyzer/program.ts:345
@@ -1138,6 +1158,33 @@ impl Program {
         })
     }
 
+    // analyzer/program.ts:1974
+    /// `createNewEvaluatorInternal` is empty, and `createTypeEvaluatorWithTracker` without
+    /// `logTypeEvaluationTime` is `createTypeEvaluator`.
+    fn create_new_evaluator(&self) -> P<TypeEvaluator> {
+        if let Some(evaluator) = self.evaluator.get() {
+            // We shouldn't need to call this, but there appears to be a bug
+            // in the v8 garbage collector where it's unable to resolve orphaned
+            // objects without us giving it some assistance.
+            evaluator.dispose_evaluator();
+        }
+
+        let config_options = self.config_options.get();
+        let evaluator = create_type_evaluator(
+            self.look_up_import(),
+            EvaluatorOptions {
+                print_type_flags: get_print_type_flags(config_options),
+                log_calls: config_options.log_type_evaluation_time,
+                minimum_logging_threshold: config_options.type_evaluation_time_threshold,
+                evaluate_unknown_imports_as_any: config_options.evaluate_unknown_imports_as_any.unwrap_or(false),
+                verify_type_cache_evaluator_flags: config_options.internal_test_mode.unwrap_or(false),
+                node_info_reader: self.analyzer_node_info_context.to_dyn::<dyn AnalyzerNodeInfoReader>(|c| c),
+            },
+        );
+        self.evaluator.set(Some(evaluator));
+        evaluator
+    }
+
     // analyzer/program.ts:2258
     fn should_check_file(&self, file_info: P<SourceFileInfo>) -> bool {
         // Always do a full checking for a file that's open in the editor.
@@ -1171,8 +1218,16 @@ impl Program {
         let bound_file = self.bind_file(file_to_check, None, file_to_check.source_file.is_binding_required(), false);
 
         let config_options = self.config_options.get();
+        // `_checkDependentFiles` returns undefined for a file that is not a notebook cell.
         if !self.disable_checker && bound_file {
-            file_to_check.source_file.check(&config_options);
+            file_to_check.source_file.check(
+                &config_options,
+                self.look_up_import(),
+                self.import_resolver.get(),
+                self.evaluator.get().unwrap(),
+                None,
+                self.analyzer_node_info_context.to_dyn::<dyn AnalyzerNodeInfoReader>(|c| c),
+            );
         }
 
         // Detect import cycles that involve the file.

@@ -19,6 +19,8 @@ use crate::analyzer::analyzer_node_info::{
     get_dunder_all_info,
 };
 use crate::analyzer::binder::Binder;
+use crate::analyzer::checker::Checker;
+use crate::analyzer::type_evaluator::TypeEvaluator;
 use crate::analyzer::circular_dependency::CircularDependency;
 use crate::analyzer::scope::Scope;
 use crate::analyzer::symbol::SymbolTable;
@@ -740,17 +742,27 @@ impl SourceFile {
 
     // analyzer/sourceFile.ts:990
     /// Runs the checker through `run_checker`.
-    pub fn check(&self, config_options: &ConfigOptions) {
+    pub fn check(
+        &self,
+        config_options: &ConfigOptions,
+        import_lookup: ImportLookup,
+        import_resolver: P<ImportResolver>,
+        evaluator: P<TypeEvaluator>,
+        dependent_files: Option<Vec<ParserOutput>>,
+        node_info_reader: P<dyn AnalyzerNodeInfoReader>,
+    ) {
         assert(!self.is_parse_required(), Some("Check called before parsing"));
         assert(!self.is_binding_required(), Some("Check called before binding"));
         assert(!self.data().is_binding_in_progress, Some("Check called while binding in progress"));
         assert(!self.data().is_checking_in_progress, Some("Check called while checking in progress"));
         assert(self.is_checking_required(), Some("Check called unnecessarily"));
+        assert(self.data().parser_output.is_some(), Some("Parse results not available"));
+        let _ = import_lookup;
 
         timing_stats().type_checker_time.time_operation(|| {
             let check_duration = Duration::new();
             self.data_mut().is_checking_in_progress = true;
-            let checker_diagnostics = run_checker(self);
+            let checker_diagnostics = run_checker(self, import_resolver, evaluator, dependent_files, node_info_reader);
             let mut data = self.data_mut();
             data.is_checking_needed = false;
             data.checker_diagnostics = checker_diagnostics;
@@ -1285,14 +1297,27 @@ pub fn checker_enabled() -> bool {
     ENABLED.with(|e| *e)
 }
 
-/// The checker call in `sourceFile.ts` `check()`. Without `checker_enabled()`
-/// the checker list stays empty.
-fn run_checker(_source_file: &SourceFile) -> Vec<P<Diagnostic>> {
+/// The checker call in `sourceFile.ts` `check()`: builds the `Checker`, runs it, and
+/// returns `fileInfo.diagnosticSink.fetchAndClear()`. Without `checker_enabled()` the
+/// checker list stays empty.
+///
+/// The catch around it is not ported: it turns a crash into an
+/// `internalTypeCheckingError` diagnostic (docs/porting.md, "exceptions").
+fn run_checker(
+    source_file: &SourceFile,
+    import_resolver: P<ImportResolver>,
+    evaluator: P<TypeEvaluator>,
+    dependent_files: Option<Vec<ParserOutput>>,
+    node_info_reader: P<dyn AnalyzerNodeInfoReader>,
+) -> Vec<P<Diagnostic>> {
     if !checker_enabled() {
         return Vec::new();
     }
-    // analyzer/sourceFile.ts:1000: `new Checker(importResolver, evaluator, parseResults,
-    // dependentFiles, nodeInfoReader).check()` (crate::analyzer::checker::Checker), then
-    // `checkerDiagnostics = fileInfo.diagnosticSink.fetchAndClear()`.
-    todo!()
+    let parser_output = source_file.data().parser_output.unwrap();
+    let node_info = create_analyzer_node_info_accessor(node_info_reader.get(), None);
+    let mut checker = Checker::new(import_resolver, evaluator, &parser_output, dependent_files, node_info_reader);
+    checker.check();
+
+    let file_info = node_info.get_file_info(parser_output.parse_tree.0);
+    file_info.diagnostic_sink.fetch_and_clear()
 }
