@@ -3,12 +3,12 @@
 //! Ported: argument parsing, the single-threaded check and its JSON and text
 //! reports. Out of scope (AGENTS.md): `--watch`, `--threads` with more than
 //! one thread, `--verifytypes` and `--createstub`; each stops with a message.
-//! `--stats` prints the summary line only.
+//! `--dependencies` prints nothing.
 
 use std::cell::Cell;
 use std::io::Read;
 use std::rc::Rc;
-use std::time::{Instant, SystemTime, UNIX_EPOCH};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use jsrt::command_line_args::{ArgValue, OptionDefinition, OptionType, command_line_args};
 use jsrt::number::{number_to_string, parse_int};
@@ -28,6 +28,7 @@ use crate::common::python_version::PythonVersion;
 use crate::common::real_file_system::{RealTempFile, create_from_real_file_system};
 use crate::common::service_provider::ServiceProvider;
 use crate::common::text_range::{Range, is_empty_range};
+use crate::common::timing::timing_stats;
 use crate::common::uri::Uri;
 use crate::common::uri::uri::process_cwd;
 use crate::common::uri::uri_utils::{get_file_spec, try_stat};
@@ -162,7 +163,6 @@ const OPTION_DEFINITIONS: [OptionDefinition; 24] = [
 
 // pyright.ts:157
 fn process_args(argv: &[String]) -> ExitStatus {
-    let start_time = Instant::now();
     let args = match command_line_args(&OPTION_DEFINITIONS, argv) {
         Ok(entries) => Args { entries },
         Err(e) => {
@@ -404,7 +404,7 @@ fn process_args(argv: &[String]) -> ExitStatus {
     options.language_server_settings.watch_for_source_changes = Some(watch);
     options.language_server_settings.watch_for_config_changes = Some(watch);
 
-    let service = AnalyzerService::new(
+    let service: &'static AnalyzerService = Box::leak(Box::new(AnalyzerService::new(
         "<default>",
         service_provider,
         AnalyzerServiceOptions {
@@ -415,23 +415,24 @@ fn process_args(argv: &[String]) -> ExitStatus {
             max_analysis_time: None,
             skip_scanning_user_files: false,
         },
-    );
+    )));
 
     // `--threads` with more than one thread runs worker processes, which the
     // port does not do; every run is single-threaded.
-    run_single_threaded(&args, options, &service, min_severity_level, output, start_time)
+    run_single_threaded(&args, options, service, min_severity_level, output)
 }
 
 // pyright.ts:458
 fn run_single_threaded(
     args: &Args,
     options: CommandLineOptions,
-    service: &AnalyzerService,
+    service: &'static AnalyzerService,
     min_severity_level: SeverityLevel,
     output: &'static dyn ConsoleInterface,
-    start_time: Instant,
 ) -> ExitStatus {
     let treat_warnings_as_errors = args.truthy("warnings");
+    let stats = args.truthy("stats");
+    let verbose = args.truthy("verbose");
     let output_json = args.truthy("outputjson");
 
     // A deferred: the first resolve wins.
@@ -485,8 +486,18 @@ fn run_single_threaded(
         }
 
         if !output_json {
-            // Print the total time.
-            output.info(&format!("Completed in {}sec", duration_in_seconds(start_time)));
+            // `--watch` is not supported, so the run always prints the total time.
+            timing_stats().print_summary(output);
+
+            if stats {
+                // Print the stats details.
+                service.print_stats();
+                timing_stats().print_details(&StandardConsole::new(LogLevel::Log));
+
+                if verbose {
+                    service.print_detailed_analysis_times();
+                }
+            }
         }
 
         resolve(if error_count > 0 { ExitStatus::ErrorsReported } else { ExitStatus::NoErrors });
@@ -500,11 +511,6 @@ fn run_single_threaded(
     service.run_timers();
 
     exit_status.get().unwrap_or(ExitStatus::NoErrors)
-}
-
-/// `Duration.getDurationInSeconds()`: whole milliseconds, as `Date.now()` counts them, over 1000.
-fn duration_in_seconds(start: Instant) -> String {
-    number_to_string(start.elapsed().as_millis() as f64 / 1000.0)
 }
 
 // pyright.ts:1170
@@ -740,6 +746,9 @@ pub fn main() -> i32 {
     let handle = std::thread::Builder::new()
         .stack_size(1 << 30)
         .spawn(move || {
+            // pyright.ts imports `timing` first, so `timingStats.totalDuration`
+            // starts before anything else.
+            timing_stats();
             oracle_init();
             process_args(&argv) as i32
         })

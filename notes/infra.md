@@ -39,6 +39,7 @@
 - `crates/pyright/src/analyzer/mod.rs`: declares `analysis`, `background_analysis_program`, `circular_dependency`, `service_utils`.
 - Switched to `jsrt::number` (main 8a4b41e): deleted `crates/jsrt/src/infra_shims.rs`; `python_version.rs` parses with `jsrt::number::parse_int`.
 - Switched to `jsrt::string::is_js_whitespace_char` (jsrt agent): deleted the copy in `common/core.rs`.
+- `crates/pyright/src/parser/parser.rs` (unowned): `parseSourceFile` wraps `_startNewParse` in `timingStats.tokenizeFileTime` and the statement loop in `timingStats.parseFileTime`, as `parser.ts:275` and `:283` do.
 
 ## Needs from others
 
@@ -55,10 +56,13 @@
 - `Diagnostic.message` is a Rust `String`, so a message that quotes source text with a lone surrogate loses it. The JSON report and the diag dump would print U+FFFD where pyright prints `\udxxx`.
 - Not ported, with no effect on a CLI run: the realpath alias index in `program.ts` (it bridges invalidation between symlink twins when files change), the cache manager and `emptyCache` (reference runs never empty the cache), the log tracker, file watchers, edit mode, open files, notebook cell chains and shadow files.
 - `enumerateSourceFiles` pushes auto-excluded directories onto the `ConfigOptions` the service was constructed with, which nothing reads afterwards; the port keeps only the `setConfigOptions` call that follows.
-- `--threads N` runs single-threaded; `--watch`, `--verifytypes` and `--createstub` stop with exit 2. `--stats` prints no timing details.
+- `--threads N` runs single-threaded; `--watch`, `--verifytypes` and `--createstub` stop with exit 2. `--dependencies` prints nothing (`Program.printDependencies` is not ported).
+- `--stats` prints pyright's lines; the timers measure Rust, so the times differ, and `Total files parsed and bound` counts fewer files until the checker exists.
 - A TOML parse error prints `JSON.stringify(e)` of smol-toml's `TomlError` in pyright; the port prints the error message. Stderr only.
 - `importFailureInfo` is the logger's own array in pyright (`ImportLogger.getLogs()` returns it), so a result shows lines logged after it was built. `_resolve_best_absolute_import` copies the logger's final lines into the result it returns; no other path logs after building a kept result.
 - `typeshedInfoProvider.ts` logs `JSON.stringify(e)` when VERSIONS cannot be read; for a Node error that is `{"errno":...,"code":...,"syscall":...,"path":...}`. `FsError` keeps only a message, so the port logs that message. Only `--verbose` output with an unreadable VERSIONS file differs.
 - `filterImplicitImports` copies a result with `Object.assign`, sharing its maps; the port deep-clones `ImportResult`, so `import x` of a package with many submodules copies its implicit-import map. Output is the same.
 - `--verbose` prints a V8 `Heap stats: ...` line from `cacheManager.getUsedHeapRatio`; the port has no V8 heap and prints nothing there. The other verbose lines (config, auto-excludes, execution environments, search paths, `Found N source files`) match pyright on primer-bidict.
 - `ImportLookupResult.doc_string` is `Option<String>`; `getDocString` returns a UTF-16 string, converted lossily, so a lone surrogate in a module docstring becomes U+FFFD.
+- `RealFileSystem::readdir_entries_sync` sorts entries by name bytes: Node's `fs.readdirSync` returns libuv's `scandir` order, sorted with `strcmp`.
+- `timingStats` is a thread-local on the analysis thread; `pyright::main` touches it first, as `pyright.ts` imports `timing` first.

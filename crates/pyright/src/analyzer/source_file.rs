@@ -12,6 +12,7 @@ use std::rc::Rc;
 
 use jsrt::{JsMap, JsSet, JsStr, JsString, P};
 
+use crate::common::timing::{Duration, timing_stats};
 use crate::analyzer::analyzer_file_info::{AnalyzerFileInfo, ImportLookup};
 use crate::analyzer::analyzer_node_info::{
     AnalyzerNodeInfoContext, AnalyzerNodeInfoContextImpl, AnalyzerNodeInfoReader, create_analyzer_node_info_accessor,
@@ -556,12 +557,19 @@ impl SourceFile {
         let mut file_contents = self.get_open_file_contents();
         let mut content_hash = if file_contents.is_some() { self.data().last_file_content_hash } else { None };
         if file_contents.is_none() {
-            match content.map(str::to_string).or_else(|| self.get_file_content()) {
-                Some(contents) => {
-                    let hash = get_string_fingerprint(&contents);
-                    let mut data = self.data_mut();
-                    data.last_file_content_length = Some(contents.js_len());
-                    data.last_file_content_hash = Some(hash);
+            let read = timing_stats().read_file_time.time_operation(|| {
+                // Read the file's contents.
+                let contents = content.map(str::to_string).or_else(|| self.get_file_content())?;
+
+                // Remember the length and fingerprint for comparison purposes.
+                let hash = get_string_fingerprint(&contents);
+                let mut data = self.data_mut();
+                data.last_file_content_length = Some(contents.js_len());
+                data.last_file_content_hash = Some(hash);
+                Some((contents, hash))
+            });
+            match read {
+                Some((contents, hash)) => {
                     content_hash = Some(hash);
                     file_contents = Some(contents);
                 }
@@ -613,29 +621,27 @@ impl SourceFile {
 
         // Resolve imports.
         let exec_environment = config_options.find_exec_environment(self.uri);
-        let import_result = self.resolve_imports(
-            import_resolver,
-            &parser_output.imported_modules,
-            exec_environment,
-        );
+        timing_stats().resolve_imports_time.time_operation(|| {
+            let import_result = self.resolve_imports(import_resolver, &parser_output.imported_modules, exec_environment);
 
-        {
-            let mut data = self.data_mut();
-            data.imports = Some(import_result.imports);
-            data.builtins_import = import_result.builtins_import_result;
-            data.import_info = import_result.import_info;
+            {
+                let mut data = self.data_mut();
+                data.imports = Some(import_result.imports);
+                data.builtins_import = import_result.builtins_import_result;
+                data.import_info = import_result.import_info;
 
-            data.parse_diagnostics = diag_sink.fetch_and_clear();
-        }
+                data.parse_diagnostics = diag_sink.fetch_and_clear();
+            }
 
-        let mut task_list_diagnostics = Vec::new();
-        add_task_list_diagnostics(
-            config_options.task_list_tokens.as_deref(),
-            &text,
-            tokenizer_output,
-            &mut task_list_diagnostics,
-        );
-        self.data_mut().task_list_diagnostics = task_list_diagnostics;
+            let mut task_list_diagnostics = Vec::new();
+            add_task_list_diagnostics(
+                config_options.task_list_tokens.as_deref(),
+                &text,
+                tokenizer_output,
+                &mut task_list_diagnostics,
+            );
+            self.data_mut().task_list_diagnostics = task_list_diagnostics;
+        });
 
         // Is this file in a "strict" path?
         let use_strict = config_options.strict.iter().any(|strict_file_spec| self.uri.matches_regex(&strict_file_spec.reg_exp));
@@ -693,31 +699,34 @@ impl SourceFile {
         let parser_output = parser_output.unwrap();
 
         // Perform name binding.
-        let parse_tree = parser_output.parse_tree;
-        let binding_session = node_info_context.begin_write(parse_tree);
-        let node_info = create_analyzer_node_info_accessor(binding_session.get(), Some(binding_session.get()));
-        let import_info = self.data().import_info.clone();
-        for record in &import_info {
-            node_info.set_import_info(record.node, record.import_result);
-        }
+        timing_stats().bind_time.time_operation(|| {
+            let parse_tree = parser_output.parse_tree;
+            let binding_session = node_info_context.begin_write(parse_tree);
+            let node_info = create_analyzer_node_info_accessor(binding_session.get(), Some(binding_session.get()));
+            let import_info = self.data().import_info.clone();
+            for record in &import_info {
+                node_info.set_import_info(record.node, record.import_result);
+            }
 
-        let file_info = P::new(self.build_file_info(config_options, import_lookup, builtins_scope, future_imports));
-        node_info.set_file_info(parse_tree, file_info);
+            let file_info = P::new(self.build_file_info(config_options, import_lookup, builtins_scope, future_imports));
+            node_info.set_file_info(parse_tree, file_info);
 
-        let mut binder = Binder::new(file_info, config_options.index_generation_mode, None, node_info);
-        self.data_mut().is_binding_in_progress = true;
-        binder.bind_module(parse_tree);
+            let mut binder = Binder::new(file_info, config_options.index_generation_mode, None, node_info);
+            self.data_mut().is_binding_in_progress = true;
+            binder.bind_module(parse_tree);
 
-        let bind_diagnostics = file_info.diagnostic_sink.fetch_and_clear();
-        let module_scope = node_info.get_scope(parse_tree);
-        assert(module_scope.is_some(), Some("Module scope not returned by binder"));
+            let bind_diagnostics = file_info.diagnostic_sink.fetch_and_clear();
+            let module_scope = node_info.get_scope(parse_tree);
+            assert(module_scope.is_some(), Some("Module scope not returned by binder"));
 
-        node_info_context.publish(binding_session);
-        oracle_dump_bind(self.uri, parse_tree, node_info_context);
-        {
+            node_info_context.publish(binding_session);
+            oracle_dump_bind(self.uri, parse_tree, node_info_context);
             let mut data = self.data_mut();
             data.module_symbol_table = Some(module_scope.unwrap().symbol_table);
             data.bind_diagnostics = bind_diagnostics;
+        });
+        {
+            let mut data = self.data_mut();
             data.is_binding_in_progress = false;
 
             // Prepare for the next stage of the analysis.
@@ -738,17 +747,29 @@ impl SourceFile {
         assert(!self.data().is_checking_in_progress, Some("Check called while checking in progress"));
         assert(self.is_checking_required(), Some("Check called unnecessarily"));
 
-        self.data_mut().is_checking_in_progress = true;
-        let checker_diagnostics = run_checker(self);
-        {
+        timing_stats().type_checker_time.time_operation(|| {
+            let check_duration = Duration::new();
+            self.data_mut().is_checking_in_progress = true;
+            let checker_diagnostics = run_checker(self);
             let mut data = self.data_mut();
             data.is_checking_needed = false;
             data.checker_diagnostics = checker_diagnostics;
+            data.check_time = Some(check_duration.get_duration_in_milliseconds());
+        });
+        {
+            let mut data = self.data_mut();
             data.is_checking_in_progress = false;
+
+            // Clear any circular dependencies associated with this file.
             data.circular_dependencies = Vec::new();
         }
 
         self.recompute_diagnostics(config_options);
+    }
+
+    // analyzer/sourceFile.ts:412
+    pub fn get_check_time(&self) -> Option<f64> {
+        self.data().check_time
     }
 
     // analyzer/sourceFile.ts:1096
