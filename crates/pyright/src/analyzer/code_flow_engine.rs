@@ -119,7 +119,7 @@ pub struct CodeFlowEngine {
     // analyzer/codeFlowEngine.ts:204
     pub(crate) evaluator: P<TypeEvaluator>,
     // analyzer/codeFlowEngine.ts:205
-    pub(crate) speculative_type_tracker: SpeculativeTypeTracker,
+    pub(crate) speculative_type_tracker: P<RefCell<SpeculativeTypeTracker>>,
     // analyzer/codeFlowEngine.ts:206
     pub(crate) node_info: Rc<AnalyzerNodeInfoAccessor>,
     // analyzer/codeFlowEngine.ts:208
@@ -146,7 +146,7 @@ pub struct CodeFlowEngine {
 /// Builds the CodeFlowEngine. Dropped parameters: none.
 pub fn get_code_flow_engine(
     evaluator: P<TypeEvaluator>,
-    speculative_type_tracker: SpeculativeTypeTracker,
+    speculative_type_tracker: P<RefCell<SpeculativeTypeTracker>>,
     node_info: Rc<AnalyzerNodeInfoAccessor>,
 ) -> P<CodeFlowEngine> {
     todo!()

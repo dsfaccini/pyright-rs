@@ -10,8 +10,13 @@
 )]
 
 use crate::analyzer::code_flow_engine::CachedType;
+use crate::analyzer::parse_tree_utils::is_node_contained_within;
 use crate::analyzer::type_evaluator::TypeCacheEntry;
+use crate::analyzer::type_evaluator_types::TypeResult;
 use crate::analyzer::types::Type;
+use crate::analyzer::types::TypeSameOptions;
+use crate::analyzer::types::is_type_same;
+use crate::common::debug::assert;
 use crate::parser::parse_nodes::ParseNode;
 use jsrt::{JsMap, P};
 use std::cell::RefCell;
@@ -39,23 +44,18 @@ pub struct DependentType {
     pub dependent_type: P<Type>,
 }
 
-// analyzer/typeCacheUtils.ts:34
-#[derive(Clone)]
-pub struct TypeResult {
-    pub type_: P<Type>,
-    pub is_incomplete: Option<bool>,
-}
+// analyzer/typeCacheUtils.ts:34: `TypeResult` is merged into `TypeResult` of analyzer/typeEvaluatorTypes.ts ([merge]).
 
 // analyzer/typeCacheUtils.ts:39
-#[derive(Clone, Default)]
-pub struct ContextualTypeCacheEntry {
-    pub expected_type: Option<P<Type>>,
+pub trait ContextualTypeCacheEntry {
+    // analyzer/typeCacheUtils.ts:40
+    fn expected_type(&self) -> Option<P<Type>>;
 }
 
 // analyzer/typeCacheUtils.ts:43
 pub struct SpeculativeTypeEntry {
     pub expected_type: Option<P<Type>>,
-    pub type_result: TypeResult,
+    pub type_result: P<TypeResult>,
     pub incomplete_generation_count: u32,
     pub dependent_types: RefCell<Option<Vec<DependentType>>>,
 }
@@ -72,19 +72,48 @@ pub(crate) const MAX_CONTEXTUAL_TYPE_CACHE_ENTRIES_PER_NODE: u32 = 8;
 
 // analyzer/typeCacheUtils.ts:62
 pub fn contextual_type_cache_entry_matches(
-    entry: &ContextualTypeCacheEntry,
+    entry: &dyn ContextualTypeCacheEntry,
     expected_type: Option<P<Type>>,
 ) -> bool {
-    todo!()
+    match expected_type {
+        Some(expected_type) => match entry.expected_type() {
+            Some(entry_expected_type) => is_type_same(
+                expected_type,
+                entry_expected_type,
+                &TypeSameOptions::default(),
+                0,
+            ),
+            None => false,
+        },
+        None => entry.expected_type().is_none(),
+    }
 }
 
 // analyzer/typeCacheUtils.ts:69
-pub fn add_contextual_type_cache_entry<T>(
+pub fn add_contextual_type_cache_entry<T: Clone + ContextualTypeCacheEntry>(
     cache_entries: &[T],
     new_entry: T,
     is_entry_valid: Option<&mut dyn FnMut(T) -> bool>,
 ) -> Vec<T> {
-    todo!()
+    let mut is_entry_valid = is_entry_valid;
+    let mut new_cache_entries: Vec<T> = Vec::new();
+    for entry in cache_entries {
+        let is_valid = match is_entry_valid.as_mut() {
+            None => true,
+            Some(is_entry_valid) => is_entry_valid(entry.clone()),
+        };
+        if is_valid && !contextual_type_cache_entry_matches(entry, new_entry.expected_type()) {
+            new_cache_entries.push(entry.clone());
+        }
+    }
+
+    new_cache_entries.push(new_entry);
+    let max_entries = MAX_CONTEXTUAL_TYPE_CACHE_ENTRIES_PER_NODE as usize;
+    if new_cache_entries.len() > max_entries {
+        new_cache_entries = new_cache_entries.split_off(new_cache_entries.len() - max_entries);
+    }
+
+    new_cache_entries
 }
 
 // analyzer/typeCacheUtils.ts:98
@@ -101,12 +130,49 @@ impl SpeculativeTypeTracker {
         speculative_root_node: P<ParseNode>,
         options: Option<&SpeculativeModeOptions>,
     ) {
-        todo!()
+        self._speculative_context_stack.push(SpeculativeContext {
+            speculative_root_node,
+            entries_to_undo: Vec::new(),
+            dependent_type: options.and_then(|options| options.dependent_type),
+            allow_diagnostics: options.and_then(|options| options.allow_diagnostics),
+        });
+
+        // Retain a list of active dependent types. This information is already
+        // contained within the speculative context stack, but we retain a copy
+        // in this alternate form for performance reasons.
+        if let Some(dependent_type) = options.and_then(|options| options.dependent_type) {
+            self._active_dependent_types.push(DependentType {
+                speculative_root_node,
+                dependent_type,
+            });
+        }
     }
 
     // analyzer/typeCacheUtils.ts:122
     pub fn leave_speculative_context(&mut self) {
-        todo!()
+        assert(!self._speculative_context_stack.is_empty(), None);
+        let context = self._speculative_context_stack.pop();
+
+        if context
+            .as_ref()
+            .is_some_and(|context| context.dependent_type.is_some())
+        {
+            assert(!self._active_dependent_types.is_empty(), None);
+            self._active_dependent_types.pop();
+        }
+
+        // Delete all of the speculative type cache entries
+        // that were tracked in this context.
+        for entry in context.unwrap().entries_to_undo {
+            match entry.cache {
+                SpeculativeCache::Type(cache) => {
+                    cache.borrow_mut().shift_remove(&entry.id);
+                }
+                SpeculativeCache::FlowNodeType(cache) => {
+                    cache.borrow_mut().shift_remove(&entry.id);
+                }
+            }
+        }
     }
 
     // analyzer/typeCacheUtils.ts:138
@@ -116,33 +182,79 @@ impl SpeculativeTypeTracker {
         node: Option<P<ParseNode>>,
         ignore_if_diagnostics_allowed: bool,
     ) -> bool {
-        todo!()
+        if self._speculative_context_stack.is_empty() {
+            return false;
+        }
+
+        let Some(node) = node else {
+            return true;
+        };
+
+        for stack_entry in self._speculative_context_stack.iter().rev() {
+            if is_node_contained_within(node, stack_entry.speculative_root_node) {
+                if !ignore_if_diagnostics_allowed || !stack_entry.allow_diagnostics.unwrap_or(false)
+                {
+                    return true;
+                }
+            }
+        }
+
+        false
     }
 
     // analyzer/typeCacheUtils.ts:159
     pub fn track_entry(&mut self, cache: SpeculativeCache, id: u32) {
-        todo!()
+        if let Some(context) = self._speculative_context_stack.last_mut() {
+            context.entries_to_undo.push(SpeculativeEntry { cache, id });
+        }
     }
 
     // analyzer/typeCacheUtils.ts:172
     pub fn disable_speculative_mode(&mut self) -> Vec<SpeculativeContext> {
-        todo!()
+        std::mem::take(&mut self._speculative_context_stack)
     }
 
     // analyzer/typeCacheUtils.ts:178
     pub fn enable_speculative_mode(&mut self, stack: Vec<SpeculativeContext>) {
-        todo!()
+        assert(self._speculative_context_stack.is_empty(), None);
+        self._speculative_context_stack = stack;
     }
 
     // analyzer/typeCacheUtils.ts:183
     pub fn add_speculative_type(
         &mut self,
         node: P<ParseNode>,
-        type_result: &TypeResult,
+        type_result: P<TypeResult>,
         incomplete_generation_count: u32,
         expected_type: Option<P<Type>>,
     ) {
-        todo!()
+        assert(!self._speculative_context_stack.is_empty(), None);
+
+        let new_entry = SpeculativeTypeEntry {
+            expected_type,
+            type_result,
+            incomplete_generation_count,
+            dependent_types: RefCell::new(None),
+        };
+
+        if !self._active_dependent_types.is_empty() {
+            *new_entry.dependent_types.borrow_mut() = Some(self._active_dependent_types.clone());
+        }
+
+        let new_entry = P::new_eval(new_entry);
+        let cache_entries = add_contextual_type_cache_entry(
+            self._speculative_type_cache
+                .get(&node.id.get())
+                .map(|entries| entries.as_slice())
+                .unwrap_or(&[]),
+            new_entry,
+            Some(&mut |entry: P<SpeculativeTypeEntry>| {
+                !entry.type_result.is_incomplete.get().unwrap_or(false)
+                    || entry.incomplete_generation_count == incomplete_generation_count
+            }),
+        );
+        self._speculative_type_cache
+            .insert(node.id.get(), cache_entries);
     }
 
     // analyzer/typeCacheUtils.ts:209
@@ -151,12 +263,50 @@ impl SpeculativeTypeTracker {
         node: P<ParseNode>,
         expected_type: Option<P<Type>>,
     ) -> Option<P<SpeculativeTypeEntry>> {
-        todo!()
+        if self
+            ._speculative_context_stack
+            .iter()
+            .any(|context| is_node_contained_within(node, context.speculative_root_node))
+        {
+            // `_dependent_types_match` takes `&mut self`: iterate a copy of the handles.
+            if let Some(entries) = self._speculative_type_cache.get(&node.id.get()).cloned() {
+                for entry in entries {
+                    if contextual_type_cache_entry_matches(&entry, expected_type)
+                        && self._dependent_types_match(entry)
+                    {
+                        return Some(entry);
+                    }
+                }
+            }
+        }
+
+        None
     }
 
     // analyzer/typeCacheUtils.ts:231
     pub(crate) fn _dependent_types_match(&mut self, entry: P<SpeculativeTypeEntry>) -> bool {
-        todo!()
+        let cached_dependent_types = entry.dependent_types.borrow();
+        let cached_dependent_types = cached_dependent_types.as_deref().unwrap_or(&[]);
+        if cached_dependent_types.len() != self._active_dependent_types.len() {
+            return false;
+        }
+
+        cached_dependent_types
+            .iter()
+            .enumerate()
+            .all(|(index, cached_dep_type)| {
+                let active_dep_type = &self._active_dependent_types[index];
+                if cached_dep_type.speculative_root_node != active_dep_type.speculative_root_node {
+                    return false;
+                }
+
+                is_type_same(
+                    cached_dep_type.dependent_type,
+                    active_dep_type.dependent_type,
+                    &TypeSameOptions::default(),
+                    0,
+                )
+            })
     }
 }
 
@@ -168,4 +318,18 @@ impl SpeculativeTypeTracker {
 pub enum SpeculativeCache {
     Type(P<RefCell<JsMap<u32, TypeCacheEntry>>>),
     FlowNodeType(P<RefCell<JsMap<u32, Option<CachedType>>>>),
+}
+
+// Defined in tools/stubgen/typemap.toml [items].
+impl ContextualTypeCacheEntry for SpeculativeTypeEntry {
+    fn expected_type(&self) -> Option<P<Type>> {
+        self.expected_type
+    }
+}
+
+/// A shared entry reads through its handle.
+impl<T: ContextualTypeCacheEntry> ContextualTypeCacheEntry for P<T> {
+    fn expected_type(&self) -> Option<P<Type>> {
+        self.get().expected_type()
+    }
 }

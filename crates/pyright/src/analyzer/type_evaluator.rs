@@ -313,7 +313,7 @@ pub struct TypeEvaluator {
     // analyzer/typeEvaluator.ts:669
     pub(crate) symbol_resolution_stack: RefCell<Vec<SymbolResolutionStackEntry>>,
     // analyzer/typeEvaluator.ts:670
-    pub(crate) speculative_type_tracker: RefCell<SpeculativeTypeTracker>,
+    pub(crate) speculative_type_tracker: P<RefCell<SpeculativeTypeTracker>>,
     // analyzer/typeEvaluator.ts:671
     pub(crate) suppressed_node_stack: RefCell<Vec<SuppressedNodeStackEntry>>,
     // analyzer/typeEvaluator.ts:672
@@ -4353,4 +4353,11 @@ pub struct CreateTypeEvaluatorGetOverloadArgParamPairsReturn {
 pub struct CreateTypeEvaluatorPrintSrcDestTypesReturn {
     pub source_type: String,
     pub dest_type: String,
+}
+
+// Defined in tools/stubgen/typemap.toml [items].
+impl analyzer::type_cache_utils::ContextualTypeCacheEntry for TypeFormTypeCacheEntry {
+    fn expected_type(&self) -> Option<P<analyzer::types::Type>> {
+        self.expected_type
+    }
 }

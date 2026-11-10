@@ -730,6 +730,9 @@ export class Gen {
         // A type parameter of a function type (`<T>(func: T) => ..`) has no Rust generic to bind
         // to: use its constraint.
         const bindable = decl !== undefined && (ts.isFunctionLike(decl.parent) ? !ts.isFunctionTypeNode(decl.parent) && !ts.isCallSignatureDeclaration(decl.parent) : true);
+        if (decl !== undefined && bindable && this.boundOf(decl) !== undefined) {
+            return { k: 'generic', name: sym.getName() };
+        }
         if (decl?.constraint) {
             // Only a handle constraint can stand for its subtypes: a caller casts the handle back.
             const c = this.mapNode(decl.constraint, site, new Map());
@@ -741,6 +744,15 @@ export class Gen {
             return this.unmappedAt(`unbound type parameter ${sym.getName()}`, undefined, site);
         }
         return { k: 'generic', name: sym.getName() };
+    }
+
+    // The `[bounds]` entry of a function's type parameter: `<file>:<function>.<T>`.
+    boundOf(tp: ts.TypeParameterDeclaration): string | undefined {
+        const fn = tp.parent;
+        if (!ts.isFunctionDeclaration(fn) || !fn.name) {
+            return undefined;
+        }
+        return this.table.bounds.get(`${relPath(this.loaded, fn.getSourceFile())}:${fn.name.text}.${tp.name.text}`);
     }
 
     builtin(name: string, args: IR[], node: ts.Node | undefined, site?: Site): IR {

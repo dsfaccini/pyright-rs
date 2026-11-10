@@ -306,7 +306,7 @@ pub struct ExpectedTypeResult {
 }
 
 // analyzer/typeEvaluatorTypes.ts:419
-pub fn ensure_expected_type_candidates<T>(type_: T, candidates: &[T]) -> Vec<T> {
+pub fn ensure_expected_type_candidates<T: Clone>(type_: T, candidates: &[T]) -> Vec<T> {
     todo!()
 }
 

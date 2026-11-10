@@ -190,6 +190,11 @@ export class FileEmitter {
         }
         const merged = this.gen.table.merge.get(key);
         if (merged) {
+            // Merged into a type of the same name in another file: an alias would name itself.
+            if (merged.includes(':') && this.gen.nameOfKey(merged) === name && this.gen.fileOfKey(merged) !== this.file) {
+                this.out.push(`${this.marker(decl)}: \`${name}\` is merged into \`${name}\` of ${this.gen.fileOfKey(merged)} ([merge]).`, '');
+                return;
+            }
             const ir = this.gen.mapKey(key, [], undefined, this.site(name));
             this.out.push(this.marker(decl), `pub type ${name} = ${render(ir, 'field', this.uses)};`, '');
             return;
@@ -991,7 +996,11 @@ export class FileEmitter {
         for (const tp of decl.typeParameters ?? []) {
             const n = tp.name.text;
             if (!outer.has(n) && new RegExp(`\\b${n}\\b`).test(sigText)) {
-                out.push(n);
+                const bound = this.gen.boundOf(tp);
+                out.push(bound === undefined ? n : `${n}: ${shortenPaths(bound)}`);
+                if (bound !== undefined) {
+                    this.uses.add(usesOfText(bound));
+                }
             }
         }
         return out.length ? `<${out.join(', ')}>` : '';
@@ -1359,7 +1368,8 @@ export class FileEmitter {
                     this.uses.add(['std::cell::OnceCell']);
                     ty = `OnceCell<${render(t, 'field', this.uses)}>`;
                 } else {
-                    ty = renderField(t, this.uses, !isConst || reassigned || mutated);
+                    const forced = this.gen.table.mutable.get(`${this.file}:${siteRoot}.${n}`);
+                    ty = renderField(t, this.uses, forced ?? (!isConst || reassigned || mutated));
                 }
                 const why = later ? ' Set after the struct exists: its initializer uses the struct.' : '';
                 fields.push(`    ${this.marker(d)}${why ? ` ${why.trim()}` : ''}`, `    pub(crate) ${fieldName(n)}: ${ty},`);

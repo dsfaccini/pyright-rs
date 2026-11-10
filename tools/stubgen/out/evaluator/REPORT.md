@@ -213,8 +213,6 @@ How each class and interface of the stubbed files is held (docs/porting.md "memo
 - `analyzer/typeCacheUtils.ts:SpeculativeEntry`: value; written: cache at analyzer/typeCacheUtils.ts:134; never stored in a second place
 - `analyzer/typeCacheUtils.ts:SpeculativeContext`: value; written: entriesToUndo at analyzer/typeCacheUtils.ts:162; never stored in a second place
 - `analyzer/typeCacheUtils.ts:DependentType`: value; never written after construction; stored at analyzer/typeCacheUtils.ts:198
-- `analyzer/typeCacheUtils.ts:TypeResult`: value; never written after construction; stored at analyzer/typeCacheUtils.ts:192
-- `analyzer/typeCacheUtils.ts:ContextualTypeCacheEntry`: value; never written after construction; never stored in a second place
 - `analyzer/typeCacheUtils.ts:SpeculativeTypeEntry`: handle; written: dependentTypes at analyzer/typeCacheUtils.ts:198; stored at analyzer/typeCacheUtils.ts:201
 - `analyzer/typeCacheUtils.ts:SpeculativeModeOptions`: value; never written after construction; never stored in a second place
 - `analyzer/typeCacheUtils.ts:SpeculativeTypeTracker`: owned; written: _speculativeContextStack at analyzer/typeCacheUtils.ts:174; never stored in a second place
