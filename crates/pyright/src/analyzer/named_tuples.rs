@@ -435,7 +435,7 @@ pub fn create_named_tuple_type(
                                 .literal_value
                                 .clone();
                             entry_name = match literal_value {
-                                Some(LiteralValue::String(value)) => value,
+                                Some(LiteralValue::String(value)) => value.to_string_lossy(),
                                 _ => unreachable!("a str literal holds a string"),
                             };
 
@@ -659,7 +659,7 @@ pub fn create_named_tuple_type(
                 type_: ClassType::clone_as_instance(
                     ClassType::clone_with_literal(
                         ClassType(str_type),
-                        Some(LiteralValue::String(name.clone())),
+                        Some(LiteralValue::String(name.into())),
                     ),
                     true,
                 )

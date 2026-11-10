@@ -238,7 +238,7 @@ pub(crate) fn apply_struct_unpack_transform(
         return result.clone();
     };
 
-    let element_kinds = parse_struct_format(&format_value);
+    let element_kinds = parse_struct_format(&format_value.to_string_lossy());
     let Some(element_kinds) =
         element_kinds.filter(|kinds| kinds.len() as u32 <= MAX_STRUCT_UNPACK_ELEMENT_COUNT)
     else {

@@ -3242,6 +3242,7 @@ pub(crate) fn narrow_type_for_typed_dict_key(
                 let Some(LiteralValue::String(literal_key_value)) = literal_value else {
                     unreachable!("narrowTypeForTypedDictKey takes a str literal");
                 };
+                let literal_key_value = literal_key_value.to_string_lossy();
                 let known_entry = entries.known_items.borrow().get(&literal_key_value).cloned();
                 let td_entry = match &known_entry {
                     Some(known_entry) => Some(known_entry.clone()),
@@ -3362,6 +3363,7 @@ pub fn narrow_type_for_discriminated_dict_entry_comparison(
                 let Some(LiteralValue::String(index_literal_value)) = literal_value else {
                     unreachable!("narrowTypeForDiscriminatedDictEntryComparison takes a str literal");
                 };
+                let index_literal_value = index_literal_value.to_string_lossy();
                 let td_entry = symbol_map
                     .known_items
                     .borrow()

@@ -914,7 +914,7 @@ pub fn synthesize_typed_dict_class_methods(
                                 TupleTypeArg {
                                     type_: ClassType::clone_with_literal(
                                         ClassType::clone_as_instance(str_class_type, true),
-                                        Some(LiteralValue::String(name.clone())),
+                                        Some(LiteralValue::String(name.into())),
                                     )
                                     .0,
                                     is_unbounded: false,
@@ -993,7 +993,7 @@ pub fn synthesize_typed_dict_class_methods(
             let name_literal_type = ClassType::clone_as_instance(
                 ClassType::clone_with_literal(
                     str_class_type,
-                    Some(LiteralValue::String(name.clone())),
+                    Some(LiteralValue::String(name.into())),
                 ),
                 true,
             );
@@ -1214,7 +1214,7 @@ pub fn synthesize_typed_dict_class_methods(
                     .map(|(key, _)| {
                         ClassType::clone_with_literal(
                             str_type,
-                            Some(LiteralValue::String(key.clone())),
+                            Some(LiteralValue::String(key.into())),
                         )
                         .0
                     })
@@ -2078,7 +2078,7 @@ pub fn assign_to_typed_dict(
         } else {
             let literal_value = ClassType(key_type).d().priv_.borrow().literal_value.clone();
             let key_value = match literal_value {
-                Some(LiteralValue::String(value)) => value,
+                Some(LiteralValue::String(value)) => value.to_string_lossy(),
                 _ => unreachable!("a str literal holds a string"),
             };
             let symbol_entry = td_entries.known_items.borrow().get(&key_value).cloned();
@@ -2285,7 +2285,7 @@ pub fn get_type_of_indexed_typed_dict(
 
                 // Look up the entry in the typed dict to get its type.
                 let entry_name = match literal_value {
-                    LiteralValue::String(value) => value,
+                    LiteralValue::String(value) => value.to_string_lossy(),
                     _ => unreachable!("a str literal holds a string"),
                 };
                 let known_entry = entries.known_items.borrow().get(&entry_name).cloned();

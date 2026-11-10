@@ -1276,7 +1276,7 @@ pub(crate) fn calc_literal_for_binary_op(
                         Some(
                             ClassType::clone_with_literal(
                                 ClassType(left_subtype),
-                                Some(LiteralValue::String(left_value + &right_value)),
+                                Some(LiteralValue::String(left_value.concat(&right_value))),
                             )
                             .0,
                         )

@@ -1334,7 +1334,9 @@ export class FileEmitter {
             const variants: string[] = [];
             const used = new Set<string>();
             parts.forEach((p, i) => {
-                const t = this.gen.mapNode(p, { ...site, key: `${name}#${i}` }, new Map());
+                // `[sites]` keys a member by its index: "<file>:<Alias>#<i>".
+                const memberSite = { ...site, key: `${name}#${i}` };
+                const t = this.gen.siteOverride(memberSite) ?? this.gen.mapNode(p, memberSite, new Map());
                 let v = pascal(p.getText().replace(/<.*$/, '').replace(/\[\]$/, 'List'));
                 if (used.has(v)) {
                     v = `${v}${i}`;
