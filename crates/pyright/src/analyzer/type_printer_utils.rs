@@ -10,7 +10,8 @@
 )]
 
 use jsrt::JsStr;
-use regex::{NoExpand, Regex};
+use regex::NoExpand;
+use regex::Regex;
 
 thread_local! {
     // analyzer/typePrinterUtils.ts:10
@@ -31,8 +32,10 @@ pub fn print_string_literal(value: &str, quotation: &str) -> String {
     if quotation != "\"" {
         // The first and last characters are the quotes JSON.stringify added.
         let inner = &literal_str[1..literal_str.len() - 1];
-        let inner = ESCAPED_DOUBLE_QUOTE_REG_EX.with(|re| re.replace_all(inner, NoExpand("\"")).into_owned());
-        let inner = SINGLE_TICK_REG_EX.with(|re| re.replace_all(&inner, NoExpand("\\'")).into_owned());
+        let inner = ESCAPED_DOUBLE_QUOTE_REG_EX
+            .with(|re| re.replace_all(inner, NoExpand("\"")).into_owned());
+        let inner =
+            SINGLE_TICK_REG_EX.with(|re| re.replace_all(&inner, NoExpand("\\'")).into_owned());
         literal_str = format!("'{inner}'");
     }
 
@@ -56,7 +59,11 @@ pub fn print_bytes_literal(value: &str) -> String {
                 bytes_string.push(char);
             }
         } else {
-            bytes_string.push_str(&format!("\\x{:x}{:x}", (char_code >> 4) & 0xf, char_code & 0xf));
+            bytes_string.push_str(&format!(
+                "\\x{:x}{:x}",
+                (char_code >> 4) & 0xf,
+                char_code & 0xf
+            ));
         }
     }
 

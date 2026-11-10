@@ -10,7 +10,9 @@
 )]
 
 use crate::analyzer::type_complexity::get_complexity_score_for_type;
-use crate::analyzer::types::{Type, TypeSameOptions, TypeVarType, is_type_same};
+use crate::analyzer::types::TypeSameOptions;
+use crate::analyzer::types::is_type_same;
+use crate::analyzer::types::{Type, TypeVarType};
 use jsrt::{JsMap, JsSet, P};
 use std::cell::RefCell;
 
@@ -45,9 +47,15 @@ impl ConstraintSet {
     pub fn clone(&self) -> P<ConstraintSet> {
         let constraint_set = ConstraintSet::new();
 
-        let entries: Vec<TypeVarConstraints> = self._type_var_map.borrow().values().cloned().collect();
+        let entries: Vec<TypeVarConstraints> =
+            self._type_var_map.borrow().values().cloned().collect();
         for value in entries {
-            constraint_set.set_bounds(value.type_var, value.lower_bound, value.upper_bound, value.retain_literals);
+            constraint_set.set_bounds(
+                value.type_var,
+                value.lower_bound,
+                value.upper_bound,
+                value.retain_literals,
+            );
         }
 
         let scope_ids = self._scope_ids.borrow().clone();
@@ -89,8 +97,12 @@ impl ConstraintSet {
         }
 
         let mut is_same = true;
-        let entries: Vec<(String, TypeVarConstraints)> =
-            self._type_var_map.borrow().iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+        let entries: Vec<(String, TypeVarConstraints)> = self
+            ._type_var_map
+            .borrow()
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
         for (key, value) in entries {
             let other_value = other._type_var_map.borrow().get(&key).cloned();
             match other_value {
@@ -116,7 +128,8 @@ impl ConstraintSet {
         let mut score = 0.0;
 
         // Sum the scores for the defined type vars.
-        let entries: Vec<TypeVarConstraints> = self._type_var_map.borrow().values().cloned().collect();
+        let entries: Vec<TypeVarConstraints> =
+            self._type_var_map.borrow().values().cloned().collect();
         for entry in entries {
             // Add 1 to the score for each type variable defined.
             score += 1.0;
@@ -211,7 +224,8 @@ impl ConstraintSet {
 
     // analyzer/constraintTracker.ts:174
     pub fn has_unification_vars(&self) -> bool {
-        let entries: Vec<TypeVarConstraints> = self._type_var_map.borrow().values().cloned().collect();
+        let entries: Vec<TypeVarConstraints> =
+            self._type_var_map.borrow().values().cloned().collect();
         for entry in entries {
             if TypeVarType::is_unification(entry.type_var).unwrap_or(false) {
                 return true;
@@ -239,7 +253,12 @@ impl ConstraintTracker {
     pub fn clone(&self) -> P<ConstraintTracker> {
         let new_type_var_map = ConstraintTracker::new();
 
-        let sets: Vec<P<ConstraintSet>> = self._constraint_sets.borrow().iter().map(|set| ConstraintSet::clone(set)).collect();
+        let sets: Vec<P<ConstraintSet>> = self
+            ._constraint_sets
+            .borrow()
+            .iter()
+            .map(|set| ConstraintSet::clone(set))
+            .collect();
         *new_type_var_map._constraint_sets.borrow_mut() = sets;
 
         new_type_var_map
@@ -273,7 +292,12 @@ impl ConstraintTracker {
 
     // analyzer/constraintTracker.ts:219
     pub fn copy_from_clone(&self, clone: P<ConstraintTracker>) {
-        let sets: Vec<P<ConstraintSet>> = clone._constraint_sets.borrow().iter().map(|context| ConstraintSet::clone(context)).collect();
+        let sets: Vec<P<ConstraintSet>> = clone
+            ._constraint_sets
+            .borrow()
+            .iter()
+            .map(|context| ConstraintSet::clone(context))
+            .collect();
         *self._constraint_sets.borrow_mut() = sets;
     }
 
@@ -281,7 +305,12 @@ impl ConstraintTracker {
     pub fn copy_bounds(&self, entry: &TypeVarConstraints) {
         let sets = self._constraint_sets.borrow().clone();
         for set in sets {
-            set.set_bounds(entry.type_var, entry.lower_bound, entry.upper_bound, entry.retain_literals);
+            set.set_bounds(
+                entry.type_var,
+                entry.lower_bound,
+                entry.upper_bound,
+                entry.retain_literals,
+            );
         }
     }
 
@@ -304,7 +333,9 @@ impl ConstraintTracker {
             return false;
         }
 
-        sets.iter().enumerate().all(|(index, set)| set.is_same(other_sets[index]))
+        sets.iter()
+            .enumerate()
+            .all(|(index, set)| set.is_same(other_sets[index]))
     }
 
     // analyzer/constraintTracker.ts:248

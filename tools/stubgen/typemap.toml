@@ -230,6 +230,14 @@ interface = "analyzer/codeFlowEngine.ts:CodeFlowAnalyzer"
 "analyzer/parameterUtils.ts:ParamAssignmentTracker.lookupDetails.return" = "&mut crate::analyzer::parameter_utils::ParamAssignmentInfo"
 # `Map.set` returns the map; no caller reads it.
 "analyzer/constraintSolution.ts:ConstraintSolutionSet.setType.return" = "()"
+# `UniqueNameMap` methods take `&mut self` (`_addIfUnique` writes `_map`), so the printers that call
+# `isUnique` hold it mutably.
+"analyzer/typePrinter.ts:printTypeInternal.uniqueNameMap" = "&mut crate::analyzer::type_printer::UniqueNameMap"
+"analyzer/typePrinter.ts:printUnionType.uniqueNameMap" = "&mut crate::analyzer::type_printer::UniqueNameMap"
+"analyzer/typePrinter.ts:printFunctionType.uniqueNameMap" = "&mut crate::analyzer::type_printer::UniqueNameMap"
+"analyzer/typePrinter.ts:printParamSpecValueForPythonSyntax.uniqueNameMap" = "&mut crate::analyzer::type_printer::UniqueNameMap"
+"analyzer/typePrinter.ts:printObjectTypeForClassInternal.uniqueNameMap" = "&mut crate::analyzer::type_printer::UniqueNameMap"
+"analyzer/typePrinter.ts:printFunctionPartsInternal.uniqueNameMap" = "&mut crate::analyzer::type_printer::UniqueNameMap"
 
 # Bounds on a function's type parameter, which then stays a Rust generic instead of becoming its
 # constraint: "<file>:<function>.<T>" = "<Rust bounds>".

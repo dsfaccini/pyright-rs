@@ -9,15 +9,24 @@
     clippy::all
 )]
 
-use crate::analyzer::types::{ClassType, FunctionParam, FunctionType, Type, TypeVarType};
-use jsrt::P;
 use crate::analyzer::symbol_name_utils::is_dunder_name;
-use crate::analyzer::type_utils::{do_for_each_subtype, partially_specialize_type};
-use crate::analyzer::types::{
-    AnyType, FunctionParamFlags, ParamSpecAccess, TypeSameOptions, is_any_or_unknown, is_class_instance, is_never,
-    is_param_spec, is_position_only_separator, is_type_same, is_type_var_tuple, is_unpacked_class,
-};
+use crate::analyzer::type_utils::do_for_each_subtype;
+use crate::analyzer::type_utils::partially_specialize_type;
+use crate::analyzer::types::AnyType;
+use crate::analyzer::types::FunctionParamFlags;
+use crate::analyzer::types::ParamSpecAccess;
+use crate::analyzer::types::TypeSameOptions;
+use crate::analyzer::types::is_any_or_unknown;
+use crate::analyzer::types::is_class_instance;
+use crate::analyzer::types::is_never;
+use crate::analyzer::types::is_param_spec;
+use crate::analyzer::types::is_position_only_separator;
+use crate::analyzer::types::is_type_same;
+use crate::analyzer::types::is_type_var_tuple;
+use crate::analyzer::types::is_unpacked_class;
+use crate::analyzer::types::{ClassType, FunctionParam, FunctionType, Type, TypeVarType};
 use crate::parser::parse_nodes::ParamCategory;
+use jsrt::P;
 
 // analyzer/parameterUtils.ts:31
 pub fn is_typed_kwargs(param: &FunctionParam, effective_param_type: P<Type>) -> bool {
@@ -25,7 +34,13 @@ pub fn is_typed_kwargs(param: &FunctionParam, effective_param_type: P<Type>) -> 
         && is_class_instance(effective_param_type)
         && is_unpacked_class(effective_param_type)
         && ClassType::is_typed_dict_class(ClassType(effective_param_type))
-        && ClassType(effective_param_type).d().shared.get().typed_dict_entries.get().is_some()
+        && ClassType(effective_param_type)
+            .d()
+            .shared
+            .get()
+            .typed_dict_entries
+            .get()
+            .is_some()
 }
 
 // analyzer/parameterUtils.ts:41
@@ -165,7 +180,8 @@ pub fn get_param_list_details(
                 index,
                 type_: type_override.unwrap_or_else(|| FunctionType::get_param_type(type_, index)),
                 declared_type: FunctionType::get_declared_param_type(type_, index),
-                default_type: default_type_override.or_else(|| FunctionType::get_param_default_type(type_, index)),
+                default_type: default_type_override
+                    .or_else(|| FunctionType::get_param_default_type(type_, index)),
                 kind,
             }));
         }
@@ -181,7 +197,12 @@ pub fn get_param_list_details(
             // If this is an unpacked tuple, expand the entries.
             let param_type = FunctionType::get_param_type(type_, index);
             let tuple_type_args = if has_name(param) && is_unpacked_class(param_type) {
-                ClassType(param_type).d().priv_.borrow().tuple_type_args.clone()
+                ClassType(param_type)
+                    .d()
+                    .priv_
+                    .borrow()
+                    .tuple_type_args
+                    .clone()
             } else {
                 None
             };
@@ -212,7 +233,11 @@ pub fn get_param_list_details(
                             category,
                             tuple_arg.type_,
                             FunctionParamFlags::NameSynthesized | FunctionParamFlags::TypeDeclared,
-                            Some(&format!("{}[{}]", param.name.as_deref().unwrap_or(""), tuple_index)),
+                            Some(&format!(
+                                "{}[{}]",
+                                param.name.as_deref().unwrap_or(""),
+                                tuple_index
+                            )),
                             None,
                             None,
                         ),
@@ -235,7 +260,9 @@ pub fn get_param_list_details(
                 // would signify the start of keyword-only parameters. However, we can construct
                 // callable signatures that defy this rule by using Callable and TypeVarTuples
                 // or unpacked tuples.
-                if !saw_keyword_only_separator && (position_only_index < 0 || index >= position_only_index) {
+                if !saw_keyword_only_separator
+                    && (position_only_index < 0 || index >= position_only_index)
+                {
                     result.first_keyword_only_index = Some(result.params.len() as i32);
                     saw_keyword_only_separator = true;
                 }
@@ -252,7 +279,9 @@ pub fn get_param_list_details(
                 // would signify the start of keyword-only parameters. However, we can construct
                 // callable signatures that defy this rule by using Callable and TypeVarTuples
                 // or unpacked tuples.
-                if !saw_keyword_only_separator && (position_only_index < 0 || index >= position_only_index) {
+                if !saw_keyword_only_separator
+                    && (position_only_index < 0 || index >= position_only_index)
+                {
                     let mut first_keyword_only_index = result.params.len() as i32;
                     if has_name(param) {
                         first_keyword_only_index += 1;
@@ -279,11 +308,17 @@ pub fn get_param_list_details(
             let param_type = FunctionType::get_param_type(type_, index);
 
             // Is this an unpacked TypedDict? If so, expand the entries.
-            let typed_dict_entries = if is_class_instance(param_type) && is_unpacked_class(param_type) {
-                ClassType(param_type).d().shared.get().typed_dict_entries.get()
-            } else {
-                None
-            };
+            let typed_dict_entries =
+                if is_class_instance(param_type) && is_unpacked_class(param_type) {
+                    ClassType(param_type)
+                        .d()
+                        .shared
+                        .get()
+                        .typed_dict_entries
+                        .get()
+                } else {
+                    None
+                };
             if let Some(typed_dict_entries) = typed_dict_entries {
                 let param_class = ClassType(param_type);
                 if result.first_keyword_only_index.is_none() {
@@ -309,7 +344,11 @@ pub fn get_param_list_details(
                         None,
                     );
 
-                    let default_param_type = if !entry.is_required { Some(specialized_param_type) } else { None };
+                    let default_param_type = if !entry.is_required {
+                        Some(specialized_param_type)
+                    } else {
+                        None
+                    };
                     add_virtual_param(
                         &mut result,
                         type_,
@@ -330,12 +369,18 @@ pub fn get_param_list_details(
                     );
                 }
 
-                let extra_items_type = typed_dict_entries.extra_items.borrow().as_ref().map(|entry| entry.value_type);
+                let extra_items_type = typed_dict_entries
+                    .extra_items
+                    .borrow()
+                    .as_ref()
+                    .map(|entry| entry.value_type);
 
                 let add_kwargs_for_extra_items = if let Some(extra_items_type) = extra_items_type {
                     !is_never(extra_items_type)
                 } else {
-                    !options.and_then(|options| options.disallow_extra_kwargs_for_td).unwrap_or(false)
+                    !options
+                        .and_then(|options| options.disallow_extra_kwargs_for_td)
+                        .unwrap_or(false)
                 };
 
                 // Unless the TypedDict is completely closed (i.e. is not allowed to
@@ -392,13 +437,21 @@ pub fn get_param_list_details(
                 result.position_param_count += 1;
             }
 
-            let default_type_override = type_.d().priv_.borrow().specialized_types.and_then(|specialized_types| {
-                specialized_types
-                    .parameter_default_types
+            let default_type_override =
+                type_
+                    .d()
+                    .priv_
                     .borrow()
-                    .as_ref()
-                    .and_then(|default_types| default_types.get(index as usize).copied().flatten())
-            });
+                    .specialized_types
+                    .and_then(|specialized_types| {
+                        specialized_types
+                            .parameter_default_types
+                            .borrow()
+                            .as_ref()
+                            .and_then(|default_types| {
+                                default_types.get(index as usize).copied().flatten()
+                            })
+                    });
             add_virtual_param(
                 &mut result,
                 type_,
@@ -415,7 +468,8 @@ pub fn get_param_list_details(
 
     // If the signature ends in `*args: P.args, **kwargs: P.kwargs`,
     // extract the ParamSpec P.
-    result.param_spec = FunctionType::get_param_spec_from_args_kwargs(type_).map(|param_spec| TypeVarType(param_spec.0));
+    result.param_spec = FunctionType::get_param_spec_from_args_kwargs(type_)
+        .map(|param_spec| TypeVarType(param_spec.0));
 
     result.first_position_or_keyword_index = result
         .params
@@ -437,7 +491,12 @@ pub fn is_param_spec_args(param_spec: TypeVarType, arg_type: P<Type>) -> bool {
         arg_type,
         &mut |arg_subtype, _, _| {
             if is_param_spec(arg_subtype)
-                && TypeVarType(arg_subtype).d().priv_.borrow().param_spec_access == Some(ParamSpecAccess::Args)
+                && TypeVarType(arg_subtype)
+                    .d()
+                    .priv_
+                    .borrow()
+                    .param_spec_access
+                    == Some(ParamSpecAccess::Args)
                 && is_type_same(
                     arg_subtype,
                     param_spec.0,
@@ -457,7 +516,12 @@ pub fn is_param_spec_args(param_spec: TypeVarType, arg_type: P<Type>) -> bool {
             }
 
             if is_class_instance(arg_subtype) {
-                let tuple_type_args = ClassType(arg_subtype).d().priv_.borrow().tuple_type_args.clone();
+                let tuple_type_args = ClassType(arg_subtype)
+                    .d()
+                    .priv_
+                    .borrow()
+                    .tuple_type_args
+                    .clone();
                 if let Some(tuple_type_args) = tuple_type_args {
                     if tuple_type_args.len() == 1
                         && tuple_type_args[0].is_unbounded
@@ -488,7 +552,12 @@ pub fn is_param_spec_kwargs(param_spec: TypeVarType, arg_type: P<Type>) -> bool 
         arg_type,
         &mut |arg_subtype, _, _| {
             if is_param_spec(arg_subtype)
-                && TypeVarType(arg_subtype).d().priv_.borrow().param_spec_access == Some(ParamSpecAccess::Kwargs)
+                && TypeVarType(arg_subtype)
+                    .d()
+                    .priv_
+                    .borrow()
+                    .param_spec_access
+                    == Some(ParamSpecAccess::Kwargs)
                 && is_type_same(
                     arg_subtype,
                     param_spec.0,
@@ -507,12 +576,17 @@ pub fn is_param_spec_kwargs(param_spec: TypeVarType, arg_type: P<Type>) -> bool 
                 return;
             }
 
-            if is_class_instance(arg_subtype) && ClassType::is_built_in(ClassType(arg_subtype), Some(&["dict".to_string()])) {
+            if is_class_instance(arg_subtype)
+                && ClassType::is_built_in(ClassType(arg_subtype), Some(&["dict".to_string()]))
+            {
                 let type_args = ClassType(arg_subtype).d().priv_.borrow().type_args.clone();
                 if let Some(type_args) = type_args {
                     if type_args.len() == 2
                         && is_class_instance(type_args[0])
-                        && ClassType::is_built_in(ClassType(type_args[0]), Some(&["str".to_string()]))
+                        && ClassType::is_built_in(
+                            ClassType(type_args[0]),
+                            Some(&["str".to_string()]),
+                        )
                         && is_any_or_unknown(type_args[1])
                     {
                         return;
@@ -552,7 +626,12 @@ impl ParamAssignmentTracker {
         let params = param_infos
             .iter()
             .map(|&p| {
-                let args_needed = if p.default_type.is_some() || p.param.category != ParamCategory::Simple { 0 } else { 1 };
+                let args_needed =
+                    if p.default_type.is_some() || p.param.category != ParamCategory::Simple {
+                        0
+                    } else {
+                        1
+                    };
                 ParamAssignmentInfo {
                     param_details: p,
                     keyword_name: None,
@@ -583,7 +662,10 @@ impl ParamAssignmentTracker {
                 return false;
             }
 
-            let effective_name = p.keyword_name.as_deref().or(p.param_details.param.name.as_deref());
+            let effective_name =
+                p.keyword_name
+                    .as_deref()
+                    .or(p.param_details.param.name.as_deref());
             effective_name == Some(name)
         })
     }
@@ -593,7 +675,10 @@ impl ParamAssignmentTracker {
         &mut self,
         param_info: P<VirtualParamDetails>,
     ) -> &mut ParamAssignmentInfo {
-        let info = self.params.iter_mut().find(|p| p.param_details == param_info);
+        let info = self
+            .params
+            .iter_mut()
+            .find(|p| p.param_details == param_info);
         info.expect("lookupDetails: the parameter is tracked")
     }
 
@@ -607,7 +692,13 @@ impl ParamAssignmentTracker {
     pub fn get_unassigned_params(&mut self) -> Vec<String> {
         let mut unassigned_params: Vec<String> = Vec::new();
         for p in &self.params {
-            let Some(name) = p.param_details.param.name.as_deref().filter(|name| !name.is_empty()) else {
+            let Some(name) = p
+                .param_details
+                .param
+                .name
+                .as_deref()
+                .filter(|name| !name.is_empty())
+            else {
                 continue;
             };
 
