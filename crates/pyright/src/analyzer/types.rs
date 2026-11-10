@@ -81,12 +81,18 @@ impl EnumLiteral {
         item_type: P<Type>,
         is_repr_enum: bool,
     ) -> P<EnumLiteral> {
-        todo!()
+        P::new_eval(EnumLiteral {
+            class_full_name,
+            class_name,
+            item_name,
+            item_type,
+            is_repr_enum,
+        })
     }
 
     // analyzer/types.ts:95
     pub fn get_name(&self) -> String {
-        todo!()
+        format!("{}.{}", self.class_full_name, self.item_name)
     }
 }
 
@@ -99,12 +105,15 @@ pub struct SentinelLiteral {
 impl SentinelLiteral {
     // analyzer/types.ts:101
     pub fn new(class_full_name: String, class_name: String) -> P<SentinelLiteral> {
-        todo!()
+        P::new_eval(SentinelLiteral {
+            class_full_name,
+            class_name,
+        })
     }
 
     // analyzer/types.ts:103
     pub fn get_name(&self) -> String {
-        todo!()
+        self.class_name.clone()
     }
 }
 
@@ -210,92 +219,269 @@ pub struct TypeBase;
 impl TypeBase {
     // analyzer/types.ts:217
     pub fn is_instantiable(type_: P<Type>) -> bool {
-        todo!()
+        type_.flags.get().any(TypeFlags::Instantiable)
     }
 
     // analyzer/types.ts:221
     pub fn is_instance(type_: P<Type>) -> bool {
-        todo!()
+        type_.flags.get().any(TypeFlags::Instance)
     }
 
     // analyzer/types.ts:225
     pub fn is_ambiguous(type_: P<Type>) -> bool {
-        todo!()
+        type_.flags.get().any(TypeFlags::Ambiguous)
     }
 
     // analyzer/types.ts:229
     pub fn add_props(type_: P<Type>) -> RefMut<'static, TypeBaseProps> {
-        todo!()
+        RefMut::map(type_.get().props.borrow_mut(), |props| {
+            props.get_or_insert_with(TypeBaseProps::default)
+        })
     }
 
     // analyzer/types.ts:242
     pub fn get_instantiable_depth(type_: P<Type>) -> u32 {
-        todo!()
+        type_
+            .props
+            .borrow()
+            .as_ref()
+            .and_then(|props| props.instantiable_depth)
+            .unwrap_or(0)
     }
 
     // analyzer/types.ts:246
     pub fn set_special_form(type_: P<Type>, special_form: Option<ClassType>) {
-        todo!()
+        TypeBase::add_props(type_).special_form = special_form;
     }
 
     // analyzer/types.ts:250
     pub fn set_instantiable_depth(type_: P<Type>, depth: Option<u32>) {
-        todo!()
+        TypeBase::add_props(type_).instantiable_depth = depth;
     }
 
     // analyzer/types.ts:254
     pub fn set_type_alias_info(type_: P<Type>, type_alias_info: Option<TypeAliasInfo>) {
-        todo!()
+        TypeBase::add_props(type_).type_alias_info = type_alias_info;
     }
 
     // analyzer/types.ts:258
     pub fn set_type_form(type_: P<Type>, type_form: Option<P<Type>>) {
-        todo!()
+        TypeBase::add_props(type_).type_form = type_form;
     }
 
     // analyzer/types.ts:262
     pub fn set_condition(type_: P<Type>, condition: Option<Vec<TypeCondition>>) {
-        todo!()
+        TypeBase::add_props(type_).condition = condition;
     }
 
     // analyzer/types.ts:266
     pub fn clone_type(type_: P<Type>) -> P<Type> {
-        todo!()
+        // `{ ...type }` with copies of `props` and `priv`: `shared` stays shared.
+        let d = match &type_.get().d {
+            TypeDetails::Unbound(_) => TypeDetails::Unbound(UnboundTypeDetails {}),
+            TypeDetails::Unknown(d) => TypeDetails::Unknown(UnknownTypeDetails {
+                priv_: d.priv_.clone(),
+            }),
+            TypeDetails::Module(d) => TypeDetails::Module(ModuleTypeDetails {
+                priv_: d.priv_.clone(),
+            }),
+            TypeDetails::Class(d) => TypeDetails::Class(ClassTypeDetails {
+                shared: d.shared.clone(),
+                priv_: d.priv_.clone(),
+            }),
+            TypeDetails::Function(d) => TypeDetails::Function(FunctionTypeDetails {
+                shared: d.shared.clone(),
+                priv_: d.priv_.clone(),
+            }),
+            TypeDetails::Overloaded(d) => TypeDetails::Overloaded(OverloadedTypeDetails {
+                priv_: d.priv_.clone(),
+            }),
+            TypeDetails::Never(d) => TypeDetails::Never(NeverTypeDetails {
+                priv_: d.priv_.clone(),
+            }),
+            TypeDetails::Any(d) => TypeDetails::Any(AnyTypeDetails {
+                priv_: d.priv_.clone(),
+            }),
+            TypeDetails::Union(d) => TypeDetails::Union(UnionTypeDetails {
+                priv_: d.priv_.clone(),
+            }),
+            TypeDetails::TypeVar(d) => TypeDetails::TypeVar(TypeVarTypeDetails {
+                shared: d.shared.clone(),
+                priv_: d.priv_.clone(),
+            }),
+        };
+        P::new_eval(Type {
+            category: type_.category,
+            flags: type_.flags.clone(),
+            props: type_.props.clone(),
+            cached: RefCell::new(None),
+            d,
+        })
     }
 
     // analyzer/types.ts:278
     pub fn clone_as_special_form(type_: P<Type>, special_form: Option<ClassType>) -> P<Type> {
-        todo!()
+        let clone = TypeBase::clone_type(type_);
+        TypeBase::set_special_form(clone, special_form);
+        clone
     }
 
     // analyzer/types.ts:284
     pub fn clone_type_as_instance(type_: P<Type>, cache: bool) -> P<Type> {
-        todo!()
+        common::debug::assert(TypeBase::is_instantiable(type_), None);
+
+        let new_instance = TypeBase::clone_type(type_);
+
+        // Remove type form information from the type.
+        let has_type_form = new_instance
+            .props
+            .borrow()
+            .as_ref()
+            .is_some_and(|props| props.type_form.is_some());
+        if has_type_form {
+            TypeBase::set_type_form(new_instance, None);
+        }
+
+        let depth = new_instance
+            .props
+            .borrow()
+            .as_ref()
+            .and_then(|props| props.instantiable_depth);
+        match depth {
+            None => {
+                new_instance
+                    .flags
+                    .set(new_instance.flags.get() & !TypeFlags::Instantiable);
+                new_instance
+                    .flags
+                    .set(new_instance.flags.get() | TypeFlags::Instance);
+            }
+            Some(depth) if depth <= 1 => {
+                TypeBase::set_instantiable_depth(new_instance, None);
+            }
+            Some(depth) => {
+                TypeBase::set_instantiable_depth(new_instance, Some(depth - 1));
+            }
+        }
+
+        // Should we cache it for next time?
+        if cache {
+            type_
+                .cached
+                .borrow_mut()
+                .get_or_insert_with(CachedTypeInfo::default)
+                .type_base_instance_type = Some(new_instance);
+        }
+
+        new_instance
     }
 
     // analyzer/types.ts:316
     pub fn clone_type_as_instantiable(type_: P<Type>, cache: bool) -> P<Type> {
-        todo!()
+        let new_instance = TypeBase::clone_type(type_);
+
+        if TypeBase::is_instance(type_) {
+            new_instance
+                .flags
+                .set(new_instance.flags.get() & !TypeFlags::Instance);
+            new_instance
+                .flags
+                .set(new_instance.flags.get() | TypeFlags::Instantiable);
+        } else {
+            let old_depth = type_
+                .props
+                .borrow()
+                .as_ref()
+                .and_then(|props| props.instantiable_depth);
+            TypeBase::set_instantiable_depth(
+                new_instance,
+                Some(match old_depth {
+                    None => 1,
+                    Some(old_depth) => old_depth + 1,
+                }),
+            );
+        }
+
+        // Remove type alias information because the type will no longer match
+        // that of the type alias definition.
+        let has_type_alias_info = new_instance
+            .props
+            .borrow()
+            .as_ref()
+            .is_some_and(|props| props.type_alias_info.is_some());
+        if has_type_alias_info {
+            TypeBase::set_type_alias_info(new_instance, None);
+        }
+
+        // Remove type form information from the type.
+        let has_type_form = new_instance
+            .props
+            .borrow()
+            .as_ref()
+            .is_some_and(|props| props.type_form.is_some());
+        if has_type_form {
+            TypeBase::set_type_form(new_instance, None);
+        }
+
+        // Should we cache it for next time?
+        if cache {
+            type_
+                .cached
+                .borrow_mut()
+                .get_or_insert_with(CachedTypeInfo::default)
+                .type_base_instantiable_type = Some(new_instance);
+        }
+
+        new_instance
     }
 
     // analyzer/types.ts:350
     pub fn clone_for_type_alias(type_: P<Type>, alias_info: &TypeAliasInfo) -> P<Type> {
-        todo!()
+        let type_clone = TypeBase::clone_type(type_);
+
+        TypeBase::set_type_alias_info(type_clone, Some(alias_info.clone()));
+
+        type_clone
     }
 
     // analyzer/types.ts:358
     pub fn clone_with_type_form(type_: P<Type>, type_form: Option<P<Type>>) -> P<Type> {
-        todo!()
+        let type_clone = TypeBase::clone_type(type_);
+
+        TypeBase::set_type_form(type_clone, type_form);
+
+        type_clone
     }
 
     // analyzer/types.ts:366
     pub fn clone_for_condition(type_: P<Type>, condition: Option<&[TypeCondition]>) -> P<Type> {
-        todo!()
+        // Handle the common case where there are no conditions. In this case,
+        // cloning isn't necessary.
+        let has_condition = type_
+            .props
+            .borrow()
+            .as_ref()
+            .is_some_and(|props| props.condition.is_some());
+        if !has_condition && condition.is_none() {
+            return type_;
+        }
+
+        let type_clone = TypeBase::clone_type(type_);
+        TypeBase::set_condition(type_clone, condition.map(|condition| condition.to_vec()));
+        type_clone
     }
 
     // analyzer/types.ts:378
     pub fn clone_for_ambiguous_type(type_: P<Type>) -> P<Type> {
-        todo!()
+        if TypeBase::is_ambiguous(type_) {
+            return type_;
+        }
+
+        let type_clone = TypeBase::clone_type(type_);
+        type_clone
+            .flags
+            .set(type_clone.flags.get() | TypeFlags::Ambiguous);
+        type_clone
     }
 }
 
@@ -333,12 +519,23 @@ impl Deref for UnboundType {
 impl UnboundType {
     // analyzer/types.ts:401
     pub fn create() -> UnboundType {
-        todo!()
+        // All Unbound objects are the same, so use a shared instance.
+        unbound_type::INSTANCE.with(|instance| *instance)
     }
 
     // analyzer/types.ts:406
     pub fn convert_to_instance(type_: UnboundType) -> UnboundType {
-        todo!()
+        // Remove the "special form" if present. Otherwise return the existing type.
+        let has_special_form = type_
+            .props
+            .borrow()
+            .as_ref()
+            .is_some_and(|props| props.special_form.is_some());
+        if has_special_form {
+            UnboundType::create()
+        } else {
+            type_
+        }
     }
 }
 
@@ -348,7 +545,13 @@ pub mod unbound_type {
 
     thread_local! {
         // analyzer/types.ts:392
-        pub(crate) static INSTANCE: UnboundType = todo!();
+        pub(crate) static INSTANCE: UnboundType = UnboundType(P::new_eval(Type {
+            category: TypeCategory::Unbound,
+            flags: Cell::new(TypeFlags::Instantiable | TypeFlags::Instance),
+            props: RefCell::new(None),
+            cached: RefCell::new(None),
+            d: TypeDetails::Unbound(UnboundTypeDetails {}),
+        }));
     }
 }
 
@@ -396,17 +599,42 @@ impl UnknownType {
     // analyzer/types.ts:452
     /// TS defaults: isIncomplete = false.
     pub fn create(is_incomplete: bool) -> UnknownType {
-        todo!()
+        if is_incomplete {
+            unknown_type::INCOMPLETE_INSTANCE.with(|instance| *instance)
+        } else {
+            unknown_type::INSTANCE.with(|instance| *instance)
+        }
     }
 
     // analyzer/types.ts:456
     pub fn create_possible_type(possible_type: P<Type>, is_incomplete: bool) -> UnknownType {
-        todo!()
+        UnknownType(P::new_eval(Type {
+            category: TypeCategory::Unknown,
+            flags: Cell::new(TypeFlags::Instantiable | TypeFlags::Instance),
+            props: RefCell::new(None),
+            cached: RefCell::new(None),
+            d: TypeDetails::Unknown(UnknownTypeDetails {
+                priv_: UnknownDetailsPriv {
+                    is_incomplete,
+                    possible_type: Some(possible_type),
+                },
+            }),
+        }))
     }
 
     // analyzer/types.ts:472
     pub fn convert_to_instance(type_: UnknownType) -> UnknownType {
-        todo!()
+        // Remove the "special form" if present. Otherwise return the existing type.
+        let has_special_form = type_
+            .props
+            .borrow()
+            .as_ref()
+            .is_some_and(|props| props.special_form.is_some());
+        if has_special_form {
+            UnknownType::create(type_.d().priv_.is_incomplete)
+        } else {
+            type_
+        }
     }
 }
 
@@ -416,12 +644,34 @@ pub mod unknown_type {
 
     thread_local! {
         // analyzer/types.ts:429
-        pub(crate) static INSTANCE: UnknownType = todo!();
+        pub(crate) static INSTANCE: UnknownType = UnknownType(P::new_eval(Type {
+            category: TypeCategory::Unknown,
+            flags: Cell::new(TypeFlags::Instantiable | TypeFlags::Instance),
+            props: RefCell::new(None),
+            cached: RefCell::new(None),
+            d: TypeDetails::Unknown(UnknownTypeDetails {
+                priv_: UnknownDetailsPriv {
+                    is_incomplete: false,
+                    possible_type: None,
+                },
+            }),
+        }));
     }
 
     thread_local! {
         // analyzer/types.ts:440
-        pub(crate) static INCOMPLETE_INSTANCE: UnknownType = todo!();
+        pub(crate) static INCOMPLETE_INSTANCE: UnknownType = UnknownType(P::new_eval(Type {
+            category: TypeCategory::Unknown,
+            flags: Cell::new(TypeFlags::Instantiable | TypeFlags::Instance),
+            props: RefCell::new(None),
+            cached: RefCell::new(None),
+            d: TypeDetails::Unknown(UnknownTypeDetails {
+                priv_: UnknownDetailsPriv {
+                    is_incomplete: true,
+                    possible_type: None,
+                },
+            }),
+        }));
     }
 }
 
@@ -476,12 +726,55 @@ impl ModuleType {
         file_uri: &Uri,
         symbol_table: Option<SymbolTable>,
     ) -> ModuleType {
-        todo!()
+        // types.ts writes `TypeFlags.Instantiable | TypeFlags.Instantiable`: one flag.
+        ModuleType(P::new_eval(Type {
+            category: TypeCategory::Module,
+            flags: Cell::new(TypeFlags::Instantiable),
+            props: RefCell::new(None),
+            cached: RefCell::new(None),
+            d: TypeDetails::Module(ModuleTypeDetails {
+                priv_: RefCell::new(ModuleDetailsPriv {
+                    fields: symbol_table.unwrap_or_else(SymbolTable::new),
+                    doc_string: None,
+                    not_present_field_type: None,
+                    loader_fields: SymbolTable::new(),
+                    module_name: module_name.to_string(),
+                    file_uri: *file_uri,
+                }),
+            }),
+        }))
     }
 
     // analyzer/types.ts:521
     pub fn get_field(module_type: ModuleType, name: &str) -> Option<P<Symbol>> {
-        todo!()
+        // Always look for the symbol in the module's fields before consulting
+        // the loader fields. The loader runs before the module, so its values
+        // will be overwritten by the module.
+        let (fields, loader_fields) = {
+            let priv_ = module_type.d().priv_.borrow();
+            (priv_.fields, priv_.loader_fields)
+        };
+        let mut symbol = fields.get(name);
+
+        // `moduleType.priv.loaderFields` is always a Map, so always truthy.
+        match symbol {
+            None => {
+                symbol = loader_fields.get(name);
+            }
+            Some(found) if found.get_declarations().len() == 1 => {
+                // If the symbol is hidden when accessed via the module but is
+                // also accessible through a loader field, use the latter so it
+                // isn't flagged as an error.
+                let loader_symbol = loader_fields.get(name);
+                if let Some(loader_symbol) = loader_symbol {
+                    if !loader_symbol.is_externally_hidden() {
+                        symbol = Some(loader_symbol);
+                    }
+                }
+            }
+            Some(_) => {}
+        }
+        symbol
     }
 }
 
@@ -690,19 +983,111 @@ impl ClassType {
         effective_metaclass: Option<P<Type>>,
         doc_string: Option<&str>,
     ) -> ClassType {
-        todo!()
+        ClassType(P::new_eval(Type {
+            category: TypeCategory::Class,
+            flags: Cell::new(TypeFlags::Instantiable),
+            props: RefCell::new(None),
+            cached: RefCell::new(None),
+            d: TypeDetails::Class(ClassTypeDetails {
+                shared: Cell::new(P::new_eval(ClassDetailsShared {
+                    name: name.to_string(),
+                    full_name: full_name.to_string(),
+                    module_name: module_name.to_string(),
+                    file_uri: *file_uri,
+                    flags: Cell::new(flags),
+                    type_source_id,
+                    base_classes: RefCell::new(Vec::new()),
+                    mro: RefCell::new(Vec::new()),
+                    declaration: Cell::new(None),
+                    declared_metaclass: Cell::new(declared_metaclass),
+                    effective_metaclass: Cell::new(effective_metaclass),
+                    fields: Cell::new(SymbolTable::new()),
+                    type_params: RefCell::new(Vec::new()),
+                    type_var_scope_id: RefCell::new(None),
+                    doc_string: doc_string.map(str::to_string),
+                    data_class_entries: RefCell::new(None),
+                    data_class_behaviors: Cell::new(None),
+                    named_tuple_entries: RefCell::new(None),
+                    typed_dict_entries: Cell::new(None),
+                    typed_dict_extra_items_expr: Cell::new(None),
+                    local_slots_names: RefCell::new(None),
+                    has_non_empty_slots: Cell::new(None),
+                    deprecated_message: RefCell::new(None),
+                    protocol_compatibility: RefCell::new(None),
+                    class_data_class_transform: Cell::new(None),
+                    requires_variance_inference: Cell::new(None),
+                    is_instance_hashable: Cell::new(None),
+                    synthesize_methods_deferred: RefCell::new(None),
+                    synthesize_data_class_slots_deferred: RefCell::new(None),
+                    calculate_inherited_slots_names_deferred: RefCell::new(None),
+                    inherited_slots_names_cached: RefCell::new(None),
+                })),
+                priv_: RefCell::new(ClassDetailsPriv::default()),
+            }),
+        }))
     }
 
     // analyzer/types.ts:905
     /// TS defaults: includeSubclasses = true.
     pub fn clone_as_instance(type_: ClassType, include_subclasses: bool) -> ClassType {
-        todo!()
+        if TypeBase::is_instance(type_.0) {
+            return type_;
+        }
+
+        if include_subclasses {
+            let cached = type_
+                .cached
+                .borrow()
+                .as_ref()
+                .and_then(|cached| cached.type_base_instance_type);
+            if let Some(cached) = cached {
+                return ClassType(cached);
+            }
+        }
+
+        let new_instance = ClassType(TypeBase::clone_type_as_instance(
+            type_.0,
+            /* cache */ include_subclasses,
+        ));
+        let has_special_form = new_instance
+            .props
+            .borrow()
+            .as_ref()
+            .is_some_and(|props| props.special_form.is_some());
+        if has_special_form {
+            TypeBase::set_special_form(new_instance.0, None);
+        }
+
+        if include_subclasses {
+            new_instance.d().priv_.borrow_mut().include_subclasses = Some(true);
+        }
+
+        new_instance
     }
 
     // analyzer/types.ts:926
     /// TS defaults: includeSubclasses = true.
     pub fn clone_as_instantiable(type_: ClassType, include_subclasses: bool) -> ClassType {
-        todo!()
+        if include_subclasses {
+            let cached = type_
+                .cached
+                .borrow()
+                .as_ref()
+                .and_then(|cached| cached.type_base_instantiable_type);
+            if let Some(cached) = cached {
+                return ClassType(cached);
+            }
+        }
+
+        let new_instance = ClassType(TypeBase::clone_type_as_instantiable(
+            type_.0,
+            include_subclasses,
+        ));
+        if include_subclasses {
+            new_instance.d().priv_.borrow_mut().include_subclasses = Some(true);
+        }
+
+        new_instance
     }
 
     // analyzer/types.ts:939
@@ -715,18 +1100,71 @@ impl ClassType {
         tuple_type_args: Option<&[TupleTypeArg]>,
         is_empty_container: Option<bool>,
     ) -> ClassType {
-        todo!()
+        let new_class_type = ClassType(TypeBase::clone_type(class_type.0));
+        let mut priv_ = new_class_type.d().priv_.borrow_mut();
+
+        priv_.type_args = match type_args {
+            Some([]) => None,
+            Some(type_args) => Some(type_args.to_vec()),
+            None => None,
+        };
+
+        // If the user passed undefined for this argument, infer it
+        // based on whether typeArgs was provided.
+        let is_type_arg_explicit = is_type_arg_explicit.unwrap_or(type_args.is_some());
+
+        priv_.is_type_arg_explicit = Some(is_type_arg_explicit);
+
+        if include_subclasses {
+            priv_.include_subclasses = Some(true);
+        }
+
+        priv_.tuple_type_args = tuple_type_args.map(|tuple_type_args| tuple_type_args.to_vec());
+
+        if let Some(is_empty_container) = is_empty_container {
+            priv_.is_empty_container = Some(is_empty_container);
+        }
+
+        drop(priv_);
+        new_class_type
     }
 
     // analyzer/types.ts:972
     /// TS defaults: includeSubclasses = true.
     pub fn clone_include_subclasses(class_type: ClassType, include_subclasses: bool) -> ClassType {
-        todo!()
+        if class_type
+            .d()
+            .priv_
+            .borrow()
+            .include_subclasses
+            .unwrap_or(false)
+            == include_subclasses
+        {
+            return class_type;
+        }
+
+        let new_class_type = ClassType(TypeBase::clone_type(class_type.0));
+        new_class_type.d().priv_.borrow_mut().include_subclasses = Some(include_subclasses);
+        new_class_type
     }
 
     // analyzer/types.ts:982
     pub fn clone_with_literal(class_type: ClassType, value: Option<LiteralValue>) -> ClassType {
-        todo!()
+        let new_class_type = ClassType(TypeBase::clone_type(class_type.0));
+        new_class_type.d().priv_.borrow_mut().literal_value = value;
+
+        // Remove type alias information because the type will no longer match
+        // that of the type alias definition if we change the literal type.
+        let has_type_alias_info = new_class_type
+            .props
+            .borrow()
+            .as_ref()
+            .is_some_and(|props| props.type_alias_info.is_some());
+        if has_type_alias_info {
+            TypeBase::set_type_alias_info(new_class_type.0, None);
+        }
+
+        new_class_type
     }
 
     // analyzer/types.ts:995
@@ -734,12 +1172,20 @@ impl ClassType {
         type_: ClassType,
         deprecated_message: Option<String>,
     ) -> ClassType {
-        todo!()
+        let new_class_type = ClassType(TypeBase::clone_type(type_.0));
+        new_class_type
+            .d()
+            .priv_
+            .borrow_mut()
+            .deprecated_instance_message = deprecated_message;
+        new_class_type
     }
 
     // analyzer/types.ts:1001
     pub fn clone_for_typing_alias(class_type: ClassType, alias_name: String) -> ClassType {
-        todo!()
+        let new_class_type = ClassType(TypeBase::clone_type(class_type.0));
+        new_class_type.d().priv_.borrow_mut().alias_name = Some(alias_name);
+        new_class_type
     }
 
     // analyzer/types.ts:1007
@@ -747,177 +1193,452 @@ impl ClassType {
         class_type: ClassType,
         narrowed_entries: Option<JsMap<String, TypedDictEntry>>,
     ) -> ClassType {
-        todo!()
+        let new_class_type = ClassType(TypeBase::clone_type(class_type.0));
+        new_class_type
+            .d()
+            .priv_
+            .borrow_mut()
+            .typed_dict_narrowed_entries = narrowed_entries;
+        new_class_type
     }
 
     // analyzer/types.ts:1016
     pub fn clone_for_partial_typed_dict(class_type: ClassType) -> ClassType {
-        todo!()
+        let new_class_type = ClassType(TypeBase::clone_type(class_type.0));
+        new_class_type.d().priv_.borrow_mut().is_typed_dict_partial = Some(true);
+        new_class_type
     }
 
     // analyzer/types.ts:1022
     pub fn clone_remove_type_promotions(class_type: ClassType) -> ClassType {
-        todo!()
+        if !class_type
+            .d()
+            .priv_
+            .borrow()
+            .include_promotions
+            .unwrap_or(false)
+        {
+            return class_type;
+        }
+
+        let new_class_type = ClassType(TypeBase::clone_type(class_type.0));
+        let mut priv_ = new_class_type.d().priv_.borrow_mut();
+        if priv_.include_promotions.is_some() {
+            priv_.include_promotions = None;
+        }
+        drop(priv_);
+        new_class_type
     }
 
     // analyzer/types.ts:1034
     pub fn clone_for_partial(class_type: ClassType, partial_call_type: P<Type>) -> ClassType {
-        todo!()
+        let new_class_type = ClassType(TypeBase::clone_type(class_type.0));
+        new_class_type.d().priv_.borrow_mut().partial_call_type = Some(partial_call_type);
+        new_class_type
     }
 
     // analyzer/types.ts:1040
     pub fn clone_for_unpacked(class_type: ClassType) -> ClassType {
-        todo!()
+        if class_type.d().priv_.borrow().is_unpacked.unwrap_or(false) {
+            return class_type;
+        }
+
+        let new_class_type = ClassType(TypeBase::clone_type(class_type.0));
+        new_class_type.d().priv_.borrow_mut().is_unpacked = Some(true);
+        new_class_type
     }
 
     // analyzer/types.ts:1050
     pub fn clone_for_packed(class_type: ClassType) -> ClassType {
-        todo!()
+        if !class_type.d().priv_.borrow().is_unpacked.unwrap_or(false) {
+            return class_type;
+        }
+
+        let new_class_type = ClassType(TypeBase::clone_type(class_type.0));
+        new_class_type.d().priv_.borrow_mut().is_unpacked = Some(false);
+        new_class_type
     }
 
     // analyzer/types.ts:1060
     pub fn clone_with_new_flags(class_type: ClassType, new_flags: ClassTypeFlags) -> ClassType {
-        todo!()
+        let new_class_type = ClassType(TypeBase::clone_type(class_type.0));
+        let shared = P::new_eval(ClassDetailsShared::clone(&new_class_type.d().shared.get()));
+        new_class_type.d().shared.set(shared);
+        shared.flags.set(new_flags);
+        new_class_type
     }
 
     // analyzer/types.ts:1067
     pub fn is_literal_value_same(type1: ClassType, type2: ClassType) -> bool {
-        todo!()
+        let priv1 = type1.d().priv_.borrow();
+        let priv2 = type2.d().priv_.borrow();
+        let (value1, value2) = match (&priv1.literal_value, &priv2.literal_value) {
+            (None, value2) => return value2.is_none(),
+            (Some(_), None) => return false,
+            (Some(value1), Some(value2)) => (value1, value2),
+        };
+
+        if let LiteralValue::EnumLiteral(enum1) = value1 {
+            if let LiteralValue::EnumLiteral(enum2) = value2 {
+                return enum1.item_name == enum2.item_name;
+            }
+            return false;
+        }
+
+        if let LiteralValue::SentinelLiteral(sentinel1) = value1 {
+            if let LiteralValue::SentinelLiteral(sentinel2) = value2 {
+                return sentinel1.class_full_name == sentinel2.class_full_name;
+            }
+            return false;
+        }
+
+        // `===` on primitives: a number never equals a bigint, and NaN equals nothing.
+        match (value1, value2) {
+            (LiteralValue::Number(a), LiteralValue::Number(b)) => a == b,
+            (LiteralValue::Bigint(a), LiteralValue::Bigint(b)) => a == b,
+            (LiteralValue::Boolean(a), LiteralValue::Boolean(b)) => a == b,
+            (LiteralValue::String(a), LiteralValue::String(b)) => a == b,
+            _ => false,
+        }
     }
 
     // analyzer/types.ts:1094
     pub fn is_typed_dict_narrowed_entries_same(type1: ClassType, type2: ClassType) -> bool {
-        todo!()
+        let priv1 = type1.d().priv_.borrow();
+        let priv2 = type2.d().priv_.borrow();
+        if let Some(td_entries1) = &priv1.typed_dict_narrowed_entries {
+            let Some(td_entries2) = &priv2.typed_dict_narrowed_entries else {
+                return false;
+            };
+
+            if td_entries1.len() != td_entries2.len() {
+                return false;
+            }
+
+            for (key, entry1) in td_entries1 {
+                let Some(entry2) = td_entries2.get(key) else {
+                    return false;
+                };
+                if entry1.is_provided != entry2.is_provided {
+                    return false;
+                }
+            }
+        } else if priv2.typed_dict_narrowed_entries.is_some() {
+            return false;
+        }
+
+        true
     }
 
     // analyzer/types.ts:1128
     pub fn is_typed_dict_narrower(type1: ClassType, type2: ClassType) -> bool {
-        todo!()
+        let priv2 = type2.d().priv_.borrow();
+        let Some(td_entries2) = &priv2.typed_dict_narrowed_entries else {
+            return true;
+        };
+
+        let priv1 = type1.d().priv_.borrow();
+        let empty = JsMap::default();
+        let td_entries1 = priv1.typed_dict_narrowed_entries.as_ref().unwrap_or(&empty);
+
+        for (key, entry2) in td_entries2 {
+            if entry2.is_provided {
+                let entry1 = td_entries1.get(key);
+                if !entry1.is_some_and(|entry1| entry1.is_provided) {
+                    return false;
+                }
+            }
+        }
+
+        true
     }
 
     // analyzer/types.ts:1151
     pub fn is_unspecialized(class_type: ClassType) -> bool {
-        todo!()
+        !class_type.d().shared.get().type_params.borrow().is_empty()
+            && class_type.d().priv_.borrow().type_args.is_none()
     }
 
     // analyzer/types.ts:1155
     pub fn is_special_built_in(class_type: ClassType, class_name: Option<&str>) -> bool {
-        todo!()
+        let shared = class_type.d().shared.get();
+        let has_alias_name = class_type
+            .d()
+            .priv_
+            .borrow()
+            .alias_name
+            .as_deref()
+            .is_some_and(|alias_name| !alias_name.is_empty());
+        if !shared.flags.get().any(ClassTypeFlags::SpecialBuiltIn) && !has_alias_name {
+            return false;
+        }
+
+        if let Some(class_name) = class_name {
+            return shared.name == class_name;
+        }
+
+        true
     }
 
     // analyzer/types.ts:1167
     pub fn is_built_in(class_type: ClassType, class_name: Option<&[String]>) -> bool {
-        todo!()
+        let shared = class_type.d().shared.get();
+        if !shared.flags.get().any(ClassTypeFlags::BuiltIn) {
+            return false;
+        }
+
+        if let Some(class_name) = class_name {
+            let alias_name = class_type.d().priv_.borrow().alias_name.clone();
+            return class_name.iter().any(|name| {
+                *name == shared.name
+                    || *name == shared.full_name
+                    || Some(name) == alias_name.as_ref()
+            });
+        }
+
+        true
     }
 
     // analyzer/types.ts:1185
     pub fn supports_abstract_methods(class_type: ClassType) -> bool {
-        todo!()
+        class_type
+            .d()
+            .shared
+            .get()
+            .flags
+            .get()
+            .any(ClassTypeFlags::SupportsAbstractMethods)
     }
 
     // analyzer/types.ts:1189
     pub fn is_data_class(class_type: ClassType) -> bool {
-        todo!()
+        class_type
+            .d()
+            .shared
+            .get()
+            .data_class_behaviors
+            .get()
+            .is_some()
     }
 
     // analyzer/types.ts:1193
     pub fn is_data_class_skip_generate_init(class_type: ClassType) -> bool {
-        todo!()
+        class_type
+            .d()
+            .shared
+            .get()
+            .data_class_behaviors
+            .get()
+            .is_some_and(|behaviors| behaviors.skip_generate_init.get().unwrap_or(false))
     }
 
     // analyzer/types.ts:1197
     pub fn is_data_class_skip_generate_eq(class_type: ClassType) -> bool {
-        todo!()
+        class_type
+            .d()
+            .shared
+            .get()
+            .data_class_behaviors
+            .get()
+            .is_some_and(|behaviors| behaviors.skip_generate_eq.get().unwrap_or(false))
     }
 
     // analyzer/types.ts:1201
     pub fn is_data_class_frozen(class_type: ClassType) -> bool {
-        todo!()
+        class_type
+            .d()
+            .shared
+            .get()
+            .data_class_behaviors
+            .get()
+            .is_some_and(|behaviors| behaviors.frozen.get().unwrap_or(false))
     }
 
     // analyzer/types.ts:1205
     pub fn is_data_class_generate_order(class_type: ClassType) -> bool {
-        todo!()
+        class_type
+            .d()
+            .shared
+            .get()
+            .data_class_behaviors
+            .get()
+            .is_some_and(|behaviors| behaviors.generate_order.get().unwrap_or(false))
     }
 
     // analyzer/types.ts:1209
     pub fn is_data_class_keyword_only(class_type: ClassType) -> bool {
-        todo!()
+        class_type
+            .d()
+            .shared
+            .get()
+            .data_class_behaviors
+            .get()
+            .is_some_and(|behaviors| behaviors.keyword_only.get().unwrap_or(false))
     }
 
     // analyzer/types.ts:1213
     pub fn is_data_class_generate_slots(class_type: ClassType) -> bool {
-        todo!()
+        class_type
+            .d()
+            .shared
+            .get()
+            .data_class_behaviors
+            .get()
+            .is_some_and(|behaviors| behaviors.generate_slots.get().unwrap_or(false))
     }
 
     // analyzer/types.ts:1217
     pub fn is_data_class_generate_hash(class_type: ClassType) -> bool {
-        todo!()
+        class_type
+            .d()
+            .shared
+            .get()
+            .data_class_behaviors
+            .get()
+            .is_some_and(|behaviors| behaviors.generate_hash.get().unwrap_or(false))
     }
 
     // analyzer/types.ts:1221
     pub fn is_type_check_only(class_type: ClassType) -> bool {
-        todo!()
+        class_type
+            .d()
+            .shared
+            .get()
+            .flags
+            .get()
+            .any(ClassTypeFlags::TypeCheckOnly)
     }
 
     // analyzer/types.ts:1225
     pub fn is_new_type_class(class_type: ClassType) -> bool {
-        todo!()
+        class_type
+            .d()
+            .shared
+            .get()
+            .flags
+            .get()
+            .any(ClassTypeFlags::NewTypeClass)
     }
 
     // analyzer/types.ts:1229
     pub fn is_valid_type_alias_class(class_type: ClassType) -> bool {
-        todo!()
+        class_type
+            .d()
+            .shared
+            .get()
+            .flags
+            .get()
+            .any(ClassTypeFlags::ValidTypeAliasClass)
     }
 
     // analyzer/types.ts:1233
     pub fn is_special_form_class(class_type: ClassType) -> bool {
-        todo!()
+        class_type
+            .d()
+            .shared
+            .get()
+            .flags
+            .get()
+            .any(ClassTypeFlags::SpecialFormClass)
     }
 
     // analyzer/types.ts:1237
     pub fn is_illegal_isinstance_class(class_type: ClassType) -> bool {
-        todo!()
+        class_type
+            .d()
+            .shared
+            .get()
+            .flags
+            .get()
+            .any(ClassTypeFlags::IllegalIsinstanceClass)
     }
 
     // analyzer/types.ts:1241
     pub fn is_typed_dict_class(class_type: ClassType) -> bool {
-        todo!()
+        class_type
+            .d()
+            .shared
+            .get()
+            .flags
+            .get()
+            .any(ClassTypeFlags::TypedDictClass)
     }
 
     // analyzer/types.ts:1245
     pub fn is_can_omit_dict_values(class_type: ClassType) -> bool {
-        todo!()
+        class_type
+            .d()
+            .shared
+            .get()
+            .flags
+            .get()
+            .any(ClassTypeFlags::CanOmitDictValues)
     }
 
     // analyzer/types.ts:1249
     pub fn is_typed_dict_marked_closed(class_type: ClassType) -> bool {
-        todo!()
+        class_type
+            .d()
+            .shared
+            .get()
+            .flags
+            .get()
+            .any(ClassTypeFlags::TypedDictMarkedClosed)
     }
 
     // analyzer/types.ts:1253
     pub fn is_typed_dict_effectively_closed(class_type: ClassType) -> bool {
-        todo!()
+        class_type
+            .d()
+            .shared
+            .get()
+            .flags
+            .get()
+            .any(ClassTypeFlags::TypedDictEffectivelyClosed)
     }
 
     // analyzer/types.ts:1257
     pub fn is_enum_class(class_type: ClassType) -> bool {
-        todo!()
+        class_type
+            .d()
+            .shared
+            .get()
+            .flags
+            .get()
+            .any(ClassTypeFlags::EnumClass)
     }
 
     // analyzer/types.ts:1261
     pub fn is_enum_member_set_may_be_incomplete(class_type: ClassType) -> bool {
-        todo!()
+        class_type
+            .d()
+            .shared
+            .get()
+            .flags
+            .get()
+            .any(ClassTypeFlags::EnumMemberSetMayBeIncomplete)
     }
 
     // analyzer/types.ts:1265
     pub fn is_enum_member_set_may_be_dynamically_modified(class_type: ClassType) -> bool {
-        todo!()
+        class_type
+            .d()
+            .shared
+            .get()
+            .flags
+            .get()
+            .any(ClassTypeFlags::EnumMemberSetMayBeDynamicallyModified)
     }
 
     // analyzer/types.ts:1269
     pub fn is_named_tuple_class(class_type: ClassType) -> bool {
-        todo!()
+        class_type
+            .d()
+            .shared
+            .get()
+            .named_tuple_entries
+            .borrow()
+            .is_some()
     }
 
     // analyzer/types.ts:1273
@@ -926,112 +1647,313 @@ impl ClassType {
         file_uri: &Uri,
         type_source_id: i32,
     ) -> bool {
-        todo!()
+        let shared = class_type.d().shared.get();
+        shared.file_uri.equals(Some(*file_uri)) && shared.type_source_id == type_source_id
     }
 
     // analyzer/types.ts:1277
     pub fn is_property_class(class_type: ClassType) -> bool {
-        todo!()
+        class_type
+            .d()
+            .shared
+            .get()
+            .flags
+            .get()
+            .any(ClassTypeFlags::PropertyClass)
     }
 
     // analyzer/types.ts:1281
     pub fn is_class_property(class_type: ClassType) -> bool {
-        todo!()
+        class_type
+            .d()
+            .shared
+            .get()
+            .flags
+            .get()
+            .any(ClassTypeFlags::ClassProperty)
     }
 
     // analyzer/types.ts:1285
     pub fn is_final(class_type: ClassType) -> bool {
-        todo!()
+        class_type
+            .d()
+            .shared
+            .get()
+            .flags
+            .get()
+            .any(ClassTypeFlags::Final)
     }
 
     // analyzer/types.ts:1289
     pub(crate) fn is_disjoint_base(class_type: ClassType) -> bool {
-        todo!()
+        // The disjoint-base property applies only to nominal classes.
+        if ClassType::is_protocol_class(class_type) || ClassType::is_typed_dict_class(class_type) {
+            return false;
+        }
+
+        let deferred = class_type
+            .d()
+            .shared
+            .get()
+            .synthesize_data_class_slots_deferred
+            .borrow()
+            .clone();
+        if let Some(deferred) = deferred {
+            deferred.call();
+        }
+
+        let shared = class_type.d().shared.get();
+        shared.flags.get().any(ClassTypeFlags::DisjointBase)
+            || ClassType::is_built_in(class_type, Some(&["object".to_string()]))
+            || shared.has_non_empty_slots.get().unwrap_or(false)
     }
 
     // analyzer/types.ts:1304
     pub fn get_disjoint_base(class_type: ClassType) -> Option<ClassType> {
-        todo!()
+        if ClassType::is_disjoint_base(class_type) {
+            return Some(class_type);
+        }
+
+        // An unknown class in the MRO may introduce an unknown disjoint base, but
+        // it cannot make two already-known disjoint bases compatible. Preserve the
+        // most-derived known candidate so transitive conflicts are still reported.
+        let mro = class_type.d().shared.get().mro.borrow().clone();
+        let candidates: Vec<ClassType> = mro
+            .into_iter()
+            .filter(|mro_class| {
+                is_instantiable_class(*mro_class)
+                    && ClassType::is_disjoint_base(ClassType(*mro_class))
+            })
+            .map(ClassType)
+            .collect();
+
+        ClassType::get_most_derived_disjoint_base(&candidates)
     }
 
     // analyzer/types.ts:1322
     pub fn get_most_derived_disjoint_base(candidates: &[ClassType]) -> Option<ClassType> {
-        todo!()
+        candidates.iter().copied().find(|candidate| {
+            candidates.iter().all(|other_candidate| {
+                let mro = candidate.d().shared.get().mro.borrow().clone();
+                mro.into_iter().any(|mro_class| {
+                    is_instantiable_class(mro_class)
+                        && ClassType::is_same_generic_class(
+                            ClassType(mro_class),
+                            *other_candidate,
+                            0,
+                        )
+                })
+            })
+        })
     }
 
     // analyzer/types.ts:1333
     pub fn is_protocol_class(class_type: ClassType) -> bool {
-        todo!()
+        class_type
+            .d()
+            .shared
+            .get()
+            .flags
+            .get()
+            .any(ClassTypeFlags::ProtocolClass)
     }
 
     // analyzer/types.ts:1337
     pub fn is_defined_in_stub(class_type: ClassType) -> bool {
-        todo!()
+        class_type
+            .d()
+            .shared
+            .get()
+            .flags
+            .get()
+            .any(ClassTypeFlags::DefinedInStub)
     }
 
     // analyzer/types.ts:1341
     pub fn is_pseudo_generic_class(class_type: ClassType) -> bool {
-        todo!()
+        class_type
+            .d()
+            .shared
+            .get()
+            .flags
+            .get()
+            .any(ClassTypeFlags::PseudoGenericClass)
     }
 
     // analyzer/types.ts:1345
     pub fn get_data_class_entries(class_type: ClassType) -> Vec<P<DataClassEntry>> {
-        todo!()
+        let deferred = class_type
+            .d()
+            .shared
+            .get()
+            .synthesize_methods_deferred
+            .borrow()
+            .clone();
+        if let Some(deferred) = deferred {
+            deferred.call();
+        }
+
+        class_type
+            .d()
+            .shared
+            .get()
+            .data_class_entries
+            .borrow()
+            .clone()
+            .unwrap_or_default()
     }
 
     // analyzer/types.ts:1351
     pub fn is_runtime_checkable(class_type: ClassType) -> bool {
-        todo!()
+        class_type
+            .d()
+            .shared
+            .get()
+            .flags
+            .get()
+            .any(ClassTypeFlags::RuntimeCheckable)
     }
 
     // analyzer/types.ts:1355
     pub fn is_typing_extension_class(class_type: ClassType) -> bool {
-        todo!()
+        class_type
+            .d()
+            .shared
+            .get()
+            .flags
+            .get()
+            .any(ClassTypeFlags::TypingExtensionClass)
     }
 
     // analyzer/types.ts:1359
     pub fn is_partially_evaluated(class_type: ClassType) -> bool {
-        todo!()
+        class_type
+            .d()
+            .shared
+            .get()
+            .flags
+            .get()
+            .any(ClassTypeFlags::PartiallyEvaluated)
     }
 
     // analyzer/types.ts:1363
     pub fn has_custom_class_get_item(class_type: ClassType) -> bool {
-        todo!()
+        class_type
+            .d()
+            .shared
+            .get()
+            .flags
+            .get()
+            .any(ClassTypeFlags::HasCustomClassGetItem)
     }
 
     // analyzer/types.ts:1367
     pub fn is_tuple_class(class_type: ClassType) -> bool {
-        todo!()
+        class_type
+            .d()
+            .shared
+            .get()
+            .flags
+            .get()
+            .any(ClassTypeFlags::TupleClass)
     }
 
     // analyzer/types.ts:1371
     pub fn get_type_params(class_type: ClassType) -> Vec<TypeVarType> {
-        todo!()
+        class_type.d().shared.get().type_params.borrow().clone()
     }
 
     // analyzer/types.ts:1375
     pub fn derives_from_any_or_unknown(class_type: ClassType) -> bool {
-        todo!()
+        class_type
+            .d()
+            .shared
+            .get()
+            .mro
+            .borrow()
+            .iter()
+            .any(|base_class| is_any_or_unknown(*base_class))
     }
 
     // analyzer/types.ts:1379
     pub fn get_symbol_table(class_type: ClassType) -> SymbolTable {
-        todo!()
+        let deferred = class_type
+            .d()
+            .shared
+            .get()
+            .synthesize_methods_deferred
+            .borrow()
+            .clone();
+        if let Some(deferred) = deferred {
+            deferred.call();
+        }
+
+        class_type.d().shared.get().fields.get()
     }
 
     // analyzer/types.ts:1385
     pub fn get_inherited_slots_names(class_type: ClassType) -> Option<Vec<String>> {
-        todo!()
+        // First synthesize methods if needed. The slots entries
+        // can depend on synthesized methods.
+        let deferred = class_type
+            .d()
+            .shared
+            .get()
+            .synthesize_methods_deferred
+            .borrow()
+            .clone();
+        if let Some(deferred) = deferred {
+            deferred.call();
+        }
+
+        let deferred = class_type
+            .d()
+            .shared
+            .get()
+            .calculate_inherited_slots_names_deferred
+            .borrow()
+            .clone();
+        if let Some(deferred) = deferred {
+            deferred.call();
+        }
+
+        class_type
+            .d()
+            .shared
+            .get()
+            .inherited_slots_names_cached
+            .borrow()
+            .clone()
     }
 
     // analyzer/types.ts:1398
     pub fn is_hierarchy_partially_evaluated(class_type: ClassType) -> bool {
-        todo!()
+        ClassType::is_partially_evaluated(class_type)
+            || class_type
+                .d()
+                .shared
+                .get()
+                .mro
+                .borrow()
+                .iter()
+                .any(|mro_class| {
+                    is_class(*mro_class) && ClassType::is_partially_evaluated(ClassType(*mro_class))
+                })
     }
 
     // analyzer/types.ts:1405
     pub fn has_named_tuple_entry(class_type: ClassType, name: &str) -> bool {
-        todo!()
+        match class_type
+            .d()
+            .shared
+            .get()
+            .named_tuple_entries
+            .borrow()
+            .as_ref()
+        {
+            None => false,
+            Some(entries) => entries.contains(name),
+        }
     }
 
     // analyzer/types.ts:1414
@@ -1041,7 +1963,123 @@ impl ClassType {
         type2: ClassType,
         recursion_count: u32,
     ) -> bool {
-        todo!()
+        let mut recursion_count = recursion_count;
+        if class_type
+            .d()
+            .priv_
+            .borrow()
+            .is_typed_dict_partial
+            .unwrap_or(false)
+            != type2
+                .d()
+                .priv_
+                .borrow()
+                .is_typed_dict_partial
+                .unwrap_or(false)
+        {
+            return false;
+        }
+
+        if TypeBase::is_instance(class_type.0) != TypeBase::is_instance(type2.0) {
+            return false;
+        }
+
+        if TypeBase::get_instantiable_depth(class_type.0)
+            != TypeBase::get_instantiable_depth(type2.0)
+        {
+            return false;
+        }
+
+        let class1_details = class_type.d().shared.get();
+        let class2_details = type2.d().shared.get();
+
+        if class1_details == class2_details {
+            return true;
+        }
+
+        // Compare most of the details fields. We intentionally skip the isAbstractClass
+        // flag because it gets set dynamically.
+        if class1_details.full_name != class2_details.full_name
+            || class1_details.flags.get() != class2_details.flags.get()
+            || class1_details.type_source_id != class2_details.type_source_id
+            || class1_details.base_classes.borrow().len()
+                != class2_details.base_classes.borrow().len()
+            || class1_details.type_params.borrow().len()
+                != class2_details.type_params.borrow().len()
+        {
+            return false;
+        }
+
+        if recursion_count > MAX_TYPE_RECURSION_COUNT {
+            return true;
+        }
+        recursion_count += 1;
+
+        // Special-case NamedTuple and Tuple classes because we rewrite the base classes
+        // in these cases.
+        if ClassType::is_built_in(class_type, Some(&["NamedTuple".to_string()]))
+            && ClassType::is_built_in(type2, Some(&["NamedTuple".to_string()]))
+        {
+            return true;
+        }
+        if ClassType::is_built_in(class_type, Some(&["tuple".to_string()]))
+            && ClassType::is_built_in(type2, Some(&["tuple".to_string()]))
+        {
+            return true;
+        }
+
+        // Make sure the base classes match.
+        let base_classes1 = class1_details.base_classes.borrow().clone();
+        let base_classes2 = class2_details.base_classes.borrow().clone();
+        for i in 0..base_classes1.len() {
+            if !is_type_same(
+                base_classes1[i],
+                base_classes2[i],
+                &TypeSameOptions {
+                    ignore_pseudo_generic: Some(true),
+                    ..TypeSameOptions::default()
+                },
+                recursion_count,
+            ) {
+                return false;
+            }
+        }
+
+        let declared_metaclass1 = class1_details.declared_metaclass.get();
+        let declared_metaclass2 = class2_details.declared_metaclass.get();
+        if declared_metaclass1.is_some() || declared_metaclass2.is_some() {
+            match (declared_metaclass1, declared_metaclass2) {
+                (Some(declared_metaclass1), Some(declared_metaclass2))
+                    if is_type_same(
+                        declared_metaclass1,
+                        declared_metaclass2,
+                        &TypeSameOptions {
+                            ignore_pseudo_generic: Some(true),
+                            ..TypeSameOptions::default()
+                        },
+                        recursion_count,
+                    ) => {}
+                _ => return false,
+            }
+        }
+
+        let type_params1 = class1_details.type_params.borrow().clone();
+        let type_params2 = class2_details.type_params.borrow().clone();
+        for i in 0..type_params1.len() {
+            if !is_type_same(
+                type_params1[i].0,
+                type_params2[i].0,
+                &TypeSameOptions {
+                    ignore_pseudo_generic: Some(true),
+                    ..TypeSameOptions::default()
+                },
+                recursion_count,
+            ) {
+                return false;
+            }
+        }
+
+        true
     }
 
     // analyzer/types.ts:1510
@@ -1050,12 +2088,92 @@ impl ClassType {
         parent_class_type: ClassType,
         inheritance_chain: Option<&mut Vec<P<Type>>>,
     ) -> bool {
-        todo!()
+        let mut inheritance_chain = inheritance_chain;
+
+        // Is it the exact same class?
+        if ClassType::is_same_generic_class(subclass_type, parent_class_type, 0) {
+            // Handle literal types.
+            if parent_class_type.d().priv_.borrow().literal_value.is_some() {
+                if subclass_type.d().priv_.borrow().literal_value.is_none()
+                    || !ClassType::is_literal_value_same(parent_class_type, subclass_type)
+                {
+                    return false;
+                }
+            }
+
+            if let Some(inheritance_chain) = inheritance_chain.as_deref_mut() {
+                inheritance_chain.push(subclass_type.0);
+            }
+            return true;
+        }
+
+        // Handle built-in types like 'dict' and 'list', which are all
+        // subclasses of object even though they are not explicitly declared
+        // that way.
+        if ClassType::is_built_in(subclass_type, None)
+            && ClassType::is_built_in(parent_class_type, Some(&["object".to_string()]))
+        {
+            if let Some(inheritance_chain) = inheritance_chain.as_deref_mut() {
+                inheritance_chain.push(parent_class_type.0);
+            }
+            return true;
+        }
+
+        // Handle the case where the subclass is a type[type[T]] and the parent
+        // class is type.
+        let subclass_depth = TypeBase::get_instantiable_depth(subclass_type.0);
+        if subclass_depth > 0 {
+            if ClassType::is_built_in(parent_class_type, Some(&["type".to_string()]))
+                && TypeBase::get_instantiable_depth(parent_class_type.0) < subclass_depth
+            {
+                if let Some(inheritance_chain) = inheritance_chain.as_deref_mut() {
+                    inheritance_chain.push(parent_class_type.0);
+                }
+                return true;
+            }
+        }
+
+        // Handle the case where both source and dest are property objects. This
+        // special case is needed because we synthesize a new class for each
+        // property declaration.
+        if ClassType::is_built_in(subclass_type, Some(&["property".to_string()]))
+            && ClassType::is_built_in(parent_class_type, Some(&["property".to_string()]))
+        {
+            if let Some(inheritance_chain) = inheritance_chain.as_deref_mut() {
+                inheritance_chain.push(subclass_type.0);
+            }
+            return true;
+        }
+
+        let base_classes = subclass_type.d().shared.get().base_classes.borrow().clone();
+        for base_class in base_classes {
+            if is_instantiable_class(base_class) {
+                if ClassType::is_derived_from(
+                    ClassType(base_class),
+                    parent_class_type,
+                    inheritance_chain.as_deref_mut(),
+                ) {
+                    if let Some(inheritance_chain) = inheritance_chain.as_deref_mut() {
+                        inheritance_chain.push(subclass_type.0);
+                    }
+                    return true;
+                }
+            } else if is_any_or_unknown(base_class) {
+                if let Some(inheritance_chain) = inheritance_chain.as_deref_mut() {
+                    inheritance_chain.push(UnknownType::create(false).0);
+                }
+                return true;
+            }
+        }
+
+        false
     }
 
     // analyzer/types.ts:1584
     pub fn get_reverse_mro(class_type: ClassType) -> Vec<P<Type>> {
-        todo!()
+        let mut mro = class_type.d().shared.get().mro.borrow().clone();
+        mro.reverse();
+        mro
     }
 }
 
@@ -1094,33 +2212,42 @@ impl FunctionParam {
         default_type: Option<P<Type>>,
         default_expr: Option<ExpressionNode>,
     ) -> FunctionParam {
-        todo!()
+        FunctionParam {
+            category,
+            flags,
+            name: name.map(str::to_string),
+            _type: type_,
+            _default_type: default_type,
+            default_expr,
+        }
     }
 
     // analyzer/types.ts:1630
     pub fn is_name_synthesized(param: &FunctionParam) -> bool {
-        todo!()
+        param.flags.any(FunctionParamFlags::NameSynthesized)
     }
 
     // analyzer/types.ts:1634
     pub fn is_type_declared(param: &FunctionParam) -> bool {
-        todo!()
+        param.flags.any(FunctionParamFlags::TypeDeclared)
     }
 
     // analyzer/types.ts:1638
     pub fn is_type_inferred(param: &FunctionParam) -> bool {
-        todo!()
+        param.flags.any(FunctionParamFlags::TypeInferred)
     }
 }
 
 // analyzer/types.ts:1643
 pub fn is_position_only_separator(param: &FunctionParam) -> bool {
-    todo!()
+    // A simple parameter with no name is treated as a "/" separator.
+    param.category == ParamCategory::Simple && param.name.as_deref().is_none_or(str::is_empty)
 }
 
 // analyzer/types.ts:1648
 pub fn is_keyword_only_separator(param: &FunctionParam) -> bool {
-    todo!()
+    // An *args parameter with no name is treated as a "*" separator.
+    param.category == ParamCategory::ArgsList && param.name.as_deref().is_none_or(str::is_empty)
 }
 
 // analyzer/types.ts:1653
@@ -1248,7 +2375,14 @@ impl FunctionType {
         function_flags: FunctionTypeFlags,
         doc_string: Option<&str>,
     ) -> FunctionType {
-        todo!()
+        FunctionType::create(
+            name,
+            full_name,
+            module_name,
+            function_flags,
+            TypeFlags::Instance,
+            doc_string,
+        )
     }
 
     // analyzer/types.ts:1833
@@ -1256,7 +2390,14 @@ impl FunctionType {
         function_flags: FunctionTypeFlags,
         doc_string: Option<&str>,
     ) -> FunctionType {
-        todo!()
+        FunctionType::create(
+            "",
+            "",
+            "",
+            function_flags,
+            TypeFlags::Instantiable,
+            doc_string,
+        )
     }
 
     // analyzer/types.ts:1837
@@ -1265,7 +2406,14 @@ impl FunctionType {
         name: &str,
         additional_flags: FunctionTypeFlags,
     ) -> FunctionType {
-        todo!()
+        FunctionType::create(
+            name,
+            name,
+            "",
+            additional_flags | FunctionTypeFlags::SynthesizedMethod,
+            TypeFlags::Instance,
+            None,
+        )
     }
 
     // analyzer/types.ts:1841
@@ -1277,7 +2425,31 @@ impl FunctionType {
         type_flags: TypeFlags,
         doc_string: Option<&str>,
     ) -> FunctionType {
-        todo!()
+        FunctionType(P::new_eval(Type {
+            category: TypeCategory::Function,
+            flags: Cell::new(type_flags),
+            props: RefCell::new(None),
+            cached: RefCell::new(None),
+            d: TypeDetails::Function(FunctionTypeDetails {
+                shared: Cell::new(P::new_eval(FunctionDetailsShared {
+                    name: name.to_string(),
+                    full_name: full_name.to_string(),
+                    module_name: module_name.to_string(),
+                    flags: Cell::new(function_flags),
+                    type_params: RefCell::new(Vec::new()),
+                    parameters: Cell::new(P::new_eval(RefCell::new(Vec::new()))),
+                    declared_return_type: Cell::new(None),
+                    declaration: Cell::new(None),
+                    type_var_scope_id: RefCell::new(None),
+                    doc_string: RefCell::new(doc_string.map(str::to_string)),
+                    deprecated_message: RefCell::new(None),
+                    method_class: Cell::new(None),
+                    decorator_data_class_behaviors: Cell::new(None),
+                    inferred_return_type: RefCell::new(None),
+                })),
+                priv_: RefCell::new(FunctionDetailsPriv::default()),
+            }),
+        }))
     }
 
     // analyzer/types.ts:1876
@@ -1287,17 +2459,156 @@ impl FunctionType {
         strip_first_param: bool,
         bound_to_type: Option<ClassType>,
     ) -> FunctionType {
-        todo!()
+        let mut strip_first_param = strip_first_param;
+        let new_function = FunctionType(TypeBase::clone_type(type_.0));
+        let type_shared = type_.d().shared.get();
+
+        let new_shared = P::new_eval(FunctionDetailsShared::clone(&type_shared));
+        new_function.d().shared.set(new_shared);
+        {
+            let mut priv_ = new_function.d().priv_.borrow_mut();
+            priv_.pre_bound_flags = Some(new_shared.flags.get());
+            priv_.bound_to_type = bound_to_type;
+        }
+
+        if let Some(bound_to_type) = bound_to_type {
+            if type_shared.name == "__new__" || type_shared.name == "__init__" {
+                let scope_id = bound_to_type
+                    .d()
+                    .shared
+                    .get()
+                    .type_var_scope_id
+                    .borrow()
+                    .clone();
+                new_function
+                    .d()
+                    .priv_
+                    .borrow_mut()
+                    .constructor_type_var_scope_id = scope_id;
+            }
+        }
+
+        if strip_first_param {
+            let parameters = type_shared.parameters.get();
+            let param_count = parameters.borrow().len();
+            if param_count > 0 {
+                let first_param = parameters.borrow()[0].clone();
+                if first_param.category == ParamCategory::Simple {
+                    if param_count > 0 {
+                        // Stash away the effective type of the first parameter or
+                        // Any if it was inferred.
+                        let stripped_first_param_type =
+                            if FunctionParam::is_type_inferred(&first_param) {
+                                AnyType::create(false).0
+                            } else {
+                                FunctionType::get_param_type(type_, 0)
+                            };
+                        new_function
+                            .d()
+                            .priv_
+                            .borrow_mut()
+                            .stripped_first_param_type = Some(stripped_first_param_type);
+                    }
+                    let remaining: Vec<FunctionParam> =
+                        parameters.borrow().iter().skip(1).cloned().collect();
+                    new_shared
+                        .parameters
+                        .set(P::new_eval(RefCell::new(remaining)));
+                }
+            } else {
+                strip_first_param = false;
+            }
+        }
+
+        let type_alias_info = type_
+            .props
+            .borrow()
+            .as_ref()
+            .and_then(|props| props.type_alias_info.clone());
+        if let Some(type_alias_info) = type_alias_info {
+            TypeBase::set_type_alias_info(new_function.0, Some(type_alias_info));
+        }
+
+        let specialized_types = type_.d().priv_.borrow().specialized_types;
+        if let Some(specialized_types) = specialized_types {
+            let parameter_types = if strip_first_param {
+                let rest: Vec<P<Type>> = specialized_types
+                    .parameter_types
+                    .get()
+                    .borrow()
+                    .iter()
+                    .skip(1)
+                    .copied()
+                    .collect();
+                P::new_eval(RefCell::new(rest))
+            } else {
+                specialized_types.parameter_types.get()
+            };
+            let parameter_default_types = if strip_first_param {
+                specialized_types
+                    .parameter_default_types
+                    .get()
+                    .map(|defaults| {
+                        let rest: Vec<Option<P<Type>>> =
+                            defaults.borrow().iter().skip(1).copied().collect();
+                        P::new_eval(RefCell::new(rest))
+                    })
+            } else {
+                specialized_types.parameter_default_types.get()
+            };
+            new_function.d().priv_.borrow_mut().specialized_types =
+                Some(P::new_eval(SpecializedFunctionTypes {
+                    parameter_types: Cell::new(parameter_types),
+                    parameter_default_types: Cell::new(parameter_default_types),
+                    return_type: Cell::new(specialized_types.return_type.get()),
+                }));
+        }
+
+        let inferred_return_type = type_shared.inferred_return_type.borrow().clone();
+        *new_shared.inferred_return_type.borrow_mut() = inferred_return_type;
+
+        new_function
     }
 
     // analyzer/types.ts:1929
     pub fn clone_as_instance(type_: FunctionType) -> FunctionType {
-        todo!()
+        let cached = type_
+            .cached
+            .borrow()
+            .as_ref()
+            .and_then(|cached| cached.type_base_instance_type);
+        if let Some(cached) = cached {
+            return FunctionType(cached);
+        }
+
+        let new_instance = FunctionType(TypeBase::clone_type_as_instance(
+            type_.0, /* cache */ true,
+        ));
+        let has_special_form = new_instance
+            .props
+            .borrow()
+            .as_ref()
+            .is_some_and(|props| props.special_form.is_some());
+        if has_special_form {
+            TypeBase::set_special_form(new_instance.0, None);
+        }
+        new_instance
     }
 
     // analyzer/types.ts:1941
     pub fn clone_as_instantiable(type_: FunctionType) -> FunctionType {
-        todo!()
+        let cached = type_
+            .cached
+            .borrow()
+            .as_ref()
+            .and_then(|cached| cached.type_base_instantiable_type);
+        if let Some(cached) = cached {
+            return FunctionType(cached);
+        }
+
+        FunctionType(TypeBase::clone_type_as_instantiable(
+            type_.0, /* cache */ true,
+        ))
     }
 
     // analyzer/types.ts:1953
@@ -1305,7 +2616,19 @@ impl FunctionType {
         type_: FunctionType,
         specialized_types: P<SpecializedFunctionTypes>,
     ) -> FunctionType {
-        todo!()
+        let new_function = FunctionType(TypeBase::clone_type(type_.0));
+
+        let param_count = type_.d().shared.get().parameters.get().borrow().len();
+        common::debug::assert(
+            specialized_types.parameter_types.get().borrow().len() == param_count,
+            None,
+        );
+        if let Some(parameter_default_types) = specialized_types.parameter_default_types.get() {
+            common::debug::assert(parameter_default_types.borrow().len() == param_count, None);
+        }
+
+        new_function.d().priv_.borrow_mut().specialized_types = Some(specialized_types);
+        new_function
     }
 
     // analyzer/types.ts:1966
@@ -1313,12 +2636,151 @@ impl FunctionType {
         type_: FunctionType,
         param_spec_value: FunctionType,
     ) -> FunctionType {
-        todo!()
+        let param_spec_value_shared = param_spec_value.d().shared.get();
+        let has_positional_only = param_spec_value_shared
+            .parameters
+            .get()
+            .borrow()
+            .iter()
+            .any(is_position_only_separator);
+        let new_function = FunctionType::clone_remove_param_spec_args_kwargs(
+            FunctionType(TypeBase::clone_type(type_.0)),
+            has_positional_only,
+        );
+        let param_spec = FunctionType::get_param_spec_from_args_kwargs(type_);
+        common::debug::assert(param_spec.is_some(), None);
+        let param_spec = param_spec.unwrap();
+
+        // Make a shallow clone of the details.
+        let new_shared = P::new_eval(FunctionDetailsShared::clone(&new_function.d().shared.get()));
+        new_function.d().shared.set(new_shared);
+
+        let prev_type_params = new_shared.type_params.borrow().clone();
+        let type_params: Vec<TypeVarType> = prev_type_params
+            .into_iter()
+            .filter(|t| !is_type_same(t.0, param_spec.0, &TypeSameOptions::default(), 0))
+            .collect();
+        *new_shared.type_params.borrow_mut() = type_params;
+
+        let prev_params = new_shared.parameters.get().borrow().clone();
+        let spec_params = param_spec_value_shared.parameters.get().borrow().clone();
+
+        let mut new_params = prev_params;
+        for (index, param) in spec_params.iter().enumerate() {
+            new_params.push(FunctionParam::create(
+                param.category,
+                FunctionType::get_param_type(param_spec_value, index as i32),
+                (param.flags & FunctionParamFlags::NameSynthesized)
+                    | FunctionParamFlags::TypeDeclared,
+                param.name.as_deref(),
+                FunctionType::get_param_default_type(param_spec_value, index as i32),
+                param.default_expr,
+            ));
+        }
+        new_shared
+            .parameters
+            .set(P::new_eval(RefCell::new(new_params)));
+
+        if new_shared.doc_string.borrow().is_none() {
+            let doc_string = param_spec_value_shared.doc_string.borrow().clone();
+            *new_shared.doc_string.borrow_mut() = doc_string;
+        }
+
+        if new_shared.deprecated_message.borrow().is_none() {
+            let deprecated_message = param_spec_value_shared.deprecated_message.borrow().clone();
+            *new_shared.deprecated_message.borrow_mut() = deprecated_message;
+        }
+
+        let type_shared = type_.d().shared.get();
+        let orig_flags_mask = FunctionTypeFlags::Overloaded | FunctionTypeFlags::ParamSpecValue;
+        new_shared
+            .flags
+            .set(type_shared.flags.get() & orig_flags_mask);
+
+        let method_flags_mask = FunctionTypeFlags::ClassMethod
+            | FunctionTypeFlags::StaticMethod
+            | FunctionTypeFlags::ConstructorMethod;
+
+        // If the original function was a method, use its method type. Otherwise
+        // use the method type of the param spec.
+        if type_shared.method_class.get().is_some() {
+            new_shared
+                .flags
+                .set(new_shared.flags.get() | (type_shared.flags.get() & method_flags_mask));
+        } else {
+            new_shared.flags.set(
+                new_shared.flags.get() | (param_spec_value_shared.flags.get() & method_flags_mask),
+            );
+        }
+
+        // Use the "..." flag from the param spec.
+        new_shared.flags.set(
+            new_shared.flags.get()
+                | (param_spec_value_shared.flags.get() & FunctionTypeFlags::GradualCallableForm),
+        );
+
+        // Mark the function as synthesized since there is no user-defined declaration for it.
+        new_shared
+            .flags
+            .set(new_shared.flags.get() | FunctionTypeFlags::SynthesizedMethod);
+        if new_shared.declaration.get().is_some() {
+            new_shared.declaration.set(None);
+        }
+
+        // Update the specialized parameter types as well.
+        let specialized_types = new_function.d().priv_.borrow().specialized_types;
+        if let Some(specialized_types) = specialized_types {
+            for index in 0..spec_params.len() {
+                let param_type = FunctionType::get_param_type(param_spec_value, index as i32);
+                specialized_types
+                    .parameter_types
+                    .get()
+                    .borrow_mut()
+                    .push(param_type);
+
+                if let Some(parameter_default_types) =
+                    specialized_types.parameter_default_types.get()
+                {
+                    let default_type =
+                        FunctionType::get_param_default_type(param_spec_value, index as i32);
+                    parameter_default_types.borrow_mut().push(default_type);
+                }
+            }
+        }
+
+        let constructor_scope_id = param_spec_value
+            .d()
+            .priv_
+            .borrow()
+            .constructor_type_var_scope_id
+            .clone();
+        new_function
+            .d()
+            .priv_
+            .borrow_mut()
+            .constructor_type_var_scope_id = constructor_scope_id;
+
+        if new_shared.method_class.get().is_none()
+            && param_spec_value_shared.method_class.get().is_some()
+        {
+            new_shared
+                .method_class
+                .set(param_spec_value_shared.method_class.get());
+        }
+
+        new_function
     }
 
     // analyzer/types.ts:2047
     pub fn clone_with_new_flags(type_: FunctionType, flags: FunctionTypeFlags) -> FunctionType {
-        todo!()
+        let new_function = FunctionType(TypeBase::clone_type(type_.0));
+
+        // Make a shallow clone of the details.
+        let new_shared = P::new_eval(FunctionDetailsShared::clone(&type_.d().shared.get()));
+        new_function.d().shared.set(new_shared);
+        new_shared.flags.set(flags);
+
+        new_function
     }
 
     // analyzer/types.ts:2057
@@ -1328,12 +2790,33 @@ impl FunctionType {
         new_constructor_scope_id: Option<String>,
         type_params: Vec<TypeVarType>,
     ) -> FunctionType {
-        todo!()
+        let new_function = FunctionType(TypeBase::clone_type(type_.0));
+
+        // Make a shallow clone of the details.
+        let new_shared = P::new_eval(FunctionDetailsShared::clone(&type_.d().shared.get()));
+        new_function.d().shared.set(new_shared);
+        *new_shared.type_var_scope_id.borrow_mut() = new_scope_id;
+        new_function
+            .d()
+            .priv_
+            .borrow_mut()
+            .constructor_type_var_scope_id = new_constructor_scope_id;
+        *new_shared.type_params.borrow_mut() = type_params;
+
+        new_function
     }
 
     // analyzer/types.ts:2074
     pub fn clone_with_doc_string(type_: FunctionType, doc_string: Option<String>) -> FunctionType {
-        todo!()
+        let new_function = FunctionType(TypeBase::clone_type(type_.0));
+
+        // Make a shallow clone of the details.
+        let new_shared = P::new_eval(FunctionDetailsShared::clone(&type_.d().shared.get()));
+        new_function.d().shared.set(new_shared);
+
+        *new_shared.doc_string.borrow_mut() = doc_string;
+
+        new_function
     }
 
     // analyzer/types.ts:2085
@@ -1341,7 +2824,15 @@ impl FunctionType {
         type_: FunctionType,
         deprecated_message: Option<String>,
     ) -> FunctionType {
-        todo!()
+        let new_function = FunctionType(TypeBase::clone_type(type_.0));
+
+        // Make a shallow clone of the details.
+        let new_shared = P::new_eval(FunctionDetailsShared::clone(&type_.d().shared.get()));
+        new_function.d().shared.set(new_shared);
+
+        *new_shared.deprecated_message.borrow_mut() = deprecated_message;
+
+        new_function
     }
 
     // analyzer/types.ts:2100
@@ -1350,164 +2841,558 @@ impl FunctionType {
         type_: FunctionType,
         strip_position_only_separator: bool,
     ) -> FunctionType {
-        todo!()
+        let type_shared = type_.d().shared.get();
+        let param_count = type_shared.parameters.get().borrow().len();
+        if param_count < 2 {
+            return type_;
+        }
+
+        let (args_category, kwargs_category) = {
+            let parameters = type_shared.parameters.get();
+            let parameters = parameters.borrow();
+            (
+                parameters[param_count - 2].category,
+                parameters[param_count - 1].category,
+            )
+        };
+
+        if args_category != ParamCategory::ArgsList || kwargs_category != ParamCategory::KwargsDict
+        {
+            return type_;
+        }
+
+        let args_type = FunctionType::get_param_type(type_, param_count as i32 - 2);
+        let kwargs_type = FunctionType::get_param_type(type_, param_count as i32 - 1);
+        if !is_param_spec(args_type)
+            || !is_param_spec(kwargs_type)
+            || !is_type_same(args_type, kwargs_type, &TypeSameOptions::default(), 0)
+        {
+            return type_;
+        }
+
+        let new_function = FunctionType(TypeBase::clone_type(type_.0));
+
+        // Make a shallow clone of the details.
+        let details = P::new_eval(FunctionDetailsShared::clone(&type_shared));
+        new_function.d().shared.set(details);
+
+        let mut params_to_drop = 2;
+
+        // If the last remaining parameter is a position-only separator, remove it as well.
+        // Always remove it if it's the only remaining parameter.
+        if param_count >= 3
+            && is_position_only_separator(&details.parameters.get().borrow()[param_count - 3])
+        {
+            if param_count == 3 || strip_position_only_separator {
+                params_to_drop = 3;
+            }
+        }
+
+        // Remove the last parameters, which are the *args and **kwargs.
+        let kept: Vec<FunctionParam> =
+            details.parameters.get().borrow()[..param_count - params_to_drop].to_vec();
+        details.parameters.set(P::new_eval(RefCell::new(kept)));
+
+        // `array.slice(0, array.length - paramsToDrop)`: a negative end counts from the end.
+        let slice_end = |len: usize| -> usize {
+            let end = len as i64 - params_to_drop as i64;
+            if end < 0 {
+                (len as i64 + end).max(0) as usize
+            } else {
+                end as usize
+            }
+        };
+
+        let specialized_types = type_.d().priv_.borrow().specialized_types;
+        if let Some(specialized_types) = specialized_types {
+            let parameter_types: Vec<P<Type>> = {
+                let parameter_types = specialized_types.parameter_types.get();
+                let parameter_types = parameter_types.borrow();
+                parameter_types[..slice_end(parameter_types.len())].to_vec()
+            };
+            let parameter_default_types =
+                specialized_types
+                    .parameter_default_types
+                    .get()
+                    .map(|defaults| {
+                        let defaults = defaults.borrow();
+                        P::new_eval(RefCell::new(defaults[..slice_end(defaults.len())].to_vec()))
+                    });
+            new_function.d().priv_.borrow_mut().specialized_types =
+                Some(P::new_eval(SpecializedFunctionTypes {
+                    parameter_types: Cell::new(P::new_eval(RefCell::new(parameter_types))),
+                    parameter_default_types: Cell::new(parameter_default_types),
+                    return_type: Cell::new(specialized_types.return_type.get()),
+                }));
+        }
+
+        let inferred_return_type = type_shared.inferred_return_type.borrow().clone();
+        if inferred_return_type.is_some() {
+            *details.inferred_return_type.borrow_mut() = inferred_return_type;
+        }
+
+        new_function
     }
 
     // analyzer/types.ts:2165
     pub fn get_param_spec_from_args_kwargs(type_: FunctionType) -> Option<ParamSpecType> {
-        todo!()
+        let params = type_.d().shared.get().parameters.get();
+        let param_count = params.borrow().len();
+        if param_count < 2 {
+            return None;
+        }
+
+        let second_last_param_category = params.borrow()[param_count - 2].category;
+        let second_last_param_type = FunctionType::get_param_type(type_, param_count as i32 - 2);
+        let last_param_category = params.borrow()[param_count - 1].category;
+        let last_param_type = FunctionType::get_param_type(type_, param_count as i32 - 1);
+
+        let param_spec_access = |t: P<Type>| TypeVarType(t).d().priv_.borrow().param_spec_access;
+
+        if second_last_param_category == ParamCategory::ArgsList
+            && is_param_spec(second_last_param_type)
+            && param_spec_access(second_last_param_type) == Some(ParamSpecAccess::Args)
+            && last_param_category == ParamCategory::KwargsDict
+            && is_param_spec(last_param_type)
+            && param_spec_access(last_param_type) == Some(ParamSpecAccess::Kwargs)
+        {
+            return Some(TypeVarType::clone_for_param_spec_access(
+                ParamSpecType(second_last_param_type),
+                /* access */ None,
+            ));
+        }
+
+        None
     }
 
     // analyzer/types.ts:2190
     pub fn add_param_spec_variadics(type_: FunctionType, param_spec: ParamSpecType) {
-        todo!()
+        FunctionType::add_param(
+            type_,
+            &FunctionParam::create(
+                ParamCategory::ArgsList,
+                TypeVarType::clone_for_param_spec_access(param_spec, Some(ParamSpecAccess::Args)).0,
+                FunctionParamFlags::TypeDeclared,
+                Some("args"),
+                None,
+                None,
+            ),
+        );
+
+        FunctionType::add_param(
+            type_,
+            &FunctionParam::create(
+                ParamCategory::KwargsDict,
+                TypeVarType::clone_for_param_spec_access(param_spec, Some(ParamSpecAccess::Kwargs))
+                    .0,
+                FunctionParamFlags::TypeDeclared,
+                Some("kwargs"),
+                None,
+                None,
+            ),
+        );
     }
 
     // analyzer/types.ts:2212
     /// TS defaults: useUnknown = false.
     pub fn add_default_params(type_: FunctionType, use_unknown: bool) {
-        todo!()
+        for param in FunctionType::get_default_params(use_unknown) {
+            FunctionType::add_param(type_, &param);
+        }
     }
 
     // analyzer/types.ts:2218
     /// TS defaults: useUnknown = false.
     pub fn get_default_params(use_unknown: bool) -> Vec<FunctionParam> {
-        todo!()
+        vec![
+            FunctionParam::create(
+                ParamCategory::ArgsList,
+                if use_unknown {
+                    UnknownType::create(false).0
+                } else {
+                    AnyType::create(false).0
+                },
+                if use_unknown {
+                    FunctionParamFlags::None
+                } else {
+                    FunctionParamFlags::TypeDeclared
+                },
+                Some("args"),
+                None,
+                None,
+            ),
+            FunctionParam::create(
+                ParamCategory::KwargsDict,
+                if use_unknown {
+                    UnknownType::create(false).0
+                } else {
+                    AnyType::create(false).0
+                },
+                if use_unknown {
+                    FunctionParamFlags::None
+                } else {
+                    FunctionParamFlags::TypeDeclared
+                },
+                Some("kwargs"),
+                None,
+                None,
+            ),
+        ]
     }
 
     // analyzer/types.ts:2236
     pub fn has_default_params(function_type: FunctionType) -> bool {
-        todo!()
+        let mut saw_args = false;
+        let mut saw_kwargs = false;
+
+        let parameters = function_type
+            .d()
+            .shared
+            .get()
+            .parameters
+            .get()
+            .borrow()
+            .clone();
+        for (i, param) in parameters.iter().enumerate() {
+            // Ignore nameless separator parameters.
+            if param.name.as_deref().is_none_or(str::is_empty) {
+                continue;
+            }
+
+            match param.category {
+                ParamCategory::Simple => return false,
+                ParamCategory::ArgsList => saw_args = true,
+                ParamCategory::KwargsDict => saw_kwargs = true,
+            }
+
+            if !is_any_or_unknown(FunctionType::get_param_type(function_type, i as i32)) {
+                return false;
+            }
+        }
+
+        saw_args && saw_kwargs
     }
 
     // analyzer/types.ts:2264
     pub fn is_instance_method(type_: FunctionType) -> bool {
-        todo!()
+        !type_.d().shared.get().flags.get().any(
+            FunctionTypeFlags::ConstructorMethod
+                | FunctionTypeFlags::StaticMethod
+                | FunctionTypeFlags::ClassMethod,
+        )
     }
 
     // analyzer/types.ts:2274
     pub fn is_constructor_method(type_: FunctionType) -> bool {
-        todo!()
+        type_
+            .d()
+            .shared
+            .get()
+            .flags
+            .get()
+            .any(FunctionTypeFlags::ConstructorMethod)
     }
 
     // analyzer/types.ts:2278
     pub fn is_static_method(type_: FunctionType) -> bool {
-        todo!()
+        type_
+            .d()
+            .shared
+            .get()
+            .flags
+            .get()
+            .any(FunctionTypeFlags::StaticMethod)
     }
 
     // analyzer/types.ts:2282
     pub fn is_class_method(type_: FunctionType) -> bool {
-        todo!()
+        type_
+            .d()
+            .shared
+            .get()
+            .flags
+            .get()
+            .any(FunctionTypeFlags::ClassMethod)
     }
 
     // analyzer/types.ts:2286
     pub fn is_abstract_method(type_: FunctionType) -> bool {
-        todo!()
+        type_
+            .d()
+            .shared
+            .get()
+            .flags
+            .get()
+            .any(FunctionTypeFlags::AbstractMethod)
     }
 
     // analyzer/types.ts:2290
     pub fn is_generator(type_: FunctionType) -> bool {
-        todo!()
+        type_
+            .d()
+            .shared
+            .get()
+            .flags
+            .get()
+            .any(FunctionTypeFlags::Generator)
     }
 
     // analyzer/types.ts:2294
     pub fn is_synthesized_method(type_: FunctionType) -> bool {
-        todo!()
+        type_
+            .d()
+            .shared
+            .get()
+            .flags
+            .get()
+            .any(FunctionTypeFlags::SynthesizedMethod)
     }
 
     // analyzer/types.ts:2298
     pub fn is_type_check_only(type_: FunctionType) -> bool {
-        todo!()
+        type_
+            .d()
+            .shared
+            .get()
+            .flags
+            .get()
+            .any(FunctionTypeFlags::TypeCheckOnly)
     }
 
     // analyzer/types.ts:2302
     pub fn is_overloaded(type_: FunctionType) -> bool {
-        todo!()
+        type_
+            .d()
+            .shared
+            .get()
+            .flags
+            .get()
+            .any(FunctionTypeFlags::Overloaded)
     }
 
     // analyzer/types.ts:2306
     pub fn is_default_param_check_disabled(type_: FunctionType) -> bool {
-        todo!()
+        type_
+            .d()
+            .shared
+            .get()
+            .flags
+            .get()
+            .any(FunctionTypeFlags::DisableDefaultChecks)
     }
 
     // analyzer/types.ts:2310
     pub fn is_async(type_: FunctionType) -> bool {
-        todo!()
+        type_
+            .d()
+            .shared
+            .get()
+            .flags
+            .get()
+            .any(FunctionTypeFlags::Async)
     }
 
     // analyzer/types.ts:2314
     pub fn is_stub_definition(type_: FunctionType) -> bool {
-        todo!()
+        type_
+            .d()
+            .shared
+            .get()
+            .flags
+            .get()
+            .any(FunctionTypeFlags::StubDefinition)
     }
 
     // analyzer/types.ts:2318
     pub fn is_py_typed_definition(type_: FunctionType) -> bool {
-        todo!()
+        type_
+            .d()
+            .shared
+            .get()
+            .flags
+            .get()
+            .any(FunctionTypeFlags::PyTypedDefinition)
     }
 
     // analyzer/types.ts:2322
     pub fn is_final(type_: FunctionType) -> bool {
-        todo!()
+        type_
+            .d()
+            .shared
+            .get()
+            .flags
+            .get()
+            .any(FunctionTypeFlags::Final)
     }
 
     // analyzer/types.ts:2326
     pub fn has_unannotated_params(type_: FunctionType) -> bool {
-        todo!()
+        type_
+            .d()
+            .shared
+            .get()
+            .flags
+            .get()
+            .any(FunctionTypeFlags::UnannotatedParams)
     }
 
     // analyzer/types.ts:2330
     pub fn is_gradual_callable_form(type_: FunctionType) -> bool {
-        todo!()
+        type_
+            .d()
+            .shared
+            .get()
+            .flags
+            .get()
+            .any(FunctionTypeFlags::GradualCallableForm)
     }
 
     // analyzer/types.ts:2334
     pub fn is_param_spec_value(type_: FunctionType) -> bool {
-        todo!()
+        type_
+            .d()
+            .shared
+            .get()
+            .flags
+            .get()
+            .any(FunctionTypeFlags::ParamSpecValue)
     }
 
     // analyzer/types.ts:2338
     pub fn is_partially_evaluated(type_: FunctionType) -> bool {
-        todo!()
+        type_
+            .d()
+            .shared
+            .get()
+            .flags
+            .get()
+            .any(FunctionTypeFlags::PartiallyEvaluated)
     }
 
     // analyzer/types.ts:2342
     pub fn is_overridden(type_: FunctionType) -> bool {
-        todo!()
+        type_
+            .d()
+            .shared
+            .get()
+            .flags
+            .get()
+            .any(FunctionTypeFlags::Overridden)
     }
 
     // analyzer/types.ts:2346
     pub fn is_built_in(type_: FunctionType, name: Option<&[String]>) -> bool {
-        todo!()
+        let shared = type_.d().shared.get();
+        if !shared.flags.get().any(FunctionTypeFlags::BuiltIn) {
+            return false;
+        }
+
+        if let Some(name) = name {
+            return name
+                .iter()
+                .any(|name| *name == shared.name || *name == shared.full_name);
+        }
+
+        true
     }
 
     // analyzer/types.ts:2359
     pub fn get_declared_param_type(type_: FunctionType, index: i32) -> P<Type> {
-        todo!()
+        type_.d().shared.get().parameters.get().borrow()[index as usize]._type
     }
 
     // analyzer/types.ts:2363
     pub fn get_param_type(type_: FunctionType, index: i32) -> P<Type> {
-        todo!()
+        let parameters = type_.d().shared.get().parameters.get();
+        common::debug::assert(
+            (index as i64) < parameters.borrow().len() as i64,
+            Some("Parameter types array overflow"),
+        );
+
+        let specialized_types = type_.d().priv_.borrow().specialized_types;
+        if let Some(specialized_types) = specialized_types {
+            let parameter_types = specialized_types.parameter_types.get();
+            let parameter_types = parameter_types.borrow();
+            if (index as i64) < parameter_types.len() as i64 {
+                return parameter_types[index as usize];
+            }
+        }
+
+        parameters.borrow()[index as usize]._type
     }
 
     // analyzer/types.ts:2373
     pub fn get_param_default_type(type_: FunctionType, index: i32) -> Option<P<Type>> {
-        todo!()
+        let parameters = type_.d().shared.get().parameters.get();
+        common::debug::assert(
+            (index as i64) < parameters.borrow().len() as i64,
+            Some("Parameter types array overflow"),
+        );
+
+        let specialized_types = type_.d().priv_.borrow().specialized_types;
+        if let Some(parameter_default_types) = specialized_types
+            .and_then(|specialized_types| specialized_types.parameter_default_types.get())
+        {
+            let parameter_default_types = parameter_default_types.borrow();
+            if (index as i64) < parameter_default_types.len() as i64 {
+                if let Some(default_arg_type) = parameter_default_types[index as usize] {
+                    return Some(default_arg_type);
+                }
+            }
+        }
+
+        parameters.borrow()[index as usize]._default_type
     }
 
     // analyzer/types.ts:2389
     pub fn add_param(type_: FunctionType, param: &FunctionParam) {
-        todo!()
+        type_
+            .d()
+            .shared
+            .get()
+            .parameters
+            .get()
+            .borrow_mut()
+            .push(param.clone());
+
+        let specialized_types = type_.d().priv_.borrow().specialized_types;
+        if let Some(specialized_types) = specialized_types {
+            specialized_types
+                .parameter_types
+                .get()
+                .borrow_mut()
+                .push(param._type);
+        }
     }
 
     // analyzer/types.ts:2397
     pub fn add_position_only_param_separator(type_: FunctionType) {
-        todo!()
+        FunctionType::add_param(
+            type_,
+            &FunctionParam::create(
+                ParamCategory::Simple,
+                AnyType::create(false).0,
+                FunctionParamFlags::None,
+                None,
+                None,
+                None,
+            ),
+        );
     }
 
     // analyzer/types.ts:2401
     pub fn add_keyword_only_param_separator(type_: FunctionType) {
-        todo!()
+        FunctionType::add_param(
+            type_,
+            &FunctionParam::create(
+                ParamCategory::ArgsList,
+                AnyType::create(false).0,
+                FunctionParamFlags::None,
+                None,
+                None,
+                None,
+            ),
+        );
     }
 
     // analyzer/types.ts:2405
@@ -1516,7 +3401,27 @@ impl FunctionType {
         type_: FunctionType,
         include_inferred: bool,
     ) -> Option<P<Type>> {
-        todo!()
+        let specialized_types = type_.d().priv_.borrow().specialized_types;
+        if let Some(return_type) =
+            specialized_types.and_then(|specialized_types| specialized_types.return_type.get())
+        {
+            return Some(return_type);
+        }
+
+        let shared = type_.d().shared.get();
+        if let Some(declared_return_type) = shared.declared_return_type.get() {
+            return Some(declared_return_type);
+        }
+
+        if include_inferred {
+            return shared
+                .inferred_return_type
+                .borrow()
+                .as_ref()
+                .map(|inferred| inferred.type_);
+        }
+
+        None
     }
 }
 
@@ -1563,22 +3468,44 @@ impl Deref for OverloadedType {
 impl OverloadedType {
     // analyzer/types.ts:2435
     pub fn create(overloads: &[FunctionType], implementation: Option<P<Type>>) -> OverloadedType {
-        todo!()
+        let new_type = OverloadedType(P::new_eval(Type {
+            category: TypeCategory::Overloaded,
+            flags: Cell::new(TypeFlags::Instance),
+            props: RefCell::new(None),
+            cached: RefCell::new(None),
+            d: TypeDetails::Overloaded(OverloadedTypeDetails {
+                priv_: RefCell::new(OverloadedDetailsPriv {
+                    _overloads: Vec::new(),
+                    _implementation: implementation,
+                }),
+            }),
+        }));
+
+        for overload in overloads {
+            OverloadedType::add_overload(new_type, *overload);
+        }
+
+        if let Some(implementation) = implementation.and_then(FunctionType::cast) {
+            implementation.d().priv_.borrow_mut().overloaded = Some(new_type);
+        }
+
+        new_type
     }
 
     // analyzer/types.ts:2460
     pub fn add_overload(type_: OverloadedType, function_type: FunctionType) {
-        todo!()
+        function_type.d().priv_.borrow_mut().overloaded = Some(type_);
+        type_.d().priv_.borrow_mut()._overloads.push(function_type);
     }
 
     // analyzer/types.ts:2465
     pub fn get_overloads(type_: OverloadedType) -> Vec<FunctionType> {
-        todo!()
+        type_.d().priv_.borrow()._overloads.clone()
     }
 
     // analyzer/types.ts:2469
     pub fn get_implementation(type_: OverloadedType) -> Option<P<Type>> {
-        todo!()
+        type_.d().priv_.borrow()._implementation
     }
 }
 
@@ -1624,17 +3551,31 @@ impl Deref for NeverType {
 impl NeverType {
     // analyzer/types.ts:2501
     pub fn create_never() -> NeverType {
-        todo!()
+        never_type::NEVER_INSTANCE.with(|instance| *instance)
     }
 
     // analyzer/types.ts:2505
     pub fn create_no_return() -> NeverType {
-        todo!()
+        never_type::NO_RETURN_INSTANCE.with(|instance| *instance)
     }
 
     // analyzer/types.ts:2509
     pub fn convert_to_instance(type_: NeverType) -> NeverType {
-        todo!()
+        // Remove the specialForm or typeForm if present. Otherwise return the existing type.
+        let has_form = type_
+            .props
+            .borrow()
+            .as_ref()
+            .is_some_and(|props| props.special_form.is_some() || props.type_form.is_some());
+        if !has_form {
+            return type_;
+        }
+
+        if type_.d().priv_.is_no_return {
+            NeverType::create_no_return()
+        } else {
+            NeverType::create_never()
+        }
     }
 }
 
@@ -1644,12 +3585,28 @@ pub mod never_type {
 
     thread_local! {
         // analyzer/types.ts:2483
-        pub(crate) static NEVER_INSTANCE: NeverType = todo!();
+        pub(crate) static NEVER_INSTANCE: NeverType = NeverType(P::new_eval(Type {
+            category: TypeCategory::Never,
+            flags: Cell::new(TypeFlags::Instance | TypeFlags::Instantiable),
+            props: RefCell::new(None),
+            cached: RefCell::new(None),
+            d: TypeDetails::Never(NeverTypeDetails {
+                priv_: NeverDetailsPriv { is_no_return: false },
+            }),
+        }));
     }
 
     thread_local! {
         // analyzer/types.ts:2492
-        pub(crate) static NO_RETURN_INSTANCE: NeverType = todo!();
+        pub(crate) static NO_RETURN_INSTANCE: NeverType = NeverType(P::new_eval(Type {
+            category: TypeCategory::Never,
+            flags: Cell::new(TypeFlags::Instance | TypeFlags::Instantiable),
+            props: RefCell::new(None),
+            cached: RefCell::new(None),
+            d: TypeDetails::Never(NeverTypeDetails {
+                priv_: NeverDetailsPriv { is_no_return: true },
+            }),
+        }));
     }
 }
 
@@ -1696,12 +3653,16 @@ impl AnyType {
     // analyzer/types.ts:2555
     /// TS defaults: isEllipsis = false.
     pub fn create(is_ellipsis: bool) -> AnyType {
-        todo!()
+        if is_ellipsis {
+            any_type::ELLIPSIS_INSTANCE.with(|instance| *instance)
+        } else {
+            any_type::ANY_INSTANCE.with(|instance| *instance)
+        }
     }
 
     // analyzer/types.ts:2559
     pub fn create_special_form() -> AnyType {
-        todo!()
+        any_type::ANY_INSTANCE_SPECIAL_FORM.with(|instance| *instance)
     }
 }
 
@@ -1711,24 +3672,58 @@ pub mod any_type {
 
     thread_local! {
         // analyzer/types.ts:2528
-        pub(crate) static ANY_INSTANCE_SPECIAL_FORM: AnyType = todo!();
+        pub(crate) static ANY_INSTANCE_SPECIAL_FORM: AnyType = AnyType(P::new_eval(Type {
+            category: TypeCategory::Any,
+            flags: Cell::new(TypeFlags::Instance | TypeFlags::Instantiable),
+            props: RefCell::new(None),
+            cached: RefCell::new(None),
+            d: TypeDetails::Any(AnyTypeDetails {
+                priv_: AnyDetailsPriv { is_ellipsis: false },
+            }),
+        }));
     }
 
     thread_local! {
         // analyzer/types.ts:2537
-        pub(crate) static ANY_INSTANCE: AnyType = todo!();
+        pub(crate) static ANY_INSTANCE: AnyType = AnyType(P::new_eval(Type {
+            category: TypeCategory::Any,
+            flags: Cell::new(TypeFlags::Instance | TypeFlags::Instantiable),
+            props: RefCell::new(None),
+            cached: RefCell::new(None),
+            d: TypeDetails::Any(AnyTypeDetails {
+                priv_: AnyDetailsPriv { is_ellipsis: false },
+            }),
+        }));
     }
 
     thread_local! {
         // analyzer/types.ts:2546
-        pub(crate) static ELLIPSIS_INSTANCE: AnyType = todo!();
+        pub(crate) static ELLIPSIS_INSTANCE: AnyType = AnyType(P::new_eval(Type {
+            category: TypeCategory::Any,
+            flags: Cell::new(TypeFlags::Instance | TypeFlags::Instantiable),
+            props: RefCell::new(None),
+            cached: RefCell::new(None),
+            d: TypeDetails::Any(AnyTypeDetails {
+                priv_: AnyDetailsPriv { is_ellipsis: true },
+            }),
+        }));
     }
 }
 
 impl AnyType {
     // analyzer/types.ts:2565
     pub fn convert_to_instance(type_: AnyType) -> AnyType {
-        todo!()
+        // Remove the "special form" if present. Otherwise return the existing type.
+        let has_special_form = type_
+            .props
+            .borrow()
+            .as_ref()
+            .is_some_and(|props| props.special_form.is_some());
+        if has_special_form {
+            AnyType::create(false)
+        } else {
+            type_
+        }
     }
 }
 
@@ -1745,12 +3740,45 @@ impl TypeCondition {
         conditions1: Option<&[TypeCondition]>,
         conditions2: Option<&[TypeCondition]>,
     ) -> Option<Vec<TypeCondition>> {
-        todo!()
+        let Some(conditions1) = conditions1 else {
+            return conditions2.map(|conditions2| conditions2.to_vec());
+        };
+
+        let Some(conditions2) = conditions2 else {
+            return Some(conditions1.to_vec());
+        };
+
+        // Deduplicate the lists.
+        let mut combined = conditions1.to_vec();
+        for c1 in conditions2 {
+            if !combined
+                .iter()
+                .any(|c2| TypeCondition::_compare(c1, c2) == 0)
+            {
+                combined.push(c1.clone());
+            }
+        }
+
+        // Always keep the conditions sorted for easier comparison.
+        jsrt::sort::sort_by(&mut combined, TypeCondition::_compare);
+        Some(combined)
     }
 
     // analyzer/types.ts:2602
     pub(crate) fn _compare(c1: &TypeCondition, c2: &TypeCondition) -> i32 {
-        todo!()
+        let name1 = c1.type_var.d().shared.get().name.borrow().clone();
+        let name2 = c2.type_var.d().shared.get().name.borrow().clone();
+        match jsrt::JsStr::js_cmp(name1.as_str(), name2.as_str()) {
+            std::cmp::Ordering::Less => return -1,
+            std::cmp::Ordering::Greater => return 1,
+            std::cmp::Ordering::Equal => {}
+        }
+        if c1.constraint_index < c2.constraint_index {
+            return -1;
+        } else if c1.constraint_index > c2.constraint_index {
+            return 1;
+        }
+        0
     }
 
     // analyzer/types.ts:2616
@@ -1758,7 +3786,27 @@ impl TypeCondition {
         conditions1: Option<&[TypeCondition]>,
         conditions2: Option<&[TypeCondition]>,
     ) -> bool {
-        todo!()
+        let Some(conditions1) = conditions1 else {
+            return conditions2.is_none();
+        };
+
+        let Some(conditions2) = conditions2 else {
+            return false;
+        };
+        if conditions1.len() != conditions2.len() {
+            return false;
+        }
+
+        !conditions1.iter().enumerate().any(|(index, c1)| {
+            c1.type_var.d().priv_.borrow().name_with_scope
+                != conditions2[index]
+                    .type_var
+                    .d()
+                    .priv_
+                    .borrow()
+                    .name_with_scope
+                || c1.constraint_index != conditions2[index].constraint_index
+        })
     }
 
     // analyzer/types.ts:2641
@@ -1766,7 +3814,27 @@ impl TypeCondition {
         conditions1: Option<&[TypeCondition]>,
         conditions2: Option<&[TypeCondition]>,
     ) -> bool {
-        todo!()
+        let (Some(conditions1), Some(conditions2)) = (conditions1, conditions2) else {
+            return true;
+        };
+
+        for c1 in conditions1 {
+            let mut found_type_var_match = false;
+            let name_with_scope1 = c1.type_var.d().priv_.borrow().name_with_scope.clone();
+            let exact_match = conditions2.iter().find(|c2| {
+                if name_with_scope1 == c2.type_var.d().priv_.borrow().name_with_scope {
+                    found_type_var_match = true;
+                    return c1.constraint_index == c2.constraint_index;
+                }
+                false
+            });
+
+            if found_type_var_match && exact_match.is_none() {
+                return false;
+            }
+        }
+
+        true
     }
 }
 
@@ -1825,12 +3893,118 @@ impl Deref for UnionType {
 impl UnionType {
     // analyzer/types.ts:2689
     pub fn create() -> UnionType {
-        todo!()
+        UnionType(P::new_eval(Type {
+            category: TypeCategory::Union,
+            flags: Cell::new(TypeFlags::Instance | TypeFlags::Instantiable),
+            props: RefCell::new(None),
+            cached: RefCell::new(None),
+            d: TypeDetails::Union(UnionTypeDetails {
+                priv_: RefCell::new(UnionDetailsPriv {
+                    subtypes: Vec::new(),
+                    literal_instances: LiteralTypes {
+                        literal_str_map: None,
+                        literal_int_map: None,
+                        literal_enum_map: None,
+                    },
+                    literal_classes: LiteralTypes {
+                        literal_str_map: None,
+                        literal_int_map: None,
+                        literal_enum_map: None,
+                    },
+                    type_alias_sources: None,
+                    includes_recursive_type_alias: false,
+                    includes_enum_literal: false,
+                }),
+            }),
+        }))
     }
 
     // analyzer/types.ts:2717
     pub fn add_type(union_type: UnionType, new_type: UnionableType) {
-        todo!()
+        if let Some(new_class) = ClassType::cast(new_type) {
+            let literal_value = new_class.d().priv_.borrow().literal_value.clone();
+            if ClassType::is_enum_class(new_class)
+                && matches!(literal_value, Some(LiteralValue::EnumLiteral(_)))
+            {
+                union_type.d().priv_.borrow_mut().includes_enum_literal = true;
+            }
+
+            // If we're adding a string, integer or enum literal, add it to the
+            // corresponding literal map to speed up some operations. It's not
+            // uncommon for unions to contain hundreds of literals.
+            let has_condition = new_type
+                .props
+                .borrow()
+                .as_ref()
+                .is_some_and(|props| props.condition.is_some());
+            if let Some(literal_value) = literal_value.filter(|_| !has_condition) {
+                let is_instance = is_class_instance(new_type);
+                let is_str = ClassType::is_built_in(new_class, Some(&["str".to_string()]));
+                let is_int =
+                    !is_str && ClassType::is_built_in(new_class, Some(&["int".to_string()]));
+                let is_enum = !is_str && !is_int && ClassType::is_enum_class(new_class);
+
+                let mut union_priv = union_type.d().priv_.borrow_mut();
+                let literal_maps = if is_instance {
+                    &mut union_priv.literal_instances
+                } else {
+                    &mut union_priv.literal_classes
+                };
+
+                if is_str {
+                    if let LiteralValue::String(value) = &literal_value {
+                        literal_maps
+                            .literal_str_map
+                            .get_or_insert_with(JsMap::default)
+                            .insert(value.clone(), new_type);
+                    }
+                } else if is_int {
+                    let key = match &literal_value {
+                        LiteralValue::Number(value) => Some(NumberValue::Number(*value)),
+                        LiteralValue::Bigint(value) => Some(NumberValue::BigInt(value.clone())),
+                        _ => None,
+                    };
+                    if let Some(key) = key {
+                        literal_maps
+                            .literal_int_map
+                            .get_or_insert_with(JsMap::default)
+                            .insert(key, new_type);
+                    }
+                } else if is_enum {
+                    let LiteralValue::EnumLiteral(enum_literal) = &literal_value else {
+                        unreachable!("an enum class literal is an EnumLiteral");
+                    };
+                    literal_maps
+                        .literal_enum_map
+                        .get_or_insert_with(JsMap::default)
+                        .insert(enum_literal.get_name(), new_type);
+                }
+            }
+        }
+
+        union_type
+            .flags
+            .set(union_type.flags.get() & new_type.flags.get());
+        union_type.d().priv_.borrow_mut().subtypes.push(new_type);
+
+        if let Some(type_var) = TypeVarType::cast(new_type) {
+            let has_recursive_alias_name = type_var
+                .d()
+                .shared
+                .get()
+                .recursive_alias
+                .get()
+                .is_some_and(|recursive_alias| !recursive_alias.name.is_empty());
+            if has_recursive_alias_name {
+                // Note that at least one recursive type alias was included in
+                // this union. We'll need to expand it before the union is used.
+                union_type
+                    .d()
+                    .priv_
+                    .borrow_mut()
+                    .includes_recursive_type_alias = true;
+            }
+        }
     }
 
     // analyzer/types.ts:2762
@@ -1842,12 +4016,107 @@ impl UnionType {
         exclusion_set: Option<&mut JsSet<u32>>,
         recursion_count: u32,
     ) -> bool {
-        todo!()
+        // Handle string literals as a special case because unions can sometimes
+        // contain hundreds of string literal types.
+        if let Some(class_subtype) = ClassType::cast(subtype) {
+            let has_condition = subtype
+                .props
+                .borrow()
+                .as_ref()
+                .is_some_and(|props| props.condition.is_some());
+            let literal_value = class_subtype.d().priv_.borrow().literal_value.clone();
+            if let Some(literal_value) = literal_value.filter(|_| !has_condition) {
+                let union_priv = union_type.d().priv_.borrow();
+                let literal_maps = if is_class_instance(subtype) {
+                    &union_priv.literal_instances
+                } else {
+                    &union_priv.literal_classes
+                };
+
+                if ClassType::is_built_in(class_subtype, Some(&["str".to_string()]))
+                    && let Some(map) = &literal_maps.literal_str_map
+                {
+                    return match &literal_value {
+                        LiteralValue::String(value) => map.contains_key(value),
+                        _ => false,
+                    };
+                } else if ClassType::is_built_in(class_subtype, Some(&["int".to_string()]))
+                    && let Some(map) = &literal_maps.literal_int_map
+                {
+                    return match &literal_value {
+                        LiteralValue::Number(value) => {
+                            map.contains_key(&NumberValue::Number(*value))
+                        }
+                        LiteralValue::Bigint(value) => {
+                            map.contains_key(&NumberValue::BigInt(value.clone()))
+                        }
+                        _ => false,
+                    };
+                } else if ClassType::is_enum_class(class_subtype)
+                    && let Some(map) = &literal_maps.literal_enum_map
+                {
+                    let LiteralValue::EnumLiteral(enum_literal) = &literal_value else {
+                        unreachable!("an enum class literal is an EnumLiteral");
+                    };
+                    return map.contains_key(&enum_literal.get_name());
+                }
+            }
+        }
+
+        let subtypes = union_type.d().priv_.borrow().subtypes.clone();
+        let found_index = subtypes.iter().enumerate().position(|(i, t)| {
+            if exclusion_set
+                .as_ref()
+                .is_some_and(|exclusion_set| exclusion_set.contains(&(i as u32)))
+            {
+                return false;
+            }
+
+            is_type_same(*t, subtype, options, recursion_count)
+        });
+
+        let Some(found_index) = found_index else {
+            return false;
+        };
+
+        if let Some(exclusion_set) = exclusion_set {
+            exclusion_set.insert(found_index as u32);
+        }
+        true
     }
 
     // analyzer/types.ts:2802
     pub fn add_type_alias_source(union_type: UnionType, type_alias_source: P<Type>) {
-        todo!()
+        if type_alias_source.category == TypeCategory::Union {
+            let source_union = UnionType(type_alias_source);
+            let has_type_alias_info = type_alias_source
+                .props
+                .borrow()
+                .as_ref()
+                .is_some_and(|props| props.type_alias_info.is_some());
+            let sources_to_add: Option<Vec<UnionType>> = if has_type_alias_info {
+                Some(vec![source_union])
+            } else {
+                source_union
+                    .d()
+                    .priv_
+                    .borrow()
+                    .type_alias_sources
+                    .as_ref()
+                    .map(|sources| sources.iter().copied().collect())
+            };
+
+            if let Some(sources_to_add) = sources_to_add {
+                let mut union_priv = union_type.d().priv_.borrow_mut();
+                let type_alias_sources = union_priv
+                    .type_alias_sources
+                    .get_or_insert_with(JsSet::default);
+
+                for source in sources_to_add {
+                    type_alias_sources.insert(source);
+                }
+            }
+        }
     }
 }
 
@@ -2000,7 +4269,15 @@ impl Deref for ParamSpecType {
 impl ParamSpecType {
     // analyzer/types.ts:2928
     pub fn get_unknown() -> FunctionType {
-        todo!()
+        let new_function = FunctionType::create_instance(
+            "",
+            "",
+            "",
+            FunctionTypeFlags::ParamSpecValue | FunctionTypeFlags::GradualCallableForm,
+            None,
+        );
+        FunctionType::add_default_params(new_function, false);
+        new_function
     }
 }
 
@@ -2032,28 +4309,94 @@ impl TypeVarType {
     // analyzer/types.ts:2954
     /// TS defaults: kind = TypeVarKind.TypeVar.
     pub fn create_instance(name: &str, kind: TypeVarKind) -> TypeVarType {
-        todo!()
+        TypeVarType::create(name, kind, TypeFlags::Instance)
     }
 
     // analyzer/types.ts:2958
     /// TS defaults: kind = TypeVarKind.TypeVar.
     pub fn create_instantiable(name: &str, kind: TypeVarKind) -> TypeVarType {
-        todo!()
+        TypeVarType::create(name, kind, TypeFlags::Instantiable)
     }
 
     // analyzer/types.ts:2962
     pub fn clone_as_instance(type_: TypeVarType) -> TypeVarType {
-        todo!()
+        common::debug::assert(TypeBase::is_instantiable(type_.0), None);
+
+        let cached = type_
+            .cached
+            .borrow()
+            .as_ref()
+            .and_then(|cached| cached.type_base_instance_type);
+        if let Some(cached) = cached {
+            return TypeVarType(cached);
+        }
+
+        let new_instance = TypeVarType(TypeBase::clone_type_as_instance(
+            type_.0, /* cache */ true,
+        ));
+        let has_special_form = new_instance
+            .props
+            .borrow()
+            .as_ref()
+            .is_some_and(|props| props.special_form.is_some());
+        if has_special_form {
+            TypeBase::set_special_form(new_instance.0, None);
+        }
+
+        let free_type_var = new_instance.d().priv_.borrow().free_type_var;
+        if let Some(free_type_var) = free_type_var {
+            let free_type_var = TypeVarType::clone_as_instance(free_type_var);
+            new_instance.d().priv_.borrow_mut().free_type_var = Some(free_type_var);
+        }
+
+        new_instance
     }
 
     // analyzer/types.ts:2981
     pub fn clone_as_instantiable(type_: TypeVarType) -> TypeVarType {
-        todo!()
+        let cached = type_
+            .cached
+            .borrow()
+            .as_ref()
+            .and_then(|cached| cached.type_base_instantiable_type);
+        if let Some(cached) = cached {
+            return TypeVarType(cached);
+        }
+
+        let new_instance = TypeVarType(TypeBase::clone_type_as_instantiable(
+            type_.0, /* cache */ true,
+        ));
+
+        let free_type_var = new_instance.d().priv_.borrow().free_type_var;
+        if let Some(free_type_var) = free_type_var {
+            let free_type_var = TypeVarType::clone_as_instantiable(free_type_var);
+            new_instance.d().priv_.borrow_mut().free_type_var = Some(free_type_var);
+        }
+
+        new_instance
     }
 
     // analyzer/types.ts:2995
     pub fn clone_for_new_name(type_: TypeVarType, name: String) -> TypeVarType {
-        todo!()
+        let new_instance = TypeVarType(TypeBase::clone_type(type_.0));
+        let new_shared = P::new_eval(TypeVarDetailsShared::clone(&type_.d().shared.get()));
+        new_instance.d().shared.set(new_shared);
+        *new_shared.name.borrow_mut() = name.clone();
+
+        let (scope_id, scope_name) = {
+            let priv_ = new_instance.d().priv_.borrow();
+            (priv_.scope_id.clone(), priv_.scope_name.clone())
+        };
+        if let Some(scope_id) = scope_id.filter(|scope_id| !scope_id.is_empty()) {
+            let name_with_scope = TypeVarType::make_name_with_scope(
+                &name,
+                &scope_id,
+                scope_name.as_deref().unwrap_or(""),
+            );
+            new_instance.d().priv_.borrow_mut().name_with_scope = Some(name_with_scope);
+        }
+
+        new_instance
     }
 
     // analyzer/types.ts:3011
@@ -2063,23 +4406,80 @@ impl TypeVarType {
         scope_name: Option<String>,
         scope_type: Option<TypeVarScopeType>,
     ) -> TypeVarType {
-        todo!()
+        let new_instance = TypeVarType(TypeBase::clone_type(type_.0));
+        let name = type_.d().shared.get().name.borrow().clone();
+        let mut priv_ = new_instance.d().priv_.borrow_mut();
+        priv_.name_with_scope = Some(TypeVarType::make_name_with_scope(
+            &name,
+            &scope_id,
+            scope_name.as_deref().unwrap_or(""),
+        ));
+        priv_.scope_id = Some(scope_id);
+        priv_.scope_name = scope_name;
+        priv_.scope_type = scope_type;
+        drop(priv_);
+        new_instance
     }
 
     // analyzer/types.ts:3025
     /// TS defaults: isInUnion = false.
     pub fn clone_for_unpacked(type_: TypeVarType, is_in_union: bool) -> TypeVarType {
-        todo!()
+        let new_instance = TypeVarType(TypeBase::clone_type(type_.0));
+        new_instance.d().priv_.borrow_mut().is_unpacked = Some(true);
+
+        if is_type_var_tuple(new_instance.0) && is_in_union {
+            new_instance.d().priv_.borrow_mut().is_in_union = Some(is_in_union);
+        }
+
+        let free_type_var = new_instance.d().priv_.borrow().free_type_var;
+        if let Some(free_type_var) = free_type_var {
+            let free_type_var = TypeVarType::clone_for_unpacked(free_type_var, is_in_union);
+            new_instance.d().priv_.borrow_mut().free_type_var = Some(free_type_var);
+        }
+        new_instance
     }
 
     // analyzer/types.ts:3039
     pub fn clone_for_packed(type_: TypeVarType) -> TypeVarType {
-        todo!()
+        let new_instance = TypeVarType(TypeBase::clone_type(type_.0));
+        new_instance.d().priv_.borrow_mut().is_unpacked = Some(false);
+
+        if is_type_var_tuple(new_instance.0) {
+            new_instance.d().priv_.borrow_mut().is_in_union = Some(false);
+        }
+
+        let free_type_var = new_instance.d().priv_.borrow().free_type_var;
+        if let Some(free_type_var) = free_type_var {
+            let free_type_var = TypeVarType::clone_for_packed(free_type_var);
+            new_instance.d().priv_.borrow_mut().free_type_var = Some(free_type_var);
+        }
+        new_instance
     }
 
     // analyzer/types.ts:3056
     pub fn clone_as_invariant(type_: TypeVarType) -> TypeVarType {
-        todo!()
+        if is_param_spec(type_.0) || is_type_var_tuple(type_.0) {
+            return type_;
+        }
+
+        let declared_variance = type_.d().shared.get().declared_variance.get();
+        if declared_variance == Variance::Auto {
+            return type_;
+        }
+
+        if declared_variance == Variance::Invariant {
+            if !TypeVarType::has_bound(type_) && !TypeVarType::has_constraints(type_) {
+                return type_;
+            }
+        }
+
+        let new_instance = TypeVarType(TypeBase::clone_type(type_.0));
+        let new_shared = P::new_eval(TypeVarDetailsShared::clone(&new_instance.d().shared.get()));
+        new_instance.d().shared.set(new_shared);
+        new_shared.declared_variance.set(Variance::Invariant);
+        new_shared.bound_type.set(None);
+        *new_shared.constraints.borrow_mut() = Vec::new();
+        new_instance
     }
 
     // analyzer/types.ts:3079
@@ -2087,7 +4487,9 @@ impl TypeVarType {
         type_: ParamSpecType,
         access: Option<ParamSpecAccess>,
     ) -> ParamSpecType {
-        todo!()
+        let new_instance = ParamSpecType(TypeBase::clone_type(type_.0));
+        new_instance.d().priv_.borrow_mut().param_spec_access = access;
+        new_instance
     }
 
     // analyzer/types.ts:3085
@@ -2095,12 +4497,40 @@ impl TypeVarType {
         type_: TypeVarType,
         specialized_bound_type: P<Type>,
     ) -> TypeVarType {
-        todo!()
+        common::debug::assert(TypeVarType::is_self(type_), None);
+        let new_instance = TypeVarType(TypeBase::clone_type(type_.0));
+        let new_shared = P::new_eval(TypeVarDetailsShared::clone(&new_instance.d().shared.get()));
+        new_instance.d().shared.set(new_shared);
+        new_shared.bound_type.set(Some(specialized_bound_type));
+        new_instance
     }
 
     // analyzer/types.ts:3093
     pub fn clone_as_unification_var(type_: TypeVarType, usage_offset: Option<i32>) -> TypeVarType {
-        todo!()
+        if TypeVarType::is_unification(type_).unwrap_or(false) {
+            return type_;
+        }
+
+        // If the caller specified a usage offset, append it to the TypeVar
+        // internal name. This allows us to distinguish it from other uses
+        // of the same TypeVar. For example nested calls to a generic
+        // function like `foo(foo(1))`.
+        let mut new_name_with_scope = type_.d().priv_.borrow().name_with_scope.clone();
+        if let Some(usage_offset) = usage_offset.filter(|usage_offset| *usage_offset != 0) {
+            new_name_with_scope = Some(format!(
+                "{}-{}",
+                new_name_with_scope.as_deref().unwrap_or("undefined"),
+                usage_offset
+            ));
+        }
+
+        let new_instance = TypeVarType(TypeBase::clone_type(type_.0));
+        let mut priv_ = new_instance.d().priv_.borrow_mut();
+        priv_.is_unification_var = Some(true);
+        priv_.scope_id = Some(UNIFICATION_SCOPE_ID.to_string());
+        priv_.name_with_scope = new_name_with_scope;
+        drop(priv_);
+        new_instance
     }
 
     // analyzer/types.ts:3114
@@ -2108,194 +4538,389 @@ impl TypeVarType {
         type_: TypeVarType,
         computed_variance: Variance,
     ) -> TypeVarType {
-        todo!()
+        let new_instance = TypeVarType(TypeBase::clone_type(type_.0));
+        new_instance.d().priv_.borrow_mut().computed_variance = Some(computed_variance);
+        new_instance
     }
 
     // analyzer/types.ts:3120
     pub fn make_name_with_scope(name: &str, scope_id: &str, scope_name: &str) -> String {
-        todo!()
+        // We include the scopeName here even though it's normally already part
+        // of the scopeId. There are cases where it can diverge, specifically
+        // in scenarios involving higher-order functions that return generic
+        // callable types. See adjustCallableReturnType for details.
+        format!("{name}.{scope_id}.{scope_name}")
     }
 
     // analyzer/types.ts:3134
     pub fn make_bound_scope_id(scope_id: Option<&str>) -> Option<String> {
-        todo!()
+        let scope_id = scope_id.filter(|scope_id| !scope_id.is_empty())?;
+
+        // Append an asterisk to denote a bound scope.
+        Some(format!("{scope_id}*"))
     }
 
     // analyzer/types.ts:3143
     pub fn clone_as_bound(type_: TypeVarType) -> TypeVarType {
-        todo!()
+        let (scope_id, scope_name, scope_type, free_type_var) = {
+            let priv_ = type_.d().priv_.borrow();
+            (
+                priv_.scope_id.clone(),
+                priv_.scope_name.clone(),
+                priv_.scope_type,
+                priv_.free_type_var,
+            )
+        };
+        let Some(scope_id) = scope_id else {
+            return type_;
+        };
+        if free_type_var.is_some() {
+            return type_;
+        }
+
+        let clone = TypeVarType::clone_for_scope_id(
+            type_,
+            TypeVarType::make_bound_scope_id(Some(&scope_id)).unwrap_or_default(),
+            scope_name,
+            scope_type,
+        );
+
+        clone.d().priv_.borrow_mut().free_type_var = Some(type_);
+
+        clone
     }
 
     // analyzer/types.ts:3163
     pub fn is_bound(type_: TypeVarType) -> bool {
-        todo!()
+        // If the type var has an associated free type var, then it's
+        // considered bound. If it has no associated free var, then it's
+        // considered free.
+        type_.d().priv_.borrow().free_type_var.is_some()
     }
 
     // analyzer/types.ts:3170
     pub fn is_unification(type_: TypeVarType) -> Option<bool> {
-        todo!()
+        type_.d().priv_.borrow().is_unification_var
     }
 
     // analyzer/types.ts:3174
     pub(crate) fn create(name: &str, kind: TypeVarKind, type_flags: TypeFlags) -> TypeVarType {
-        todo!()
+        TypeVarType(P::new_eval(Type {
+            category: TypeCategory::TypeVar,
+            flags: Cell::new(type_flags),
+            props: RefCell::new(None),
+            cached: RefCell::new(None),
+            d: TypeDetails::TypeVar(TypeVarTypeDetails {
+                shared: Cell::new(P::new_eval(TypeVarDetailsShared {
+                    kind,
+                    name: RefCell::new(name.to_string()),
+                    constraints: RefCell::new(Vec::new()),
+                    bound_type: Cell::new(None),
+                    is_default_explicit: Cell::new(false),
+                    default_type: Cell::new(UnknownType::create(false).0),
+                    declared_variance: Cell::new(Variance::Invariant),
+                    is_synthesized: Cell::new(false),
+                    is_synthesized_self: Cell::new(false),
+                    synthesized_index: Cell::new(None),
+                    is_exempt_from_bound_check: Cell::new(false),
+                    is_type_param_syntax: Cell::new(false),
+                    recursive_alias: Cell::new(None),
+                })),
+                priv_: RefCell::new(TypeVarDetailsPriv::default()),
+            }),
+        }))
     }
 
     // analyzer/types.ts:3200
     pub fn add_constraint(type_: TypeVarType, constraint_type: P<Type>) {
-        todo!()
+        type_
+            .d()
+            .shared
+            .get()
+            .constraints
+            .borrow_mut()
+            .push(constraint_type);
     }
 
     // analyzer/types.ts:3204
     pub fn get_name_with_scope(type_var_type: TypeVarType) -> String {
-        todo!()
+        // If there is no name with scope, fall back on the (unscoped) name.
+        let name_with_scope = type_var_type.d().priv_.borrow().name_with_scope.clone();
+        match name_with_scope {
+            Some(name_with_scope) if !name_with_scope.is_empty() => name_with_scope,
+            _ => type_var_type.d().shared.get().name.borrow().clone(),
+        }
     }
 
     // analyzer/types.ts:3209
     /// TS defaults: includeScope = true.
     pub fn get_readable_name(type_: TypeVarType, include_scope: bool) -> String {
-        todo!()
+        let scope_name = type_.d().priv_.borrow().scope_name.clone();
+        let name = type_.d().shared.get().name.borrow().clone();
+        if let Some(scope_name) = scope_name.filter(|scope_name| !scope_name.is_empty()) {
+            if include_scope {
+                return format!("{name}@{scope_name}");
+            }
+        }
+
+        name
     }
 
     // analyzer/types.ts:3217
     pub fn get_variance(type_: TypeVarType) -> Variance {
-        todo!()
+        let variance = type_
+            .d()
+            .priv_
+            .borrow()
+            .computed_variance
+            .unwrap_or_else(|| type_.d().shared.get().declared_variance.get());
+
+        // By this point, the variance should have been inferred.
+        common::debug::assert(
+            variance != Variance::Auto,
+            Some("Expected variance to be inferred"),
+        );
+
+        // If we're in the process of computing variance, it will still be
+        // unknown. Default to covariant in this case.
+        if variance == Variance::Unknown {
+            return Variance::Covariant;
+        }
+
+        variance
     }
 
     // analyzer/types.ts:3234
     pub fn is_type_alias_placeholder(type_: TypeVarType) -> bool {
-        todo!()
+        let shared = type_.d().shared.get();
+        shared.recursive_alias.get().is_some() && shared.bound_type.get().is_none()
     }
 
     // analyzer/types.ts:3238
     pub fn is_self(type_: TypeVarType) -> bool {
-        todo!()
+        type_.d().shared.get().is_synthesized_self.get()
     }
 
     // analyzer/types.ts:3242
     pub fn has_constraints(type_: TypeVarType) -> bool {
-        todo!()
+        !type_.d().shared.get().constraints.borrow().is_empty()
     }
 
     // analyzer/types.ts:3246
     pub fn has_bound(type_: TypeVarType) -> bool {
-        todo!()
+        type_.d().shared.get().bound_type.get().is_some()
     }
 }
 
 // analyzer/types.ts:3251
 pub fn is_never(type_: P<Type>) -> bool {
-    todo!()
+    type_.category == TypeCategory::Never
 }
 
 // analyzer/types.ts:3255
 pub fn is_any(type_: P<Type>) -> bool {
-    todo!()
+    type_.category == TypeCategory::Any
 }
 
 // analyzer/types.ts:3259
 pub fn is_unknown(type_: P<Type>) -> bool {
-    todo!()
+    type_.category == TypeCategory::Unknown
 }
 
 // analyzer/types.ts:3263
 pub fn is_any_or_unknown(type_: P<Type>) -> bool {
-    todo!()
+    if type_.category == TypeCategory::Any || type_.category == TypeCategory::Unknown {
+        return true;
+    }
+
+    if let Some(union) = UnionType::cast(type_) {
+        return !union
+            .d()
+            .priv_
+            .borrow()
+            .subtypes
+            .iter()
+            .any(|subtype| !is_any_or_unknown(*subtype));
+    }
+
+    false
 }
 
 // analyzer/types.ts:3275
 pub fn is_unbound(type_: P<Type>) -> bool {
-    todo!()
+    type_.category == TypeCategory::Unbound
 }
 
 // analyzer/types.ts:3279
 pub fn is_union(type_: P<Type>) -> bool {
-    todo!()
+    type_.category == TypeCategory::Union
 }
 
 // analyzer/types.ts:3283
 pub fn is_possibly_unbound(type_: P<Type>) -> bool {
-    todo!()
+    if is_unbound(type_) {
+        return true;
+    }
+
+    if let Some(union) = UnionType::cast(type_) {
+        return union
+            .d()
+            .priv_
+            .borrow()
+            .subtypes
+            .iter()
+            .any(|subtype| is_possibly_unbound(*subtype));
+    }
+
+    false
 }
 
 // analyzer/types.ts:3295
 pub fn is_class(type_: P<Type>) -> bool {
-    todo!()
+    type_.category == TypeCategory::Class
 }
 
 // analyzer/types.ts:3299
 pub fn is_instantiable_class(type_: P<Type>) -> bool {
-    todo!()
+    type_.category == TypeCategory::Class && TypeBase::is_instantiable(type_)
 }
 
 // analyzer/types.ts:3303
 pub fn is_class_instance(type_: P<Type>) -> bool {
-    todo!()
+    type_.category == TypeCategory::Class && TypeBase::is_instance(type_)
 }
 
 // analyzer/types.ts:3307
 pub fn is_module(type_: P<Type>) -> bool {
-    todo!()
+    type_.category == TypeCategory::Module
 }
 
 // analyzer/types.ts:3311
 pub fn is_type_var(type_: P<Type>) -> bool {
-    todo!()
+    type_.category == TypeCategory::TypeVar
 }
 
 // analyzer/types.ts:3315
 pub fn is_param_spec(type_: P<Type>) -> bool {
-    todo!()
+    type_.category == TypeCategory::TypeVar
+        && TypeVarType(type_).d().shared.get().kind == TypeVarKind::ParamSpec
 }
 
 // analyzer/types.ts:3319
 pub fn is_type_var_tuple(type_: P<Type>) -> bool {
-    todo!()
+    type_.category == TypeCategory::TypeVar
+        && TypeVarType(type_).d().shared.get().kind == TypeVarKind::TypeVarTuple
 }
 
 // analyzer/types.ts:3323
 pub fn is_unpacked_type_var_tuple(type_: P<Type>) -> bool {
-    todo!()
+    if !is_type_var_tuple(type_) {
+        return false;
+    }
+    let priv_ = TypeVarType(type_).d().priv_.borrow();
+    priv_.is_unpacked.unwrap_or(false) && !priv_.is_in_union.unwrap_or(false)
 }
 
 // analyzer/types.ts:3327
 pub fn is_unpacked_type_var(type_: P<Type>) -> bool {
-    todo!()
+    is_type_var(type_)
+        && !is_type_var_tuple(type_)
+        && TypeVarType(type_)
+            .d()
+            .priv_
+            .borrow()
+            .is_unpacked
+            .unwrap_or(false)
 }
 
 // analyzer/types.ts:3331
 pub fn is_unpacked_class(type_: P<Type>) -> bool {
-    todo!()
+    let Some(class_type) = ClassType::cast(type_) else {
+        return false;
+    };
+    if !class_type.d().priv_.borrow().is_unpacked.unwrap_or(false) {
+        return false;
+    }
+
+    true
 }
 
 // analyzer/types.ts:3339
 pub fn is_unpacked(type_: P<Type>) -> bool {
-    todo!()
+    is_unpacked_type_var_tuple(type_) || is_unpacked_type_var(type_) || is_unpacked_class(type_)
 }
 
 // analyzer/types.ts:3343
 pub fn is_function(type_: P<Type>) -> bool {
-    todo!()
+    type_.category == TypeCategory::Function
 }
 
 // analyzer/types.ts:3347
 pub fn is_overloaded(type_: P<Type>) -> bool {
-    todo!()
+    type_.category == TypeCategory::Overloaded
 }
 
 // analyzer/types.ts:3351
 pub fn is_function_or_overloaded(type_: P<Type>) -> bool {
-    todo!()
+    type_.category == TypeCategory::Function || type_.category == TypeCategory::Overloaded
 }
 
 // analyzer/types.ts:3355
 pub fn is_method_type(type_: P<Type>) -> bool {
-    todo!()
+    let func_type = match FunctionType::cast(type_) {
+        Some(func_type) => func_type,
+        None => {
+            let overloads = OverloadedType(type_).d().priv_.borrow()._overloads.clone();
+            if overloads.is_empty() {
+                return false;
+            }
+            overloads[0]
+        }
+    };
+
+    let priv_ = func_type.d().priv_.borrow();
+
+    // __new__ methods are never really bound at runtime.
+    if let Some(pre_bound_flags) = priv_.pre_bound_flags {
+        if pre_bound_flags.any(FunctionTypeFlags::ConstructorMethod) {
+            return false;
+        }
+    }
+
+    // If the function type has a stripped first parameter type, it was
+    // bound to class or object and is therefore a MethodType rather
+    // a FunctionType.
+    priv_.stripped_first_param_type.is_some()
 }
 
 // analyzer/types.ts:3381
 pub fn get_type_alias_info(type_: P<Type>) -> Option<TypeAliasInfo> {
-    todo!()
+    let type_alias_info = type_
+        .props
+        .borrow()
+        .as_ref()
+        .and_then(|props| props.type_alias_info.clone());
+    if type_alias_info.is_some() {
+        return type_alias_info;
+    }
+
+    if let Some(type_var) = TypeVarType::cast(type_) {
+        let shared = type_var.d().shared.get();
+        if shared.recursive_alias.get().is_some() {
+            if let Some(bound_type) = shared.bound_type.get() {
+                let bound_alias_info = bound_type
+                    .props
+                    .borrow()
+                    .as_ref()
+                    .and_then(|props| props.type_alias_info.clone());
+                if bound_alias_info.is_some() {
+                    return bound_alias_info;
+                }
+            }
+        }
+    }
+
+    None
 }
 
 // analyzer/types.ts:3401
@@ -2306,17 +4931,521 @@ pub fn is_type_same(
     options: &TypeSameOptions,
     recursion_count: u32,
 ) -> bool {
-    todo!()
+    let mut recursion_count = recursion_count;
+    if type1 == type2 {
+        return true;
+    }
+
+    if type1.category != type2.category {
+        if options.treat_any_same_as_unknown.unwrap_or(false) {
+            if type1.category == TypeCategory::Any && type2.category == TypeCategory::Unknown {
+                return true;
+            }
+            if type1.category == TypeCategory::Unknown && type2.category == TypeCategory::Any {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    if !options.ignore_type_flags.unwrap_or(false) {
+        if (type1.flags.get() & TypeFlags::TypeCompatibilityMask)
+            != (type2.flags.get() & TypeFlags::TypeCompatibilityMask)
+        {
+            return false;
+        }
+    }
+
+    if recursion_count > MAX_TYPE_RECURSION_COUNT {
+        return true;
+    }
+    recursion_count += 1;
+
+    let recursive_options_copy;
+    let recursive_options = if options.ignore_type_flags.unwrap_or(false) {
+        recursive_options_copy = TypeSameOptions {
+            ignore_type_flags: Some(false),
+            ..options.clone()
+        };
+        &recursive_options_copy
+    } else {
+        options
+    };
+
+    if options.honor_type_form.unwrap_or(false) {
+        let type_form1 = type1
+            .props
+            .borrow()
+            .as_ref()
+            .and_then(|props| props.type_form);
+        let type_form2 = type2
+            .props
+            .borrow()
+            .as_ref()
+            .and_then(|props| props.type_form);
+
+        if let Some(type_form1) = type_form1 {
+            let Some(type_form2) = type_form2 else {
+                return false;
+            };
+
+            if !is_type_same(type_form1, type_form2, options, recursion_count) {
+                return false;
+            }
+        } else if type_form2.is_some() {
+            return false;
+        }
+    }
+
+    match type1.category {
+        TypeCategory::Class => {
+            let class_type1 = ClassType(type1);
+            let class_type2 = ClassType(type2);
+
+            // If the details are not the same it's not the same class.
+            if !ClassType::is_same_generic_class(class_type1, class_type2, recursion_count) {
+                return false;
+            }
+
+            if !options.ignore_conditions.unwrap_or(false) {
+                let condition1 = type1
+                    .props
+                    .borrow()
+                    .as_ref()
+                    .and_then(|props| props.condition.clone());
+                let condition2 = type2
+                    .props
+                    .borrow()
+                    .as_ref()
+                    .and_then(|props| props.condition.clone());
+                if !TypeCondition::is_same(condition1.as_deref(), condition2.as_deref()) {
+                    return false;
+                }
+            }
+
+            if !options.ignore_pseudo_generic.unwrap_or(false)
+                || !ClassType::is_pseudo_generic_class(class_type1)
+            {
+                // Make sure the type args match.
+                let type1_tuple_type_args = class_type1.d().priv_.borrow().tuple_type_args.clone();
+                let type2_tuple_type_args = class_type2.d().priv_.borrow().tuple_type_args.clone();
+
+                if let (Some(type1_tuple_type_args), Some(type2_tuple_type_args)) =
+                    (&type1_tuple_type_args, &type2_tuple_type_args)
+                {
+                    if type1_tuple_type_args.len() != type2_tuple_type_args.len() {
+                        return false;
+                    }
+
+                    // TypeScript skips this loop when both arrays are the same object; the loop
+                    // returns true for that case too.
+                    for i in 0..type1_tuple_type_args.len() {
+                        if !is_type_same(
+                            type1_tuple_type_args[i].type_,
+                            type2_tuple_type_args[i].type_,
+                            recursive_options,
+                            recursion_count,
+                        ) {
+                            return false;
+                        }
+
+                        if type1_tuple_type_args[i].is_unbounded
+                            != type2_tuple_type_args[i].is_unbounded
+                        {
+                            return false;
+                        }
+                    }
+                } else {
+                    let type1_type_args = class_type1.d().priv_.borrow().type_args.clone();
+                    let type2_type_args = class_type2.d().priv_.borrow().type_args.clone();
+
+                    // TypeScript skips this loop when both are the same array, or both are undefined;
+                    // the loop returns true for those cases too.
+                    let type_arg_count = type1_type_args
+                        .as_ref()
+                        .map_or(0, Vec::len)
+                        .max(type2_type_args.as_ref().map_or(0, Vec::len));
+
+                    for i in 0..type_arg_count {
+                        // Assume that missing type args are "Unknown".
+                        let type_arg1 = type1_type_args
+                            .as_ref()
+                            .and_then(|type_args| type_args.get(i).copied())
+                            .unwrap_or_else(|| UnknownType::create(false).0);
+                        let type_arg2 = type2_type_args
+                            .as_ref()
+                            .and_then(|type_args| type_args.get(i).copied())
+                            .unwrap_or_else(|| UnknownType::create(false).0);
+
+                        if !is_type_same(type_arg1, type_arg2, recursive_options, recursion_count) {
+                            return false;
+                        }
+                    }
+                }
+            }
+
+            if !ClassType::is_literal_value_same(class_type1, class_type2) {
+                return false;
+            }
+
+            let priv1 = class_type1.d().priv_.borrow();
+            let priv2 = class_type2.d().priv_.borrow();
+
+            if priv1.is_unpacked.unwrap_or(false) != priv2.is_unpacked.unwrap_or(false) {
+                return false;
+            }
+
+            if priv1.is_typed_dict_partial.unwrap_or(false)
+                != priv2.is_typed_dict_partial.unwrap_or(false)
+            {
+                return false;
+            }
+
+            if options.honor_is_type_arg_explicit.unwrap_or(false) {
+                if priv1.is_type_arg_explicit.unwrap_or(false)
+                    != priv2.is_type_arg_explicit.unwrap_or(false)
+                {
+                    return false;
+                }
+            }
+            drop(priv1);
+            drop(priv2);
+
+            if !options.ignore_typed_dict_narrow_entries.unwrap_or(false)
+                && !ClassType::is_typed_dict_narrowed_entries_same(class_type1, class_type2)
+            {
+                return false;
+            }
+
+            true
+        }
+
+        TypeCategory::Function => {
+            // Make sure the parameter counts match.
+            let function_type1 = FunctionType(type1);
+            let function_type2 = FunctionType(type2);
+            let shared1 = function_type1.d().shared.get();
+            let shared2 = function_type2.d().shared.get();
+            let params1_array = shared1.parameters.get();
+            let params2_array = shared2.parameters.get();
+            let params1 = params1_array.borrow().clone();
+            let params2 = params2_array.borrow().clone();
+
+            if params1.len() != params2.len() {
+                return false;
+            }
+
+            // If one function is ... and the other is not, they are not the same.
+            if FunctionType::is_gradual_callable_form(function_type1)
+                != FunctionType::is_gradual_callable_form(function_type2)
+            {
+                return false;
+            }
+
+            let specialized_types1 = function_type1.d().priv_.borrow().specialized_types;
+            let specialized_types2 = function_type2.d().priv_.borrow().specialized_types;
+
+            if shared1 == shared2 && specialized_types1 == specialized_types2 {
+                return true;
+            }
+
+            let have_same_param_signature = params1_array == params2_array
+                && specialized_types1
+                    .map(|specialized_types| specialized_types.parameter_types.get())
+                    == specialized_types2
+                        .map(|specialized_types| specialized_types.parameter_types.get());
+
+            if !have_same_param_signature {
+                // `findIndex` returns -1, never undefined, when there is no separator.
+                let position_only_index1 = params1
+                    .iter()
+                    .position(is_position_only_separator)
+                    .map_or(-1, |index| index as i64);
+                let position_only_index2 = params2
+                    .iter()
+                    .position(is_position_only_separator)
+                    .map_or(-1, |index| index as i64);
+
+                // Make sure the parameter details match.
+                for i in 0..params1.len() {
+                    let param1 = &params1[i];
+                    let param2 = &params2[i];
+
+                    if param1.category != param2.category {
+                        return false;
+                    }
+
+                    let is_name1_relevant = i as i64 > position_only_index1;
+                    let is_name2_relevant = i as i64 > position_only_index2;
+
+                    if is_name1_relevant != is_name2_relevant {
+                        return false;
+                    }
+
+                    if is_name1_relevant {
+                        if param1.name != param2.name {
+                            return false;
+                        }
+                    } else if is_position_only_separator(param1)
+                        && is_position_only_separator(param2)
+                    {
+                        continue;
+                    } else if is_keyword_only_separator(param1) && is_keyword_only_separator(param2)
+                    {
+                        continue;
+                    }
+
+                    let param1_type = FunctionType::get_param_type(function_type1, i as i32);
+                    let param2_type = FunctionType::get_param_type(function_type2, i as i32);
+                    if !is_type_same(param1_type, param2_type, recursive_options, recursion_count) {
+                        return false;
+                    }
+                }
+            }
+
+            // Make sure the return types match.
+            let mut return1_type = shared1.declared_return_type.get();
+            if let Some(return_type) =
+                specialized_types1.and_then(|specialized_types| specialized_types.return_type.get())
+            {
+                return1_type = Some(return_type);
+            }
+            if return1_type.is_none() {
+                if let Some(inferred) = shared1.inferred_return_type.borrow().as_ref() {
+                    return1_type = Some(inferred.type_);
+                }
+            }
+
+            let mut return2_type = shared2.declared_return_type.get();
+            if let Some(return_type) =
+                specialized_types2.and_then(|specialized_types| specialized_types.return_type.get())
+            {
+                return2_type = Some(return_type);
+            }
+            if return2_type.is_none() {
+                if let Some(inferred) = shared2.inferred_return_type.borrow().as_ref() {
+                    return2_type = Some(inferred.type_);
+                }
+            }
+
+            if return1_type.is_some() || return2_type.is_some() {
+                match (return1_type, return2_type) {
+                    (Some(return1_type), Some(return2_type))
+                        if is_type_same(
+                            return1_type,
+                            return2_type,
+                            recursive_options,
+                            recursion_count,
+                        ) => {}
+                    _ => return false,
+                }
+            }
+
+            true
+        }
+
+        TypeCategory::Overloaded => {
+            // Make sure the overload counts match.
+            let overloads1 = OverloadedType(type1).d().priv_.borrow()._overloads.clone();
+            let overloads2 = OverloadedType(type2).d().priv_.borrow()._overloads.clone();
+
+            // TypeScript returns true when both arrays are the same object; the loop below
+            // returns true for that case too.
+            if overloads1.len() != overloads2.len() {
+                return false;
+            }
+
+            // We assume here that overloaded functions always appear
+            // in the same order from one analysis pass to another.
+            for i in 0..overloads1.len() {
+                if !is_type_same(overloads1[i].0, overloads2[i].0, options, recursion_count) {
+                    return false;
+                }
+            }
+
+            true
+        }
+
+        TypeCategory::Union => {
+            let union_type2 = UnionType(type2);
+            let subtypes1_len = UnionType(type1).d().priv_.borrow().subtypes.len();
+            let subtypes2_len = union_type2.d().priv_.borrow().subtypes.len();
+
+            if subtypes1_len != subtypes2_len {
+                return false;
+            }
+
+            // TypeScript returns true when both subtype arrays are the same object, which only
+            // happens for spread copies of one union.
+
+            // The types do not have a particular order, so we need to
+            // do the comparison in an order-independent manner.
+            let mut exclusion_set = JsSet::default();
+            find_subtype(type1, &mut |subtype| {
+                !UnionType::contains_type(
+                    union_type2,
+                    subtype,
+                    options,
+                    Some(&mut exclusion_set),
+                    recursion_count,
+                )
+            })
+            .is_none()
+        }
+
+        TypeCategory::TypeVar => {
+            let type1_type_var = TypeVarType(type1);
+            let type2_type_var = TypeVarType(type2);
+            let priv1 = type1_type_var.d().priv_.borrow().clone();
+            let priv2 = type2_type_var.d().priv_.borrow().clone();
+
+            if priv1.scope_id != priv2.scope_id {
+                return false;
+            }
+
+            if priv1.name_with_scope != priv2.name_with_scope {
+                return false;
+            }
+
+            let shared1 = type1_type_var.d().shared.get();
+            let shared2 = type2_type_var.d().shared.get();
+
+            // Handle the case where this is a generic recursive type alias. Make
+            // sure that the type argument types match.
+            if shared1.recursive_alias.get().is_some() && shared2.recursive_alias.get().is_some() {
+                let type_args_of = |t: P<Type>| {
+                    t.props
+                        .borrow()
+                        .as_ref()
+                        .and_then(|props| props.type_alias_info.as_ref())
+                        .and_then(|info| info.type_args.clone())
+                        .unwrap_or_default()
+                };
+                let type1_type_args = type_args_of(type1);
+                let type2_type_args = type_args_of(type2);
+                let type_arg_count = type1_type_args.len().max(type2_type_args.len());
+
+                for i in 0..type_arg_count {
+                    // Assume that missing type args are "Any".
+                    let type_arg1 = type1_type_args
+                        .get(i)
+                        .copied()
+                        .unwrap_or_else(|| AnyType::create(false).0);
+                    let type_arg2 = type2_type_args
+                        .get(i)
+                        .copied()
+                        .unwrap_or_else(|| AnyType::create(false).0);
+
+                    if !is_type_same(type_arg1, type_arg2, recursive_options, recursion_count) {
+                        return false;
+                    }
+                }
+            }
+
+            if is_type_var_tuple(type1) && is_type_var_tuple(type2) {
+                if priv1.is_in_union.unwrap_or(false) != priv2.is_in_union.unwrap_or(false) {
+                    return false;
+                }
+            }
+
+            if shared1 == shared2 {
+                return true;
+            }
+
+            if is_param_spec(type1) != is_param_spec(type2) {
+                return false;
+            }
+
+            if is_type_var_tuple(type1) != is_type_var_tuple(type2) {
+                return false;
+            }
+
+            if *shared1.name.borrow() != *shared2.name.borrow()
+                || shared1.is_synthesized.get() != shared2.is_synthesized.get()
+                || shared1.declared_variance.get() != shared2.declared_variance.get()
+                || priv1.scope_id != priv2.scope_id
+            {
+                return false;
+            }
+
+            let bound_type1 = shared1.bound_type.get();
+            let bound_type2 = shared2.bound_type.get();
+            if bound_type1 != bound_type2 {
+                let (Some(bound_type1), Some(bound_type2)) = (bound_type1, bound_type2) else {
+                    return false;
+                };
+
+                if !is_type_same(bound_type1, bound_type2, recursive_options, recursion_count) {
+                    return false;
+                }
+            }
+
+            // TypeScript skips this comparison when both arrays are the same object; it returns
+            // true for that case too.
+            let constraints1 = shared1.constraints.borrow().clone();
+            let constraints2 = shared2.constraints.borrow().clone();
+            if constraints1.len() != constraints2.len() {
+                return false;
+            }
+
+            for i in 0..constraints1.len() {
+                if !is_type_same(
+                    constraints1[i],
+                    constraints2[i],
+                    recursive_options,
+                    recursion_count,
+                ) {
+                    return false;
+                }
+            }
+
+            true
+        }
+
+        TypeCategory::Module => {
+            let fields1 = ModuleType(type1).d().priv_.borrow().fields;
+            let fields2 = ModuleType(type2).d().priv_.borrow().fields;
+
+            // Module types are the same if they share the same
+            // module symbol table.
+            if fields1 == fields2 {
+                return true;
+            }
+
+            // If both symbol tables are empty, we can also assume
+            // they're equal.
+            if fields1.size() == 0 && fields2.size() == 0 {
+                return true;
+            }
+
+            false
+        }
+
+        TypeCategory::Unknown => {
+            UnknownType(type1).d().priv_.is_incomplete == UnknownType(type2).d().priv_.is_incomplete
+        }
+
+        _ => true,
+    }
 }
 
 // analyzer/types.ts:3791
 pub fn remove_unknown_from_union(type_: P<Type>) -> P<Type> {
-    todo!()
+    remove_from_union(type_, &mut |t| is_unknown(t))
 }
 
 // analyzer/types.ts:3797
 pub fn remove_unbound(type_: P<Type>) -> P<Type> {
-    todo!()
+    if is_union(type_) {
+        return remove_from_union(type_, &mut |t| is_unbound(t));
+    }
+
+    if is_unbound(type_) {
+        return UnknownType::create(false).0;
+    }
+
+    type_
 }
 
 // analyzer/types.ts:3809
@@ -2324,12 +5453,35 @@ pub fn remove_from_union(
     type_: P<Type>,
     remove_filter: &mut dyn FnMut(P<Type>) -> bool,
 ) -> P<Type> {
-    todo!()
+    if let Some(union) = UnionType::cast(type_) {
+        let subtypes = union.d().priv_.borrow().subtypes.clone();
+        let remaining_types: Vec<P<Type>> = subtypes
+            .iter()
+            .copied()
+            .filter(|t| !remove_filter(*t))
+            .collect();
+        if remaining_types.len() < subtypes.len() {
+            let new_type = combine_types(&remaining_types, None);
+
+            if let Some(new_union) = UnionType::cast(new_type) {
+                UnionType::add_type_alias_source(new_union, type_);
+            }
+
+            return new_type;
+        }
+    }
+
+    type_
 }
 
 // analyzer/types.ts:3826
 pub fn find_subtype(type_: P<Type>, filter: &mut dyn FnMut(P<Type>) -> bool) -> Option<P<Type>> {
-    todo!()
+    if let Some(union) = UnionType::cast(type_) {
+        let subtypes = union.d().priv_.borrow().subtypes.clone();
+        return subtypes.into_iter().find(|subtype| filter(*subtype));
+    }
+
+    if filter(type_) { Some(type_) } else { None }
 }
 
 // analyzer/types.ts:3836
@@ -2341,12 +5493,188 @@ pub struct CombineTypesOptions {
 
 // analyzer/types.ts:3850
 pub fn combine_types(subtypes: &[P<Type>], options: Option<&CombineTypesOptions>) -> P<Type> {
-    todo!()
+    // Filter out any Never or NoReturn types.
+    let (never_types, subtypes) =
+        common::collection_utils::partition(subtypes.iter().copied(), |t| is_never(*t));
+
+    if subtypes.is_empty() {
+        if !never_types.is_empty() {
+            // Prefer NoReturn over Never. This approach preserves type alias
+            // information if present.
+            return never_types
+                .iter()
+                .copied()
+                .find(|t| NeverType(*t).d().priv_.is_no_return)
+                .unwrap_or(never_types[0]);
+        }
+
+        return NeverType::create_never().0;
+    }
+
+    // Handle the common case where there is only one type.
+    // Also handle the common case where there are multiple copies of the same type.
+    let mut all_subtypes_are_same = true;
+    if subtypes.len() > 1 {
+        for index in 1..subtypes.len() {
+            if subtypes[index] != subtypes[0] {
+                all_subtypes_are_same = false;
+                break;
+            }
+        }
+    }
+
+    if all_subtypes_are_same {
+        return subtypes[0];
+    }
+
+    // Expand all union types.
+    let mut expanded_types: Option<Vec<P<Type>>> = None;
+    let mut type_alias_sources: JsSet<UnionType> = JsSet::default();
+
+    for i in 0..subtypes.len() {
+        let subtype = subtypes[i];
+        if let Some(union) = UnionType::cast(subtype) {
+            let expanded = expanded_types.get_or_insert_with(|| subtypes[..i].to_vec());
+            let union_priv = union.d().priv_.borrow();
+            expanded.extend(union_priv.subtypes.iter().copied());
+
+            let has_type_alias_info = subtype
+                .props
+                .borrow()
+                .as_ref()
+                .is_some_and(|props| props.type_alias_info.is_some());
+            if has_type_alias_info {
+                type_alias_sources.insert(union);
+            } else if let Some(sources) = &union_priv.type_alias_sources {
+                for source in sources {
+                    type_alias_sources.insert(*source);
+                }
+            }
+        } else if let Some(expanded) = expanded_types.as_mut() {
+            expanded.push(subtype);
+        }
+    }
+
+    let mut expanded_types = expanded_types.unwrap_or(subtypes);
+
+    // Sort all of the literal and empty types to the end.
+    jsrt::sort::sort_by(&mut expanded_types, |type1, type2| {
+        if is_class(*type1) && ClassType(*type1).d().priv_.borrow().literal_value.is_some() {
+            return 1;
+        }
+
+        if is_class(*type2) && ClassType(*type2).d().priv_.borrow().literal_value.is_some() {
+            return -1;
+        }
+
+        if is_class_instance(*type1)
+            && ClassType(*type1)
+                .d()
+                .priv_
+                .borrow()
+                .is_empty_container
+                .unwrap_or(false)
+        {
+            return 1;
+        } else if is_class_instance(*type2)
+            && ClassType(*type2)
+                .d()
+                .priv_
+                .borrow()
+                .is_empty_container
+                .unwrap_or(false)
+        {
+            return -1;
+        }
+
+        0
+    });
+
+    // If removing all NoReturn types results in no remaining types,
+    // convert it to an unknown.
+    if expanded_types.is_empty() {
+        return UnknownType::create(false).0;
+    }
+
+    let new_union_type = UnionType::create();
+    if !type_alias_sources.is_empty() {
+        new_union_type.d().priv_.borrow_mut().type_alias_sources = Some(type_alias_sources);
+    }
+
+    let mut hit_max_subtype_count = false;
+
+    let max_subtype_count = options.and_then(|options| options.max_subtype_count);
+    let elide_redundant_literals = !options
+        .and_then(|options| options.skip_elide_redundant_literals)
+        .unwrap_or(false);
+    for (index, subtype) in expanded_types.iter().enumerate() {
+        if index == 0 {
+            UnionType::add_type(new_union_type, *subtype);
+        } else if max_subtype_count.is_none_or(|max_subtype_count| {
+            (new_union_type.d().priv_.borrow().subtypes.len() as u32) < max_subtype_count
+        }) {
+            _add_type_if_unique(new_union_type, *subtype, elide_redundant_literals);
+        } else {
+            hit_max_subtype_count = true;
+        }
+    }
+
+    if hit_max_subtype_count {
+        return AnyType::create(false).0;
+    }
+
+    // If only one type remains, convert it from a union to a simple type.
+    let union_priv = new_union_type.d().priv_.borrow();
+    if union_priv.subtypes.len() == 1 {
+        return union_priv.subtypes[0];
+    }
+    drop(union_priv);
+
+    new_union_type.0
 }
 
 // analyzer/types.ts:3967
 pub fn is_same_without_literal_value(dest_type: P<Type>, src_type: P<Type>) -> bool {
-    todo!()
+    // If it's the same with literals, great.
+    if is_type_same(dest_type, src_type, &TypeSameOptions::default(), 0) {
+        return true;
+    }
+
+    if is_instantiable_class(src_type)
+        && ClassType(src_type)
+            .d()
+            .priv_
+            .borrow()
+            .literal_value
+            .is_some()
+    {
+        // Strip the literal.
+        let src_type = ClassType::clone_with_literal(ClassType(src_type), /* value */ None).0;
+        return is_type_same(dest_type, src_type, &TypeSameOptions::default(), 0);
+    }
+
+    if is_class_instance(src_type)
+        && ClassType(src_type)
+            .d()
+            .priv_
+            .borrow()
+            .literal_value
+            .is_some()
+    {
+        // Strip the literal.
+        let src_type = ClassType::clone_with_literal(ClassType(src_type), /* value */ None).0;
+        return is_type_same(
+            dest_type,
+            src_type,
+            &TypeSameOptions {
+                ignore_conditions: Some(true),
+                ..TypeSameOptions::default()
+            },
+            0,
+        );
+    }
+
+    false
 }
 
 // analyzer/types.ts:3988
@@ -2355,7 +5683,210 @@ pub(crate) fn _add_type_if_unique(
     type_to_add: UnionableType,
     elide_redundant_literals: bool,
 ) {
-    todo!()
+    // Handle the addition of a string literal in a special manner to
+    // avoid n^2 behavior in unions that contain hundreds of string
+    // literal types. Skip this for constrained types.
+    let has_condition = |t: P<Type>| {
+        t.props
+            .borrow()
+            .as_ref()
+            .is_some_and(|props| props.condition.is_some())
+    };
+    if is_class(type_to_add) && !has_condition(type_to_add) {
+        let class_to_add = ClassType(type_to_add);
+        let literal_value = class_to_add.d().priv_.borrow().literal_value.clone();
+        let union_priv = union_type.d().priv_.borrow();
+        let literal_maps = if is_class_instance(type_to_add) {
+            &union_priv.literal_instances
+        } else {
+            &union_priv.literal_classes
+        };
+
+        if ClassType::is_built_in(class_to_add, Some(&["str".to_string()]))
+            && let Some(literal_value) = &literal_value
+            && let Some(map) = &literal_maps.literal_str_map
+        {
+            let has = match literal_value {
+                LiteralValue::String(value) => map.contains_key(value),
+                _ => false,
+            };
+            drop(union_priv);
+            if !has {
+                UnionType::add_type(union_type, type_to_add);
+            }
+            return;
+        } else if ClassType::is_built_in(class_to_add, Some(&["int".to_string()]))
+            && let Some(literal_value) = &literal_value
+            && let Some(map) = &literal_maps.literal_int_map
+        {
+            let has = match literal_value {
+                LiteralValue::Number(value) => map.contains_key(&NumberValue::Number(*value)),
+                LiteralValue::Bigint(value) => {
+                    map.contains_key(&NumberValue::BigInt(value.clone()))
+                }
+                _ => false,
+            };
+            drop(union_priv);
+            if !has {
+                UnionType::add_type(union_type, type_to_add);
+            }
+            return;
+        } else if ClassType::is_enum_class(class_to_add)
+            && let Some(literal_value) = &literal_value
+            && let Some(map) = &literal_maps.literal_enum_map
+        {
+            let LiteralValue::EnumLiteral(enum_literal) = literal_value else {
+                unreachable!("an enum class literal is an EnumLiteral");
+            };
+            let has = map.contains_key(&enum_literal.get_name());
+            drop(union_priv);
+            if !has {
+                UnionType::add_type(union_type, type_to_add);
+            }
+            return;
+        }
+    }
+
+    let is_pseudo_generic =
+        is_class(type_to_add) && ClassType::is_pseudo_generic_class(ClassType(type_to_add));
+
+    // `unionType.priv.subtypes.length` is read again on every iteration.
+    let mut i = 0;
+    while i < union_type.d().priv_.borrow().subtypes.len() {
+        let type_ = union_type.d().priv_.borrow().subtypes[i];
+
+        // Does this type already exist in the types array?
+        if is_type_same(
+            type_,
+            type_to_add,
+            &TypeSameOptions {
+                honor_type_form: Some(true),
+                ..TypeSameOptions::default()
+            },
+            0,
+        ) {
+            return;
+        }
+
+        // Handle the case where pseudo-generic classes with different
+        // type arguments are being combined. Rather than add multiple
+        // specialized types, we will replace them with a single specialized
+        // type that is specialized with Unknowns. This is important because
+        // we can hit recursive cases (where a pseudo-generic class is
+        // parameterized with its own class) ad infinitum.
+        if is_pseudo_generic {
+            if is_type_same(
+                type_,
+                type_to_add,
+                &TypeSameOptions {
+                    ignore_pseudo_generic: Some(true),
+                    honor_type_form: Some(true),
+                    ..TypeSameOptions::default()
+                },
+                0,
+            ) {
+                let type_args: Vec<P<Type>> = ClassType(type_to_add)
+                    .d()
+                    .shared
+                    .get()
+                    .type_params
+                    .borrow()
+                    .iter()
+                    .map(|_| UnknownType::create(false).0)
+                    .collect();
+                let specialized = ClassType::specialize(
+                    ClassType(type_to_add),
+                    Some(&type_args),
+                    None,
+                    false,
+                    None,
+                    None,
+                );
+                union_type.d().priv_.borrow_mut().subtypes[i] = specialized.0;
+                return;
+            }
+        }
+
+        if is_class_instance(type_) && is_class_instance(type_to_add) {
+            let class_type = ClassType(type_);
+            let class_to_add = ClassType(type_to_add);
+
+            // If the typeToAdd is a literal value and there's already
+            // a non-literal type that matches, don't add the literal value.
+            if elide_redundant_literals && is_same_without_literal_value(type_, type_to_add) {
+                if class_type.d().priv_.borrow().literal_value.is_none() {
+                    return;
+                }
+            }
+
+            // If we're adding Literal[False] or Literal[True] to its
+            // opposite, combine them into a non-literal 'bool' type.
+            if ClassType::is_built_in(class_type, Some(&["bool".to_string()]))
+                && !has_condition(type_)
+                && ClassType::is_built_in(class_to_add, Some(&["bool".to_string()]))
+                && !has_condition(type_to_add)
+            {
+                let literal_to_add = class_to_add.d().priv_.borrow().literal_value.clone();
+                let literal = class_type.d().priv_.borrow().literal_value.clone();
+                if let Some(literal_to_add) = literal_to_add {
+                    // `!typeToAdd.priv.literalValue === type.priv.literalValue`: the negated
+                    // literal, compared with `===`.
+                    let negated = !match &literal_to_add {
+                        LiteralValue::Number(value) => *value != 0.0 && !value.is_nan(),
+                        LiteralValue::Bigint(value) => *value != jsrt::JsBigInt::from(0),
+                        LiteralValue::Boolean(value) => *value,
+                        LiteralValue::String(value) => !value.is_empty(),
+                        LiteralValue::EnumLiteral(_) | LiteralValue::SentinelLiteral(_) => true,
+                    };
+                    if matches!(literal, Some(LiteralValue::Boolean(value)) if value == negated) {
+                        let replacement =
+                            ClassType::clone_with_literal(class_type, /* value */ None);
+                        union_type.d().priv_.borrow_mut().subtypes[i] = replacement.0;
+                        return;
+                    }
+                }
+            }
+
+            // If the typeToAdd is a TypedDict that is the same class as the
+            // existing type, see if one of them is a proper subset of the other.
+            if ClassType::is_typed_dict_class(class_type)
+                && ClassType::is_same_generic_class(class_type, class_to_add, 0)
+            {
+                // Do not proceed if the TypedDicts are generic and have different type arguments.
+                if class_type.d().priv_.borrow().type_args.is_none()
+                    && class_to_add.d().priv_.borrow().type_args.is_none()
+                {
+                    if ClassType::is_typed_dict_narrower(class_to_add, class_type) {
+                        return;
+                    } else if ClassType::is_typed_dict_narrower(class_type, class_to_add) {
+                        union_type.d().priv_.borrow_mut().subtypes[i] = type_to_add;
+                        return;
+                    }
+                }
+            }
+        }
+
+        // If the typeToAdd is an empty container and there's already
+        // non-empty container of the same type, don't add the empty container.
+        if is_class_instance(type_to_add)
+            && ClassType(type_to_add)
+                .d()
+                .priv_
+                .borrow()
+                .is_empty_container
+                .unwrap_or(false)
+        {
+            if is_class_instance(type_)
+                && ClassType::is_same_generic_class(ClassType(type_), ClassType(type_to_add), 0)
+            {
+                return;
+            }
+        }
+
+        i += 1;
+    }
+
+    UnionType::add_type(union_type, type_to_add);
 }
 
 // Inline object type at FunctionDetailsShared.inferredReturnType.
@@ -2410,5 +5941,89 @@ impl CalculateInheritedSlotsNamesDeferred {
     // analyzer/typeEvaluator.ts:19586
     pub fn call(&self) {
         todo!()
+    }
+}
+
+// Defined in tools/stubgen/typemap.toml [items].
+impl Clone for ClassDetailsShared {
+    fn clone(&self) -> ClassDetailsShared {
+        ClassDetailsShared {
+            name: self.name.clone(),
+            full_name: self.full_name.clone(),
+            module_name: self.module_name.clone(),
+            file_uri: self.file_uri,
+            flags: self.flags.clone(),
+            type_source_id: self.type_source_id,
+            base_classes: self.base_classes.clone(),
+            mro: self.mro.clone(),
+            declaration: self.declaration.clone(),
+            declared_metaclass: self.declared_metaclass.clone(),
+            effective_metaclass: self.effective_metaclass.clone(),
+            fields: self.fields.clone(),
+            type_params: self.type_params.clone(),
+            type_var_scope_id: self.type_var_scope_id.clone(),
+            doc_string: self.doc_string.clone(),
+            data_class_entries: self.data_class_entries.clone(),
+            data_class_behaviors: self.data_class_behaviors.clone(),
+            named_tuple_entries: self.named_tuple_entries.clone(),
+            typed_dict_entries: self.typed_dict_entries.clone(),
+            typed_dict_extra_items_expr: self.typed_dict_extra_items_expr.clone(),
+            local_slots_names: self.local_slots_names.clone(),
+            has_non_empty_slots: self.has_non_empty_slots.clone(),
+            deprecated_message: self.deprecated_message.clone(),
+            protocol_compatibility: self.protocol_compatibility.clone(),
+            class_data_class_transform: self.class_data_class_transform.clone(),
+            requires_variance_inference: self.requires_variance_inference.clone(),
+            is_instance_hashable: self.is_instance_hashable.clone(),
+            synthesize_methods_deferred: self.synthesize_methods_deferred.clone(),
+            synthesize_data_class_slots_deferred: self.synthesize_data_class_slots_deferred.clone(),
+            calculate_inherited_slots_names_deferred: self
+                .calculate_inherited_slots_names_deferred
+                .clone(),
+            inherited_slots_names_cached: self.inherited_slots_names_cached.clone(),
+        }
+    }
+}
+
+// Defined in tools/stubgen/typemap.toml [items].
+impl Clone for FunctionDetailsShared {
+    fn clone(&self) -> FunctionDetailsShared {
+        FunctionDetailsShared {
+            name: self.name.clone(),
+            full_name: self.full_name.clone(),
+            module_name: self.module_name.clone(),
+            flags: self.flags.clone(),
+            type_params: self.type_params.clone(),
+            parameters: self.parameters.clone(),
+            declared_return_type: self.declared_return_type.clone(),
+            declaration: self.declaration.clone(),
+            type_var_scope_id: self.type_var_scope_id.clone(),
+            doc_string: self.doc_string.clone(),
+            deprecated_message: self.deprecated_message.clone(),
+            method_class: self.method_class.clone(),
+            decorator_data_class_behaviors: self.decorator_data_class_behaviors.clone(),
+            inferred_return_type: self.inferred_return_type.clone(),
+        }
+    }
+}
+
+// Defined in tools/stubgen/typemap.toml [items].
+impl Clone for TypeVarDetailsShared {
+    fn clone(&self) -> TypeVarDetailsShared {
+        TypeVarDetailsShared {
+            kind: self.kind,
+            name: self.name.clone(),
+            constraints: self.constraints.clone(),
+            bound_type: self.bound_type.clone(),
+            is_default_explicit: self.is_default_explicit.clone(),
+            default_type: self.default_type.clone(),
+            declared_variance: self.declared_variance.clone(),
+            is_synthesized: self.is_synthesized.clone(),
+            is_synthesized_self: self.is_synthesized_self.clone(),
+            synthesized_index: self.synthesized_index.clone(),
+            is_exempt_from_bound_check: self.is_exempt_from_bound_check.clone(),
+            is_type_param_syntax: self.is_type_param_syntax.clone(),
+            recursive_alias: self.recursive_alias.clone(),
+        }
     }
 }
