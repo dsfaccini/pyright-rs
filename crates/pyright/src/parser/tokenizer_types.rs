@@ -10,7 +10,7 @@ use std::ops::{BitAnd, BitAndAssign, BitOr, BitOrAssign, Deref, Not};
 
 use jsrt::{JsStr, JsString, NormalizationForm, P};
 
-use crate::jsrt_pending::NumberValue;
+use jsrt::NumberValue;
 
 use crate::common::text_range::{HasTextRange, TextRange};
 
