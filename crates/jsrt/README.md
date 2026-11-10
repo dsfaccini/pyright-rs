@@ -66,3 +66,19 @@ An integer below 1e21 prints the same through Rust's `Display` as through `numbe
 | `strings.sort()` | `sort::sort_strings(&mut v)` |
 
 `sort_by` ports V8's TimSort and makes the same comparator calls in the same order, so a comparator that is not a total order, or has side effects, behaves as in pyright. The comparator may return `f64` (NaN counts as 0), `i32`, `i64` or `Ordering`. Never replace a ported `sort` with `slice::sort_by`: the result differs for inconsistent comparators.
+
+## regexes
+
+Pyright's regexes have no `u` flag. Where the `regex` crate spells a JS escape differently, splice the `js_regex` fragment into the pattern:
+
+| JavaScript | `regex` crate |
+|---|---|
+| `\s`, `\S`, `\s` inside `[...]` | `js_regex::WHITESPACE`, `NOT_WHITESPACE`, `WHITESPACE_IN_CLASS` |
+| `\w`, `\W`, `\w` inside `[...]` | `js_regex::WORD`, `NOT_WORD`, `WORD_IN_CLASS` |
+| `\d`, `\D` | `js_regex::DIGIT`, `NOT_DIGIT` |
+| `\b` | `js_regex::WORD_BOUNDARY` |
+| `.` | `js_regex::DOT` |
+| `/i` on ASCII letters | `(?i-u:letters)` |
+| `\s` test on one character | `string::is_js_whitespace_char(c)` |
+
+Lookahead and code-unit matching of astral characters have no fragment; `notes/jsrt.md` lists each call site and how to port it.
