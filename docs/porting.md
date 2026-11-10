@@ -39,6 +39,17 @@ Every porting agent follows this file. Change a rule here first, then in the cod
 - A field computed once on first use becomes `OnceCell<T>`.
 - Never hold a `RefCell` borrow across a call that can reach back into the same object. Copy the value out first.
 
+## memory
+
+pyright allocates about 23 times what it keeps alive: 194 GB over a pydantic-ai check, 8.4 GB live (`docs/research/memory-advice.md`). These rules keep a later collector of evaluator objects possible.
+
+- Allocate with `P::new_eval` in evaluator and checker code. Keep `P::new` for parsing, binding, configuration and the program.
+- Make an object a `P` only when pyright compares it with `===`, or writes to it after storing it elsewhere. Otherwise use an owned value, or `Rc` when it is shared and acyclic. The arena never runs Drop.
+- Never store a `&'static T` taken from `P::get` in a struct. Store the `P`.
+- Never capture a `P` in a closure that a struct stores. Write the stored callback as a struct with named fields and a method, so a collector can see every `P`.
+- Reach parse-node and type details only through typed handles and `d()`. Create them only through their `create` functions. Their memory layout will change.
+- Set `PYRIGHT_RS_ALLOC_STATS=1` to print objects and bytes per type and heap when `pyright-rs` exits.
+
 ## collections
 
 - `Map` becomes `jsrt::JsMap`. `Set` becomes `jsrt::JsSet`. Both iterate in insertion order, like JavaScript.
