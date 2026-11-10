@@ -7134,7 +7134,52 @@ impl Checker {
         class_type: ClassType,
         error_node: P<ParseNode>,
     ) {
-        todo!()
+        if class_type.d().shared.get().base_classes.borrow().len() < 2 {
+            return;
+        }
+
+        let mut candidates: Vec<ClassType> = Vec::new();
+
+        let base_classes = class_type.d().shared.get().base_classes.borrow().clone();
+        for base_class in base_classes {
+            if !analyzer::types::is_instantiable_class(base_class) {
+                // An unknown base may introduce an unknown disjoint base, but it
+                // cannot make two already-incompatible known bases compatible,
+                // so keep collecting the known candidates.
+                continue;
+            }
+
+            let Some(candidate) = ClassType::get_disjoint_base(ClassType(base_class)) else {
+                // The base class is invalid or its disjoint base is unknown; an
+                // unknown disjoint base cannot relate two otherwise-incompatible
+                // known candidates, so keep collecting the known candidates.
+                continue;
+            };
+
+            if !candidates.iter().any(|existing_candidate| {
+                ClassType::is_same_generic_class(*existing_candidate, candidate, 0)
+            }) {
+                candidates.push(candidate);
+            }
+        }
+
+        if candidates.len() > 1 && ClassType::get_most_derived_disjoint_base(&candidates).is_none() {
+            // `object` is a disjoint base but is compatible with every
+            // other disjoint base, so including it in the reported names
+            // would be misleading. Filter it out.
+            let bases = candidates
+                .iter()
+                .filter(|candidate| !ClassType::is_built_in(**candidate, Some(&["object".to_string()])))
+                .map(|candidate| format!("\"{}\"", candidate.d().shared.get().name))
+                .collect::<Vec<_>>()
+                .join(", ");
+            self._evaluator.add_diagnostic(
+                DiagnosticRule::reportGeneralTypeIssues,
+                &LocMessage::disjoint_base_incompatible().format(&[("bases", &bases)]),
+                error_node,
+                None,
+            );
+        }
     }
 
     // analyzer/checker.ts:5776
@@ -7143,7 +7188,121 @@ impl Checker {
         class_type: ClassType,
         error_node: P<ParseNode>,
     ) {
-        todo!()
+        // Skip this check if the class has only one base class or one or more
+        // of the base classes are Any.
+        let mut filtered_base_classes: Vec<ClassType> = Vec::new();
+        let base_classes = class_type.d().shared.get().base_classes.borrow().clone();
+        for base_class in base_classes {
+            if !analyzer::types::is_class(base_class) {
+                return;
+            }
+
+            if !ClassType::is_built_in(
+                ClassType(base_class),
+                Some(&["Generic".to_string(), "Protocol".to_string(), "object".to_string()]),
+            ) {
+                filtered_base_classes.push(ClassType(base_class));
+            }
+        }
+
+        if filtered_base_classes.len() < 2 {
+            return;
+        }
+
+        let diag_addendum = DiagnosticAddendum::new();
+
+        for base_class in filtered_base_classes {
+            let solution = analyzer::type_utils::build_solution_from_specialized_class(base_class);
+
+            let base_class_mro = base_class.d().shared.get().mro.borrow().clone();
+            for base_class_mro_class in base_class_mro {
+                // There's no need to check for conflicts if this class isn't generic.
+                if analyzer::types::is_class(base_class_mro_class)
+                    && !ClassType(base_class_mro_class).d().shared.get().type_params.borrow().is_empty()
+                {
+                    let specialized_base_class_mro_class = ClassType(analyzer::type_utils::apply_solved_type_vars(
+                        base_class_mro_class,
+                        &solution,
+                        &analyzer::type_utils::ApplyTypeVarOptions::default(),
+                    ));
+
+                    // Find the corresponding class in the derived class's MRO list.
+                    let class_mro = class_type.d().shared.get().mro.borrow().clone();
+                    let matching_mro_class = class_mro.iter().copied().find(|mro_class| {
+                        analyzer::types::is_class(*mro_class)
+                            && ClassType::is_same_generic_class(
+                                ClassType(*mro_class),
+                                specialized_base_class_mro_class,
+                                0,
+                            )
+                    });
+
+                    if let Some(matching_mro_class) = matching_mro_class {
+                        if analyzer::types::is_instantiable_class(matching_mro_class) {
+                            let scope_ids = analyzer::type_utils::get_type_var_scope_ids(class_type.0);
+                            let matching_mro_object = analyzer::type_utils::make_type_vars_bound(
+                                ClassType::clone_as_instance(ClassType(matching_mro_class), true).0,
+                                Some(&scope_ids[..]),
+                            );
+                            let base_class_mro_object = analyzer::type_utils::make_type_vars_bound(
+                                ClassType::clone_as_instance(specialized_base_class_mro_class, true).0,
+                                Some(&scope_ids[..]),
+                            );
+
+                            if !self._evaluator.assign_type(
+                                matching_mro_object,
+                                base_class_mro_object,
+                                None,
+                                None,
+                                analyzer::type_evaluator_types::AssignTypeFlags::Default,
+                                0,
+                            ) {
+                                let diag = DiagnosticAddendum::new();
+                                let base_class_object =
+                                    analyzer::type_utils::convert_to_instance(base_class.0, true);
+
+                                if analyzer::types::is_type_same(
+                                    base_class_object,
+                                    base_class_mro_object,
+                                    &analyzer::types::TypeSameOptions::default(),
+                                    0,
+                                ) {
+                                    diag.add_message(LocAddendum::base_class_incompatible().format(&[
+                                        ("baseClass", &self._evaluator.print_type(base_class_object, None)),
+                                        ("type", &self._evaluator.print_type(matching_mro_object, None)),
+                                    ]));
+                                } else {
+                                    diag.add_message(LocAddendum::base_class_incompatible_subclass().format(&[
+                                        ("baseClass", &self._evaluator.print_type(base_class_object, None)),
+                                        ("subclass", &self._evaluator.print_type(base_class_mro_object, None)),
+                                        ("type", &self._evaluator.print_type(matching_mro_object, None)),
+                                    ]));
+                                }
+
+                                diag_addendum.add_addendum(diag);
+
+                                // Break out of the inner loop so we don't report any redundant errors for this base class.
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if !diag_addendum.is_empty() {
+            self._evaluator.add_diagnostic(
+                DiagnosticRule::reportGeneralTypeIssues,
+                &(LocMessage::base_class_incompatible()
+                    .format(&[("type", &class_type.d().shared.get().name)])
+                    + &diag_addendum.get_string(
+                        common::diagnostic::DEFAULT_MAX_DIAGNOSTIC_DEPTH,
+                        common::diagnostic::DEFAULT_MAX_DIAGNOSTIC_LINE_COUNT,
+                    )),
+                error_node,
+                None,
+            );
+        }
     }
 
     // analyzer/checker.ts:5863
@@ -7152,7 +7311,101 @@ impl Checker {
         class_type: ClassType,
         error_node: P<ParseNode>,
     ) {
-        todo!()
+        // Skip this check if reportIncompatibleMethodOverride and reportIncompatibleVariableOverride
+        // are disabled because it's a relatively expensive check.
+        if self._file_info.diagnostic_rule_set.report_incompatible_method_override
+            == common::config_options::DiagnosticLevel::None
+            && self._file_info.diagnostic_rule_set.report_incompatible_variable_override
+                == common::config_options::DiagnosticLevel::None
+        {
+            return;
+        }
+
+        let mut base_classes: Vec<ClassType> = Vec::new();
+
+        // Filter any unknown base classes. Also remove Generic and Protocol
+        // base classes.
+        let class_base_classes = class_type.d().shared.get().base_classes.borrow().clone();
+        for base_class in class_base_classes {
+            if analyzer::types::is_class(base_class)
+                && !ClassType::is_built_in(ClassType(base_class), Some(&["Generic".to_string()]))
+                && !ClassType::is_built_in(ClassType(base_class), Some(&["Protocol".to_string()]))
+            {
+                base_classes.push(ClassType(base_class));
+            }
+        }
+
+        // If there is only one base class, there's nothing to do.
+        if base_classes.len() < 2 {
+            return;
+        }
+
+        // Build maps of symbols for each of the base classes.
+        let base_class_symbol_maps: Vec<jsrt::JsMap<String, ClassMember>> = base_classes
+            .iter()
+            .map(|base_class| {
+                let class_mro = class_type.d().shared.get().mro.borrow().clone();
+                let specialized_base_class = class_mro.iter().copied().find(|c| {
+                    analyzer::types::is_class(*c) && ClassType::is_same_generic_class(ClassType(*c), *base_class, 0)
+                });
+                match specialized_base_class {
+                    Some(specialized_base_class) if analyzer::types::is_class(specialized_base_class) => {
+                        // Retrieve all of the specialized symbols from the base class and its ancestors.
+                        analyzer::type_utils::get_class_fields_recursive(ClassType(specialized_base_class))
+                    }
+                    _ => jsrt::JsMap::default(),
+                }
+            })
+            .collect();
+
+        let child_class_symbol_map = analyzer::type_utils::get_class_fields_recursive(class_type);
+
+        for symbol_map_base_index in 1..base_class_symbol_maps.len() {
+            let base_symbol_map = &base_class_symbol_maps[symbol_map_base_index];
+
+            for (name, overridden_class_and_symbol) in base_symbol_map.iter() {
+                // Special-case dundered methods, which can differ in signature. Also
+                // exempt private symbols.
+                if analyzer::symbol_name_utils::is_dunder_name(name)
+                    || analyzer::symbol_name_utils::is_private_name(name)
+                {
+                    continue;
+                }
+
+                let overridden_class_type = overridden_class_and_symbol.class_type;
+                if !analyzer::types::is_class(overridden_class_type) {
+                    continue;
+                }
+
+                let override_class_and_symbol = child_class_symbol_map.get(name);
+
+                if let Some(override_class_and_symbol) = override_class_and_symbol {
+                    let override_class_type = override_class_and_symbol.class_type;
+
+                    // If the override is the same as the overridden, then there's nothing
+                    // to check. If the override is the child class, then we can also skip
+                    // the check because the normal override checks will report the error.
+                    if !analyzer::types::is_class(override_class_type)
+                        || ClassType::is_same_generic_class(
+                            ClassType(override_class_type),
+                            ClassType(overridden_class_type),
+                            0,
+                        )
+                        || ClassType::is_same_generic_class(ClassType(override_class_type), class_type, 0)
+                    {
+                        continue;
+                    }
+
+                    self._validate_multiple_inheritance_override(
+                        overridden_class_and_symbol,
+                        override_class_and_symbol,
+                        class_type,
+                        name,
+                        error_node,
+                    );
+                }
+            }
+        }
     }
 
     // analyzer/checker.ts:5950
@@ -7164,7 +7417,274 @@ impl Checker {
         member_name: &str,
         error_node: P<ParseNode>,
     ) {
-        todo!()
+        if !analyzer::types::is_class(overridden_class_and_symbol.class_type)
+            || !analyzer::types::is_class(override_class_and_symbol.class_type)
+        {
+            return;
+        }
+        let overridden_class = ClassType(overridden_class_and_symbol.class_type);
+        let override_class = ClassType(override_class_and_symbol.class_type);
+
+        // Special case the '_' symbol, which is used in single dispatch
+        // code and other cases where the name does not matter.
+        if member_name == "_" {
+            return;
+        }
+
+        let mut overridden_type = self
+            ._evaluator
+            .get_effective_type_of_symbol(overridden_class_and_symbol.symbol);
+        overridden_type = analyzer::type_utils::partially_specialize_type(
+            overridden_type,
+            overridden_class,
+            self._evaluator.get_type_class_type(),
+            None,
+        );
+
+        let override_symbol = override_class_and_symbol.symbol;
+        let mut override_type = self._evaluator.get_effective_type_of_symbol(override_symbol);
+        override_type = analyzer::type_utils::partially_specialize_type(
+            override_type,
+            override_class,
+            self._evaluator.get_type_class_type(),
+            None,
+        );
+
+        let child_override_symbol = ClassType::get_symbol_table(child_class_type).get(member_name);
+        let child_override_type =
+            child_override_symbol.map(|symbol| self._evaluator.get_effective_type_of_symbol(symbol));
+
+        let mut diag: Option<P<Diagnostic>> = None;
+        let override_decl =
+            analyzer::symbol_utils::get_last_typed_declaration_for_symbol(override_class_and_symbol.symbol);
+        let overridden_decl =
+            analyzer::symbol_utils::get_last_typed_declaration_for_symbol(overridden_class_and_symbol.symbol);
+
+        if analyzer::types::is_function_or_overloaded(overridden_type) {
+            let diag_addendum = DiagnosticAddendum::new();
+
+            if analyzer::types::is_function_or_overloaded(override_type) {
+                // If one base defines the member as a plain callable variable and a
+                // sibling base overrides it with a real method, bind the method's "self"
+                // so the two are compared as plain callables (mirrors the single-base
+                // override handling in `_validateBaseClassOverride`). This is
+                // load-bearing for parametered callables (e.g. `Callable[[int], None]`
+                // vs `def cb(self, value: int)`): without binding, the method's extra
+                // "self" causes a spurious arity mismatch. See the `DiamondParam*`
+                // samples in methodOverride7.py.
+                let child_class_self = ClassType::clone_as_instance(
+                    analyzer::type_utils::self_specialize_class(
+                        child_class_type,
+                        Some(&analyzer::type_utils::SelfSpecializeOptions {
+                            use_bound_type_vars: Some(true),
+                            ..Default::default()
+                        }),
+                    ),
+                    true,
+                );
+                let comparison = self._get_callable_variable_override_comparison(
+                    overridden_class_and_symbol.symbol,
+                    override_class_and_symbol.symbol,
+                    overridden_type,
+                    override_type,
+                    child_class_type,
+                    child_class_self,
+                );
+                let overridden_type_for_comparison = comparison.base_type;
+                let override_type_for_comparison = comparison.override_type;
+
+                if !self._evaluator.validate_override_method(
+                    overridden_type_for_comparison,
+                    override_type_for_comparison,
+                    None,
+                    diag_addendum,
+                    true,
+                ) {
+                    if let Some(override_decl) = override_decl {
+                        if override_decl.type_ == analyzer::declaration::DeclarationType::Function {
+                            diag = self._evaluator.add_diagnostic(
+                                DiagnosticRule::reportIncompatibleMethodOverride,
+                                &(LocMessage::base_class_method_type_incompatible().format(&[
+                                    ("classType", &child_class_type.d().shared.get().name),
+                                    ("name", member_name),
+                                ]) + &diag_addendum.get_string(
+                                    common::diagnostic::DEFAULT_MAX_DIAGNOSTIC_DEPTH,
+                                    common::diagnostic::DEFAULT_MAX_DIAGNOSTIC_LINE_COUNT,
+                                )),
+                                error_node,
+                                None,
+                            );
+                        }
+                    }
+                }
+            }
+        } else if analyzer::type_utils::is_property(overridden_type) {
+            // Handle properties specially.
+            if !analyzer::type_utils::is_property(override_type) && !analyzer::types::is_any_or_unknown(override_type) {
+                let decls = override_symbol.get_declarations();
+                if !decls.is_empty() {
+                    diag = self._evaluator.add_diagnostic(
+                        DiagnosticRule::reportIncompatibleVariableOverride,
+                        &LocMessage::base_class_variable_type_incompatible().format(&[
+                            ("classType", &child_class_type.d().shared.get().name),
+                            ("name", member_name),
+                        ]),
+                        error_node,
+                        None,
+                    );
+                }
+            } else {
+                self._validate_multiple_inheritance_property_override(
+                    overridden_class,
+                    child_class_type,
+                    overridden_type,
+                    override_type,
+                    override_symbol,
+                    member_name,
+                    error_node,
+                );
+            }
+        } else {
+            // This check can be expensive, so don't perform it if the corresponding
+            // rule is disabled.
+            if self._file_info.diagnostic_rule_set.report_incompatible_variable_override
+                != common::config_options::DiagnosticLevel::None
+            {
+                let primary_decl =
+                    analyzer::symbol_utils::get_last_typed_declaration_for_symbol(overridden_class_and_symbol.symbol);
+                let mut is_invariant = primary_decl.is_some_and(|primary_decl| {
+                    primary_decl.type_ == analyzer::declaration::DeclarationType::Variable
+                        && !primary_decl.variable().unwrap().is_final.get().unwrap_or(false)
+                });
+
+                // If the entry is a member of a frozen dataclass, it is immutable,
+                // so it does not need to be invariant.
+                if ClassType::is_data_class_frozen(overridden_class)
+                    && overridden_class.d().shared.get().data_class_entries.borrow().is_some()
+                {
+                    let has_dataclass_entry = overridden_class
+                        .d()
+                        .shared
+                        .get()
+                        .data_class_entries
+                        .borrow()
+                        .as_ref()
+                        .unwrap()
+                        .iter()
+                        .any(|entry| entry.name == member_name);
+                    if has_dataclass_entry {
+                        is_invariant = false;
+                    }
+                }
+
+                let mut overridden_td_entry: Option<analyzer::types::TypedDictEntry> = None;
+                if let Some(typed_dict_entries) = overridden_class.d().shared.get().typed_dict_entries.get() {
+                    let known_item = typed_dict_entries.known_items.borrow().get(member_name).cloned();
+                    let extra_items = typed_dict_entries.extra_items.borrow().clone();
+                    overridden_td_entry = Some(match known_item {
+                        Some(entry) => entry,
+                        None => match extra_items {
+                            Some(entry) => entry,
+                            None => analyzer::typed_dicts::get_effective_extra_items_entry_type(
+                                &self._evaluator,
+                                overridden_class,
+                            ),
+                        },
+                    });
+
+                    if overridden_td_entry.as_ref().is_some_and(|entry| entry.is_read_only) {
+                        is_invariant = false;
+                    }
+                }
+
+                let mut override_td_entry: Option<analyzer::types::TypedDictEntry> = None;
+                if let Some(typed_dict_entries) = override_class.d().shared.get().typed_dict_entries.get() {
+                    let known_item = typed_dict_entries.known_items.borrow().get(member_name).cloned();
+                    let extra_items = typed_dict_entries.extra_items.borrow().clone();
+                    override_td_entry = Some(match known_item {
+                        Some(entry) => entry,
+                        None => match extra_items {
+                            Some(entry) => entry,
+                            None => analyzer::typed_dicts::get_effective_extra_items_entry_type(
+                                &self._evaluator,
+                                override_class,
+                            ),
+                        },
+                    });
+                }
+
+                if !self._evaluator.assign_type(
+                    overridden_type,
+                    child_override_type.unwrap_or(override_type),
+                    None,
+                    None,
+                    if is_invariant {
+                        analyzer::type_evaluator_types::AssignTypeFlags::Invariant
+                    } else {
+                        analyzer::type_evaluator_types::AssignTypeFlags::Default
+                    },
+                    0,
+                ) {
+                    diag = self._evaluator.add_diagnostic(
+                        DiagnosticRule::reportIncompatibleVariableOverride,
+                        &LocMessage::base_class_variable_type_incompatible().format(&[
+                            ("classType", &child_class_type.d().shared.get().name),
+                            ("name", member_name),
+                        ]),
+                        error_node,
+                        None,
+                    );
+                } else if let (Some(overridden_td_entry), Some(override_td_entry)) =
+                    (&overridden_td_entry, &override_td_entry)
+                {
+                    let is_required_compatible: bool;
+                    let mut is_read_only_compatible = true;
+
+                    // If both classes are TypedDicts and they both define this field,
+                    // make sure the attributes are compatible.
+                    if overridden_td_entry.is_read_only {
+                        is_required_compatible = override_td_entry.is_required || !overridden_td_entry.is_required;
+                    } else {
+                        is_read_only_compatible = !override_td_entry.is_read_only;
+                        is_required_compatible = override_td_entry.is_required == overridden_td_entry.is_required;
+                    }
+
+                    if !is_required_compatible {
+                        let message: fn() -> crate::localization::localize::ParameterizedString =
+                            if override_td_entry.is_required {
+                                LocMessage::typed_dict_field_required_redefinition
+                            } else {
+                                LocMessage::typed_dict_field_not_required_redefinition
+                            };
+                        diag = self._evaluator.add_diagnostic(
+                            DiagnosticRule::reportIncompatibleVariableOverride,
+                            &message().format(&[("name", member_name)]),
+                            error_node,
+                            None,
+                        );
+                    } else if !is_read_only_compatible {
+                        diag = self._evaluator.add_diagnostic(
+                            DiagnosticRule::reportIncompatibleVariableOverride,
+                            &LocMessage::typed_dict_field_read_only_redefinition().format(&[("name", member_name)]),
+                            error_node,
+                            None,
+                        );
+                    }
+                }
+            }
+        }
+
+        if let (Some(diag), Some(override_decl), Some(overridden_decl)) = (diag, override_decl, overridden_decl) {
+            self._add_multiple_inheritance_related_info(
+                diag,
+                overridden_class,
+                overridden_type,
+                overridden_decl,
+                override_class,
+                override_type,
+                override_decl,
+            );
+        }
     }
 
     // analyzer/checker.ts:6168
@@ -7178,7 +7698,35 @@ impl Checker {
         override_type: P<Type>,
         override_decl: P<Declaration>,
     ) {
-        todo!()
+        diag.add_related_info(
+            LocAddendum::base_class_overridden_type().format(&[
+                (
+                    "baseClass",
+                    &self
+                        ._evaluator
+                        .print_type(analyzer::type_utils::convert_to_instance(overridden_class.0, true), None),
+                ),
+                ("type", &self._evaluator.print_type(overridden_type, None)),
+            ]),
+            overridden_decl.uri.get(),
+            overridden_decl.range.get(),
+            common::diagnostic::TaskListPriority::Normal,
+        );
+
+        diag.add_related_info(
+            LocAddendum::base_class_overrides_type().format(&[
+                (
+                    "baseClass",
+                    &self
+                        ._evaluator
+                        .print_type(analyzer::type_utils::convert_to_instance(override_class.0, true), None),
+                ),
+                ("type", &self._evaluator.print_type(override_type, None)),
+            ]),
+            override_decl.uri.get(),
+            override_decl.range.get(),
+            common::diagnostic::TaskListPriority::Normal,
+        );
     }
 
     // analyzer/checker.ts:6196
@@ -7192,12 +7740,165 @@ impl Checker {
         member_name: &str,
         error_node: P<ParseNode>,
     ) {
-        todo!()
+        // `c.priv.fgetInfo?.methodType` and its siblings. TypeScript casts the symbol type to a
+        // class; on any other type the info is undefined.
+        let prop_method_info: [(&str, fn(P<Type>) -> Option<P<Type>>); 3] = [
+            ("fget", |c| {
+                ClassType::cast(c).and_then(|c| c.d().priv_.borrow().fget_info.as_ref().map(|info| info.method_type))
+            }),
+            ("fset", |c| {
+                ClassType::cast(c).and_then(|c| c.d().priv_.borrow().fset_info.as_ref().map(|info| info.method_type))
+            }),
+            ("fdel", |c| {
+                ClassType::cast(c).and_then(|c| c.d().priv_.borrow().fdel_info.as_ref().map(|info| info.method_type))
+            }),
+        ];
+
+        for (method_name, method_accessor) in prop_method_info {
+            let diag_addendum = DiagnosticAddendum::new();
+            let base_class_prop_method = method_accessor(overridden_symbol_type);
+            let subclass_prop_method = method_accessor(override_symbol_type);
+
+            // Is the method present on the base class but missing in the subclass?
+            if let Some(base_class_prop_method) = base_class_prop_method {
+                let base_class_method_type = analyzer::type_utils::partially_specialize_type(
+                    base_class_prop_method,
+                    overridden_class_type,
+                    self._evaluator.get_type_class_type(),
+                    None,
+                );
+
+                // Overloaded accessors (e.g. overloaded property setters) are
+                // represented as an OverloadedType rather than a FunctionType.
+                // Override-compatibility checking for overloaded accessors is not
+                // yet performed; only single-function accessors are validated here.
+                if analyzer::types::is_function(base_class_method_type) {
+                    let base_class_method_type = FunctionType(base_class_method_type);
+                    match subclass_prop_method {
+                        None => {
+                            // The method is missing.
+                            diag_addendum.add_message(
+                                LocAddendum::property_method_missing().format(&[("name", method_name)]),
+                            );
+
+                            let decls = override_symbol.get_declarations();
+
+                            if !decls.is_empty() {
+                                let last_decl = decls[decls.len() - 1];
+                                let diag = self._evaluator.add_diagnostic(
+                                    DiagnosticRule::reportIncompatibleMethodOverride,
+                                    &(LocMessage::property_overridden().format(&[
+                                        ("name", member_name),
+                                        ("className", &overridden_class_type.d().shared.get().name),
+                                    ]) + &diag_addendum.get_string(
+                                        common::diagnostic::DEFAULT_MAX_DIAGNOSTIC_DEPTH,
+                                        common::diagnostic::DEFAULT_MAX_DIAGNOSTIC_LINE_COUNT,
+                                    )),
+                                    error_node,
+                                    None,
+                                );
+
+                                let orig_decl = base_class_method_type.d().shared.get().declaration.get();
+                                if let (Some(diag), Some(orig_decl)) = (diag, orig_decl) {
+                                    self._add_multiple_inheritance_related_info(
+                                        diag,
+                                        overridden_class_type,
+                                        overridden_symbol_type,
+                                        orig_decl,
+                                        override_class_type,
+                                        override_symbol_type,
+                                        last_decl,
+                                    );
+                                }
+                            }
+                        }
+                        Some(subclass_prop_method) => {
+                            let subclass_method_type = analyzer::type_utils::partially_specialize_type(
+                                subclass_prop_method,
+                                override_class_type,
+                                self._evaluator.get_type_class_type(),
+                                None,
+                            );
+
+                            if analyzer::types::is_function(subclass_method_type) {
+                                let subclass_method_type = FunctionType(subclass_method_type);
+                                if !self._evaluator.validate_override_method(
+                                    base_class_method_type.0,
+                                    subclass_method_type.0,
+                                    Some(override_class_type),
+                                    diag_addendum.create_addendum(),
+                                    true,
+                                ) {
+                                    diag_addendum.add_message(
+                                        LocAddendum::property_method_incompatible()
+                                            .format(&[("name", method_name)]),
+                                    );
+                                    let decl = subclass_method_type.d().shared.get().declaration.get();
+
+                                    if let Some(decl) = decl {
+                                        if decl.type_ == analyzer::declaration::DeclarationType::Function {
+                                            let diag = self._evaluator.add_diagnostic(
+                                                DiagnosticRule::reportIncompatibleMethodOverride,
+                                                &(LocMessage::property_overridden().format(&[
+                                                    ("name", member_name),
+                                                    ("className", &overridden_class_type.d().shared.get().name),
+                                                ]) + &diag_addendum.get_string(
+                                                    common::diagnostic::DEFAULT_MAX_DIAGNOSTIC_DEPTH,
+                                                    common::diagnostic::DEFAULT_MAX_DIAGNOSTIC_LINE_COUNT,
+                                                )),
+                                                error_node,
+                                                None,
+                                            );
+
+                                            let orig_decl =
+                                                base_class_method_type.d().shared.get().declaration.get();
+                                            if let (Some(diag), Some(orig_decl)) = (diag, orig_decl) {
+                                                self._add_multiple_inheritance_related_info(
+                                                    diag,
+                                                    overridden_class_type,
+                                                    overridden_symbol_type,
+                                                    orig_decl,
+                                                    override_class_type,
+                                                    override_symbol_type,
+                                                    decl,
+                                                );
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 
     // analyzer/checker.ts:6321
     pub(crate) fn _validate_overload_decorator_consistency(&mut self, class_type: ClassType) {
-        todo!()
+        ClassType::get_symbol_table(class_type).for_each(|symbol, _name| {
+            let primary_decl = analyzer::symbol_utils::get_last_typed_declaration_for_symbol(symbol);
+
+            let Some(primary_decl) = primary_decl else {
+                return;
+            };
+            if primary_decl.type_ != analyzer::declaration::DeclarationType::Function {
+                return;
+            }
+
+            let type_of_symbol = self._evaluator.get_effective_type_of_symbol(symbol);
+
+            if !analyzer::types::is_overloaded(type_of_symbol) {
+                return;
+            }
+
+            let overloads = OverloadedType::get_overloads(OverloadedType(type_of_symbol));
+            let implementation = OverloadedType::get_implementation(OverloadedType(type_of_symbol));
+
+            self._validate_overload_final_override(&overloads, implementation);
+
+            self._validate_overload_abstract_consistency(&overloads, implementation);
+        });
     }
 
     // analyzer/checker.ts:6344
@@ -7206,7 +7907,61 @@ impl Checker {
         overloads: &[FunctionType],
         implementation: Option<P<Type>>,
     ) {
-        todo!()
+        let name_node_or_node = |decl: P<Declaration>| -> P<ParseNode> {
+            analyzer::declaration_utils::get_name_node_for_declaration(decl)
+                .map(|name_node| name_node.0)
+                .unwrap_or_else(|| decl.node.get())
+        };
+
+        // If there's an implementation, it will determine whether the
+        // function is abstract.
+        if let Some(implementation) = implementation {
+            if analyzer::types::is_function(implementation) {
+                let is_impl_abstract = FunctionType::is_abstract_method(FunctionType(implementation));
+                if is_impl_abstract {
+                    return;
+                }
+
+                for overload in overloads {
+                    let decl = overload.d().shared.get().declaration.get();
+
+                    if FunctionType::is_abstract_method(*overload) {
+                        if let Some(decl) = decl {
+                            self._evaluator.add_diagnostic(
+                                DiagnosticRule::reportInconsistentOverload,
+                                &LocMessage::overload_abstract_impl_mismatch()
+                                    .format(&[("name", &overload.d().shared.get().name)]),
+                                name_node_or_node(decl),
+                                None,
+                            );
+                        }
+                    }
+                }
+                return;
+            }
+        }
+
+        if overloads.len() < 2 {
+            return;
+        }
+
+        // If there was no implementation, make sure all overloads are either
+        // abstract or not abstract.
+        let is_first_overload_abstract = FunctionType::is_abstract_method(overloads[0]);
+
+        for overload in &overloads[1..] {
+            if FunctionType::is_abstract_method(*overload) != is_first_overload_abstract {
+                if let Some(decl) = overload.d().shared.get().declaration.get() {
+                    self._evaluator.add_diagnostic(
+                        DiagnosticRule::reportInconsistentOverload,
+                        &LocMessage::overload_abstract_mismatch()
+                            .format(&[("name", &overload.d().shared.get().name)]),
+                        name_node_or_node(decl),
+                        None,
+                    );
+                }
+            }
+        }
     }
 
     // analyzer/checker.ts:6390
@@ -7215,17 +7970,296 @@ impl Checker {
         overloads: &[FunctionType],
         implementation: Option<P<Type>>,
     ) {
-        todo!()
+        let name_node_or_node = |decl: P<Declaration>| -> P<ParseNode> {
+            analyzer::declaration_utils::get_name_node_for_declaration(decl)
+                .map(|name_node| name_node.0)
+                .unwrap_or_else(|| decl.node.get())
+        };
+
+        // If there's an implementation, the overloads are not allowed to be marked final or override.
+        if implementation.is_some() {
+            for overload in overloads {
+                if FunctionType::is_final(*overload) {
+                    if let Some(decl) = overload.d().shared.get().declaration.get() {
+                        self._evaluator.add_diagnostic(
+                            DiagnosticRule::reportInconsistentOverload,
+                            &LocMessage::overload_final_impl(),
+                            name_node_or_node(decl),
+                            None,
+                        );
+                    }
+                }
+
+                if FunctionType::is_overridden(*overload) {
+                    if let Some(decl) = overload.d().shared.get().declaration.get() {
+                        self._evaluator.add_diagnostic(
+                            DiagnosticRule::reportInconsistentOverload,
+                            &LocMessage::overload_override_impl(),
+                            name_node_or_node(decl),
+                            None,
+                        );
+                    }
+                }
+            }
+
+            return;
+        }
+
+        // If there's not an implementation, only the first overload can be marked final.
+        if overloads.is_empty() {
+            return;
+        }
+
+        for overload in &overloads[1..] {
+            if FunctionType::is_final(*overload) {
+                if let Some(decl) = overload.d().shared.get().declaration.get() {
+                    self._evaluator.add_diagnostic(
+                        DiagnosticRule::reportInconsistentOverload,
+                        &LocMessage::overload_final_no_impl(),
+                        name_node_or_node(decl),
+                        None,
+                    );
+                }
+            }
+
+            if FunctionType::is_overridden(*overload) {
+                if let Some(decl) = overload.d().shared.get().declaration.get() {
+                    self._evaluator.add_diagnostic(
+                        DiagnosticRule::reportInconsistentOverload,
+                        &LocMessage::overload_override_no_impl(),
+                        name_node_or_node(decl),
+                        None,
+                    );
+                }
+            }
+        }
     }
 
     // analyzer/checker.ts:6441
     pub(crate) fn _validate_typed_dict_overrides(&mut self, class_type: ClassType) {
-        todo!()
+        if !ClassType::is_typed_dict_class(class_type) {
+            return;
+        }
+
+        let typed_dict_entries =
+            analyzer::typed_dicts::get_typed_dict_members_for_class(&self._evaluator, class_type, false);
+
+        let base_classes = class_type.d().shared.get().base_classes.borrow().clone();
+        for base_class in base_classes {
+            let diag = DiagnosticAddendum::new();
+
+            if !analyzer::types::is_class(base_class)
+                || !ClassType::is_typed_dict_class(ClassType(base_class))
+                || !ClassType::is_typed_dict_effectively_closed(ClassType(base_class))
+            {
+                continue;
+            }
+            let base_class = ClassType(base_class);
+
+            let base_typed_dict_entries =
+                analyzer::typed_dicts::get_typed_dict_members_for_class(&self._evaluator, base_class, false);
+
+            let solution = analyzer::type_utils::build_solution_from_specialized_class(base_class);
+
+            let base_extra_items = base_typed_dict_entries.extra_items.borrow().clone();
+            let base_extra_items_type = match &base_extra_items {
+                Some(extra_items) => analyzer::type_utils::apply_solved_type_vars(
+                    extra_items.value_type,
+                    &solution,
+                    &analyzer::type_utils::ApplyTypeVarOptions::default(),
+                ),
+                None => analyzer::types::UnknownType::create(false).0,
+            };
+
+            let known_items: Vec<(String, analyzer::types::TypedDictEntry)> = typed_dict_entries
+                .known_items
+                .borrow()
+                .iter()
+                .map(|(name, entry)| (name.clone(), entry.clone()))
+                .collect();
+            for (name, entry) in known_items {
+                let base_entry = base_typed_dict_entries.known_items.borrow().get(&name).cloned();
+
+                if base_entry.is_none() {
+                    match &base_extra_items {
+                        Some(extra_items) if !analyzer::types::is_never(extra_items.value_type) => {
+                            if !self._evaluator.assign_type(
+                                base_extra_items_type,
+                                entry.value_type,
+                                None,
+                                None,
+                                if !extra_items.is_read_only {
+                                    analyzer::type_evaluator_types::AssignTypeFlags::Invariant
+                                } else {
+                                    analyzer::type_evaluator_types::AssignTypeFlags::Default
+                                },
+                                0,
+                            ) {
+                                diag.add_message(LocAddendum::typed_dict_closed_extra_type_mismatch().format(&[
+                                    ("name", &name),
+                                    ("type", &self._evaluator.print_type(entry.value_type, None)),
+                                ]));
+                            } else if !extra_items.is_read_only && entry.is_read_only {
+                                diag.add_message(
+                                    LocAddendum::typed_dict_closed_field_not_read_only().format(&[("name", &name)]),
+                                );
+                            } else if !extra_items.is_read_only && entry.is_required {
+                                diag.add_message(
+                                    LocAddendum::typed_dict_closed_field_not_required().format(&[("name", &name)]),
+                                );
+                            }
+                        }
+                        _ => {
+                            diag.add_message(
+                                LocAddendum::typed_dict_closed_extra_not_allowed().format(&[("name", &name)]),
+                            );
+                        }
+                    }
+                }
+            }
+
+            let extra_items = typed_dict_entries.extra_items.borrow().clone();
+            if let (Some(extra_items), Some(base_extra_items)) = (&extra_items, &base_extra_items) {
+                if !self._evaluator.assign_type(
+                    base_extra_items_type,
+                    extra_items.value_type,
+                    None,
+                    None,
+                    if !base_extra_items.is_read_only {
+                        analyzer::type_evaluator_types::AssignTypeFlags::Invariant
+                    } else {
+                        analyzer::type_evaluator_types::AssignTypeFlags::Default
+                    },
+                    0,
+                ) {
+                    diag.add_message(LocAddendum::typed_dict_closed_extra_type_mismatch().format(&[
+                        ("name", "extra_items"),
+                        ("type", &self._evaluator.print_type(extra_items.value_type, None)),
+                    ]));
+                }
+            }
+
+            if !diag.is_empty() {
+                if let Some(declaration) = class_type.d().shared.get().declaration.get() {
+                    let decl_node = analyzer::declaration_utils::get_name_node_for_declaration(declaration);
+
+                    if let Some(decl_node) = decl_node {
+                        if base_extra_items.is_some() {
+                            self._evaluator.add_diagnostic(
+                                DiagnosticRule::reportIncompatibleVariableOverride,
+                                &(LocMessage::typed_dict_closed_extras().format(&[
+                                    ("name", &base_class.d().shared.get().name),
+                                    ("type", &self._evaluator.print_type(base_extra_items_type, None)),
+                                ]) + &diag.get_string(
+                                    common::diagnostic::DEFAULT_MAX_DIAGNOSTIC_DEPTH,
+                                    common::diagnostic::DEFAULT_MAX_DIAGNOSTIC_LINE_COUNT,
+                                )),
+                                decl_node.0,
+                                None,
+                            );
+                        } else {
+                            self._evaluator.add_diagnostic(
+                                DiagnosticRule::reportIncompatibleVariableOverride,
+                                &(LocMessage::typed_dict_closed_no_extras()
+                                    .format(&[("name", &base_class.d().shared.get().name)])
+                                    + &diag.get_string(
+                                        common::diagnostic::DEFAULT_MAX_DIAGNOSTIC_DEPTH,
+                                        common::diagnostic::DEFAULT_MAX_DIAGNOSTIC_LINE_COUNT,
+                                    )),
+                                decl_node.0,
+                                None,
+                            );
+                        }
+                    }
+                }
+            }
+        }
     }
 
     // analyzer/checker.ts:6565
     pub(crate) fn _validate_base_class_overrides(&mut self, class_type: ClassType) {
-        todo!()
+        ClassType::get_symbol_table(class_type).for_each(|symbol, name| {
+            // Private symbols do not need to match in type since their
+            // names are mangled, and subclasses can't access the value in
+            // the parent class.
+            if analyzer::symbol_name_utils::is_private_name(name) {
+                return;
+            }
+
+            // If the symbol has no declaration, and the type is inferred,
+            // skip the type validation but still check for other issues like
+            // Final overrides and class/instance variable mismatches.
+            let mut validate_type = true;
+            if !symbol.has_typed_declarations() {
+                validate_type = false;
+            }
+
+            // Get the symbol type defined in this class.
+            let type_of_symbol = self._evaluator.get_effective_type_of_symbol(symbol);
+
+            // If the type of the override symbol isn't known, stop here.
+            if analyzer::types::is_any_or_unknown(type_of_symbol) {
+                return;
+            }
+
+            let mut first_override: Option<ClassMember> = None;
+
+            let base_classes = class_type.d().shared.get().base_classes.borrow().clone();
+            for base_class in base_classes {
+                if !analyzer::types::is_class(base_class) {
+                    continue;
+                }
+
+                // Look up the base class in the MRO list. It's the same generic class
+                // but has already been specialized using the type variables of the classType.
+                let class_mro = class_type.d().shared.get().mro.borrow().clone();
+                let mro_base_class = class_mro.iter().copied().find(|mro_class| {
+                    analyzer::types::is_class(*mro_class)
+                        && ClassType::is_same_generic_class(ClassType(*mro_class), ClassType(base_class), 0)
+                });
+                let Some(mro_base_class) = mro_base_class else {
+                    continue;
+                };
+
+                common::debug::assert(analyzer::types::is_class(mro_base_class), None);
+                let base_class_and_symbol = analyzer::type_utils::look_up_class_member(
+                    ClassType(mro_base_class),
+                    name,
+                    analyzer::type_utils::MemberAccessFlags::Default,
+                    None,
+                );
+                let Some(base_class_and_symbol) = base_class_and_symbol else {
+                    continue;
+                };
+
+                if first_override.is_none() {
+                    first_override = Some(base_class_and_symbol.clone());
+                }
+
+                self._validate_base_class_override(
+                    &base_class_and_symbol,
+                    symbol,
+                    if validate_type {
+                        type_of_symbol
+                    } else {
+                        analyzer::types::AnyType::create(false).0
+                    },
+                    class_type,
+                    name,
+                );
+            }
+
+            match first_override {
+                None => {
+                    // If this is a method decorated with @override, validate that there
+                    // is a base class method of the same name.
+                    self._validate_override_decorator_not_present(symbol, type_of_symbol);
+                }
+                Some(first_override) => {
+                    self._validate_override_decorator_present(symbol, type_of_symbol, &first_override);
+                }
+            }
+        });
     }
 
     // analyzer/checker.ts:6633
@@ -7235,12 +8269,83 @@ impl Checker {
         override_type: P<Type>,
         base_member: &ClassMember,
     ) {
-        todo!()
+        // Skip this check if disabled.
+        if self._file_info.diagnostic_rule_set.report_implicit_override == common::config_options::DiagnosticLevel::None {
+            return;
+        }
+
+        let mut override_function: Option<FunctionType> = None;
+
+        if analyzer::types::is_function(override_type) {
+            override_function = Some(FunctionType(override_type));
+        } else if analyzer::types::is_overloaded(override_type) {
+            let impl_ = OverloadedType::get_implementation(OverloadedType(override_type));
+            if let Some(impl_) = impl_ {
+                if analyzer::types::is_function(impl_) {
+                    override_function = Some(FunctionType(impl_));
+                }
+            }
+        } else if analyzer::types::is_class_instance(override_type)
+            && ClassType::is_property_class(ClassType(override_type))
+        {
+            let fget_method_type =
+                ClassType(override_type).d().priv_.borrow().fget_info.as_ref().map(|info| info.method_type);
+            if let Some(fget_method_type) = fget_method_type {
+                if analyzer::types::is_function(fget_method_type) {
+                    override_function = Some(FunctionType(fget_method_type));
+                }
+            }
+        }
+
+        let Some(override_function) = override_function else {
+            return;
+        };
+        let Some(override_decl) = override_function.d().shared.get().declaration.get() else {
+            return;
+        };
+        if FunctionType::is_overridden(override_function) {
+            return;
+        }
+
+        // Constructors are exempt.
+        if self._is_method_exempt_from_lsp(&override_function.d().shared.get().name) {
+            return;
+        }
+
+        // If the declaration for the override function is not the same as the
+        // declaration for the symbol, the function was probably replaced by a decorator.
+        if !symbol.get_declarations().contains(&override_decl) {
+            return;
+        }
+
+        // If the base class is unknown, don't report a missing decorator.
+        if analyzer::types::is_any_or_unknown(base_member.class_type) {
+            return;
+        }
+
+        let func_node = FunctionNode(override_decl.node.get());
+        let func_name = func_node.d().name.get();
+        self._evaluator.add_diagnostic(
+            DiagnosticRule::reportImplicitOverride,
+            &LocMessage::override_decorator_missing().format(&[
+                ("name", &func_name.d().value),
+                (
+                    "className",
+                    &self._evaluator.print_type(
+                        analyzer::type_utils::convert_to_instance(base_member.class_type, true),
+                        None,
+                    ),
+                ),
+            ]),
+            func_name.0,
+            None,
+        );
     }
 
     // analyzer/checker.ts:6686
     pub(crate) fn _is_method_exempt_from_lsp(&mut self, name: &str) -> bool {
-        todo!()
+        let exempt_methods = ["__init__", "__new__", "__init_subclass__", "__post_init__"];
+        exempt_methods.contains(&name)
     }
 
     // analyzer/checker.ts:6694
@@ -7249,7 +8354,61 @@ impl Checker {
         symbol: P<Symbol>,
         override_type: P<Type>,
     ) {
-        todo!()
+        let mut override_function: Option<FunctionType> = None;
+
+        if analyzer::types::is_function(override_type) {
+            override_function = Some(FunctionType(override_type));
+        } else if analyzer::types::is_overloaded(override_type) {
+            let impl_ = OverloadedType::get_implementation(OverloadedType(override_type));
+            if let Some(impl_) = impl_ {
+                if analyzer::types::is_function(impl_) {
+                    override_function = Some(FunctionType(impl_));
+                }
+            }
+
+            // If there is no implementation present, use the first overload.
+            if impl_.is_none() {
+                let overloads = OverloadedType::get_overloads(OverloadedType(override_type));
+                if !overloads.is_empty() {
+                    override_function = Some(overloads[0]);
+                }
+            }
+        } else if analyzer::types::is_class_instance(override_type)
+            && ClassType::is_property_class(ClassType(override_type))
+        {
+            let fget_method_type =
+                ClassType(override_type).d().priv_.borrow().fget_info.as_ref().map(|info| info.method_type);
+            if let Some(fget_method_type) = fget_method_type {
+                if analyzer::types::is_function(fget_method_type) {
+                    override_function = Some(FunctionType(fget_method_type));
+                }
+            }
+        }
+
+        let Some(override_function) = override_function else {
+            return;
+        };
+        let Some(override_decl) = override_function.d().shared.get().declaration.get() else {
+            return;
+        };
+        if !FunctionType::is_overridden(override_function) {
+            return;
+        }
+
+        // If the declaration for the override function is not the same as the
+        // declaration for the symbol, the function was probably replaced by a decorator.
+        if !symbol.get_declarations().contains(&override_decl) {
+            return;
+        }
+
+        let func_node = FunctionNode(override_decl.node.get());
+        let func_name = func_node.d().name.get();
+        self._evaluator.add_diagnostic(
+            DiagnosticRule::reportGeneralTypeIssues,
+            &LocMessage::overridden_method_not_found().format(&[("name", &func_name.d().value)]),
+            func_name.0,
+            None,
+        );
     }
 
     // analyzer/checker.ts:6750
@@ -7262,12 +8421,90 @@ impl Checker {
         child_class_type: ClassType,
         child_class_self: ClassType,
     ) -> CheckerGetCallableVariableOverrideComparisonReturn {
-        todo!()
+        let base_decls = base_symbol.get_declarations();
+        let base_is_callable_variable = !base_decls.is_empty()
+            && base_decls
+                .iter()
+                .all(|decl| decl.type_ == analyzer::declaration::DeclarationType::Variable);
+        let override_is_method = override_symbol
+            .get_declarations()
+            .iter()
+            .any(|decl| decl.type_ == analyzer::declaration::DeclarationType::Function);
+
+        if !base_is_callable_variable || !override_is_method {
+            return CheckerGetCallableVariableOverrideComparisonReturn { base_type, override_type };
+        }
+
+        let bound_override_type = self._evaluator.bind_function_to_class_or_object(
+            Some(child_class_self),
+            override_type,
+            Some(child_class_type),
+            false,
+            None,
+            None,
+            0,
+        );
+
+        let Some(bound_override_type) = bound_override_type else {
+            return CheckerGetCallableVariableOverrideComparisonReturn { base_type, override_type };
+        };
+
+        // Mark both the base callable and the bound override as static so the
+        // override comparison does not skip the first parameter as an unbound
+        // "self" (see the `i === 0` self/cls skip in typeEvaluator's
+        // `validateOverrideMethodInternal`). Without this, the bound override
+        // keeps its instance-method flag and its first real parameter would be
+        // silently dropped during the comparison.
+        let static_base_type = if analyzer::types::is_function(base_type) {
+            self._mark_function_static(FunctionType(base_type)).0
+        } else {
+            base_type
+        };
+
+        if analyzer::types::is_function(bound_override_type) {
+            return CheckerGetCallableVariableOverrideComparisonReturn {
+                base_type: static_base_type,
+                override_type: self._mark_function_static(FunctionType(bound_override_type)).0,
+            };
+        }
+
+        if analyzer::types::is_overloaded(bound_override_type) {
+            // An overloaded method binds to an overloaded callable. Apply the
+            // same static normalization to every overload (and the
+            // implementation, if present) so an incompatible first parameter in
+            // an overloaded override is still caught rather than skipped as
+            // "self".
+            let static_overloads: Vec<FunctionType> =
+                OverloadedType::get_overloads(OverloadedType(bound_override_type))
+                    .into_iter()
+                    .map(|overload| self._mark_function_static(overload))
+                    .collect();
+            let impl_ = OverloadedType::get_implementation(OverloadedType(bound_override_type));
+            let static_impl = match impl_ {
+                Some(impl_) if analyzer::types::is_function(impl_) => {
+                    Some(self._mark_function_static(FunctionType(impl_)).0)
+                }
+                _ => impl_,
+            };
+
+            return CheckerGetCallableVariableOverrideComparisonReturn {
+                base_type: static_base_type,
+                override_type: OverloadedType::create(&static_overloads, static_impl).0,
+            };
+        }
+
+        CheckerGetCallableVariableOverrideComparisonReturn {
+            base_type,
+            override_type: bound_override_type,
+        }
     }
 
     // analyzer/checker.ts:6815
     pub(crate) fn _mark_function_static(&mut self, function_type: FunctionType) -> FunctionType {
-        todo!()
+        FunctionType::clone_with_new_flags(
+            function_type,
+            function_type.d().shared.get().flags.get() | analyzer::types::FunctionTypeFlags::StaticMethod,
+        )
     }
 
     // analyzer/checker.ts:6819
@@ -7279,7 +8516,525 @@ impl Checker {
         child_class_type: ClassType,
         member_name: &str,
     ) {
-        todo!()
+        let name_node_or_node = |decl: P<Declaration>| -> P<ParseNode> {
+            analyzer::declaration_utils::get_name_node_for_declaration(decl)
+                .map(|name_node| name_node.0)
+                .unwrap_or_else(|| decl.node.get())
+        };
+
+        if !analyzer::types::is_instantiable_class(base_class_and_symbol.class_type) {
+            return;
+        }
+
+        if base_class_and_symbol.symbol.is_ignored_for_override_checks()
+            || override_symbol.is_ignored_for_override_checks()
+        {
+            return;
+        }
+
+        // If the base class doesn't provide a type declaration, we won't bother
+        // proceeding with additional checks. Type inference is too inaccurate
+        // in this case, plus it would be very slow.
+        if !base_class_and_symbol.symbol.has_typed_declarations() {
+            return;
+        }
+
+        // Special case the '_' symbol, which is used in single dispatch
+        // code and other cases where the name does not matter.
+        if member_name == "_" {
+            return;
+        }
+
+        let base_class = ClassType(base_class_and_symbol.class_type);
+        let child_class_self = ClassType::clone_as_instance(
+            analyzer::type_utils::self_specialize_class(
+                child_class_type,
+                Some(&analyzer::type_utils::SelfSpecializeOptions {
+                    use_bound_type_vars: Some(true),
+                    ..Default::default()
+                }),
+            ),
+            true,
+        );
+
+        // The "Self" value for the base class depends on whether it's a
+        // protocol or not. It's not clear from the typing spec whether
+        // this is the correct behavior.
+        let base_class_self = if ClassType::is_protocol_class(base_class) {
+            child_class_self
+        } else {
+            ClassType::clone_as_instance(
+                analyzer::type_utils::self_specialize_class(
+                    base_class,
+                    Some(&analyzer::type_utils::SelfSpecializeOptions {
+                        use_bound_type_vars: Some(true),
+                        ..Default::default()
+                    }),
+                ),
+                true,
+            )
+        };
+
+        let mut base_type = analyzer::type_utils::partially_specialize_type(
+            self._evaluator.get_effective_type_of_symbol(base_class_and_symbol.symbol),
+            base_class,
+            self._evaluator.get_type_class_type(),
+            Some(base_class_self.0),
+        );
+
+        let mut override_type = analyzer::type_utils::partially_specialize_type(
+            override_type,
+            child_class_type,
+            self._evaluator.get_type_class_type(),
+            Some(child_class_self.0),
+        );
+
+        let child_type_var_scope_id = child_class_type
+            .d()
+            .shared
+            .get()
+            .type_var_scope_id
+            .borrow()
+            .clone()
+            .filter(|scope_id| !scope_id.is_empty());
+        if let Some(child_type_var_scope_id) = child_type_var_scope_id {
+            override_type = analyzer::type_utils::make_type_vars_bound(
+                override_type,
+                Some(&[child_type_var_scope_id.clone()][..]),
+            );
+            base_type = analyzer::type_utils::make_type_vars_bound(base_type, Some(&[child_type_var_scope_id][..]));
+        }
+
+        // Determine whether this is an attempt to override a method marked @final.
+        if self._is_final_function(member_name, base_class_and_symbol.symbol, base_type) {
+            let decl = analyzer::symbol_utils::get_last_typed_declaration_for_symbol(override_symbol);
+            if let Some(decl) = decl {
+                if decl.type_ == analyzer::declaration::DeclarationType::Function {
+                    let diag = self._evaluator.add_diagnostic(
+                        DiagnosticRule::reportIncompatibleMethodOverride,
+                        &LocMessage::final_method_override().format(&[
+                            ("name", member_name),
+                            ("className", &base_class.d().shared.get().name),
+                        ]),
+                        FunctionNode(decl.node.get()).d().name.get().0,
+                        None,
+                    );
+
+                    let orig_decl =
+                        analyzer::symbol_utils::get_last_typed_declaration_for_symbol(base_class_and_symbol.symbol);
+                    if let (Some(diag), Some(orig_decl)) = (diag, orig_decl) {
+                        diag.add_related_info(
+                            LocAddendum::final_method(),
+                            orig_decl.uri.get(),
+                            orig_decl.range.get(),
+                            common::diagnostic::TaskListPriority::Normal,
+                        );
+                    }
+                }
+            }
+        }
+
+        if analyzer::types::is_function_or_overloaded(base_type) {
+            let diag_addendum = DiagnosticAddendum::new();
+
+            // Don't check certain magic functions or private symbols.
+            // Also, skip this check if the class is a TypedDict. The methods for a TypedDict
+            // are synthesized, and they can result in many overloads. We assume they
+            // are correct and will not produce any errors.
+            if self._is_method_exempt_from_lsp(member_name)
+                || analyzer::symbol_name_utils::is_private_name(member_name)
+                || ClassType::is_typed_dict_class(child_class_type)
+            {
+                return;
+            }
+
+            if analyzer::types::is_function_or_overloaded(override_type) {
+                // Don't enforce parameter names for dundered methods. Many of them
+                // are misnamed in typeshed stubs, so this would result in many
+                // false positives.
+                let enforce_param_name_match = !analyzer::symbol_name_utils::is_dunder_name(member_name);
+
+                // If the base class member is a plain callable variable
+                // (e.g. `x: Callable[..., None]`) rather than an actual method,
+                // bind the override method's "self" so the two are compared as
+                // plain callables. The declaration scans needed to detect this
+                // are computed inside this helper, so the common method-vs-method
+                // path and the exempt/private/TypedDict early-returns above pay
+                // nothing extra.
+                let comparison = self._get_callable_variable_override_comparison(
+                    base_class_and_symbol.symbol,
+                    override_symbol,
+                    base_type,
+                    override_type,
+                    child_class_type,
+                    child_class_self,
+                );
+                let base_type_for_comparison = comparison.base_type;
+                let override_type_for_comparison = comparison.override_type;
+
+                if self._evaluator.validate_override_method(
+                    base_type_for_comparison,
+                    override_type_for_comparison,
+                    Some(child_class_type),
+                    diag_addendum,
+                    enforce_param_name_match,
+                ) {
+                    return;
+                }
+
+                let decl = analyzer::symbol_utils::get_last_typed_declaration_for_symbol(override_symbol);
+                let Some(decl) = decl else {
+                    return;
+                };
+
+                let diag = self._evaluator.add_diagnostic(
+                    DiagnosticRule::reportIncompatibleMethodOverride,
+                    &(LocMessage::incompatible_method_override().format(&[
+                        ("name", member_name),
+                        ("className", &base_class.d().shared.get().name),
+                    ]) + &diag_addendum.get_string(
+                        common::diagnostic::DEFAULT_MAX_DIAGNOSTIC_DEPTH,
+                        common::diagnostic::DEFAULT_MAX_DIAGNOSTIC_LINE_COUNT,
+                    )),
+                    name_node_or_node(decl),
+                    None,
+                );
+
+                let orig_decl =
+                    analyzer::symbol_utils::get_last_typed_declaration_for_symbol(base_class_and_symbol.symbol);
+                if let (Some(diag), Some(orig_decl)) = (diag, orig_decl) {
+                    diag.add_related_info(
+                        LocAddendum::overridden_method(),
+                        orig_decl.uri.get(),
+                        orig_decl.range.get(),
+                        common::diagnostic::TaskListPriority::Normal,
+                    );
+                }
+                return;
+            }
+
+            if !analyzer::types::is_any_or_unknown(override_type) {
+                // Special-case overrides of methods in '_TypedDict', since
+                // TypedDict attributes aren't manifest as attributes but rather
+                // as named keys.
+                if ClassType::is_built_in(
+                    base_class,
+                    Some(&["_TypedDict".to_string(), "TypedDictFallback".to_string()]),
+                ) {
+                    return;
+                }
+
+                let decls = override_symbol.get_declarations();
+                if decls.is_empty() {
+                    return;
+                }
+
+                let last_decl = decls[decls.len() - 1];
+                let diag = self._evaluator.add_diagnostic(
+                    DiagnosticRule::reportIncompatibleMethodOverride,
+                    &LocMessage::method_overridden().format(&[
+                        ("name", member_name),
+                        ("className", &base_class.d().shared.get().name),
+                        ("type", &self._evaluator.print_type(override_type, None)),
+                    ]),
+                    name_node_or_node(last_decl),
+                    None,
+                );
+
+                let orig_decl =
+                    analyzer::symbol_utils::get_last_typed_declaration_for_symbol(base_class_and_symbol.symbol);
+                if let (Some(diag), Some(orig_decl)) = (diag, orig_decl) {
+                    diag.add_related_info(
+                        LocAddendum::overridden_method(),
+                        orig_decl.uri.get(),
+                        orig_decl.range.get(),
+                        common::diagnostic::TaskListPriority::Normal,
+                    );
+                }
+            }
+            return;
+        }
+
+        if analyzer::type_utils::is_property(base_type) {
+            // Handle properties specially.
+            if !analyzer::type_utils::is_property(override_type) {
+                let decls = override_symbol.get_declarations();
+                if !decls.is_empty() && override_symbol.is_class_member() {
+                    let last_decl = decls[decls.len() - 1];
+                    self._evaluator.add_diagnostic(
+                        DiagnosticRule::reportIncompatibleMethodOverride,
+                        &LocMessage::property_overridden().format(&[
+                            ("name", member_name),
+                            ("className", &base_class.d().shared.get().name),
+                        ]),
+                        name_node_or_node(last_decl),
+                        None,
+                    );
+                }
+            } else {
+                self._validate_property_override(
+                    base_class,
+                    child_class_type,
+                    base_type,
+                    override_type,
+                    override_symbol,
+                    member_name,
+                );
+            }
+            return;
+        }
+
+        // This check can be expensive, so don't perform it if the corresponding
+        // rule is disabled.
+        if self._file_info.diagnostic_rule_set.report_incompatible_variable_override
+            != common::config_options::DiagnosticLevel::None
+        {
+            let decls = override_symbol.get_declarations();
+
+            if decls.is_empty() {
+                return;
+            }
+
+            let last_decl = decls[decls.len() - 1];
+            let primary_decl = decls[0];
+
+            // Verify that the override type is assignable to (same or narrower than)
+            // the declared type of the base symbol.
+            let mut is_invariant = primary_decl.type_ == analyzer::declaration::DeclarationType::Variable
+                && !primary_decl.variable().unwrap().is_final.get().unwrap_or(false);
+
+            // If the entry is a member of a frozen dataclass, it is immutable,
+            // so it does not need to be invariant.
+            if ClassType::is_data_class_frozen(base_class)
+                && base_class.d().shared.get().data_class_entries.borrow().is_some()
+            {
+                let has_dataclass_entry = base_class
+                    .d()
+                    .shared
+                    .get()
+                    .data_class_entries
+                    .borrow()
+                    .as_ref()
+                    .unwrap()
+                    .iter()
+                    .any(|entry| entry.name == member_name);
+                if has_dataclass_entry {
+                    is_invariant = false;
+                }
+            }
+
+            let mut overridden_td_entry: Option<analyzer::types::TypedDictEntry> = None;
+            let mut override_td_entry: Option<analyzer::types::TypedDictEntry> = None;
+
+            if !override_symbol.is_ignored_for_protocol_match() {
+                if let Some(typed_dict_entries) = base_class.d().shared.get().typed_dict_entries.get() {
+                    let known_item = typed_dict_entries.known_items.borrow().get(member_name).cloned();
+                    let extra_items = typed_dict_entries.extra_items.borrow().clone();
+                    overridden_td_entry = Some(match known_item {
+                        Some(entry) => entry,
+                        None => match extra_items {
+                            Some(entry) => entry,
+                            None => analyzer::typed_dicts::get_effective_extra_items_entry_type(
+                                &self._evaluator,
+                                base_class,
+                            ),
+                        },
+                    });
+
+                    if overridden_td_entry.as_ref().is_some_and(|entry| entry.is_read_only) {
+                        is_invariant = false;
+                    }
+                }
+
+                if let Some(typed_dict_entries) = child_class_type.d().shared.get().typed_dict_entries.get() {
+                    let known_item = typed_dict_entries.known_items.borrow().get(member_name).cloned();
+                    let extra_items = typed_dict_entries.extra_items.borrow().clone();
+                    override_td_entry = Some(match known_item {
+                        Some(entry) => entry,
+                        None => match extra_items {
+                            Some(entry) => entry,
+                            None => analyzer::typed_dicts::get_effective_extra_items_entry_type(
+                                &self._evaluator,
+                                child_class_type,
+                            ),
+                        },
+                    });
+                }
+            }
+
+            let mut diag_addendum = DiagnosticAddendum::new();
+            if !self._evaluator.assign_type(
+                base_type,
+                override_type,
+                Some(diag_addendum),
+                None,
+                if is_invariant {
+                    analyzer::type_evaluator_types::AssignTypeFlags::Invariant
+                } else {
+                    analyzer::type_evaluator_types::AssignTypeFlags::Default
+                },
+                0,
+            ) {
+                if is_invariant {
+                    diag_addendum = DiagnosticAddendum::new();
+                    diag_addendum.add_message(LocAddendum::override_is_invariant());
+                    diag_addendum.create_addendum().add_message(
+                        LocAddendum::override_invariant_mismatch().format(&[
+                            ("overrideType", &self._evaluator.print_type(override_type, None)),
+                            ("baseType", &self._evaluator.print_type(base_type, None)),
+                        ]),
+                    );
+                }
+
+                let diag = self._evaluator.add_diagnostic(
+                    DiagnosticRule::reportIncompatibleVariableOverride,
+                    &(LocMessage::symbol_overridden().format(&[
+                        ("name", member_name),
+                        ("className", &base_class.d().shared.get().name),
+                    ]) + &diag_addendum.get_string(
+                        common::diagnostic::DEFAULT_MAX_DIAGNOSTIC_DEPTH,
+                        common::diagnostic::DEFAULT_MAX_DIAGNOSTIC_LINE_COUNT,
+                    )),
+                    name_node_or_node(last_decl),
+                    None,
+                );
+
+                let orig_decl =
+                    analyzer::symbol_utils::get_last_typed_declaration_for_symbol(base_class_and_symbol.symbol);
+                if let (Some(diag), Some(orig_decl)) = (diag, orig_decl) {
+                    diag.add_related_info(
+                        LocAddendum::overridden_symbol(),
+                        orig_decl.uri.get(),
+                        orig_decl.range.get(),
+                        common::diagnostic::TaskListPriority::Normal,
+                    );
+                }
+            } else if let (Some(overridden_td_entry), Some(override_td_entry)) =
+                (&overridden_td_entry, &override_td_entry)
+            {
+                // Make sure the required/not-required attribute is compatible.
+                let is_required_compatible = if overridden_td_entry.is_read_only {
+                    // If the read-only flag is set, a not-required field can be overridden
+                    // by a required field, but not vice versa.
+                    override_td_entry.is_required || !overridden_td_entry.is_required
+                } else {
+                    override_td_entry.is_required == overridden_td_entry.is_required
+                };
+
+                if !is_required_compatible {
+                    let message: fn() -> crate::localization::localize::ParameterizedString =
+                        if override_td_entry.is_required {
+                            LocMessage::typed_dict_field_required_redefinition
+                        } else {
+                            LocMessage::typed_dict_field_not_required_redefinition
+                        };
+                    self._evaluator.add_diagnostic(
+                        DiagnosticRule::reportGeneralTypeIssues,
+                        &message().format(&[("name", member_name)]),
+                        name_node_or_node(last_decl),
+                        None,
+                    );
+                }
+
+                // Make sure that the derived class isn't marking a previously writable
+                // entry as read-only.
+                if !overridden_td_entry.is_read_only && override_td_entry.is_read_only {
+                    self._evaluator.add_diagnostic(
+                        DiagnosticRule::reportGeneralTypeIssues,
+                        &LocMessage::typed_dict_field_read_only_redefinition().format(&[("name", member_name)]),
+                        name_node_or_node(last_decl),
+                        None,
+                    );
+                }
+            }
+
+            // Verify that there is not a Final mismatch.
+            let is_base_var_final = self._evaluator.is_final_variable(base_class_and_symbol.symbol);
+            let override_final_var_decl = decls
+                .iter()
+                .copied()
+                .find(|decl| self._evaluator.is_final_variable_declaration(*decl));
+
+            if !is_base_var_final {
+                if let Some(override_final_var_decl) = override_final_var_decl {
+                    let diag = self._evaluator.add_diagnostic(
+                        DiagnosticRule::reportIncompatibleVariableOverride,
+                        &LocMessage::variable_final_override().format(&[
+                            ("name", member_name),
+                            ("className", &base_class.d().shared.get().name),
+                        ]),
+                        name_node_or_node(last_decl),
+                        None,
+                    );
+
+                    if let Some(diag) = diag {
+                        diag.add_related_info(
+                            LocAddendum::overridden_symbol(),
+                            override_final_var_decl.uri.get(),
+                            override_final_var_decl.range.get(),
+                            common::diagnostic::TaskListPriority::Normal,
+                        );
+                    }
+                }
+            }
+
+            // Verify that a class variable isn't overriding an instance
+            // variable or vice versa.
+            let is_base_class_var = base_class_and_symbol.symbol.is_class_var();
+            let mut is_class_var = override_symbol.is_class_var();
+
+            if is_base_class_var && !is_class_var {
+                // If the subclass doesn't redeclare the type but simply assigns
+                // it without declaring its type, we won't consider it an instance
+                // variable.
+                if !override_symbol.has_typed_declarations() {
+                    is_class_var = true;
+                }
+
+                // If the subclass is declaring an inner class, we'll consider that
+                // to be a ClassVar.
+                if override_symbol
+                    .get_typed_declarations()
+                    .iter()
+                    .all(|decl| decl.type_ == analyzer::declaration::DeclarationType::Class)
+                {
+                    is_class_var = true;
+                }
+            }
+
+            // Allow TypedDict members to have the same name as class variables in the
+            // base class because TypedDict members are not really instance members.
+            let ignore_typed_dict_override = ClassType::is_typed_dict_class(child_class_type) && !is_class_var;
+
+            if is_base_class_var != is_class_var && !ignore_typed_dict_override {
+                let unformatted_message = if override_symbol.is_class_var() {
+                    LocMessage::class_var_overrides_instance_var()
+                } else {
+                    LocMessage::instance_var_overrides_class_var()
+                };
+
+                let diag = self._evaluator.add_diagnostic(
+                    DiagnosticRule::reportIncompatibleVariableOverride,
+                    &unformatted_message.format(&[
+                        ("name", member_name),
+                        ("className", &base_class.d().shared.get().name),
+                    ]),
+                    name_node_or_node(last_decl),
+                    None,
+                );
+
+                let orig_decl =
+                    analyzer::symbol_utils::get_last_typed_declaration_for_symbol(base_class_and_symbol.symbol);
+                if let (Some(diag), Some(orig_decl)) = (diag, orig_decl) {
+                    diag.add_related_info(
+                        LocAddendum::overridden_symbol(),
+                        orig_decl.uri.get(),
+                        orig_decl.range.get(),
+                        common::diagnostic::TaskListPriority::Normal,
+                    );
+                }
+            }
+        }
     }
 
     // analyzer/checker.ts:7215
@@ -7289,7 +9044,35 @@ impl Checker {
         symbol: P<Symbol>,
         type_: P<Type>,
     ) -> bool {
-        todo!()
+        // The TypeScript never reads `type`.
+        let _ = type_;
+        if analyzer::symbol_name_utils::is_private_name(name) {
+            return false;
+        }
+
+        // Was this declared with a "def" statement?
+        let mut def_decls: Vec<FunctionNode> = Vec::new();
+        for decl in symbol.get_declarations() {
+            if decl.type_ == analyzer::declaration::DeclarationType::Function
+                && decl.node.get().node_type == ParseNodeType::Function
+            {
+                def_decls.push(FunctionNode(decl.node.get()));
+            }
+        }
+
+        // Locate all final function declarations.
+        let final_def_decls: Vec<FunctionNode> = def_decls
+            .into_iter()
+            .filter(|decl| {
+                let undecorated_func_type = self._evaluator.get_type_of_function(*decl).map(|result| result.function_type);
+                match undecorated_func_type {
+                    None => false,
+                    Some(undecorated_func_type) => FunctionType::is_final(undecorated_func_type),
+                }
+            })
+            .collect();
+
+        !final_def_decls.is_empty()
     }
 
     // analyzer/checker.ts:7241
@@ -7302,7 +9085,165 @@ impl Checker {
         override_symbol: P<Symbol>,
         member_name: &str,
     ) {
-        todo!()
+        let name_node_or_node = |decl: P<Declaration>| -> P<ParseNode> {
+            analyzer::declaration_utils::get_name_node_for_declaration(decl)
+                .map(|name_node| name_node.0)
+                .unwrap_or_else(|| decl.node.get())
+        };
+
+        // `c.priv.fgetInfo?.methodType` and its siblings. TypeScript casts the symbol type to a
+        // class; on any other type the info is undefined.
+        let prop_method_info: [(&str, fn(P<Type>) -> Option<P<Type>>); 3] = [
+            ("fget", |c| {
+                ClassType::cast(c).and_then(|c| c.d().priv_.borrow().fget_info.as_ref().map(|info| info.method_type))
+            }),
+            ("fset", |c| {
+                ClassType::cast(c).and_then(|c| c.d().priv_.borrow().fset_info.as_ref().map(|info| info.method_type))
+            }),
+            ("fdel", |c| {
+                ClassType::cast(c).and_then(|c| c.d().priv_.borrow().fdel_info.as_ref().map(|info| info.method_type))
+            }),
+        ];
+
+        for (method_name, method_accessor) in prop_method_info {
+            let diag_addendum = DiagnosticAddendum::new();
+            let base_class_prop_method = method_accessor(base_type);
+            let subclass_prop_method = method_accessor(child_type);
+
+            // Is the method present on the base class but missing in the subclass?
+            let Some(base_class_prop_method) = base_class_prop_method else {
+                continue;
+            };
+            let base_class_method_type = analyzer::type_utils::partially_specialize_type(
+                base_class_prop_method,
+                base_class_type,
+                self._evaluator.get_type_class_type(),
+                None,
+            );
+
+            // Overloaded accessors (e.g. overloaded property setters) are
+            // represented as an OverloadedType rather than a FunctionType.
+            // Override-compatibility checking for overloaded accessors is not
+            // yet performed; skip them rather than misreporting.
+            if !analyzer::types::is_function(base_class_method_type) {
+                continue;
+            }
+            let base_class_method_type = FunctionType(base_class_method_type);
+
+            let Some(subclass_prop_method) = subclass_prop_method else {
+                // The method is missing.
+                diag_addendum.add_message(LocAddendum::property_method_missing().format(&[("name", method_name)]));
+
+                let decls = override_symbol.get_declarations();
+
+                if !decls.is_empty() {
+                    let last_decl = decls[decls.len() - 1];
+                    let diag = self._evaluator.add_diagnostic(
+                        DiagnosticRule::reportIncompatibleMethodOverride,
+                        &(LocMessage::property_overridden().format(&[
+                            ("name", member_name),
+                            ("className", &base_class_type.d().shared.get().name),
+                        ]) + &diag_addendum.get_string(
+                            common::diagnostic::DEFAULT_MAX_DIAGNOSTIC_DEPTH,
+                            common::diagnostic::DEFAULT_MAX_DIAGNOSTIC_LINE_COUNT,
+                        )),
+                        name_node_or_node(last_decl),
+                        None,
+                    );
+
+                    let orig_decl = base_class_method_type.d().shared.get().declaration.get();
+                    if let (Some(diag), Some(orig_decl)) = (diag, orig_decl) {
+                        diag.add_related_info(
+                            LocAddendum::overridden_method(),
+                            orig_decl.uri.get(),
+                            orig_decl.range.get(),
+                            common::diagnostic::TaskListPriority::Normal,
+                        );
+                    }
+                }
+
+                continue;
+            };
+
+            let subclass_method_type = analyzer::type_utils::partially_specialize_type(
+                subclass_prop_method,
+                child_class_type,
+                self._evaluator.get_type_class_type(),
+                None,
+            );
+
+            if !analyzer::types::is_function(subclass_method_type) {
+                continue;
+            }
+            let subclass_method_type = FunctionType(subclass_method_type);
+
+            if self._evaluator.validate_override_method(
+                base_class_method_type.0,
+                subclass_method_type.0,
+                Some(child_class_type),
+                diag_addendum.create_addendum(),
+                true,
+            ) {
+                continue;
+            }
+
+            diag_addendum.add_message(LocAddendum::property_method_incompatible().format(&[("name", method_name)]));
+            let decl = subclass_method_type.d().shared.get().declaration.get();
+            let Some(decl) = decl else {
+                continue;
+            };
+            if decl.type_ != analyzer::declaration::DeclarationType::Function {
+                continue;
+            }
+
+            let mut diag_location: P<ParseNode> = FunctionNode(decl.node.get()).d().name.get().0;
+
+            // Make sure the method decl is contained within the
+            // class suite. If not, it probably comes from a decorator
+            // in another class. We don't want to report the error
+            // in the wrong location.
+            let child_class_decl = child_class_type.d().shared.get().declaration.get();
+            let is_in_child_class_suite = match child_class_decl {
+                Some(child_class_decl) if child_class_decl.node.get().node_type == ParseNodeType::Class => {
+                    analyzer::parse_tree_utils::is_node_contained_within(
+                        decl.node.get(),
+                        ClassNode(child_class_decl.node.get()).d().suite.get().0,
+                    )
+                }
+                _ => false,
+            };
+            if !is_in_child_class_suite {
+                let symbol_decls = override_symbol.get_declarations();
+                if symbol_decls.is_empty() {
+                    continue;
+                }
+                let last_symbol_decl = symbol_decls[symbol_decls.len() - 1];
+                diag_location = name_node_or_node(last_symbol_decl);
+            }
+
+            let diag = self._evaluator.add_diagnostic(
+                DiagnosticRule::reportIncompatibleMethodOverride,
+                &(LocMessage::property_overridden().format(&[
+                    ("name", member_name),
+                    ("className", &base_class_type.d().shared.get().name),
+                ]) + &diag_addendum.get_string(
+                    common::diagnostic::DEFAULT_MAX_DIAGNOSTIC_DEPTH,
+                    common::diagnostic::DEFAULT_MAX_DIAGNOSTIC_LINE_COUNT,
+                )),
+                diag_location,
+                None,
+            );
+
+            let orig_decl = base_class_method_type.d().shared.get().declaration.get();
+            if let (Some(diag), Some(orig_decl)) = (diag, orig_decl) {
+                diag.add_related_info(
+                    LocAddendum::overridden_method(),
+                    orig_decl.uri.get(),
+                    orig_decl.range.get(),
+                    common::diagnostic::TaskListPriority::Normal,
+                );
+            }
+        }
     }
 
     // analyzer/checker.ts:7377
@@ -7312,7 +9253,143 @@ impl Checker {
         function_type: FunctionType,
         class_node: ClassNode,
     ) {
-        todo!()
+        let class_type_info = self._evaluator.get_type_of_class(class_node);
+        let Some(class_type_info) = class_type_info else {
+            return;
+        };
+
+        let class_type = class_type_info.class_type;
+        let method_name = node.d().name.get().d().value.clone();
+        let is_metaclass = analyzer::type_utils::is_instantiable_metaclass(class_type.0);
+
+        let super_check_methods = ["__init__", "__init_subclass__", "__enter__", "__exit__"];
+        if super_check_methods.contains(&method_name.as_str())
+            && !FunctionType::is_abstract_method(function_type)
+            && !FunctionType::is_overloaded(function_type)
+            && !self._file_info.is_stub_file
+        {
+            self._validate_super_call_for_method(node, function_type, class_type);
+        }
+
+        let self_names = ["self", "_self", "__self"];
+        let cls_names = ["cls", "_cls", "__cls"];
+        let cls_names_metaclass = ["__mcls", "mcls", "mcs", "metacls"];
+
+        if method_name == "_generate_next_value_" {
+            // Skip this check for _generate_next_value_.
+            return;
+        }
+
+        let params = node.d().params.borrow().clone();
+
+        if method_name == "__new__" {
+            // __new__ overrides should have a "cls" parameter.
+            match params.first().and_then(|param| param.d().name.get()) {
+                None => {
+                    self._evaluator.add_diagnostic(
+                        DiagnosticRule::reportSelfClsParameterName,
+                        &LocMessage::new_cls_param(),
+                        node.d().name.get().0,
+                        None,
+                    );
+                }
+                Some(param_name_node) => {
+                    let param_name = param_name_node.d().value.as_str();
+                    if !cls_names.contains(&param_name) && !(is_metaclass && cls_names_metaclass.contains(&param_name)) {
+                        self._evaluator.add_diagnostic(
+                            DiagnosticRule::reportSelfClsParameterName,
+                            &LocMessage::new_cls_param(),
+                            params[0].0,
+                            None,
+                        );
+                    }
+                }
+            }
+
+            self._validate_cls_self_param_type(node, function_type, class_type, true);
+            return;
+        }
+
+        if FunctionType::is_static_method(function_type) {
+            let Some(param_name_node) = params.first().and_then(|param| param.d().name.get()) else {
+                return;
+            };
+
+            // Static methods should not have "self" or "cls" parameters.
+            let param_name = param_name_node.d().value.as_str();
+            if param_name == "self" || param_name == "cls" {
+                self._evaluator.add_diagnostic(
+                    DiagnosticRule::reportSelfClsParameterName,
+                    &LocMessage::static_cls_self_param(),
+                    param_name_node.0,
+                    None,
+                );
+            }
+            return;
+        }
+
+        if FunctionType::is_class_method(function_type) {
+            let mut param_name = String::new();
+            if let Some(param_name_node) = params.first().and_then(|param| param.d().name.get()) {
+                param_name = param_name_node.d().value.clone();
+            }
+
+            // Class methods should have a "cls" parameter.
+            if !cls_names.contains(&param_name.as_str())
+                && !(is_metaclass && cls_names_metaclass.contains(&param_name.as_str()))
+            {
+                self._evaluator.add_diagnostic(
+                    DiagnosticRule::reportSelfClsParameterName,
+                    &LocMessage::class_method_cls_param(),
+                    if !params.is_empty() { params[0].0 } else { node.d().name.get().0 },
+                    None,
+                );
+            }
+
+            self._validate_cls_self_param_type(node, function_type, class_type, true);
+            return;
+        }
+
+        let decorator_is_present = !node.d().decorators.borrow().is_empty();
+        let is_overloaded = FunctionType::is_overloaded(function_type);
+
+        // The presence of a decorator can change the behavior, so we need
+        // to back off from this check if a decorator is present. An overload
+        // is a decorator, but we'll ignore that here.
+        if is_overloaded || !decorator_is_present {
+            let mut param_name = String::new();
+            let mut first_param_is_simple = true;
+
+            if let Some(first_param) = params.first() {
+                if let Some(param_name_node) = first_param.d().name.get() {
+                    param_name = param_name_node.d().value.clone();
+                }
+
+                if first_param.d().category.get() != parser::parse_nodes::ParamCategory::Simple {
+                    first_param_is_simple = false;
+                }
+            }
+
+            // Instance methods should have a "self" parameter.
+            if first_param_is_simple && !self_names.contains(&param_name.as_str()) {
+                let is_legal_metaclass_name = is_metaclass && cls_names.contains(&param_name.as_str());
+
+                // Some typeshed stubs use a name that starts with an underscore to designate
+                // a parameter that cannot be positional.
+                let is_private_name = analyzer::symbol_name_utils::is_private_or_protected_name(&param_name);
+
+                if !is_legal_metaclass_name && !is_private_name {
+                    self._evaluator.add_diagnostic(
+                        DiagnosticRule::reportSelfClsParameterName,
+                        &LocMessage::instance_method_self_param(),
+                        if !params.is_empty() { params[0].0 } else { node.d().name.get().0 },
+                        None,
+                    );
+                }
+            }
+        }
+
+        self._validate_cls_self_param_type(node, function_type, class_type, false);
     }
 
     // analyzer/checker.ts:7509
@@ -7322,7 +9399,73 @@ impl Checker {
         method_type: FunctionType,
         class_type: ClassType,
     ) {
-        todo!()
+        // This is an expensive test, so if it's not enabled, don't do any work.
+        if self._file_info.diagnostic_rule_set.report_missing_super_call == common::config_options::DiagnosticLevel::None {
+            return;
+        }
+
+        // If the class is marked final, we can skip the "object" base class
+        // because we know that the `__init__` method in `object` doesn't do
+        // anything. It's not safe to do this if the class isn't final because
+        // it could be combined with other classes in a multi-inheritance
+        // situation that effectively adds new superclasses that we don't know
+        // about statically.
+        let mut effective_flags = analyzer::type_utils::MemberAccessFlags::SkipInstanceMembers
+            | analyzer::type_utils::MemberAccessFlags::SkipOriginalClass;
+        if ClassType::is_final(class_type) {
+            effective_flags |= analyzer::type_utils::MemberAccessFlags::SkipObjectBaseClass;
+        }
+
+        let method_name = method_type.d().shared.get().name.clone();
+        let method_member = analyzer::type_utils::look_up_class_member(class_type, &method_name, effective_flags, None);
+        if method_member.is_none() {
+            return;
+        }
+
+        let mut found_call_of_member = false;
+
+        // Now scan the implementation of the method to determine whether
+        // super().<method> has been called for all of the required base classes.
+        let evaluator = self._evaluator;
+        {
+            let mut call_node_walker = analyzer::parse_tree_utils::CallNodeWalker::new(|node: CallNode| {
+                let left_expr = node.d().left_expr.get();
+                if left_expr.node_type == ParseNodeType::MemberAccess {
+                    let left_expr = MemberAccessNode(left_expr);
+                    // Is it accessing the method by the same name?
+                    if left_expr.d().member.get().d().value == method_name {
+                        let member_base_expr = left_expr.d().left_expr.get();
+
+                        // Is it a "super" call?
+                        if member_base_expr.node_type == ParseNodeType::Call
+                            && CallNode(member_base_expr).d().left_expr.get().node_type == ParseNodeType::Name
+                            && NameNode(CallNode(member_base_expr).d().left_expr.get()).d().value == "super"
+                        {
+                            found_call_of_member = true;
+                        } else {
+                            // Is it an X.<method> direct call?
+                            let base_type = evaluator.get_type(member_base_expr);
+                            if let Some(base_type) = base_type {
+                                if analyzer::types::is_instantiable_class(base_type) {
+                                    found_call_of_member = true;
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+            call_node_walker.walk(node.d().suite.get().0);
+        }
+
+        // If we didn't find a call to at least one base class, report the problem.
+        if !found_call_of_member {
+            self._evaluator.add_diagnostic(
+                DiagnosticRule::reportMissingSuperCall,
+                &LocMessage::missing_super_call().format(&[("methodName", &method_type.d().shared.get().name)]),
+                node.d().name.get().0,
+                None,
+            );
+        }
     }
 
     // analyzer/checker.ts:7574
@@ -7333,7 +9476,118 @@ impl Checker {
         class_type: ClassType,
         is_cls: bool,
     ) {
-        todo!()
+        let shared = function_type.d().shared.get();
+        if node.d().params.borrow().is_empty() || shared.parameters.get().borrow().is_empty() {
+            return;
+        }
+
+        // If there is no type annotation, there's nothing to check because
+        // the type will be inferred.d.typeAnnotation
+        let param_info = shared.parameters.get().borrow()[0].clone();
+        let param_type = FunctionType::get_param_type(function_type, 0);
+        let first_param = node.d().params.borrow()[0];
+        let param_annotation = first_param.d().annotation.get().or(first_param.d().annotation_comment.get());
+        let Some(param_annotation) = param_annotation else {
+            return;
+        };
+        // `!paramInfo.name`: an empty name is falsy too.
+        let Some(param_info_name) = param_info.name.clone().filter(|name| !name.is_empty()) else {
+            return;
+        };
+
+        // If this is an __init__ method, we need to specifically check for the
+        // use of class-scoped TypeVars, which are not allowed in this context
+        // according to the typing spec.
+        if shared.name == "__init__" {
+            if let Some(method_class) = shared.method_class.get() {
+                let type_vars = analyzer::type_utils::get_type_var_args_recursive(param_type, 0);
+
+                if type_vars.iter().any(|type_var| {
+                    type_var.d().priv_.borrow().scope_id == *method_class.d().shared.get().type_var_scope_id.borrow()
+                        && !TypeVarType::is_self(*type_var)
+                }) {
+                    self._evaluator.add_diagnostic(
+                        DiagnosticRule::reportInvalidTypeVarUse,
+                        &LocMessage::init_method_self_param_type_var(),
+                        param_annotation,
+                        None,
+                    );
+                }
+            }
+        }
+
+        // If this is a protocol class, the self and cls parameters can be bound
+        // to something other than the class.
+        if ClassType::is_protocol_class(class_type) {
+            return;
+        }
+
+        let concrete_param_type = self._evaluator.make_top_level_type_vars_concrete(param_type, false, None);
+        let expected_type = if is_cls {
+            class_type.0
+        } else {
+            analyzer::type_utils::convert_to_instance(class_type.0, true)
+        };
+
+        // If the declared type is a protocol class or instance, skip
+        // the check. This has legitimate uses for mix-in classes.
+        if analyzer::types::is_instantiable_class(concrete_param_type)
+            && ClassType::is_protocol_class(ClassType(concrete_param_type))
+        {
+            return;
+        }
+        if analyzer::types::is_class_instance(concrete_param_type)
+            && ClassType::is_protocol_class(ClassType(concrete_param_type))
+        {
+            return;
+        }
+
+        // If the method starts with a `*args: P.args`, skip the check.
+        if param_info.category == parser::parse_nodes::ParamCategory::ArgsList
+            && analyzer::types::is_param_spec(param_type)
+            && TypeVarType(param_type).d().priv_.borrow().param_spec_access == Some(analyzer::types::ParamSpecAccess::Args)
+        {
+            return;
+        }
+
+        // Don't enforce this for an overloaded method because the "self" param
+        // annotation can be used as a filter for the overload. This differs from
+        // mypy, which enforces this check for overloads, but there are legitimate
+        // uses for this in an overloaded method.
+        if FunctionType::is_overloaded(function_type) {
+            return;
+        }
+
+        // If the declared type is LiteralString and the class is str, exempt this case.
+        // It's used in the typeshed stubs.
+        if analyzer::types::is_class_instance(param_type)
+            && ClassType::is_built_in(ClassType(param_type), Some(&["LiteralString".to_string()]))
+            && ClassType::is_built_in(class_type, Some(&["str".to_string()]))
+        {
+            return;
+        }
+
+        if !self._evaluator.assign_type(
+            param_type,
+            expected_type,
+            None,
+            None,
+            analyzer::type_evaluator_types::AssignTypeFlags::Default,
+            0,
+        ) {
+            // We exempt Never from this check because it has a legitimate use in this case.
+            if !analyzer::types::is_never(param_type) {
+                self._evaluator.add_diagnostic(
+                    DiagnosticRule::reportGeneralTypeIssues,
+                    &LocMessage::cls_self_param_type_mismatch().format(&[
+                        ("name", &param_info_name),
+                        ("classType", &self._evaluator.print_type(expected_type, None)),
+                    ]),
+                    param_annotation,
+                    None,
+                );
+            }
+        }
     }
 
     // analyzer/checker.ts:7676
@@ -7344,17 +9598,288 @@ impl Checker {
         expected_diag_addendum: Option<P<DiagnosticAddendum>>,
         send_type: Option<P<Type>>,
     ) {
-        todo!()
+        let enclosing_function_node = analyzer::parse_tree_utils::get_enclosing_function(node);
+        let Some(enclosing_function_node) = enclosing_function_node else {
+            return;
+        };
+        if enclosing_function_node.d().return_annotation.get().is_none() {
+            return;
+        }
+
+        let function_type_result = self._evaluator.get_type_of_function(enclosing_function_node);
+        let Some(function_type_result) = function_type_result else {
+            return;
+        };
+
+        let declared_return_type = FunctionType::get_effective_return_type(function_type_result.function_type, true);
+        let Some(mut declared_return_type) = declared_return_type else {
+            return;
+        };
+
+        let live_scopes = analyzer::parse_tree_utils::get_type_var_scopes_for_node(node, self._node_info.reader());
+        declared_return_type = analyzer::type_utils::make_type_vars_bound(declared_return_type, Some(&live_scopes[..]));
+
+        let is_async = enclosing_function_node.d().is_async.get();
+        let generator_type: Option<P<Type>> = if !is_async
+            && analyzer::types::is_class_instance(declared_return_type)
+            && ClassType::is_built_in(ClassType(declared_return_type), Some(&["AwaitableGenerator".to_string()]))
+        {
+            // Handle the old-style (pre-await) generator case
+            // if the return type explicitly uses AwaitableGenerator.
+            self._evaluator
+                .get_type_checker_internals_type(node, "AwaitableGenerator")
+                .or_else(|| self._evaluator.get_typing_type(node, "AwaitableGenerator"))
+        } else {
+            self._evaluator
+                .get_typing_type(node, if is_async { "AsyncGenerator" } else { "Generator" })
+        };
+
+        let Some(generator_type) = generator_type else {
+            return;
+        };
+        if !analyzer::types::is_instantiable_class(generator_type) {
+            return;
+        }
+
+        if !self._evaluator.is_node_reachable(node, None) {
+            return;
+        }
+
+        if analyzer::types::is_never(declared_return_type) {
+            self._evaluator.add_diagnostic(
+                DiagnosticRule::reportGeneralTypeIssues,
+                &LocMessage::no_return_contains_yield(),
+                node,
+                None,
+            );
+            return;
+        }
+
+        let generator_type_args = vec![
+            yield_type,
+            send_type.unwrap_or_else(|| analyzer::types::UnknownType::create(false).0),
+            analyzer::types::UnknownType::create(false).0,
+        ];
+        let specialized_generator = ClassType::clone_as_instance(
+            ClassType::specialize(ClassType(generator_type), Some(&generator_type_args), None, false, None, None),
+            true,
+        );
+
+        let diag_addendum = DiagnosticAddendum::new();
+        if !self._evaluator.assign_type(
+            declared_return_type,
+            specialized_generator.0,
+            Some(diag_addendum),
+            None,
+            analyzer::type_evaluator_types::AssignTypeFlags::Default,
+            0,
+        ) {
+            let error_message = if is_async {
+                LocMessage::generator_async_return_type()
+            } else {
+                LocMessage::generator_sync_return_type()
+            };
+
+            let message = error_message.format(&[("yieldType", &self._evaluator.print_type(yield_type, None))])
+                + &match expected_diag_addendum {
+                    Some(expected_diag_addendum) => expected_diag_addendum.get_string(
+                        common::diagnostic::DEFAULT_MAX_DIAGNOSTIC_DEPTH,
+                        common::diagnostic::DEFAULT_MAX_DIAGNOSTIC_LINE_COUNT,
+                    ),
+                    None => diag_addendum.get_string(
+                        common::diagnostic::DEFAULT_MAX_DIAGNOSTIC_DEPTH,
+                        common::diagnostic::DEFAULT_MAX_DIAGNOSTIC_LINE_COUNT,
+                    ),
+                };
+            // `node.d.expr ?? node`: a yield's expression is optional, a yield from's is not.
+            let node_expr = match YieldNode::cast(node) {
+                Some(yield_node) => yield_node.d().expr.get(),
+                None => YieldFromNode::cast(node).map(|yield_from_node| yield_from_node.d().expr.get()),
+            };
+            let error_node = node_expr.unwrap_or(node);
+            let range = expected_diag_addendum
+                .and_then(|expected_diag_addendum| expected_diag_addendum.get_effective_text_range())
+                .unwrap_or_else(|| common::text_range::HasTextRange::text_range(&error_node));
+
+            self._evaluator.add_diagnostic(DiagnosticRule::reportReturnType, &message, error_node, Some(&range));
+        }
     }
 
     // analyzer/checker.ts:7756
     pub(crate) fn _report_unused_except_statements(&mut self, node: TryNode) {
-        todo!()
+        let mut saw_unknown_exception_type = false;
+        let mut exception_types_so_far: Vec<ClassType> = Vec::new();
+
+        let except_clauses = node.d().except_clauses.borrow().clone();
+        for except in except_clauses {
+            if saw_unknown_exception_type || except.d().is_except_group.get() {
+                continue;
+            }
+            let Some(type_expr) = except.d().type_expr.get() else {
+                continue;
+            };
+
+            let exception_type = self._evaluator.get_type(type_expr);
+            let Some(exception_type) = exception_type.filter(|t| !analyzer::types::is_any_or_unknown(*t)) else {
+                saw_unknown_exception_type = true;
+                continue;
+            };
+
+            let mut types_of_this_except: Vec<ClassType> = Vec::new();
+
+            if analyzer::types::is_instantiable_class(exception_type) {
+                // If the exception type is a variable whose type could represent
+                // subclasses, the actual exception type is statically unknown.
+                if ClassType(exception_type).d().priv_.borrow().include_subclasses.unwrap_or(false) {
+                    saw_unknown_exception_type = true;
+                }
+
+                types_of_this_except.push(ClassType(exception_type));
+            } else if analyzer::types::is_class_instance(exception_type) {
+                let iterable_type = self
+                    ._evaluator
+                    .get_type_of_iterator(P::new_eval(TypeResult::new(exception_type)), false, type_expr, false)
+                    .map(|type_result| type_result.type_.get())
+                    .unwrap_or_else(|| analyzer::types::UnknownType::create(false).0);
+
+                analyzer::type_utils::do_for_each_subtype(
+                    iterable_type,
+                    &mut |subtype, _index, _all_subtypes| {
+                        if analyzer::types::is_any_or_unknown(subtype) {
+                            saw_unknown_exception_type = true;
+                        }
+
+                        if analyzer::types::is_instantiable_class(subtype) {
+                            // If the exception type is a variable whose type could represent
+                            // subclasses, the actual exception type is statically unknown.
+                            if ClassType(subtype).d().priv_.borrow().include_subclasses.unwrap_or(false) {
+                                saw_unknown_exception_type = true;
+                            }
+                            types_of_this_except.push(ClassType(subtype));
+                        }
+                    },
+                    false,
+                );
+            } else {
+                saw_unknown_exception_type = true;
+            }
+
+            if !exception_types_so_far.is_empty() && !saw_unknown_exception_type {
+                let diag_addendum = DiagnosticAddendum::new();
+                let mut overridden_exception_count = 0;
+
+                for this_except_type in &types_of_this_except {
+                    let subtype = exception_types_so_far.iter().copied().find(|previous_except_type| {
+                        analyzer::type_utils::derives_from_class_recursive(*this_except_type, *previous_except_type, true)
+                    });
+
+                    if let Some(subtype) = subtype {
+                        diag_addendum.add_message(LocAddendum::unreachable_except().format(&[
+                            (
+                                "exceptionType",
+                                &self._evaluator.print_type(
+                                    analyzer::type_utils::convert_to_instance(this_except_type.0, true),
+                                    None,
+                                ),
+                            ),
+                            (
+                                "parentType",
+                                &self
+                                    ._evaluator
+                                    .print_type(analyzer::type_utils::convert_to_instance(subtype.0, true), None),
+                            ),
+                        ]));
+                        overridden_exception_count += 1;
+                    }
+                }
+
+                // Were all of the exception types overridden?
+                if !types_of_this_except.is_empty() && types_of_this_except.len() == overridden_exception_count {
+                    self._evaluator.add_diagnostic(
+                        DiagnosticRule::reportUnusedExcept,
+                        &(LocMessage::unreachable_except()
+                            + &diag_addendum.get_string(
+                                common::diagnostic::DEFAULT_MAX_DIAGNOSTIC_DEPTH,
+                                common::diagnostic::DEFAULT_MAX_DIAGNOSTIC_LINE_COUNT,
+                            )),
+                        type_expr,
+                        None,
+                    );
+
+                    self._evaluator.add_diagnostic(
+                        DiagnosticRule::reportUnreachable,
+                        &LocMessage::unreachable_code_type(),
+                        except.d().except_suite.get().0,
+                        Some(&common::text_range::HasTextRange::text_range(&except.d().except_token.get())),
+                    );
+
+                    self._evaluator.add_unreachable_code(
+                        except.0,
+                        analyzer::type_evaluator_types::Reachability::UnreachableByAnalysis,
+                        &common::text_range::HasTextRange::text_range(&except.d().except_suite.get().0),
+                    );
+                }
+            }
+
+            exception_types_so_far.extend(types_of_this_except);
+        }
     }
 
     // analyzer/checker.ts:7855
+    #[allow(unreachable_code)]
     pub(crate) fn _report_duplicate_imports(&mut self) {
-        todo!()
+        // `getTopLevelImports(this._moduleNode, /* includeImplicitImports */ false, this._nodeInfo)`.
+        // `import_statement_utils.rs` does not port it yet; this stand-in holds the
+        // `ImportStatement` fields the loop reads.
+        struct ImportStatement {
+            node: P<ParseNode>,
+            subnode: Option<ImportAsNode>,
+            module_name: String,
+        }
+        let ordered_imports: Vec<ImportStatement> =
+            todo!("needs analyzer::import_statement_utils::get_top_level_imports");
+
+        let mut import_module_map: jsrt::JsMap<String, ImportAsNode> = jsrt::JsMap::default();
+
+        for import_statement in &ordered_imports {
+            if import_statement.node.node_type == ParseNodeType::ImportFrom {
+                let mut symbol_map: jsrt::JsMap<String, ImportFromAsNode> = jsrt::JsMap::default();
+
+                let imports = ImportFromNode(import_statement.node).d().imports.borrow().clone();
+                for import_from_as in imports {
+                    // Ignore duplicates if they're aliased.
+                    if import_from_as.d().alias.get().is_none() {
+                        let name = import_from_as.d().name.get();
+                        let prev_import = symbol_map.get(&name.d().value).copied();
+                        if prev_import.is_some() {
+                            self._evaluator.add_diagnostic(
+                                DiagnosticRule::reportDuplicateImport,
+                                &LocMessage::duplicate_import().format(&[("importName", &name.d().value)]),
+                                name.0,
+                                None,
+                            );
+                        } else {
+                            symbol_map.insert(name.d().value.clone(), import_from_as);
+                        }
+                    }
+                }
+            } else if let Some(subnode) = import_statement.subnode {
+                // Ignore duplicates if they're aliased.
+                if subnode.d().alias.get().is_none() {
+                    let prev_import = import_module_map.get(&import_statement.module_name).copied();
+                    if prev_import.is_some() {
+                        self._evaluator.add_diagnostic(
+                            DiagnosticRule::reportDuplicateImport,
+                            &LocMessage::duplicate_import().format(&[("importName", &import_statement.module_name)]),
+                            subnode.0,
+                            None,
+                        );
+                    } else {
+                        import_module_map.insert(import_statement.module_name.clone(), subnode);
+                    }
+                }
+            }
+        }
     }
 }
 
