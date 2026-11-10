@@ -62,7 +62,7 @@ ORACLE_CHECKER="$HOME/pyright-rs/target/release/pyright-rs" ORACLE_OUT=/tmp/rs-s
 oracle/compare.py ~/pyright-rs-data/reference/samples/dump /tmp/rs-samples/dump --stage tokens --stage tree
 ```
 
-- The candidate's `output.json` is compared to the reference's `output.json` without the `time` and `summary.timeInSec` fields.
+- Compare the candidate's `output.json` with the reference's, ignoring the `time` and `summary.timeInSec` fields; `compare.py` covers only the dumps.
 - For the typeshed corpus, set `ORACLE_TYPESHED` to the Rust side's bundled typeshed directory.
 - `compare.py` prints, for each differing file, the first differing line, the lines that enclose it by indentation, and a few lines of context; then the files present on one side only, and counts per stage. It exits 0 when everything matches, 1 otherwise, 2 on a usage error.
 
@@ -78,7 +78,7 @@ oracle/compare.py ~/pyright-rs-data/reference/samples/dump /tmp/rs-samples/dump 
 | `--max-reports N` | print details for at most `N` differing files (default 20) |
 | `--context N` | context lines before a difference (default 3) |
 
-Milestone 1 (tokenizer, parser, binder) has no checker yet, so its check compares the parse-and-bind stages and the diag lists those phases fill. Pyright parses more files than a parse-and-bind run does, because the checker pulls in imports:
+Milestone 1 (tokenizer, parser, binder) has no checker yet, so its check compares the parse-and-bind stages and the diag lists those phases fill. Pyright parses more files than a parse-and-bind run does, because type evaluation parses imported files on demand:
 
 ```
 oracle/compare.py ~/pyright-rs-data/reference/samples/dump /tmp/rs-samples/dump \
@@ -101,7 +101,7 @@ Results, 2026-11-10 on devbox:
 |---|---|---|---|---|
 | samples | ok | ok | ok | ok |
 | typeshed | ok | ok | ok | ok |
-| pydantic-ai | ok | pending | pending | pending |
+| pydantic-ai | ok | ok | ok | ok |
 | primer-attrs | ok | ok | ok | ok |
 | primer-bidict | ok | ok | ok | ok |
 | primer-more-itertools | ok | ok | ok | ok |
