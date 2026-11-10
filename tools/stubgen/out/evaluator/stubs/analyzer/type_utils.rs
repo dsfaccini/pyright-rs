@@ -79,7 +79,7 @@ pub struct InferenceContext {
 }
 
 // analyzer/typeUtils.ts:195
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct RequiresSpecializationOptions {
     pub ignore_pseudo_generic: Option<bool>,
     pub ignore_self: Option<bool>,
@@ -87,27 +87,27 @@ pub struct RequiresSpecializationOptions {
 }
 
 // analyzer/typeUtils.ts:207
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct IsInstantiableOptions {
     pub honor_type_var_bounds: Option<bool>,
 }
 
 // analyzer/typeUtils.ts:211
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct SelfSpecializeOptions {
     pub override_type_args: Option<bool>,
     pub use_bound_type_vars: Option<bool>,
 }
 
 // analyzer/typeUtils.ts:220
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct ApplyTypeVarOptions {
     pub type_class_type: Option<ClassType>,
     pub replace_unsolved: Option<ApplyTypeVarOptionsReplaceUnsolved>,
 }
 
 // analyzer/typeUtils.ts:231
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct AddConditionOptions {
     pub skip_self_condition: Option<bool>,
     pub skip_bound_type_vars: Option<bool>,
@@ -188,7 +188,7 @@ pub fn make_inference_context(
 }
 
 // analyzer/typeUtils.ts:388
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct MapSubtypesOptions {
     pub sort_subtypes: Option<bool>,
     pub skip_elide_redundant_literals: Option<bool>,

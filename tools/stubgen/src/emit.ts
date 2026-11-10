@@ -283,7 +283,7 @@ export class FileEmitter {
             fields.push(`    pub _phantom: PhantomData<(${unused.join(', ')}${unused.length === 1 ? ',' : ''})>,`);
         }
         // A value is copied where the TypeScript spreads it or reads it out of a container.
-        const derive = mode === 'value' ? ['#[derive(Clone)]'] : [];
+        const derive = mode === 'value' ? [valueDerive(fields)] : [];
         this.out.push(this.marker(decl), ...derive, `pub struct ${name}${generics} {`, ...fields, '}', '');
     }
 
@@ -1190,7 +1190,7 @@ export class FileEmitter {
         if (shape === 'struct' && ts.isTypeLiteralNode(a.type)) {
             this.emittedStructs.add(name);
             const fields = a.type.members.map((m) => this.field(m, name, false)).filter((f): f is string => f !== undefined);
-            this.out.push(this.marker(a), '#[derive(Clone)]', `pub struct ${name}${generics} {`, ...fields, '}', '');
+            this.out.push(this.marker(a), valueDerive(fields), `pub struct ${name}${generics} {`, ...fields, '}', '');
             return;
         }
         if (shape === 'enum' && ts.isUnionTypeNode(a.type)) {
@@ -1271,7 +1271,7 @@ export class FileEmitter {
                         fields.push(`    pub ${fieldName(p.getName())}: ${render(t, 'field', this.uses)},`);
                     }
                 }
-                this.out.push(`// Inline object type at ${a.site}.`, '#[derive(Clone)]', `pub struct ${a.name} {`, ...fields, '}', '');
+                this.out.push(`// Inline object type at ${a.site}.`, valueDerive(fields), `pub struct ${a.name} {`, ...fields, '}', '');
             }
             if (!added) {
                 break;
@@ -1593,6 +1593,14 @@ function fieldTypeNode(p: ts.Node): ts.TypeNode | undefined {
 function accessorType(t: IR, uses: Uses): string {
     const owned = render(t, 'field', uses);
     return isCopy(t) ? owned : `&${owned}`;
+}
+
+// A value struct whose fields are all optional also derives Default, so `{ a: x }` is
+// `X { a: Some(x), ..Default::default() }`.
+function valueDerive(fields: string[]): string {
+    const decls = fields.filter((f) => !f.trim().startsWith('//'));
+    const optional = decls.length > 0 && decls.every((f) => /^\s*pub \w+: (Option<|PhantomData<)/.test(f));
+    return optional ? '#[derive(Clone, Default)]' : '#[derive(Clone)]';
 }
 
 function trimBlank(lines: string[]): string[] {
