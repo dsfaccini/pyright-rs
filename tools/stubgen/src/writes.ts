@@ -59,9 +59,15 @@ export class Writes {
     // (`const a = x.f`) also give the field.
     private targets(expr: ts.Expression): ts.Node[] {
         const e = skipParens(expr);
-        if (ts.isPropertyAccessExpression(e) || ts.isElementAccessExpression(e)) {
-            const nameNode = ts.isPropertyAccessExpression(e) ? e.name : e.argumentExpression;
-            const sym = this.checker.getSymbolAtLocation(nameNode);
+        if (ts.isPropertyAccessExpression(e)) {
+            const sym = this.checker.getSymbolAtLocation(e.name);
+            return [...(sym?.declarations ?? [])];
+        }
+        if (ts.isElementAccessExpression(e)) {
+            // `x["name"]` names a property; `x[key]` names whatever property the key selects, never
+            // the variable `key` itself.
+            const arg = e.argumentExpression;
+            const sym = ts.isStringLiteral(arg) || ts.isNumericLiteral(arg) ? this.checker.getSymbolAtLocation(arg) : this.checker.getSymbolAtLocation(e);
             return [...(sym?.declarations ?? [])];
         }
         if (ts.isIdentifier(e)) {

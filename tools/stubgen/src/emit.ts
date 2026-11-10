@@ -35,6 +35,9 @@ interface FnShape {
     subst?: Map<string, IR>;
     // The marker line, when the signature comes from another declaration.
     markerNode?: ts.Node;
+    // In a `&mut self` class, callback parameters get the receiver as their first argument
+    // (`&mut dyn FnMut(&mut Binder)`): a closure cannot capture `self` while the method holds it.
+    ownerArg?: string;
 }
 
 export class FileEmitter {
@@ -224,6 +227,27 @@ export class FileEmitter {
                 const f = this.methodSigField(m, name);
                 if (f) {
                     fields.push(f);
+                }
+            }
+        }
+        // Interfaces merged into this one ([merge]) add the fields this one lacks, as Options.
+        const key = `${this.file}:${name}`;
+        const have = new Set(props.map((p) => memberName(p.node)));
+        for (const [src, target] of this.gen.table.merge) {
+            const targetKey = target.includes(':') ? target : `${this.gen.fileOfKey(src)}:${target}`;
+            const srcDecl = targetKey === key ? this.gen.decls.get(src)?.find(ts.isInterfaceDeclaration) : undefined;
+            if (!srcDecl) {
+                continue;
+            }
+            for (const p of this.gen.collectProps(srcDecl)) {
+                const n = memberName(p.node);
+                if (n === undefined || have.has(n)) {
+                    continue;
+                }
+                have.add(n);
+                const f = this.field(p.node, name, mode === 'handle', false, p.subst);
+                if (f) {
+                    fields.push(`    // From ${this.gen.nameOfKey(src)}.`, f.includes(': Option<') ? f : f.replace(/: (.*),$/, ': Option<$1>,'));
                 }
             }
         }
@@ -740,8 +764,9 @@ export class FileEmitter {
             }
             void traitOf;
             const abstract = !m.body;
+            const ownerArg = recv === '&mut self' && !isStatic && !inTrait ? cls + (outer.size ? `<${[...outer].join(', ')}>` : '') : undefined;
             return this.fnStub(
-                { name: n, vis: vis(m), receiver: isStatic ? undefined : recv, decl: m, site: `${cls}.${n}`, outerGenerics: outer, body: !(abstract && inTrait) },
+                { name: n, vis: vis(m), receiver: isStatic ? undefined : recv, decl: m, site: `${cls}.${n}`, outerGenerics: outer, body: !(abstract && inTrait), ownerArg },
                 '    '
             );
         }
@@ -805,6 +830,9 @@ export class FileEmitter {
             } else if (p.questionToken) {
                 t = opt(t);
             }
+            if (s.ownerArg) {
+                t = withOwnerArg(t, s.ownerArg);
+            }
             if (p.initializer) {
                 defaults.push(`${pname} = ${p.initializer.getText().replace(/\s+/g, ' ')}`);
             }
@@ -856,6 +884,10 @@ export class FileEmitter {
     }
 
     private returnIR(s: FnShape, site: Site): IR {
+        const override = this.gen.siteOverride({ ...site, key: `${s.site}.return` });
+        if (override) {
+            return override;
+        }
         const decl = s.decl;
         const node = s.retNode ?? decl.type;
         if (node) {
@@ -1056,7 +1088,9 @@ export class FileEmitter {
     private aliasDecl(a: ts.TypeAliasDeclaration) {
         const name = a.name.text;
         const key = `${this.file}:${name}`;
-        if (this.gen.familyByRootKey.has(key)) {
+        const fam = this.gen.familyByRootKey.get(key);
+        if (fam) {
+            this.out.push(this.marker(a), `// \`${name}\`, the union of every member, is \`P<${fam.name}>\`: struct ${fam.name} and enum ${fam.name}Details.`, '');
             return;
         }
         const tps = this.typeParams(a);
@@ -1354,6 +1388,17 @@ export class FileEmitter {
 }
 
 // ---- helpers ------------------------------------------------------------------------------
+
+function withOwnerArg(t: IR, owner: string): IR {
+    const ownerIR: IR = { k: 'raw', text: `&mut ${owner}`, param: `&mut ${owner}`, copy: false, uses: [] };
+    if (t.k === 'fn') {
+        return { ...t, params: [ownerIR, ...t.params] };
+    }
+    if (t.k === 'opt' && t.inner.k === 'fn') {
+        return { k: 'opt', inner: { ...t.inner, params: [ownerIR, ...t.inner.params] } };
+    }
+    return t;
+}
 
 function isPrivate(n: ts.Node): boolean {
     return (

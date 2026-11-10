@@ -12,6 +12,18 @@ Stubs (copy candidates for `crates/pyright/src`):
 - `stubs/analyzer/parse_tree_utils.rs` from `analyzer/parseTreeUtils.ts`
 - `stubs/analyzer/static_expressions.rs` from `analyzer/staticExpressions.ts`
 
+Every function, method and type of each stubbed file has a `// <file>:<line>` marker:
+
+- `analyzer/binder.ts`: 132/132 declarations have a marker
+- `analyzer/scope.ts`: 19/19 declarations have a marker
+- `analyzer/symbol.ts`: 42/42 declarations have a marker
+- `analyzer/declaration.ts`: 24/24 declarations have a marker
+- `analyzer/codeFlowTypes.ts`: 19/19 declarations have a marker
+- `analyzer/analyzerNodeInfo.ts`: 98/98 declarations have a marker
+- `analyzer/parseTreeWalker.ts`: 87/87 declarations have a marker
+- `analyzer/parseTreeUtils.ts`: 106/106 declarations have a marker
+- `analyzer/staticExpressions.ts`: 17/17 declarations have a marker
+
 Dependency placeholders (compile check only):
 
 - `deps/analyzer/analyzer_file_info.rs`: AbsoluteModuleDescriptor, AnalyzerFileInfo, ImportLookup, ImportLookupResult, LookupImportOptions
@@ -19,7 +31,7 @@ Dependency placeholders (compile check only):
 - `deps/analyzer/import_result.rs`: ImplicitImport, ImportResult, ImportType
 - `deps/analyzer/py_typed_utils.rs`: PyTypedInfo
 - `deps/analyzer/source_file.rs`: IPythonMode
-- `deps/analyzer/types.rs`: AnyDetailsPriv, CachedTypeInfo, CallSiteInferenceTypeCacheEntry, ClassDetailsPriv, ClassDetailsShared, ClassType, ClassTypeFlags, DataClassBehaviors, DataClassEntry, EnumLiteral, FunctionDetailsPriv, FunctionDetailsShared, FunctionDetailsSharedInferredReturnType, FunctionParam, FunctionParamFlags, FunctionType, FunctionTypeFlags, LiteralTypes, LiteralValue, ModuleDetailsPriv, NeverDetailsPriv, OverloadedDetailsPriv, OverloadedType, PropertyMethodInfo, SentinelLiteral, SpecializedFunctionTypes, TupleTypeArg, TypeAliasInfo, TypeAliasSharedInfo, TypeBase, TypeBaseProps, TypeCategory, TypeCondition, TypeFlags, TypeVarDetailsPriv, TypeVarDetailsShared, TypeVarKind, TypeVarScopeType, TypeVarType, TypedDictEntries, TypedDictEntry, UnionDetailsPriv, UnionType, UnionableType, UnknownDetailsPriv, Variance
+- `deps/analyzer/types.rs`: AnyDetailsPriv, CachedTypeInfo, CallSiteInferenceTypeCacheEntry, ClassDetailsPriv, ClassDetailsShared, ClassType, ClassTypeFlags, DataClassBehaviors, DataClassEntry, EnumLiteral, FunctionDetailsPriv, FunctionDetailsShared, FunctionDetailsSharedInferredReturnType, FunctionParam, FunctionParamFlags, FunctionType, FunctionTypeFlags, LiteralTypes, LiteralValue, ModuleDetailsPriv, NeverDetailsPriv, OverloadedDetailsPriv, OverloadedType, ParamSpecAccess, PropertyMethodInfo, SentinelLiteral, SpecializedFunctionTypes, TupleTypeArg, TypeAliasInfo, TypeAliasSharedInfo, TypeBase, TypeBaseProps, TypeCategory, TypeCondition, TypeFlags, TypeVarDetailsPriv, TypeVarDetailsShared, TypeVarKind, TypeVarScopeType, TypeVarType, TypedDictEntries, TypedDictEntry, UnionDetailsPriv, UnionType, UnionableType, UnknownDetailsPriv, Variance
 - `deps/common/config_options.rs`: DiagnosticLevel, DiagnosticRuleSet, ExecutionEnvironment
 - `deps/common/diagnostic.rs`: Diagnostic, DiagnosticAction, DiagnosticCategory, DiagnosticRelatedInfo, TaskListPriority
 - `deps/common/diagnostic_rules.rs`: DiagnosticRule
@@ -39,10 +51,10 @@ Number sites without a reviewed type: 80 (see numbers.toml, values ending in "?"
 
 Unmapped TypeScript types (rendered with a `/*? ... */` marker): 8 distinct.
 
-- `object` x13: analyzer/analyzerNodeInfo.ts:AnalyzerNodeInfoStore._infoByTree, analyzer/analyzerNodeInfo.ts:AnalyzerNodeInfoStore._fileInfoByTree, analyzer/analyzerNodeInfo.ts:AnalyzerNodeInfoContextLayer.stores, analyzer/analyzerNodeInfo.ts:AnalyzerNodeInfoContextLayer.removedKeys, ...
 - `boolean | string` x7: analyzer/staticExpressions.ts:evaluateStaticBoolExpression.definedConstants, analyzer/staticExpressions.ts:evaluateStaticBoolLikeExpression.definedConstants, analyzer/staticExpressions.ts:_evaluateStaticBoolOrBoolLikeExpression.definedConstants, analyzer/analyzerFileInfo.ts:AnalyzerFileInfo.definedConstants, ...
 - `any` x6: analyzer/staticExpressions.ts:_evaluateVersionBinaryOperation.return, analyzer/staticExpressions.ts:_evaluateStringBinaryOperation.return, common/diagnostic.ts:Diagnostic._data, ...
 - `Uri | AbsoluteModuleDescriptor` x3: analyzer/analyzerFileInfo.ts:ImportLookup
+- `object` x3: analyzer/types.ts:ClassDetailsShared.protocolCompatibility
 - `T extends ParseNode & { nodeType: NT } ? T : never` x2: analyzer/parseTreeUtils.ts:NodeForType
 - `AnalyzerNodeInfoReaderPropertyProvider | AnalyzerNodeInfoReaderMethodProvider` x1: analyzer/analyzerNodeInfo.ts:getInfoReader.provider
 - `unique symbol` x1: analyzer/analyzerNodeInfo.ts:_retiredStores

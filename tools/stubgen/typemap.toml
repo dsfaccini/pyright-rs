@@ -18,12 +18,16 @@ RegExp = { rust = "jsrt::JsRegExp" }
 # The CLI check runs to completion: nothing cancels it and nothing on the check path awaits.
 CancellationToken = { rust = "()", copy = true }
 Promise = "$0"
+# The key of a parse tree: its module node (`node.a = node` in ModuleNode.create).
+"parser/parseNodes.ts:ParseTreeKey" = { rust = "jsrt::P<crate::parser::parse_nodes::ParseNode>", copy = true }
 
 # How a class or interface is held (default rules in docs/evaluator-design.md, "objects"):
 # "handle": `P<T>`, shared by reference; fields written after construction get Cell/RefCell.
 # "value": an owned struct; parameters take `&T`.
 # "owned": a class whose methods take `&mut self`, with plain fields.
 [modes]
+# Holds a FnOnce, so it cannot be cloned.
+"analyzer/binder.ts:DeferredBindingTask" = "owned"
 # Small immutable position records.
 "common/textRange.ts:TextRange" = "value"
 "common/textRange.ts:Range" = "value"
@@ -134,8 +138,30 @@ file = "analyzer/codeFlowEngine.ts"
 function = "getCodeFlowEngine.createCodeFlowAnalyzer"
 interface = "analyzer/codeFlowEngine.ts:CodeFlowAnalyzer"
 
-# Per-site Rust type, overriding the mapping: "<file>:<site>" = "Rust type".
+# Per-site Rust type, overriding the mapping: "<file>:<site>" = "Rust type", used verbatim in every
+# position. Qualify names outside the module (`jsrt::P`) and the generator imports them.
 [sites]
+# Deferred binding callbacks run later with the binder that queued them.
+"analyzer/binder.ts:DeferredBindingTask.callback" = "Box<dyn FnOnce(&mut crate::analyzer::binder::Binder)>"
+"analyzer/binder.ts:Binder._deferBinding.callback" = "Box<dyn FnOnce(&mut crate::analyzer::binder::Binder)>"
+# One code-flow expression set is shared by the binder, its deferred tasks and the node-info store,
+# and the binder keeps adding to it after storing it.
+"analyzer/binder.ts:DeferredBindingTask.codeFlowExpressions" = "jsrt::P<std::cell::RefCell<jsrt::JsSet<String>>>"
+"analyzer/binder.ts:Binder._currentScopeCodeFlowExpressions" = "Option<jsrt::P<std::cell::RefCell<jsrt::JsSet<String>>>>"
+"analyzer/binder.ts:Binder._trackCodeFlowExpressions.return" = "jsrt::P<std::cell::RefCell<jsrt::JsSet<String>>>"
+"analyzer/codeFlowTypes.ts:FlowLabel.affectedExpressions" = "Option<jsrt::P<std::cell::RefCell<jsrt::JsSet<String>>>>"
+"analyzer/analyzerNodeInfo.ts:AnalyzerNodeInfo.codeFlowExpressions" = "jsrt::P<std::cell::RefCell<jsrt::JsSet<String>>>"
+"analyzer/analyzerNodeInfo.ts:AnalyzerNodeInfoAccessor.getCodeFlowExpressions.return" = "Option<jsrt::P<std::cell::RefCell<jsrt::JsSet<String>>>>"
+"analyzer/analyzerNodeInfo.ts:AnalyzerNodeInfoAccessor.setCodeFlowExpressions.expressions" = "jsrt::P<std::cell::RefCell<jsrt::JsSet<String>>>"
+"analyzer/analyzerNodeInfo.ts:getCodeFlowExpressions.return" = "Option<jsrt::P<std::cell::RefCell<jsrt::JsSet<String>>>>"
+"analyzer/analyzerNodeInfo.ts:setCodeFlowExpressions.expressions" = "jsrt::P<std::cell::RefCell<jsrt::JsSet<String>>>"
+# Stores keyed by a parse tree key (`node.a`): the module node.
+"analyzer/analyzerNodeInfo.ts:AnalyzerNodeInfoStore._infoByTree" = "jsrt::JsMap<jsrt::P<crate::parser::parse_nodes::ParseNode>, jsrt::JsMap<jsrt::P<crate::parser::parse_nodes::ParseNode>, jsrt::P<crate::analyzer::analyzer_node_info::AnalyzerNodeInfo>>>"
+"analyzer/analyzerNodeInfo.ts:AnalyzerNodeInfoStore._fileInfoByTree" = "jsrt::JsMap<jsrt::P<crate::parser::parse_nodes::ParseNode>, jsrt::P<crate::analyzer::analyzer_file_info::AnalyzerFileInfo>>"
+"analyzer/analyzerNodeInfo.ts:AnalyzerNodeInfoContextLayer.stores" = "jsrt::JsMap<jsrt::P<crate::parser::parse_nodes::ParseNode>, jsrt::P<crate::analyzer::analyzer_node_info::AnalyzerNodeInfoStore>>"
+"analyzer/analyzerNodeInfo.ts:AnalyzerNodeInfoContextLayer.removedKeys" = "jsrt::JsSet<jsrt::P<crate::parser::parse_nodes::ParseNode>>"
+"analyzer/analyzerNodeInfo.ts:AnalyzerNodeInfoContextImpl._getRetiredStore.key" = "jsrt::P<crate::parser::parse_nodes::ParseNode>"
+"analyzer/analyzerNodeInfo.ts:AnalyzerNodeInfoContextImpl._deleteRetiredStore.key" = "jsrt::P<crate::parser::parse_nodes::ParseNode>"
 
 # Force interior mutability on or off for a field: "<file>:<Struct>.<field>" = true | false.
 [mutable]

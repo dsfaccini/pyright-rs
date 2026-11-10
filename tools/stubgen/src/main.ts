@@ -1,6 +1,7 @@
 // tools/stubgen: Rust signature stubs from pyright's TypeScript. See tools/stubgen/README.md.
 
-import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import ts from 'typescript';
 import * as path from 'node:path';
 import { parseArgs } from 'node:util';
@@ -11,6 +12,7 @@ import { loadProgram, relPath } from './program.ts';
 import { NumberTable, Run, loadRuns, loadTable } from './table.ts';
 import { Writes } from './writes.ts';
 import { checkRun } from './check.ts';
+import { coverage } from './coverage.ts';
 
 const here = path.dirname(path.dirname(new URL(import.meta.url).pathname));
 const repoRoot = path.resolve(here, '../..');
@@ -114,14 +116,36 @@ function generate(gen: Gen, run: Run, outDir: string) {
             write('deps', file, fe.run());
         }
     }
-    writeFileSync(path.join(outDir, 'REPORT.md'), report(gen, run, wanted, notes));
+    const factoryFuncs = new Set(gen.table.factories.filter((f) => !f.func.includes('.')).map((f) => f.func));
+    const cov = coverage(gen.loaded.srcRoot, outDir, run.files, factoryFuncs);
+    if (cov.missing) {
+        console.error(`coverage: ${cov.missing} declarations have no marker (see REPORT.md)`);
+    }
+    writeFileSync(path.join(outDir, 'REPORT.md'), report(gen, run, wanted, notes, cov.lines));
+    const rs: string[] = [];
+    const collect = (dir: string) => {
+        for (const e of readdirSync(dir, { withFileTypes: true })) {
+            const p = path.join(dir, e.name);
+            if (e.isDirectory()) {
+                collect(p);
+            } else if (p.endsWith('.rs')) {
+                rs.push(p);
+            }
+        }
+    };
+    collect(outDir);
+    const fmt = spawnSync('rustfmt', ['--edition', '2024', ...rs], { encoding: 'utf8' });
+    if (fmt.status !== 0) {
+        console.error(`rustfmt failed:\n${fmt.stderr}`);
+    }
 }
 
-function report(gen: Gen, run: Run, deps: Map<string, Set<string>>, notes: string[]): string {
+function report(gen: Gen, run: Run, deps: Map<string, Set<string>>, notes: string[], cov: string[]): string {
     const lines = [`# stubgen run \`${run.name}\``, '', 'Stubs (copy candidates for `crates/pyright/src`):', ''];
     for (const f of run.files) {
         lines.push(`- \`stubs/${modulePathOf(f)}.rs\` from \`${f}\``);
     }
+    lines.push('', 'Every function, method and type of each stubbed file has a `// <file>:<line>` marker:', '', ...cov);
     lines.push('', 'Dependency placeholders (compile check only):', '');
     for (const [f, names] of [...deps].sort()) {
         lines.push(`- \`deps/${modulePathOf(f)}.rs\`: ${[...names].sort().join(', ')}`);

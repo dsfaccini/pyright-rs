@@ -5,6 +5,11 @@ Stubs (copy candidates for `crates/pyright/src`):
 - `stubs/analyzer/type_evaluator.rs` from `analyzer/typeEvaluator.ts`
 - `stubs/analyzer/types.rs` from `analyzer/types.ts`
 
+Every function, method and type of each stubbed file has a `// <file>:<line>` marker:
+
+- `analyzer/typeEvaluator.ts`: 416/416 declarations have a marker
+- `analyzer/types.ts`: 289/289 declarations have a marker
+
 Dependency placeholders (compile check only):
 
 - `deps/analyzer/analyzer_file_info.rs`: AbsoluteModuleDescriptor, AnalyzerFileInfo, ImportLookup, ImportLookupResult, LookupImportOptions
@@ -38,15 +43,14 @@ Dependency placeholders (compile check only):
 
 Number sites without a reviewed type: 154 (see numbers.toml, values ending in "?").
 
-Unmapped TypeScript types (rendered with a `/*? ... */` marker): 7 distinct.
+Unmapped TypeScript types (rendered with a `/*? ... */` marker): 6 distinct.
 
 - `any` x12: analyzer/typeEvaluator.ts:LogWrapper, common/diagnostic.ts:Diagnostic._data, analyzer/typeCacheUtils.ts:SpeculativeEntry.cache, ...
-- `object` x5: analyzer/types.ts:ClassDetailsShared.protocolCompatibility, parser/parseNodes.ts:ParseTreeKey, ...
 - `Uri | AbsoluteModuleDescriptor` x4: analyzer/analyzerFileInfo.ts:ImportLookup
 - `boolean | string` x4: analyzer/analyzerFileInfo.ts:AnalyzerFileInfo.definedConstants
-- `T | Promise<T>` x2: analyzer/typeEvaluator.ts:createTypeEvaluator.runWithCancellationToken.callback, analyzer/typeEvaluator.ts:createTypeEvaluator.runWithCancellationToken.return
 - `Parameters<T>` x1: analyzer/typeEvaluator.ts:LogWrapper
 - `ReturnType<T>` x1: analyzer/typeEvaluator.ts:LogWrapper
+- `object` x1: analyzer/types.ts:ClassDetailsShared.protocolCompatibility
 
 Interfaces held as `P<T>` by the default rule (a field is written after construction); set [modes] to override:
 

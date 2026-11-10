@@ -346,6 +346,20 @@ export class Gen {
         return out;
     }
 
+    // A [types] entry as IR. A template of exactly "$0" is its first argument (Promise<T> is T).
+    private rawEntry(entry: { rust: string; param: string | undefined; copy: boolean; uses: string[] }, args: IR[]): IR {
+        if (entry.rust === '$0' && args[0]) {
+            return args[0];
+        }
+        return {
+            k: 'raw',
+            text: shortenPaths(subst(entry.rust, args)),
+            param: entry.param ? shortenPaths(subst(entry.param, args)) : undefined,
+            copy: entry.copy,
+            uses: [...entry.uses, ...usesOf(entry.rust), ...(entry.param ? usesOf(entry.param) : []), ...args.flatMap(usesOfIR)],
+        };
+    }
+
     // ---- generics of structs ------------------------------------------------------------
     //
     // A type parameter with a mappable constraint is erased to that constraint, as in functions:
@@ -398,10 +412,21 @@ export class Gen {
     // ---- mapping --------------------------------------------------------------------------
 
     // Maps a declared type, or the checker's inferred type when there is no annotation.
-    mapDecl(typeNode: ts.TypeNode | undefined, node: ts.Node, site: Site, subst?: Map<string, IR>): IR {
+    // A [sites] entry: the Rust type, verbatim in every position. Qualified paths in it
+    // (`jsrt::P`, `std::cell::RefCell`) become imports.
+    siteOverride(site: Site): IR | undefined {
         const override = this.table.sites.get(`${site.file}:${site.key}`);
+        if (override === undefined) {
+            return undefined;
+        }
+        const text = shortenPaths(override);
+        return { k: 'raw', text, param: text, copy: false, uses: usesOf(override) };
+    }
+
+    mapDecl(typeNode: ts.TypeNode | undefined, node: ts.Node, site: Site, subst?: Map<string, IR>): IR {
+        const override = this.siteOverride(site);
         if (override) {
-            return { k: 'raw', text: override, param: undefined, copy: false, uses: [] };
+            return override;
         }
         if (typeNode) {
             return this.mapNode(typeNode, site, subst ?? new Map());
@@ -538,7 +563,7 @@ export class Gen {
         const unionKey = parts.map((p) => p.getText().replace(/\s+/g, ' ')).sort().join(' | ');
         const entry = this.table.types.get(unionKey);
         if (entry) {
-            return wrap({ k: 'raw', text: entry.rust, param: entry.param, copy: entry.copy, uses: [...entry.uses, ...usesOf(entry.rust)] });
+            return wrap(this.rawEntry(entry, []));
         }
         if (parts.length === 0) {
             return UNIT;
@@ -645,7 +670,7 @@ export class Gen {
     builtin(name: string, args: IR[], node: ts.Node | undefined, site?: Site): IR {
         const entry = this.table.types.get(name);
         if (entry) {
-            return { k: 'raw', text: subst(entry.rust, args), param: entry.param ? subst(entry.param, args) : undefined, copy: entry.copy, uses: [...entry.uses, ...usesOf(entry.rust)] };
+            return this.rawEntry(entry, args);
         }
         switch (name) {
             case 'Array':
@@ -724,7 +749,7 @@ export class Gen {
             if (entry.uses.some((u) => u.startsWith('crate::'))) {
                 this.need(key);
             }
-            return { k: 'raw', text: subst(entry.rust, args), param: entry.param ? subst(entry.param, args) : undefined, copy: entry.copy, uses: [...entry.uses, ...usesOf(entry.rust)] };
+            return this.rawEntry(entry, args);
         }
         const merged = this.table.merge.get(key);
         if (merged) {
@@ -750,8 +775,11 @@ export class Gen {
             return { k: 'named', text: name, copy: true, uses: [path] };
         }
         const decls = this.decls.get(key) ?? [];
+        // Erased type parameters take no argument. An inlined alias keeps all of them: they are
+        // substituted into its body.
         const shaped = decls.find((d) => ts.isInterfaceDeclaration(d) || ts.isClassDeclaration(d) || ts.isTypeAliasDeclaration(d));
-        if (shaped && (ts.isInterfaceDeclaration(shaped) || ts.isClassDeclaration(shaped) || ts.isTypeAliasDeclaration(shaped))) {
+        const inlined = shaped !== undefined && ts.isTypeAliasDeclaration(shaped) && this.aliasShape(shaped) === 'inline';
+        if (shaped && !inlined && (ts.isInterfaceDeclaration(shaped) || ts.isClassDeclaration(shaped) || ts.isTypeAliasDeclaration(shaped))) {
             const sp = this.structParams(shaped);
             args = sp.keptIndex.map((i, j) => {
                 const a = args[i];
@@ -1182,6 +1210,11 @@ export function usesOfIR(a: IR): string[] {
     const u = { set: new Set<string>(), add(p: readonly string[]) { for (const x of p) { this.set.add(x); } } };
     renderIR(a, 'elem', u);
     return [...u.set];
+}
+
+// `jsrt::P<std::cell::RefCell<T>>` -> `P<RefCell<T>>`.
+export function shortenPaths(rust: string): string {
+    return rust.replace(/\b(?:crate|jsrt|std)(?:::[A-Za-z_][A-Za-z0-9_]*)*::([A-Za-z_][A-Za-z0-9_]*)/g, '$1');
 }
 
 // `jsrt::JsString` -> uses `jsrt::JsString`. Bare names are assumed to be in scope.
