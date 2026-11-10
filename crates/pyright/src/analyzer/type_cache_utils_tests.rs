@@ -1,8 +1,7 @@
 //! Port of `packages/pyright-internal/src/tests/typeCacheUtils.test.ts`.
 
 use crate::analyzer::type_cache_utils::{
-    ContextualTypeCacheEntry, add_contextual_type_cache_entry,
-    contextual_type_cache_entry_matches,
+    ContextualTypeCacheEntry, add_contextual_type_cache_entry, contextual_type_cache_entry_matches,
 };
 use crate::analyzer::types::{Type, TypeVarKind, TypeVarType};
 use jsrt::P;
@@ -24,7 +23,6 @@ fn values(entries: &[TestCacheEntry]) -> Vec<i32> {
 }
 
 #[test]
-#[ignore = "needs share A: TypeVarType::create_instance and is_type_same"]
 fn contextual_type_cache_entry_matching() {
     let expected_type = TypeVarType::create_instance("T", TypeVarKind::TypeVar).0;
     let other_expected_type = TypeVarType::create_instance("U", TypeVarKind::TypeVar).0;
@@ -37,14 +35,22 @@ fn contextual_type_cache_entry_matching() {
         value: 2,
     };
 
-    assert!(contextual_type_cache_entry_matches(&entry, Some(expected_type)));
-    assert!(!contextual_type_cache_entry_matches(&entry, Some(other_expected_type)));
+    assert!(contextual_type_cache_entry_matches(
+        &entry,
+        Some(expected_type)
+    ));
+    assert!(!contextual_type_cache_entry_matches(
+        &entry,
+        Some(other_expected_type)
+    ));
     assert!(!contextual_type_cache_entry_matches(&entry, None));
-    assert!(contextual_type_cache_entry_matches(&no_expected_type_entry, None));
+    assert!(contextual_type_cache_entry_matches(
+        &no_expected_type_entry,
+        None
+    ));
 }
 
 #[test]
-#[ignore = "needs share A: TypeVarType::create_instance and is_type_same"]
 fn contextual_type_cache_entry_replacement_and_eviction() {
     let expected_types: Vec<P<Type>> = (0..9)
         .map(|index| TypeVarType::create_instance(&format!("T{index}"), TypeVarKind::TypeVar).0)

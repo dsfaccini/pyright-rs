@@ -1,6 +1,6 @@
 # flow notes
 
-Share F of step 5: `codeFlowEngine.ts`, `typeGuards.ts`, `patternMatching.ts`, `typeCacheUtils.ts`, `typeEvaluatorTypes.ts` (`docs/step5-shares.md`).
+Share F of step 5: `codeFlowEngine.ts`, `typeGuards.ts` 1-2067, `patternMatching.ts`, `typeCacheUtils.ts`, `typeEvaluatorTypes.ts` (`docs/step5-shares.md`). `typeGuards.ts` 2068-3024 moved to share J.
 
 ## Signature changes
 
@@ -21,9 +21,15 @@ All through `tools/stubgen` (`typemap.toml`, generator), documented in `docs/eva
 
 ## Needs from others
 
-- Share A: `TypeVarType::create_instance` and `is_type_same`. The two tests in `type_cache_utils_tests.rs` are `#[ignore]`d until they land.
+- Share J: `is_name_same_scope` and `is_matching_expression_or_walrus_rhs` (typeGuards.ts:2986, 3008), which most of `getTypeNarrowingCallback` calls.
 
 ## Doubts
+
+- `getTypeFromCodeFlow` returns `typeAtStart` when `flowNode` is undefined. The Rust signature takes a `P<FlowNode>`, and both callers (typeEvaluator.ts:3788, 22506) pass a defined node, so that branch is not ported.
+- `narrowTypeForIsEllipsis`: `getBuiltInObject` always returns a type, so the `?? getBuiltInObject(node, 'ellipsis') ?? AnyType.create()` fallbacks never run and are not ported.
+- Narrowing callbacks (`TypeNarrowingCallback`) read `isIncomplete` from the captured `P<TypeResult>` when they run, as the TypeScript closures do, not when they are built.
+- `getFlowNodeReachability`'s nested `cacheReachabilityResult` keys the cache by the outer call's flow node, and the recursive lookup by the recursive call's: both as in the TypeScript.
+- `stubgen --install` rewrites every other share's finished file into stub form (split imports, stub header). After an install, restore the files you do not own before committing.
 
 - `preventRecursion` and the loop-label antecedent evaluation in `codeFlowEngine.ts` catch, clean up and rethrow. Only cancellation and JS stack overflow throw there; the port has neither, so the catches are not ported (porting.md "exceptions").
 - `SpeculativeTypeTracker`'s methods take `&mut self` (generator rule for owned classes), even the read-only ones. `get_speculative_type` copies the entry handles before calling `_dependent_types_match(&mut self)`.
