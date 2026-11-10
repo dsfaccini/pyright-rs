@@ -1,0 +1,20 @@
+# Generator runs. Each run writes out/<name>/stubs (one module per file) and out/<name>/deps
+# (type-only placeholders for the files the stubs name, used by the compile check).
+
+[runs.binder]
+# Milestone 1 binder group (PLAN.md step 4).
+files = [
+    "analyzer/binder.ts",
+    "analyzer/scope.ts",
+    "analyzer/symbol.ts",
+    "analyzer/declaration.ts",
+    "analyzer/codeFlowTypes.ts",
+    "analyzer/analyzerNodeInfo.ts",
+    "analyzer/parseTreeWalker.ts",
+    "analyzer/parseTreeUtils.ts",
+    "analyzer/staticExpressions.ts",
+]
+
+[runs.evaluator]
+# Proves the evaluator mapping (docs/evaluator-design.md).
+files = ["analyzer/typeEvaluator.ts", "analyzer/types.ts"]

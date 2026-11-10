@@ -1,0 +1,146 @@
+# Type-mapping table for tools/stubgen. Edit this file, not the generator, to change a mapping.
+# docs/evaluator-design.md explains every rule; this file holds the per-type and per-site choices.
+#
+# Keys name a pyright declaration as "<path under packages/pyright-internal/src>:<Name>".
+# Library and package types use their bare name ("RegExp", "CancellationToken").
+# Number sites live in numbers.toml.
+
+# TypeScript type -> Rust type. A string is the Rust type in every position, passed as `&T` unless
+# `copy = true`. A table can give `param`, the Rust type in parameter position. $0, $1 are the
+# mapped type arguments.
+[types]
+bigint = { rust = "jsrt::JsBigInt" }
+RegExp = { rust = "jsrt::JsRegExp" }
+# porting.md "numbers": a Python number literal is NumberValue.
+"bigint | number" = { rust = "NumberValue", use = "jsrt::NumberValue" }
+# A class name or a list of class names.
+"string | string[]" = { rust = "Vec<String>", param = "&[&str]" }
+# The CLI check runs to completion: nothing cancels it and nothing on the check path awaits.
+CancellationToken = { rust = "()", copy = true }
+Promise = "$0"
+
+# How a class or interface is held (default rules in docs/evaluator-design.md, "objects"):
+# "handle": `P<T>`, shared by reference; fields written after construction get Cell/RefCell.
+# "value": an owned struct; parameters take `&T`.
+# "owned": a class whose methods take `&mut self`, with plain fields.
+[modes]
+# Small immutable position records.
+"common/textRange.ts:TextRange" = "value"
+"common/textRange.ts:Range" = "value"
+"common/textRange.ts:Position" = "value"
+# Per-instance records that `TypeBase.cloneType` copies with a spread: a clone gets its own copy.
+# They sit in a RefCell in the type, so writes through one P<Type> stay visible to its holders.
+"analyzer/types.ts:TypeBaseProps" = "value"
+"analyzer/types.ts:CachedTypeInfo" = "value"
+"analyzer/types.ts:ClassDetailsPriv" = "value"
+"analyzer/types.ts:FunctionDetailsPriv" = "value"
+"analyzer/types.ts:ModuleDetailsPriv" = "value"
+"analyzer/types.ts:OverloadedDetailsPriv" = "value"
+"analyzer/types.ts:TypeVarDetailsPriv" = "value"
+"analyzer/types.ts:UnionDetailsPriv" = "value"
+# Copied with a spread before every write.
+"analyzer/types.ts:SpecializedFunctionTypes" = "value"
+"analyzer/types.ts:TypedDictEntry" = "value"
+"analyzer/typeEvaluatorTypes.ts:ValidateArgTypeParams" = "value"
+"analyzer/typeEvaluator.ts:MatchArgsToParamsResult" = "value"
+# Results and option bags written only by the function that builds them, or by a callee that takes
+# them as `&mut` (the write analysis marks those parameters).
+"analyzer/typeEvaluatorTypes.ts:TypeResult" = "value"
+"analyzer/typeEvaluatorTypes.ts:CallResult" = "value"
+"analyzer/typeEvaluatorTypes.ts:EffectiveTypeResult" = "value"
+"analyzer/typeEvaluatorTypes.ts:ExpectedTypeOptions" = "value"
+"analyzer/typeEvaluatorTypes.ts:PrefetchedTypes" = "value"
+"analyzer/typeUtils.ts:ClassMember" = "value"
+"analyzer/typeUtils.ts:InferenceContext" = "value"
+"analyzer/parameterUtils.ts:ParamListDetails" = "value"
+# Rewritten from behavior (PLAN.md): one Rust type, its shape chosen by whoever ports common/uri.
+"common/uri/uri.ts:Uri" = "opaque"
+
+# Classes and interfaces that become Rust traits. `receiver` is the receiver of every method
+# (default: "&mut self" for classes, "&self" for interfaces).
+[traits]
+"analyzer/parseTreeWalker.ts:ParseTreeVisitor" = { receiver = "&mut self" }
+"analyzer/parseTreeWalker.ts:ParseTreeWalker" = { receiver = "&mut self" }
+# Called through the interface; several classes and object literals implement them.
+"analyzer/analyzerNodeInfo.ts:AnalyzerNodeInfoReader" = {}
+"analyzer/analyzerNodeInfo.ts:AnalyzerNodeInfoWriter" = {}
+"analyzer/analyzerNodeInfo.ts:AnalyzerNodeInfoBindingSession" = {}
+"analyzer/analyzerNodeInfo.ts:AnalyzerNodeInfoContext" = {}
+"analyzer/cellChainIndex.ts:CellChainIndexProvider" = {}
+
+# Unions discriminated by a kind field become one struct plus an enum of per-kind details
+# (docs/porting.md, "types, classes and unions").
+# base: the interface with the common fields; union: the TS union naming every member;
+# kind: the discriminant field (left out when members are told apart by flags);
+# flatten: a slot field whose object type is spread into the details struct;
+# all_fields_mutable: every field is Cell/RefCell (porting.md "parse nodes");
+# root_variant: the variant for objects created as the base itself.
+[families.ParseNode]
+file = "parser/parseNodes.ts"
+base = "ParseNodeBase"
+union = "ParseNode"
+kind = "nodeType"
+flatten = "d"
+all_fields_mutable = true
+
+[families.Token]
+file = "parser/tokenizerTypes.ts"
+base = "TokenBase"
+union = "Token"
+kind = "type"
+root_variant = "Plain"
+
+[families.Type]
+file = "analyzer/types.ts"
+base = "TypeBase"
+union = "Type"
+kind = "category"
+
+[families.Declaration]
+file = "analyzer/declaration.ts"
+base = "DeclarationBase"
+union = "Declaration"
+kind = "type"
+
+[families.FlowNode]
+file = "analyzer/codeFlowTypes.ts"
+base = "FlowNode"
+root_variant = "Plain"
+
+# Interfaces folded into another: the target struct gains the source's extra fields, and the
+# source becomes a type alias of the target.
+[merge]
+"common/uri/uriInterface.ts:Uri" = "common/uri/uri.ts:Uri"
+"analyzer/types.ts:ParamSpecDetailsPriv" = "TypeVarDetailsPriv"
+"analyzer/types.ts:TypeVarTupleDetailsPriv" = "TypeVarDetailsPriv"
+
+# Closure factories: functions that build an object out of nested closures over shared locals.
+# Each becomes a struct (docs/evaluator-design.md).
+[factories.TypeEvaluator]
+file = "analyzer/typeEvaluator.ts"
+function = "createTypeEvaluator"
+interface = "analyzer/typeEvaluatorTypes.ts:TypeEvaluator"
+drop_params = ["wrapWithLogger"]
+self_names = ["evaluatorInterface"]
+wrappers = ["wrapWithLogger"]
+
+[factories.CodeFlowEngine]
+file = "analyzer/codeFlowEngine.ts"
+function = "getCodeFlowEngine"
+interface = "analyzer/codeFlowEngine.ts:CodeFlowEngine"
+
+[factories.CodeFlowAnalyzer]
+file = "analyzer/codeFlowEngine.ts"
+function = "getCodeFlowEngine.createCodeFlowAnalyzer"
+interface = "analyzer/codeFlowEngine.ts:CodeFlowAnalyzer"
+
+# Per-site Rust type, overriding the mapping: "<file>:<site>" = "Rust type".
+[sites]
+
+# Force interior mutability on or off for a field: "<file>:<Struct>.<field>" = true | false.
+[mutable]
+
+[enums]
+# Enums to emit as flags newtypes, or as plain enums, against the detection rule.
+flags = []
+plain = []

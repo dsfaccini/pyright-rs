@@ -1,0 +1,248 @@
+# Rust type of every TypeScript `number` site the stub generator has mapped.
+# Tables are TypeScript files; keys are "<Container>.<member>[.<param>|.return][#n]",
+# where #n counts the n-th number inside one site, from 0, and #0 is left out.
+# A value ending in "?" is the generator's guess. Drop the "?" once you have checked it.
+# The generator rewrites this file: it keeps every value and regenerates the comments.
+
+["analyzer/analyzerFileInfo.ts"]
+"AnalyzerFileInfo.accessedSymbolSet" = "u32?"
+
+["analyzer/analyzerNodeInfo.ts"]
+"AnalyzerNodeInfo.codeFlowComplexity" = "f64?"
+"AnalyzerNodeInfoAccessor.getCodeFlowComplexity.return" = "f64?"
+"AnalyzerNodeInfoAccessor.setCodeFlowComplexity.complexity" = "f64?"
+"getCodeFlowComplexity.return" = "f64?"
+"setCodeFlowComplexity.complexity" = "f64?"
+
+["analyzer/binder.ts"]
+"flowNodeComplexityContribution" = "f64?"
+"Binder._codeFlowComplexity" = "f64?"
+"Binder._getUniqueFlowNodeId.return" = "u32?"
+
+["analyzer/codeFlowEngine.ts"]
+"FlowNodeTypeResult.generationCount" = "u32?"  # counter
+"FlowNodeTypeOptions.targetSymbolId" = "u32?"  # id
+"getCodeFlowEngine.isReachableRecursionSet" = "u32?"  # Map or Set key: an id
+"getCodeFlowEngine.reachabilityCache" = "u32?"  # Map or Set key: an id
+"getCodeFlowEngine.callIsNoReturnCache" = "u32?"  # Map or Set key: an id
+"getCodeFlowEngine.isExceptionContextManagerCache" = "u32?"  # Map or Set key: an id
+"getCodeFlowEngine.flowIncompleteGeneration" = "u32?"  # counter
+"getCodeFlowEngine.noReturnAnalysisDepth" = "u32?"  # counter
+"getCodeFlowEngine.contextManagerAnalysisDepth" = "u32?"  # counter
+"IncompleteSubtypeInfo.evaluationCount" = "u32?"  # counter
+"ReachabilityCacheEntry.reachabilityFrom" = "u32?"  # Map or Set key: an id
+"CodeFlowTypeCache.cache" = "u32?"  # Map or Set key: an id
+"CodeFlowTypeCache.pendingNodes" = "u32?"  # Map or Set key: an id
+"CodeFlowTypeCache.closedFinallyGateNodes" = "u32?"  # Map or Set key: an id
+"IncompleteType.generationCount" = "u32?"  # counter
+
+["analyzer/codeFlowTypes.ts"]
+"_nextFlowNodeId" = "u32?"
+"getUniqueFlowNodeId.return" = "u32?"
+"FlowNode.id" = "u32?"
+"FlowAssignment.targetSymbolId" = "u32?"
+
+["analyzer/parameterUtils.ts"]
+"ParamListDetails.positionOnlyParamCount" = "u32?"  # counter
+"ParamListDetails.positionParamCount" = "u32?"  # counter
+"ParamListDetails.kwargsIndex" = "i32?"  # text position or index
+"ParamListDetails.argsIndex" = "i32?"  # text position or index
+"ParamListDetails.firstKeywordOnlyIndex" = "i32?"  # text position or index
+"ParamListDetails.firstPositionOrKeywordIndex" = "i32?"  # text position or index
+"VirtualParamDetails.index" = "i32?"  # text position or index
+
+["analyzer/parseTreeUtils.ts"]
+"getNodeDepth.return" = "u32?"
+"findNodeByOffset.offset" = "i32?"
+"getTypeSourceId.return" = "u32?"
+"NameNodeWalker._subscriptIndex" = "i32?"
+"NameNodeWalker._callback" = "f64?"
+"NameNodeWalker.constructor._callback" = "f64?"
+"getCallNodeAndActiveParamIndex.insertionOffset" = "i32?"
+"getTokenIndexAtLeft.position" = "i32?"
+"getTokenIndexAtLeft.return" = "i32?"
+"getTokenAtLeft.position" = "i32?"
+"getTokenIndexAfter.position" = "i32?"
+"getTokenIndexAfter.return" = "i32?"
+"getTokenAfter.position" = "i32?"
+"getTokenAtIndex.index" = "i32?"
+"getTokenAt.position" = "i32?"
+"getTokenOverlapping.position" = "i32?"
+"getIndexOfTokenOverlapping.position" = "i32?"
+"getIndexOfTokenOverlapping.return" = "i32?"
+"getCommentsAtTokenIndex.index" = "i32?"
+"getTypeAnnotationForParam.paramIndex" = "i32?"
+"isBlankLine.line" = "i32?"
+"_getStartPositionIfMultipleStatementsAreOnSameLine.tokenPosition" = "i32?"
+"_getEndPositionIfMultipleStatementsAreOnSameLine.tokenPosition" = "i32?"
+"getPreviousNonWhitespaceToken.offset" = "i32?"
+"getNextNonWhitespaceToken.offset" = "i32?"
+"getNextMatchingToken.offset" = "i32?"
+"getCallNodeAndActiveParamIndex.return.activeIndex" = "i32?"
+
+["analyzer/symbol.ts"]
+"nextSymbolId" = "u32?"
+"getUniqueSymbolId.return" = "u32?"
+"indeterminateSymbolId" = "u32?"
+"Symbol.id" = "u32?"
+
+["analyzer/typeCacheUtils.ts"]
+"SpeculativeTypeTracker._speculativeTypeCache" = "u32?"  # Map or Set key: an id
+"SpeculativeTypeEntry.incompleteGenerationCount" = "u32?"  # counter
+"SpeculativeEntry.cache" = "u32?"  # Map or Set key: an id
+"SpeculativeEntry.id" = "u32?"  # id
+
+["analyzer/typeEvaluator.ts"]
+"MatchArgsToParamsResult.overloadIndex" = "i32?"  # text position or index
+"MatchArgsToParamsResult.argumentMatchScore" = "f64?"  # fractional
+"SymbolResolutionStackEntry.symbolId" = "u32?"  # id
+"maxReturnTypeInferenceStackSize" = "u32?"  # counter
+"maxReturnTypeInferenceArgCount" = "u32?"  # counter
+"maxReturnTypeInferenceCodeFlowComplexity" = "u32?"  # counter
+"maxReturnCallSiteTypeInferenceCodeFlowComplexity" = "u32?"  # counter
+"maxCallSiteReturnTypeCacheSize" = "u32?"  # counter
+"maxEntriesToUseForInference" = "u32?"  # counter
+"maxReturnTypeInferenceAttempts" = "u32?"  # counter
+"maxDeclarationsToUseForInference" = "u32?"  # counter
+"maxEffectiveTypeEvaluationAttempts" = "u32?"  # counter
+"maxTotalOverloadArgTypeExpansionCount" = "u32?"  # counter
+"maxSingleOverloadArgTypeExpansionCount" = "u32?"  # counter
+"maxInferFunctionReturnRecursionCount" = "u32?"  # counter
+"maxRecursiveTypeAliasRecursionCount" = "u32?"  # counter
+"maxTypedDeclsPerSymbol" = "u32?"  # counter
+"maxCodeComplexity" = "u32?"  # counter
+"EvaluatorOptions.minimumLoggingThreshold" = "f64?"  # fractional
+"TypeCacheEntry.incompleteGenCount" = "u32?"  # counter
+"TypeFormTypeCacheEntry.incompleteGenCount" = "u32?"  # counter
+"createTypeEvaluator.functionRecursionMap" = "u32?"  # Map or Set key: an id
+"createTypeEvaluator.codeFlowAnalyzerCache" = "u32?"  # Map or Set key: an id
+"createTypeEvaluator.typeCache" = "u32?"  # Map or Set key: an id
+"createTypeEvaluator.typeFormTypeCache" = "u32?"  # Map or Set key: an id
+"createTypeEvaluator.effectiveTypeCache" = "u32?"  # Map or Set key: an id
+"createTypeEvaluator.expectedTypeCache" = "u32?"  # Map or Set key: an id
+"createTypeEvaluator.asymmetricAccessorAssignmentCache" = "u32?"  # Map or Set key: an id
+"createTypeEvaluator.printExpressionSpaceCount" = "u32?"  # counter
+"createTypeEvaluator.incompleteGenCount" = "u32?"  # counter
+"createTypeEvaluator.returnTypeInferenceTypeCache" = "u32?"  # Map or Set key: an id
+"createTypeEvaluator.returnTypeInferenceTypeFormTypeCache" = "u32?"  # Map or Set key: an id
+"createTypeEvaluator.getTypeCacheEntryCount.return" = "u32?"  # counter
+"createTypeEvaluator.getTypeFormTypeCache.return" = "u32?"  # Map or Set key: an id
+"createTypeEvaluator.getIndexOfSymbolResolution.return" = "i32?"  # text position or index
+"createTypeEvaluator.canBeFalsy.recursionCount" = "u32?"  # counter
+"createTypeEvaluator.canBeTruthy.recursionCount" = "u32?"  # counter
+"createTypeEvaluator.getTypeOfBoundMember.recursionCount" = "u32?"  # counter
+"createTypeEvaluator.getBoundMagicMethod.recursionCount" = "u32?"  # counter
+"createTypeEvaluator.getCallSignatureInfo.activeIndex" = "i32?"  # text position or index
+"createTypeEvaluator.mapSubtypesExpandTypeVars.recursionCount" = "u32?"  # counter
+"createTypeEvaluator.applyConditionFilterToType.recursionCount" = "u32?"  # counter
+"createTypeEvaluator.getTypeOfClassMemberName.recursionCount" = "u32?"  # counter
+"createTypeEvaluator.bindMethodForMemberAccess.recursionCount" = "u32?"  # counter
+"createTypeEvaluator.updateUsageVariancesRecursive.recursionCount" = "u32?"  # counter
+"createTypeEvaluator.collectLiteralEnumClasses.recursionCount" = "u32?"  # counter
+"createTypeEvaluator.normalizeEnumTypes.recursionCount" = "u32?"  # counter
+"createTypeEvaluator.getAnyOrUnknownInInvariantPosition.recursionCount" = "u32?"  # counter
+"createTypeEvaluator.areAllMaterializationsEquivalent.recursionCount" = "u32?"  # counter
+"createTypeEvaluator.areAllMaterializationsAssignable.recursionCount" = "u32?"  # counter
+"createTypeEvaluator.validateCallArgs.recursionCount" = "u32?"  # counter
+"createTypeEvaluator.validateCallArgsForSubtype.recursionCount" = "u32?"  # counter
+"createTypeEvaluator.validateCallForClassInstance.recursionCount" = "u32?"  # counter
+"createTypeEvaluator.matchArgsToParams.overloadIndex" = "i32?"  # text position or index
+"createTypeEvaluator.createSpecialType.paramLimit" = "u32?"  # counter
+"createTypeEvaluator.inferParamType.paramIndex" = "i32?"  # text position or index
+"createTypeEvaluator.assignClass.recursionCount" = "u32?"  # counter
+"createTypeEvaluator.assignClassToSelf.recursionCount" = "u32?"  # counter
+"createTypeEvaluator.assignClassWithTypeArgs.recursionCount" = "u32?"  # counter
+"createTypeEvaluator.assignTypeArgs.recursionCount" = "u32?"  # counter
+"createTypeEvaluator.assignType.recursionCount" = "u32?"  # counter
+"createTypeEvaluator.assignRecursiveTypeAliasToSelf.recursionCount" = "u32?"  # counter
+"createTypeEvaluator.assignFromUnionType.recursionCount" = "u32?"  # counter
+"createTypeEvaluator.isTypeSubsumedByOtherType.recursionCount" = "u32?"  # counter
+"createTypeEvaluator.isProperSubtype.recursionCount" = "u32?"  # counter
+"createTypeEvaluator.assignToUnionType.recursionCount" = "u32?"  # counter
+"createTypeEvaluator.assignConditionalTypeToTypeVar.recursionCount" = "u32?"  # counter
+"createTypeEvaluator.getCallbackProtocolType.recursionCount" = "u32?"  # counter
+"createTypeEvaluator.assignParam.paramIndex" = "i32?"  # text position or index
+"createTypeEvaluator.assignParam.recursionCount" = "u32?"  # counter
+"createTypeEvaluator.assignNamedParam.paramIndex" = "i32?"  # text position or index
+"createTypeEvaluator.assignNamedParam.recursionCount" = "u32?"  # counter
+"createTypeEvaluator.assignFunction.recursionCount" = "u32?"  # counter
+"createTypeEvaluator.bindFunctionToClassOrObject.recursionCount" = "u32?"  # counter
+"createTypeEvaluator.partiallySpecializeBoundMethod.recursionCount" = "u32?"  # counter
+
+["analyzer/typeEvaluatorTypes.ts"]
+"EffectiveTypeResult.evaluationAttempts" = "u32?"  # counter
+
+["analyzer/types.ts"]
+"TypeBaseProps.instantiableDepth" = "u32?"
+"TypeSourceId" = "u32?"
+"TypeVarDetailsShared.synthesizedIndex" = "i32?"
+"FunctionDetailsShared.inferredReturnType.evaluationCount" = "u32?"
+"LiteralValue#0" = "f64?"
+"TypeCondition.constraintIndex" = "i32?"
+"maxTypeRecursionCount" = "u32?"  # counter
+"TypeBase.getInstantiableDepth.return" = "u32?"  # counter
+"TypeBase.setInstantiableDepth.depth" = "u32?"  # counter
+"ClassType.isSameGenericClass.recursionCount" = "u32?"  # counter
+"SignatureWithOffsets.expressionOffsets" = "i32?"  # text position or index
+"FunctionType.getDeclaredParamType.index" = "i32?"  # text position or index
+"FunctionType.getParamType.index" = "i32?"  # text position or index
+"FunctionType.getParamDefaultType.index" = "i32?"  # text position or index
+"TypeCondition._compare.return" = "f64?"  # no rule matched
+"TypeCondition._compare.return#1" = "f64?"  # no rule matched
+"TypeCondition._compare.return#2" = "f64?"  # no rule matched
+"UnionType.containsType.exclusionSet" = "u32?"  # Map or Set key: an id
+"UnionType.containsType.recursionCount" = "u32?"  # counter
+"TypeVarType.cloneAsUnificationVar.usageOffset" = "i32?"  # text position or index
+"isTypeSame.recursionCount" = "u32?"  # counter
+"CombineTypesOptions.maxSubtypeCount" = "u32?"  # counter
+
+["common/diagnostic.ts"]
+"DiagnosticAddendum._nestLevel" = "u32?"  # counter
+
+["common/pythonVersion.ts"]
+"PythonVersion.major" = "f64?"
+"PythonVersion.minor" = "f64?"
+"PythonVersion.micro" = "f64?"
+"PythonVersion.serial" = "f64?"
+
+["common/stringUtils.ts"]
+"StringFingerprint.primary" = "f64?"
+"StringFingerprint.secondary" = "f64?"
+
+["common/textRange.ts"]
+"TextRange.start" = "i32?"
+"TextRange.length" = "i32?"
+"Position.line" = "i32?"
+"Position.character" = "i32?"
+
+["common/textRangeCollection.ts"]
+"TextRangeCollection._lastHitIndex" = "i32?"
+
+["parser/parseNodes.ts"]
+"ParseNode.start" = "i32?"
+"ParseNode.length" = "i32?"
+"ParseNode.id" = "u32?"
+"ModuleNameNode.d.leadingDots" = "f64?"
+"PatternSequenceNode.d.starEntryIndex" = "i32?"
+
+["parser/parser.ts"]
+"ModuleImport.leadingDots" = "f64?"
+
+["parser/stringAnnotationInfo.ts"]
+"StringAnnotationInfo.size" = "u32?"
+
+["parser/tokenizer.ts"]
+"TokenizerOutput.typeIgnoreLines" = "u32?"
+"TokenizerOutput.pyrightIgnoreLines" = "u32?"
+
+["parser/tokenizerTypes.ts"]
+"Comment.start" = "i32?"
+"Comment.length" = "i32?"
+"Token.start" = "i32?"
+"Token.length" = "i32?"
+"IndentToken.indentAmount" = "i32?"
+"DedentToken.indentAmount" = "i32?"
+"StringToken.prefixLength" = "i32?"
+"StringToken.quoteMarkLength" = "i32?"
+"FStringStartToken.prefixLength" = "i32?"
+"FStringStartToken.quoteMarkLength" = "i32?"

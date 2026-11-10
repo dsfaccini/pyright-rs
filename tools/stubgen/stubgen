@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# Runs the stub generator. PYRIGHT_ROOT defaults to ~/pyright, the pinned spec checkout.
+set -euo pipefail
+here="$(cd "$(dirname "$0")" && pwd)"
+pyright="${PYRIGHT_ROOT:-$HOME/pyright}"
+"$here/link-deps" "$pyright"
+exec bun "$here/src/main.ts" --pyright "$pyright" "$@"
