@@ -4658,28 +4658,6 @@ impl TypeEvaluator {
             is_type_alias: None,
             exceeds_max_decls: None,
         };
-        let empty_options = || ExpectedTypeOptions {
-            allow_final: None,
-            allow_required: None,
-            allow_read_only: None,
-            allow_unpacked_tuple: None,
-            allow_unpacked_typed_dict: None,
-            allow_param_spec: None,
-            allow_class_var: None,
-            var_type_annotation: None,
-            type_var_gets_cur_scope: None,
-            allow_type_vars_without_scope_id: None,
-            enforce_class_type_var_scope: None,
-            parses_string_literal: None,
-            not_parsed: None,
-            no_non_type_special_forms: None,
-            type_form_arg: None,
-            forward_refs: None,
-            type_expression: None,
-            runtime_type_expression: None,
-            convert_ellipsis_to_any: None,
-            allow_ellipsis: None,
-        };
 
         match declaration.type_ {
             analyzer::declaration::DeclarationType::Intrinsic => {
@@ -4849,7 +4827,7 @@ impl TypeEvaluator {
                                     allow_required: Some(true),
                                     allow_read_only: Some(true),
                                     runtime_type_expression: Some(true),
-                                    ..empty_options()
+                                    ..Default::default()
                                 }),
                             )
                             .type_
@@ -4884,7 +4862,7 @@ impl TypeEvaluator {
                                 allow_required: Some(allow_required),
                                 allow_read_only: Some(allow_required),
                                 enforce_class_type_var_scope: variable.is_defined_by_member_access.get(),
-                                ..empty_options()
+                                ..Default::default()
                             }),
                         );
                     }
@@ -5471,26 +5449,9 @@ impl TypeEvaluator {
         let type_ = self.get_type_of_annotation(
             type_annotation_node,
             Some(&ExpectedTypeOptions {
-                allow_final: None,
-                allow_required: None,
-                allow_read_only: None,
-                allow_unpacked_tuple: None,
-                allow_unpacked_typed_dict: None,
-                allow_param_spec: None,
-                allow_class_var: Some(true),
                 var_type_annotation: Some(true),
-                type_var_gets_cur_scope: None,
-                allow_type_vars_without_scope_id: None,
-                enforce_class_type_var_scope: None,
-                parses_string_literal: None,
-                not_parsed: None,
-                no_non_type_special_forms: None,
-                type_form_arg: None,
-                forward_refs: None,
-                type_expression: None,
-                runtime_type_expression: None,
-                convert_ellipsis_to_any: None,
-                allow_ellipsis: None,
+                allow_class_var: Some(true),
+                ..Default::default()
             }),
         );
         analyzer::types::is_class_instance(type_)
@@ -5705,16 +5666,7 @@ impl TypeEvaluator {
 
         let fully_qualified_options = PrintTypeOptions {
             use_fully_qualified_names: Some(true),
-            ..options.cloned().unwrap_or(PrintTypeOptions {
-                expand_type_alias: None,
-                enforce_python_syntax: None,
-                use_fully_qualified_names: None,
-                use_typing_unpack: None,
-                print_unknown_with_any: None,
-                print_type_var_variance: None,
-                omit_type_args_if_unknown: None,
-                disable_pep604: None,
-            })
+            ..options.cloned().unwrap_or_default()
         };
         let full_src_type = self.print_type(src_type, Some(&fully_qualified_options));
         let full_dest_type = self.print_type(dest_type, Some(&fully_qualified_options));
