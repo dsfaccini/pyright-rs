@@ -26,58 +26,65 @@ Coverage: markers for every TypeScript function, method and type of each stubbed
 
 Dependency placeholders (compile check only):
 
-- `deps/analyzer/analyzer_file_info.rs`: AbsoluteModuleDescriptor, AnalyzerFileInfo, ImportLookup, ImportLookupResult, LookupImportOptions
+- `deps/analyzer/analyzer_file_info.rs`: AnalyzerFileInfo
 - `deps/analyzer/cell_chain_index.rs`: CellChainIndexProvider
-- `deps/analyzer/import_result.rs`: ImplicitImport, ImportResult, ImportType
-- `deps/analyzer/py_typed_utils.rs`: PyTypedInfo
-- `deps/analyzer/source_file.rs`: IPythonMode
-- `deps/analyzer/types.rs`: AnyDetailsPriv, CachedTypeInfo, CallSiteInferenceTypeCacheEntry, ClassDetailsPriv, ClassDetailsShared, ClassType, ClassTypeFlags, DataClassBehaviors, DataClassEntry, EnumLiteral, FunctionDetailsPriv, FunctionDetailsShared, FunctionDetailsSharedInferredReturnType, FunctionParam, FunctionParamFlags, FunctionType, FunctionTypeFlags, LiteralTypes, LiteralValue, ModuleDetailsPriv, NeverDetailsPriv, OverloadedDetailsPriv, OverloadedType, ParamSpecAccess, PropertyMethodInfo, SentinelLiteral, SpecializedFunctionTypes, TupleTypeArg, TypeAliasInfo, TypeAliasSharedInfo, TypeBase, TypeBaseProps, TypeCategory, TypeCondition, TypeFlags, TypeVarDetailsPriv, TypeVarDetailsShared, TypeVarKind, TypeVarScopeType, TypeVarType, TypedDictEntries, TypedDictEntry, UnionDetailsPriv, UnionType, UnionableType, UnknownDetailsPriv, Variance
-- `deps/common/config_options.rs`: DiagnosticLevel, DiagnosticRuleSet, ExecutionEnvironment
-- `deps/common/diagnostic.rs`: Diagnostic, DiagnosticAction, DiagnosticCategory, DiagnosticRelatedInfo, TaskListPriority
+- `deps/analyzer/import_result.rs`: ImportResult
+- `deps/analyzer/types.rs`: TypeBase
+- `deps/common/config_options.rs`: ExecutionEnvironment
+- `deps/common/diagnostic.rs`: Diagnostic
 - `deps/common/diagnostic_rules.rs`: DiagnosticRule
-- `deps/common/diagnostic_sink.rs`: TextRangeDiagnosticSink
-- `deps/common/python_version.rs`: PythonReleaseLevel, PythonVersion
-- `deps/common/string_utils.rs`: StringFingerprint
+- `deps/common/python_version.rs`: PythonVersion
 - `deps/common/text_range.rs`: Position, Range, TextRange
 - `deps/common/text_range_collection.rs`: TextRangeCollection
 - `deps/common/uri/uri.rs`: Uri
-- `deps/parser/parse_nodes.rs`: ArgCategory, ArgumentNode, AssertNode, AssignmentExpressionNode, AssignmentNode, AugmentedAssignmentNode, AwaitNode, BinaryOperationNode, BreakNode, CallNode, CaseNode, ClassNode, ComprehensionForIfNode, ComprehensionForNode, ComprehensionIfNode, ComprehensionNode, ConstantNode, ContinueNode, DecoratorNode, DelNode, DictionaryEntryNode, DictionaryExpandEntryNode, DictionaryKeyEntryNode, DictionaryNode, EllipsisNode, ErrorExpressionCategory, ErrorNode, EvaluationScopeNode, ExceptNode, ExecutionScopeNode, ExpressionNode, ForNode, FormatStringNode, FunctionAnnotationNode, FunctionNode, GlobalNode, IfNode, ImportAsNode, ImportFromAsNode, ImportFromNode, ImportNode, IndexNode, LambdaNode, ListNode, MatchNode, MemberAccessNode, ModuleNameNode, ModuleNode, NameNode, NonlocalNode, NumberNode, ParamCategory, ParameterNode, ParseNodeBase, ParseNodeType, PassNode, PatternAsNode, PatternAtomNode, PatternCaptureNode, PatternClassArgumentNode, PatternClassNode, PatternLiteralNode, PatternMappingEntryNode, PatternMappingExpandEntryNode, PatternMappingKeyEntryNode, PatternMappingNode, PatternSequenceNode, PatternValueNode, RaiseNode, ReturnNode, SetNode, SliceNode, StatementListNode, StatementNode, StringListNode, StringNode, SuiteNode, TernaryNode, TryNode, TupleNode, TypeAliasNode, TypeAnnotationNode, TypeParamKind, TypeParameterListNode, TypeParameterNode, TypeParameterScopeNode, UnaryOperationNode, UnpackNode, WhileNode, WithItemNode, WithNode, YieldFromNode, YieldNode
-- `deps/parser/parser.rs`: ModuleImport, ParseFileResults, ParserOutput
+- `deps/parser/parse_nodes.rs`: ArgumentNode, AssertNode, AssignmentExpressionNode, AssignmentNode, AugmentedAssignmentNode, AwaitNode, BinaryOperationNode, BreakNode, CallNode, CaseNode, ClassNode, ComprehensionForNode, ComprehensionIfNode, ComprehensionNode, ConstantNode, ContinueNode, DecoratorNode, DelNode, DictionaryEntryNode, DictionaryExpandEntryNode, DictionaryKeyEntryNode, DictionaryNode, EllipsisNode, ErrorNode, EvaluationScopeNode, ExceptNode, ExecutionScopeNode, ExpressionNode, ForNode, FormatStringNode, FunctionAnnotationNode, FunctionNode, GlobalNode, IfNode, ImportAsNode, ImportFromAsNode, ImportFromNode, ImportNode, IndexNode, LambdaNode, ListNode, MatchNode, MemberAccessNode, ModuleNameNode, ModuleNode, NameNode, NonlocalNode, NumberNode, ParameterNode, ParseNodeBase, ParseNodeType, PassNode, PatternAsNode, PatternCaptureNode, PatternClassArgumentNode, PatternClassNode, PatternLiteralNode, PatternMappingExpandEntryNode, PatternMappingKeyEntryNode, PatternMappingNode, PatternSequenceNode, PatternValueNode, RaiseNode, ReturnNode, SetNode, SliceNode, StatementListNode, StatementNode, StringListNode, StringNode, SuiteNode, TernaryNode, TryNode, TupleNode, TypeAliasNode, TypeAnnotationNode, TypeParameterListNode, TypeParameterNode, TypeParameterScopeNode, UnaryOperationNode, UnpackNode, WhileNode, WithItemNode, WithNode, YieldFromNode, YieldNode
+- `deps/parser/parser.rs`: ParseFileResults
 - `deps/parser/string_annotation_info.rs`: StringAnnotationInfo
-- `deps/parser/tokenizer.rs`: IgnoreComment, IgnoreCommentRule, TokenizerOutput
-- `deps/parser/tokenizer_types.rs`: Comment, CommentType, FStringMiddleToken, FStringStartToken, IdentifierToken, KeywordToken, KeywordType, NewLineType, OperatorType, StringToken, StringTokenFlags, TokenBase, TokenType
+- `deps/parser/tokenizer.rs`: TokenizerOutput
+- `deps/parser/tokenizer_types.rs`: Comment, OperatorType, StringToken, TokenBase
 
-Number sites without a reviewed type (numbers.toml, values ending in "?"): 0 in the stubbed files, 31 in placeholders.
+Number sites without a reviewed type (numbers.toml, values ending in "?"): 0 in the stubbed files, 0 in placeholders.
 
-Unmapped TypeScript types (rendered with a `/*? ... */` marker): 8 distinct.
+Unmapped TypeScript types (rendered with a `/*? ... */` marker): 5 distinct.
 
-- `boolean | string` x7: analyzer/staticExpressions.ts:evaluateStaticBoolExpression.definedConstants, analyzer/staticExpressions.ts:evaluateStaticBoolLikeExpression.definedConstants, analyzer/staticExpressions.ts:_evaluateStaticBoolOrBoolLikeExpression.definedConstants, analyzer/analyzerFileInfo.ts:AnalyzerFileInfo.definedConstants, ...
-- `any` x6: analyzer/staticExpressions.ts:_evaluateVersionBinaryOperation.return, analyzer/staticExpressions.ts:_evaluateStringBinaryOperation.return, common/diagnostic.ts:Diagnostic._data, ...
-- `Uri | AbsoluteModuleDescriptor` x3: analyzer/analyzerFileInfo.ts:ImportLookup
-- `object` x3: analyzer/types.ts:ClassDetailsShared.protocolCompatibility
+- `boolean | string` x3: analyzer/staticExpressions.ts:evaluateStaticBoolExpression.definedConstants, analyzer/staticExpressions.ts:evaluateStaticBoolLikeExpression.definedConstants, analyzer/staticExpressions.ts:_evaluateStaticBoolOrBoolLikeExpression.definedConstants
 - `T extends ParseNode & { nodeType: NT } ? T : never` x2: analyzer/parseTreeUtils.ts:NodeForType
+- `any` x2: analyzer/staticExpressions.ts:_evaluateVersionBinaryOperation.return, analyzer/staticExpressions.ts:_evaluateStringBinaryOperation.return
 - `AnalyzerNodeInfoReaderPropertyProvider | AnalyzerNodeInfoReaderMethodProvider` x1: analyzer/analyzerNodeInfo.ts:getInfoReader.provider
 - `unique symbol` x1: analyzer/analyzerNodeInfo.ts:_retiredStores
-- `unknown` x1: analyzer/parseTreeUtils.ts:getAncestorsIncludingSelf.return
 
-Interfaces held as `P<T>` by the default rule (a field is written after construction); set [modes] to override:
+How each class and interface of the stubbed files is held (docs/porting.md "memory"):
 
-- `analyzer/analyzerFileInfo.ts:AnalyzerFileInfo`: accessedSymbolSet at analyzer/typeEvaluator.ts:5123
-- `analyzer/analyzerNodeInfo.ts:AnalyzerNodeInfo`: importInfo at analyzer/analyzerNodeInfo.ts:554
-- `analyzer/analyzerNodeInfo.ts:AnalyzerNodeInfoContextLayer`: stores at analyzer/analyzerNodeInfo.ts:315
-- `analyzer/declaration.ts:ModuleLoaderActions`: uri at analyzer/binder.ts:3019
-- `analyzer/importResult.ts:ImplicitImport`: isNativeLib at analyzer/importResolver.ts:812
-- `analyzer/importResult.ts:ImportResult`: isRelative at analyzer/importResolver.ts:925
-- `analyzer/types.ts:ClassDetailsShared`: flags at analyzer/types.ts:1063
-- `analyzer/types.ts:DataClassBehaviors`: skipGenerateInit at analyzer/dataClasses.ts:1643
-- `analyzer/types.ts:DataClassEntry`: hasDefault at analyzer/dataClasses.ts:591
-- `analyzer/types.ts:FunctionDetailsShared`: flags at analyzer/types.ts:2002
-- `analyzer/types.ts:LiteralTypes`: literalStrMap at analyzer/types.ts:2734
-- `analyzer/types.ts:SpecializedFunctionTypes`: parameterTypes at analyzer/types.ts:2143
-- `analyzer/types.ts:TypeAliasSharedInfo`: typeParams at analyzer/typeEvaluator.ts:18021
-- `analyzer/types.ts:TypeVarDetailsShared`: name at analyzer/types.ts:2998
-- `analyzer/types.ts:TypedDictEntries`: knownItems at analyzer/typedDicts.ts:1138
-- `common/configOptions.ts:DiagnosticRuleSet`: analyzeUnannotatedFunctions at analyzer/service.ts:1160
+- `analyzer/binder.ts:MemberAccessInfo`: value; written: classScope at analyzer/binder.ts:4036; never stored in a second place
+- `analyzer/binder.ts:DeferredBindingTask`: owned; [modes]
+- `analyzer/binder.ts:FinalInfo`: value; never written after construction; never stored in a second place
+- `analyzer/binder.ts:ClassVarInfo`: value; never written after construction; never stored in a second place
+- `analyzer/binder.ts:NarrowExprOptions`: value; never written after construction; never stored in a second place
+- `analyzer/binder.ts:Binder`: owned; written: _deferredBindingTasks at analyzer/binder.ts:4753; never stored in a second place
+- `analyzer/binder.ts:YieldFinder`: owned; written: _containsYield at analyzer/binder.ts:4844; never stored in a second place
+- `analyzer/binder.ts:ReturnFinder`: owned; written: _containsReturn at analyzer/binder.ts:4863; never stored in a second place
+- `analyzer/binder.ts:DummyScopeGenerator`: owned; written: _currentScope at analyzer/binder.ts:4911; never stored in a second place
+- `analyzer/scope.ts:SymbolWithScope`: value; written: symbol at analyzer/binder.ts:4024; never stored in a second place
+- `analyzer/scope.ts:GlobalScopeResult`: value; written: scope at analyzer/binder.ts:1918; never stored in a second place
+- `analyzer/scope.ts:LookupSymbolOptions`: value; never written after construction; never stored in a second place
+- `analyzer/scope.ts:ChainedModuleLevelLookupContext`: value; never written after construction; never stored in a second place
+- `analyzer/scope.ts:Scope`: handle; compared or hashed by identity at analyzer/scopeUtils.ts:53; written: symbolTable at analyzer/scope.ts:257; stored at analyzer/scope.ts:140
+- `analyzer/symbol.ts:SynthesizedTypeInfo`: value; never written after construction; stored at analyzer/typeEvaluator.ts:23617
+- `analyzer/symbol.ts:Symbol`: handle; compared or hashed by identity at analyzer/binder.ts:194 (Map key or Set element); written: _declarations at analyzer/symbol.ts:291; stored at analyzer/scope.ts:200
+- `analyzer/declaration.ts:ModuleLoaderActions`: handle; written: uri at analyzer/binder.ts:3019; stored at analyzer/binder.ts:3012
+- `analyzer/analyzerNodeInfo.ts:DunderAllInfo`: value; never written after construction; stored at analyzer/analyzerNodeInfo.ts:703
+- `analyzer/analyzerNodeInfo.ts:AnalyzerNodeInfo`: handle; written: importInfo at analyzer/analyzerNodeInfo.ts:554; stored at analyzer/analyzerNodeInfo.ts:134
+- `analyzer/analyzerNodeInfo.ts:AnalyzerNodeInfoReaderPropertyProvider`: value; never written after construction; never stored in a second place
+- `analyzer/analyzerNodeInfo.ts:AnalyzerNodeInfoReaderMethodProvider`: value; never written after construction; never stored in a second place
+- `analyzer/analyzerNodeInfo.ts:AnalyzerNodeInfoStore`: handle; written: _infoByTree at analyzer/analyzerNodeInfo.ts:128; stored at analyzer/analyzerNodeInfo.ts:315
+- `analyzer/analyzerNodeInfo.ts:AnalyzerNodeInfoContextLayer`: handle; written: stores at analyzer/analyzerNodeInfo.ts:315; stored at analyzer/analyzerNodeInfo.ts:230
+- `analyzer/analyzerNodeInfo.ts:RetiredAnalyzerNodeInfoHost`: value; never written after construction; never stored in a second place
+- `analyzer/analyzerNodeInfo.ts:AnalyzerNodeInfoBindingSessionImpl`: owned; written: _store at analyzer/analyzerNodeInfo.ts:197; never stored in a second place
+- `analyzer/analyzerNodeInfo.ts:AnalyzerNodeInfoContextImpl`: handle; compared or hashed by identity at analyzer/analyzerNodeInfo.ts:206; written: _layers at analyzer/analyzerNodeInfo.ts:373; stored at analyzer/program.ts:1434
+- `analyzer/analyzerNodeInfo.ts:AnalyzerNodeInfoAccessor`: rc; never written after construction; stored at analyzer/binder.ts:372
+- `analyzer/parseTreeUtils.ts:EvaluationScopeInfo`: value; never written after construction; never stored in a second place
+- `analyzer/parseTreeUtils.ts:NameNodeWalker`: owned; written: _subscriptIndex at analyzer/parseTreeUtils.ts:1733; never stored in a second place
+- `analyzer/parseTreeUtils.ts:CallNodeWalker`: owned; never written after construction; never stored in a second place
 
 [modes] values that some code compares by identity (porting.md wants a handle): 0.
 

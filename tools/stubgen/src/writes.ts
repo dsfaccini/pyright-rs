@@ -32,6 +32,18 @@ export class Writes {
     // of the nested function behind it: a call through `evaluator.getTypeOfExpression(..)` reaches
     // `getTypeOfExpression` in `createTypeEvaluator`.
     readonly implParams = new Map<ts.SignatureDeclaration, readonly ts.ParameterDeclaration[]>();
+    // Interface and class declarations whose existing objects some code stores in a second place:
+    // a field, a container, an object or array literal, or a parameter its callee stores. A fresh
+    // object (`new`, a literal) placed straight into one place does not count. With a field write,
+    // this makes the type a handle (docs/porting.md "memory").
+    readonly stored = new Map<ts.Node, string>();
+    // Every store site per declaration, for the report.
+    readonly storeSites = new Map<ts.Node, Set<string>>();
+    // Parameters whose value the function stores.
+    readonly storingParams = new Set<ts.Node>();
+    // Methods that change `this`: they write a field of it, change a field's collection in place,
+    // or call another such method on it. Calling one changes the receiver in place, as `push` does.
+    readonly mutatingMethods = new Set<ts.Node>();
 
     constructor(private readonly checker: ts.TypeChecker) {}
 
@@ -50,7 +62,149 @@ export class Writes {
     }
 
     private size(): number {
-        return this.written.size + this.mutated.size + this.writtenThrough.size + this.reassigned.size;
+        return this.written.size + this.mutated.size + this.writtenThrough.size + this.reassigned.size + this.stored.size + this.storingParams.size + this.mutatingMethods.size;
+    }
+
+    private site(at: ts.Node): string {
+        const sf = at.getSourceFile();
+        return `${sf.fileName.replace(/.*\/src\//, '')}:${sf.getLineAndCharacterOfPosition(at.getStart(sf)).line + 1}`;
+    }
+
+    // The pyright interface and class declarations a type can be; a union gives each member, an
+    // array or tuple its elements when `elements` is set.
+    private objectDecls(t0: ts.Type, elements: boolean): ts.Node[] {
+        const t = this.checker.getNonNullableType(t0);
+        const parts = t.isUnion() ? t.types : [t];
+        const out: ts.Node[] = [];
+        for (const p of parts) {
+            if (elements && (this.checker.isArrayType(p) || this.checker.isTupleType(p)) && isTypeReference(p)) {
+                for (const a of this.checker.getTypeArguments(p)) {
+                    out.push(...this.objectDecls(a, false));
+                }
+                continue;
+            }
+            const d = p.flags & ts.TypeFlags.Object ? p.getSymbol()?.declarations?.[0] : undefined;
+            if (d && (ts.isInterfaceDeclaration(d) || ts.isClassDeclaration(d)) && !d.getSourceFile().isDeclarationFile) {
+                out.push(d);
+            }
+        }
+        return out;
+    }
+
+    // `e` is placed in a field, container or literal.
+    private onStore(e0: ts.Expression, at: ts.Node) {
+        const e = skipParens(e0);
+        if (ts.isConditionalExpression(e)) {
+            this.onStore(e.whenTrue, at);
+            this.onStore(e.whenFalse, at);
+            return;
+        }
+        if (ts.isBinaryExpression(e) && [ts.SyntaxKind.QuestionQuestionToken, ts.SyntaxKind.BarBarToken, ts.SyntaxKind.AmpersandAmpersandToken].includes(e.operatorToken.kind)) {
+            this.onStore(e.left, at);
+            this.onStore(e.right, at);
+            return;
+        }
+        if (ts.isNewExpression(e) || ts.isObjectLiteralExpression(e) || ts.isArrayLiteralExpression(e) || ts.isFunctionLike(e)) {
+            return;
+        }
+        if (ts.isIdentifier(e)) {
+            const sym = resolveSymbol(this.checker, this.checker.getSymbolAtLocation(e));
+            for (const d of sym?.declarations ?? []) {
+                if (ts.isParameter(d)) {
+                    this.storingParams.add(d);
+                }
+            }
+        }
+        for (const d of this.objectDecls(this.checker.getTypeAtLocation(e), false)) {
+            this.addStored(d, at);
+        }
+    }
+
+    private addStored(d: ts.Node, at: ts.Node) {
+        if (!this.stored.has(d)) {
+            this.stored.set(d, this.site(at));
+        }
+        const set = this.storeSites.get(d) ?? new Set<string>();
+        set.add(this.site(at));
+        this.storeSites.set(d, set);
+    }
+
+    // A container copy (`[...a]`, `a.slice()`, `Array.from(a)`) puts its elements in a second place.
+    private onCopy(e: ts.Expression, at: ts.Node) {
+        for (const d of this.objectDecls(this.checker.getTypeAtLocation(e), true)) {
+            this.addStored(d, at);
+        }
+    }
+
+    // An object used as a Map key or Set element is hashed by identity.
+    private onKey(e: ts.Expression, at: ts.Node) {
+        for (const d of this.objectDecls(this.checker.getTypeAtLocation(e), false)) {
+            if (!this.identityCompared.has(d)) {
+                this.identityCompared.set(d, `${this.site(at)} (Map key or Set element)`);
+            }
+        }
+    }
+
+    private onStoreSites(node: ts.Node) {
+        if (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
+            const l = skipParens(node.left);
+            if (ts.isPropertyAccessExpression(l) || ts.isElementAccessExpression(l)) {
+                this.onStore(node.right, node);
+            }
+        } else if (ts.isParameter(node) && ts.isConstructorDeclaration(node.parent) && ts.isParameterPropertyDeclaration(node, node.parent)) {
+            this.storingParams.add(node);
+        } else if (ts.isPropertyAssignment(node) && ts.isObjectLiteralExpression(node.parent)) {
+            this.onStore(node.initializer, node);
+        } else if (ts.isShorthandPropertyAssignment(node)) {
+            this.onStore(node.name, node);
+        } else if (ts.isArrayLiteralExpression(node)) {
+            for (const el of node.elements) {
+                if (ts.isSpreadElement(el)) {
+                    this.onCopy(el.expression, node);
+                } else if (!ts.isOmittedExpression(el)) {
+                    this.onStore(el, node);
+                }
+            }
+        } else if (ts.isCallExpression(node)) {
+            const callee = node.expression;
+            const name = ts.isPropertyAccessExpression(callee) ? callee.name.text : undefined;
+            const recv = ts.isPropertyAccessExpression(callee) ? callee.expression : undefined;
+            const t = recv ? this.checker.getNonNullableType(this.checker.getTypeAtLocation(recv)) : undefined;
+            const recvName = t?.getSymbol()?.getName();
+            const isArray = t !== undefined && (this.checker.isArrayType(t) || this.checker.isTupleType(t));
+            const isMap = recvName === 'Map' || recvName === 'WeakMap';
+            const isSet = recvName === 'Set' || recvName === 'WeakSet';
+            if (isArray && (name === 'push' || name === 'unshift')) {
+                node.arguments.forEach((a) => (ts.isSpreadElement(a) ? this.onCopy(a.expression, node) : this.onStore(a, node)));
+            } else if (isArray && name === 'splice') {
+                node.arguments.slice(2).forEach((a) => this.onStore(a, node));
+            } else if (isArray && recv && (name === 'slice' || name === 'concat' || name === 'filter' || name === 'reverse')) {
+                this.onCopy(recv, node);
+                node.arguments.forEach((a) => this.onCopy(a, node));
+            } else if (isMap && recv && name === 'set') {
+                this.onKey(node.arguments[0], node);
+                if (node.arguments[1]) {
+                    this.onStore(node.arguments[1], node);
+                }
+            } else if ((isMap || isSet) && name !== undefined && ['get', 'has', 'delete', 'add'].includes(name) && node.arguments[0]) {
+                this.onKey(node.arguments[0], node);
+            } else if (ts.isPropertyAccessExpression(callee) && ts.isIdentifier(callee.expression) && callee.expression.text === 'Array' && name === 'from' && node.arguments[0]) {
+                this.onCopy(node.arguments[0], node);
+            }
+        }
+        if (ts.isCallExpression(node) || ts.isNewExpression(node)) {
+            // An argument passed to a parameter the callee stores is stored.
+            const decl = this.checker.getResolvedSignature(node)?.getDeclaration();
+            if (decl && ts.isFunctionLike(decl)) {
+                const params = this.implParams.get(decl) ?? decl.parameters;
+                (node.arguments ?? []).forEach((arg, i) => {
+                    const param = params[Math.min(i, params.length - 1)];
+                    if (param && this.storingParams.has(param)) {
+                        this.onStore(arg, node);
+                    }
+                });
+            }
+        }
     }
 
     isWritten(decl: ts.Node): boolean {
@@ -120,7 +274,31 @@ export class Writes {
         return fn !== undefined && ts.isConstructorDeclaration(fn);
     }
 
+    // The method whose `this` an expression `this` or `this.f` names, if any.
+    private thisMethod(e0: ts.Expression): ts.Node | undefined {
+        let e = skipParens(e0);
+        while (ts.isPropertyAccessExpression(e) || ts.isElementAccessExpression(e)) {
+            e = skipParens(e.expression);
+        }
+        if (e.kind !== ts.SyntaxKind.ThisKeyword) {
+            return undefined;
+        }
+        let fn: ts.Node | undefined = e.parent;
+        while (fn && !(ts.isMethodDeclaration(fn) || ts.isConstructorDeclaration(fn) || ts.isGetAccessorDeclaration(fn) || ts.isSetAccessorDeclaration(fn) || ts.isFunctionDeclaration(fn) || ts.isFunctionExpression(fn))) {
+            fn = fn.parent;
+        }
+        return fn && (ts.isMethodDeclaration(fn) || ts.isSetAccessorDeclaration(fn)) ? fn : undefined;
+    }
+
+    private markMutatingMethod(target: ts.Expression) {
+        const m = this.thisMethod(target);
+        if (m) {
+            this.mutatingMethods.add(m);
+        }
+    }
+
     private onAssign(lhs: ts.Expression, at: ts.Node) {
+        this.markMutatingMethod(lhs);
         const e = skipParens(lhs);
         if (ts.isPropertyAccessExpression(e)) {
             if (e.name.text === 'length' && this.isCollection(e.expression)) {
@@ -156,6 +334,7 @@ export class Writes {
     }
 
     private visit(node: ts.Node) {
+        this.onStoreSites(node);
         if (ts.isBinaryExpression(node) && isIdentityOperator(node.operatorToken.kind)) {
             this.onIdentity(node);
         }
@@ -173,6 +352,15 @@ export class Writes {
             if (ts.isPropertyAccessExpression(callee) && MUTATING_METHODS.has(callee.name.text)) {
                 if (this.isCollection(callee.expression)) {
                     this.mark(this.mutated, this.targets(callee.expression), node);
+                    this.markMutatingMethod(callee.expression);
+                }
+            }
+            if (ts.isPropertyAccessExpression(callee)) {
+                // A call to a method that changes `this` changes the receiver.
+                const decl = this.checker.getResolvedSignature(node)?.getDeclaration();
+                if (decl && this.mutatingMethods.has(decl)) {
+                    this.mark(this.mutated, this.targets(callee.expression), node);
+                    this.markMutatingMethod(callee.expression);
                 }
             }
             this.onCallArgs(node);
@@ -230,6 +418,10 @@ export class Writes {
             }
         });
     }
+}
+
+function isTypeReference(t: ts.Type): t is ts.TypeReference {
+    return (t.flags & ts.TypeFlags.Object) !== 0 && 'target' in t;
 }
 
 export function skipParens(e: ts.Expression): ts.Expression {

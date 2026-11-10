@@ -2,12 +2,13 @@
 //! environment, per-stage file writes and `oracle-run.txt`. Format:
 //! `oracle/FORMAT.md`, "running" and "files".
 //!
-//! The types stage writes nothing until the evaluator exists.
+//! The types stage writes only with `PYRIGHT_RS_CHECKER=1`, the stand-in for
+//! the fork's `program.evaluator` check until `Program` holds an evaluator.
 
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
 
-use jsrt::JsSet;
+use jsrt::{FxHashMap, JsSet};
 
 use jsrt::P;
 
@@ -19,6 +20,8 @@ use crate::parser::parse_nodes::ModuleNode;
 use super::format;
 use super::tokens::dump_tokenizer_output;
 use super::tree::dump_parser_output;
+use super::types::dump_types;
+use crate::analyzer::source_file::checker_enabled;
 use crate::parser::parser::ParseFileResults;
 use crate::analyzer::program::Program;
 use crate::common::uri::Uri;
@@ -146,6 +149,8 @@ pub fn oracle_note_cache_emptied() {
 }
 
 /// Called once by the CLI when analysis is complete, before it reports.
+// `printed` is keyed by `P<Type>`, which hashes by address.
+#[allow(clippy::mutable_key_type)]
 pub fn oracle_dump_final(program: &Program) {
     with_state(|s| {
         if s.finished {
@@ -153,6 +158,7 @@ pub fn oracle_dump_final(program: &Program) {
         }
         s.finished = true;
 
+        let mut printed = FxHashMap::default();
         for file_info in program.get_source_file_info_list() {
             let source_file = file_info.source_file;
             if source_file.is_parse_required() || source_file.get_parser_output().is_none() {
@@ -160,7 +166,12 @@ pub fn oracle_dump_final(program: &Program) {
             }
 
             let uri = source_file.get_uri();
-            // The types stage needs the evaluator, which does not exist yet.
+            if s.stages.contains(&Stage::Types) && checker_enabled() {
+                if let Some(parser_output) = source_file.get_parser_output() {
+                    let text = dump_types(program, parser_output.parse_tree, &mut printed);
+                    write_dump(s, Stage::Types, uri, text);
+                }
+            }
             if s.stages.contains(&Stage::Diag) {
                 let data = source_file.data();
                 let text = dump_diagnostics(&OracleDiagnosticLists {

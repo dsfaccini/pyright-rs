@@ -9,54 +9,7 @@
 )]
 
 use crate::common::text_range::Range;
-use crate::common::uri::uri::Uri;
 use std::cell::{Cell, RefCell};
-
-// common/diagnostic.ts:21
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub enum TaskListPriority {
-    High,
-    Normal,
-    Low,
-}
-
-impl TaskListPriority {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            TaskListPriority::High => "High",
-            TaskListPriority::Normal => "Normal",
-            TaskListPriority::Low => "Low",
-        }
-    }
-}
-
-// common/diagnostic.ts:32
-#[repr(i32)]
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub enum DiagnosticCategory {
-    Error = 0,
-    Warning = 1,
-    Information = 2,
-    UnusedCode = 3,
-    UnreachableCode = 4,
-    Deprecated = 5,
-    TaskItem = 6,
-}
-
-// common/diagnostic.ts:58
-#[derive(Clone)]
-pub struct DiagnosticAction {
-    pub action: String,
-}
-
-// common/diagnostic.ts:72
-#[derive(Clone)]
-pub struct DiagnosticRelatedInfo {
-    pub message: String,
-    pub uri: Uri,
-    pub range: Range,
-    pub priority: TaskListPriority,
-}
 
 // common/diagnostic.ts:100
 pub struct Diagnostic {

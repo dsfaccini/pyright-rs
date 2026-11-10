@@ -1275,8 +1275,24 @@ fn add_task_list_diagnostics(
     }
 }
 
-/// The checker call in `sourceFile.ts` `check()`. No checker exists yet, so
+/// Whether `PYRIGHT_RS_CHECKER=1` is set: the checker, and the evaluator it
+/// drives, run only then while their bodies are being ported (PLAN.md step 5).
+/// Unset, a run parses and binds only, and reaches no evaluator stub.
+pub fn checker_enabled() -> bool {
+    thread_local! {
+        static ENABLED: bool = std::env::var("PYRIGHT_RS_CHECKER").is_ok_and(|v| v == "1");
+    }
+    ENABLED.with(|e| *e)
+}
+
+/// The checker call in `sourceFile.ts` `check()`. Without `checker_enabled()`
 /// the checker list stays empty.
 fn run_checker(_source_file: &SourceFile) -> Vec<P<Diagnostic>> {
-    Vec::new()
+    if !checker_enabled() {
+        return Vec::new();
+    }
+    // analyzer/sourceFile.ts:1000: `new Checker(importResolver, evaluator, parseResults,
+    // dependentFiles, nodeInfoReader).check()` (crate::analyzer::checker::Checker), then
+    // `checkerDiagnostics = fileInfo.diagnosticSink.fetchAndClear()`.
+    todo!()
 }

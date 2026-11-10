@@ -11,37 +11,9 @@
 use crate::parser::parse_nodes::{
     CallNode, ExpressionNode, ImportFromNode, MatchNode, NameNode, ParseNode, SuiteNode,
 };
-use jsrt::{JsSet, P, flag_ops};
+use jsrt::{JsSet, P};
 use std::cell::{Cell, RefCell};
 use std::ops::Deref;
-
-// analyzer/codeFlowTypes.ts:35
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Default)]
-pub struct FlowFlags(pub u32);
-
-impl FlowFlags {
-    pub const UnreachableStructural: FlowFlags = FlowFlags(1);
-    pub const UnreachableStaticCondition: FlowFlags = FlowFlags(2);
-    pub const Start: FlowFlags = FlowFlags(4);
-    pub const BranchLabel: FlowFlags = FlowFlags(8);
-    pub const LoopLabel: FlowFlags = FlowFlags(0x10);
-    pub const Assignment: FlowFlags = FlowFlags(0x20);
-    pub const Unbind: FlowFlags = FlowFlags(0x40);
-    pub const WildcardImport: FlowFlags = FlowFlags(0x80);
-    pub const TrueCondition: FlowFlags = FlowFlags(0x100);
-    pub const FalseCondition: FlowFlags = FlowFlags(0x200);
-    pub const Call: FlowFlags = FlowFlags(0x400);
-    pub const PreFinallyGate: FlowFlags = FlowFlags(0x800);
-    pub const PostFinally: FlowFlags = FlowFlags(0x1000);
-    pub const VariableAnnotation: FlowFlags = FlowFlags(0x4000);
-    pub const PostContextManager: FlowFlags = FlowFlags(0x8000);
-    pub const TrueNeverCondition: FlowFlags = FlowFlags(0x10000);
-    pub const FalseNeverCondition: FlowFlags = FlowFlags(0x20000);
-    pub const NarrowForPattern: FlowFlags = FlowFlags(0x40000);
-    pub const ExhaustedMatch: FlowFlags = FlowFlags(0x80000);
-}
-
-flag_ops!(FlowFlags);
 
 // analyzer/codeFlowTypes.ts:59
 pub type CodeFlowReferenceExpressionNode = P<ParseNode>;
@@ -49,7 +21,7 @@ pub type CodeFlowReferenceExpressionNode = P<ParseNode>;
 // analyzer/codeFlowTypes.ts:65
 pub struct FlowNode {
     pub flags: Cell<FlowFlags>,
-    pub id: u32,
+    pub id: f64,
     pub d: FlowNodeDetails,
 }
 
@@ -146,7 +118,7 @@ impl Deref for FlowBranchLabel {
 pub struct FlowAssignmentDetails {
     pub node: CodeFlowReferenceExpressionNode,
     pub antecedent: P<FlowNode>,
-    pub target_symbol_id: u32,
+    pub target_symbol_id: f64,
 }
 
 // analyzer/codeFlowTypes.ts:92

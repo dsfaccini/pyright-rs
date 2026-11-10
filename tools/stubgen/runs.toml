@@ -16,5 +16,48 @@ files = [
 ]
 
 [runs.evaluator]
-# Proves the evaluator mapping (docs/evaluator-design.md).
-files = ["analyzer/typeEvaluator.ts", "analyzer/types.ts"]
+# PLAN.md step 5: the evaluator block and the checker, installed into crates/pyright/src.
+install = true
+heap = "eval"
+files = [
+    # evaluator core
+    "analyzer/typeEvaluator.ts",
+    "analyzer/typeEvaluatorTypes.ts",
+    "analyzer/types.ts",
+    "analyzer/typeUtils.ts",
+    "analyzer/typeCacheUtils.ts",
+    "analyzer/typeWalker.ts",
+    "analyzer/typeComplexity.ts",
+    "analyzer/sentinel.ts",
+    "analyzer/symbolUtils.ts",
+    # code flow and narrowing
+    "analyzer/codeFlowEngine.ts",
+    "analyzer/typeGuards.ts",
+    "analyzer/patternMatching.ts",
+    # constraints and operations
+    "analyzer/constraintSolver.ts",
+    "analyzer/constraintTracker.ts",
+    "analyzer/constraintSolution.ts",
+    "analyzer/operations.ts",
+    "analyzer/typePrinter.ts",
+    "analyzer/typePrinterUtils.ts",
+    "analyzer/parameterUtils.ts",
+    "analyzer/functionTransform.ts",
+    "analyzer/declarationUtils.ts",
+    "analyzer/sourceMapper.ts",
+    "analyzer/sourceMapperUtils.ts",
+    "analyzer/constructors.ts",
+    # special classes
+    "analyzer/dataClasses.ts",
+    "analyzer/typedDicts.ts",
+    "analyzer/protocols.ts",
+    "analyzer/enums.ts",
+    "analyzer/decorators.ts",
+    "analyzer/properties.ts",
+    "analyzer/tuples.ts",
+    "analyzer/namedTuples.ts",
+    "analyzer/constructorTransform.ts",
+    # the checker
+    "analyzer/checker.ts",
+    "analyzer/deprecatedSymbols.ts",
+]

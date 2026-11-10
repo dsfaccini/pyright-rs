@@ -53,7 +53,10 @@ fn record<T>(eval: bool) {
 /// parsing, binding and configuration create, and is never collected; the
 /// evaluator heap holds what type evaluation and checking create, and is the
 /// heap a later collector reclaims.
-pub struct P<T: 'static>(&'static T);
+///
+/// A trait object is a `P<dyn Trait>`, made from a `P` of the concrete type
+/// with [`P::to_dyn`].
+pub struct P<T: ?Sized + 'static>(&'static T);
 
 impl<T: 'static> P<T> {
     /// Moves `value` into the current thread's program heap. Drop never runs for it.
@@ -70,8 +73,15 @@ impl<T: 'static> P<T> {
         EVAL_ARENA.with(|arena| P(arena.alloc(value)))
     }
 
+    /// The same object as a trait object: `p.to_dyn::<dyn Trait>(|x| x)`.
+    pub fn to_dyn<U: ?Sized>(self, upcast: fn(&'static T) -> &'static U) -> P<U> {
+        P(upcast(self.0))
+    }
+}
+
+impl<T: ?Sized + 'static> P<T> {
     pub fn ptr_eq(a: P<T>, b: P<T>) -> bool {
-        ptr::eq(a.0, b.0)
+        ptr::addr_eq(a.0, b.0)
     }
 
     /// The referenced value. Never store the returned reference in a struct:
@@ -106,29 +116,30 @@ pub fn alloc_stats() -> Option<Vec<(&'static str, AllocStat)>> {
     })
 }
 
-impl<T> Clone for P<T> {
+impl<T: ?Sized> Clone for P<T> {
     fn clone(&self) -> Self {
         *self
     }
 }
 
-impl<T> Copy for P<T> {}
+impl<T: ?Sized> Copy for P<T> {}
 
-impl<T> PartialEq for P<T> {
+/// Identity by address: two trait-object handles to one object are equal.
+impl<T: ?Sized> PartialEq for P<T> {
     fn eq(&self, other: &Self) -> bool {
-        ptr::eq(self.0, other.0)
+        ptr::addr_eq(self.0, other.0)
     }
 }
 
-impl<T> Eq for P<T> {}
+impl<T: ?Sized> Eq for P<T> {}
 
-impl<T> Hash for P<T> {
+impl<T: ?Sized> Hash for P<T> {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        ptr::hash(self.0, state);
+        ptr::hash(ptr::from_ref(self.0).cast::<()>(), state);
     }
 }
 
-impl<T> Deref for P<T> {
+impl<T: ?Sized> Deref for P<T> {
     type Target = T;
 
     fn deref(&self) -> &T {
@@ -137,7 +148,7 @@ impl<T> Deref for P<T> {
 }
 
 /// Prints the address only: arena values form cycles.
-impl<T> fmt::Debug for P<T> {
+impl<T: ?Sized> fmt::Debug for P<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "P({:p})", self.0)
     }
@@ -155,5 +166,26 @@ mod tests {
         assert_eq!(a, a);
         assert_eq!(*a, *b);
         assert_eq!(size_of::<Option<P<u64>>>(), size_of::<usize>());
+    }
+
+    trait Named {
+        fn name(&self) -> &'static str;
+    }
+
+    struct Thing(u32);
+
+    impl Named for Thing {
+        fn name(&self) -> &'static str {
+            if self.0 == 1 { "thing" } else { "other" }
+        }
+    }
+
+    #[test]
+    fn trait_object_keeps_identity() {
+        let a = P::new(Thing(1));
+        let d: P<dyn Named> = a.to_dyn(|x| x);
+        assert_eq!(d.name(), "thing");
+        assert_eq!(d, a.to_dyn::<dyn Named>(|x| x));
+        assert_ne!(d, P::new(Thing(1)).to_dyn::<dyn Named>(|x| x));
     }
 }

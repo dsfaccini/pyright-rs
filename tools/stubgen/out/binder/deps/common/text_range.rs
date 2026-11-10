@@ -11,15 +11,15 @@
 // common/textRange.ts:12
 #[derive(Clone)]
 pub struct TextRange {
-    pub start: i32,
-    pub length: i32,
+    pub start: f64,
+    pub length: f64,
 }
 
 // common/textRange.ts:93
 #[derive(Clone)]
 pub struct Position {
-    pub line: i32,
-    pub character: i32,
+    pub line: f64,
+    pub character: f64,
 }
 
 // common/textRange.ts:105

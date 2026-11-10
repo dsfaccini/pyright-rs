@@ -8,10 +8,45 @@
     clippy::all
 )]
 
-// analyzer/sourceFile.ts:76
-#[repr(i32)]
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub enum IPythonMode {
-    None = 0,
-    CellDocs = 1,
+use crate::common::config_options::DiagnosticRuleSet;
+use crate::common::console::ConsoleInterface;
+use crate::common::file_system::FileSystem;
+use crate::common::log_tracker::LogTracker;
+use crate::common::service_provider::ServiceProvider;
+use crate::common::uri::uri::Uri;
+use jsrt::P;
+use std::cell::{Cell, RefCell};
+
+// analyzer/sourceFile.ts:209
+pub struct SourceFile {
+    pub(crate) _console: P<dyn ConsoleInterface>,
+    pub(crate) _uri: Uri,
+    pub(crate) _file_id: String,
+    pub(crate) _module_name_getter: ModuleNameGetter,
+    pub(crate) _cached_module_name: RefCell<Option<String>>,
+    pub(crate) _is_stub_file: bool,
+    pub(crate) _is_third_party_import: bool,
+    pub(crate) _is_typing_stub_file: bool,
+    pub(crate) _is_typing_extensions_stub_file: bool,
+    pub(crate) _is_typeshed_stub_file: bool,
+    pub(crate) _is_built_in_stub_file: bool,
+    pub(crate) _is_third_party_py_typed_present: bool,
+    pub(crate) _edit_mode: SourceFileEditMode,
+    pub(crate) _diagnostic_rule_set: Cell<P<DiagnosticRuleSet>>,
+    pub(crate) _ipython_mode: Cell<IPythonMode>,
+    pub(crate) _log_tracker: P<LogTracker>,
+    pub(crate) _pre_edit_data: Cell<Option<P<WriteableData>>>,
+    pub(crate) _writable_data: Cell<P<WriteableData>>,
+    pub file_system: FileSystem,
+    pub service_provider: P<ServiceProvider>,
+}
+
+// A stored callback with no closure creation site on the check path.
+#[derive(Clone)]
+pub struct ModuleNameGetter {}
+
+impl ModuleNameGetter {
+    pub fn call(&self, file: &Uri) -> String {
+        todo!()
+    }
 }

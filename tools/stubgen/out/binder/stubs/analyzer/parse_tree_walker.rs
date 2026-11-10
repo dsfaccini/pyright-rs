@@ -26,12 +26,11 @@ use crate::parser::parse_nodes::{
     WithItemNode, WithNode, YieldFromNode, YieldNode,
 };
 use jsrt::P;
-use std::rc::Rc;
 
 // analyzer/parseTreeWalker.ts:102
 pub trait ParseTreeVisitor<T> {
     // analyzer/parseTreeWalker.ts:103
-    fn _default(&self) -> &T;
+    fn default_visit_result(&self) -> T;
 
     // analyzer/parseTreeWalker.ts:107
     fn visit(&mut self, node: P<ParseNode>) -> T {
@@ -431,11 +430,8 @@ pub trait ParseTreeVisitor<T> {
 
 // analyzer/parseTreeWalker.ts:664
 pub trait ParseTreeWalker: ParseTreeVisitor<bool> {
-    // analyzer/parseTreeWalker.ts:668
-    fn _get_string_annotation(&self) -> &Rc<dyn Fn(StringListNode) -> Option<P<ParseNode>>>;
-
     // analyzer/parseTreeWalker.ts:670
-    fn _annotation_node_info(&self) -> Option<&'static dyn AnalyzerNodeInfoReader>;
+    fn annotation_node_info(&self) -> Option<P<dyn AnalyzerNodeInfoReader>>;
 
     // analyzer/parseTreeWalker.ts:675
     fn walk(&mut self, node: P<ParseNode>) {

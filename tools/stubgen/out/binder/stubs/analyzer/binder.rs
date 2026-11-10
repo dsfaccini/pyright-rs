@@ -101,10 +101,9 @@ pub(crate) const FLOW_NODE_COMPLEXITY_CONTRIBUTION: f64 = 0.025;
 // analyzer/binder.ts:254
 pub struct Binder {
     pub(crate) _default: bool,
-    pub(crate) _get_string_annotation: Rc<dyn Fn(StringListNode) -> Option<P<ParseNode>>>,
-    pub(crate) _annotation_node_info: Option<&'static dyn AnalyzerNodeInfoReader>,
+    pub(crate) _annotation_node_info: Option<P<dyn AnalyzerNodeInfoReader>>,
     pub(crate) _file_info: P<AnalyzerFileInfo>,
-    pub(crate) _node_info: P<AnalyzerNodeInfoAccessor>,
+    pub(crate) _node_info: Rc<AnalyzerNodeInfoAccessor>,
     pub(crate) _deferred_binding_tasks: Vec<DeferredBindingTask>,
     pub(crate) _current_scope: P<Scope>,
     pub(crate) _current_flow_node: Option<P<FlowNode>>,
@@ -134,22 +133,18 @@ pub struct Binder {
     pub(crate) _potential_private_symbols: JsMap<String, P<Symbol>>,
     pub(crate) _code_flow_complexity: f64,
     pub(crate) _module_symbol_only: Option<bool>,
-    pub(crate) _cell_chain_index: Option<&'static dyn CellChainIndexProvider>,
+    pub(crate) _cell_chain_index: Option<P<dyn CellChainIndexProvider>>,
 }
 
 impl ParseTreeWalker for Binder {
-    fn _get_string_annotation(&self) -> &Rc<dyn Fn(StringListNode) -> Option<P<ParseNode>>> {
-        &self._get_string_annotation
-    }
-
-    fn _annotation_node_info(&self) -> Option<&'static dyn AnalyzerNodeInfoReader> {
+    fn annotation_node_info(&self) -> Option<P<dyn AnalyzerNodeInfoReader>> {
         self._annotation_node_info
     }
 }
 
 impl ParseTreeVisitor<bool> for Binder {
-    fn _default(&self) -> &bool {
-        &self._default
+    fn default_visit_result(&self) -> bool {
+        self._default
     }
 
     // analyzer/binder.ts:481
@@ -373,8 +368,8 @@ impl Binder {
     pub fn new(
         file_info: P<AnalyzerFileInfo>,
         _module_symbol_only: Option<bool>,
-        _cell_chain_index: Option<&'static dyn CellChainIndexProvider>,
-        node_info: P<AnalyzerNodeInfoAccessor>,
+        _cell_chain_index: Option<P<dyn CellChainIndexProvider>>,
+        node_info: Rc<AnalyzerNodeInfoAccessor>,
     ) -> Self {
         todo!()
     }
@@ -920,24 +915,19 @@ pub mod binder {
 // analyzer/binder.ts:4835
 pub struct YieldFinder {
     pub(crate) _default: bool,
-    pub(crate) _get_string_annotation: Rc<dyn Fn(StringListNode) -> Option<P<ParseNode>>>,
-    pub(crate) _annotation_node_info: Option<&'static dyn AnalyzerNodeInfoReader>,
+    pub(crate) _annotation_node_info: Option<P<dyn AnalyzerNodeInfoReader>>,
     pub(crate) _contains_yield: bool,
 }
 
 impl ParseTreeWalker for YieldFinder {
-    fn _get_string_annotation(&self) -> &Rc<dyn Fn(StringListNode) -> Option<P<ParseNode>>> {
-        &self._get_string_annotation
-    }
-
-    fn _annotation_node_info(&self) -> Option<&'static dyn AnalyzerNodeInfoReader> {
+    fn annotation_node_info(&self) -> Option<P<dyn AnalyzerNodeInfoReader>> {
         self._annotation_node_info
     }
 }
 
 impl ParseTreeVisitor<bool> for YieldFinder {
-    fn _default(&self) -> &bool {
-        &self._default
+    fn default_visit_result(&self) -> bool {
+        self._default
     }
 
     // analyzer/binder.ts:4843
@@ -961,24 +951,19 @@ impl YieldFinder {
 // analyzer/binder.ts:4854
 pub struct ReturnFinder {
     pub(crate) _default: bool,
-    pub(crate) _get_string_annotation: Rc<dyn Fn(StringListNode) -> Option<P<ParseNode>>>,
-    pub(crate) _annotation_node_info: Option<&'static dyn AnalyzerNodeInfoReader>,
+    pub(crate) _annotation_node_info: Option<P<dyn AnalyzerNodeInfoReader>>,
     pub(crate) _contains_return: bool,
 }
 
 impl ParseTreeWalker for ReturnFinder {
-    fn _get_string_annotation(&self) -> &Rc<dyn Fn(StringListNode) -> Option<P<ParseNode>>> {
-        &self._get_string_annotation
-    }
-
-    fn _annotation_node_info(&self) -> Option<&'static dyn AnalyzerNodeInfoReader> {
+    fn annotation_node_info(&self) -> Option<P<dyn AnalyzerNodeInfoReader>> {
         self._annotation_node_info
     }
 }
 
 impl ParseTreeVisitor<bool> for ReturnFinder {
-    fn _default(&self) -> &bool {
-        &self._default
+    fn default_visit_result(&self) -> bool {
+        self._default
     }
 
     // analyzer/binder.ts:4862
@@ -997,25 +982,20 @@ impl ReturnFinder {
 // analyzer/binder.ts:4873
 pub struct DummyScopeGenerator {
     pub(crate) _default: bool,
-    pub(crate) _get_string_annotation: Rc<dyn Fn(StringListNode) -> Option<P<ParseNode>>>,
-    pub(crate) _annotation_node_info: Option<&'static dyn AnalyzerNodeInfoReader>,
+    pub(crate) _annotation_node_info: Option<P<dyn AnalyzerNodeInfoReader>>,
     pub(crate) _current_scope: Option<P<Scope>>,
-    pub(crate) _node_info: P<AnalyzerNodeInfoAccessor>,
+    pub(crate) _node_info: Rc<AnalyzerNodeInfoAccessor>,
 }
 
 impl ParseTreeWalker for DummyScopeGenerator {
-    fn _get_string_annotation(&self) -> &Rc<dyn Fn(StringListNode) -> Option<P<ParseNode>>> {
-        &self._get_string_annotation
-    }
-
-    fn _annotation_node_info(&self) -> Option<&'static dyn AnalyzerNodeInfoReader> {
+    fn annotation_node_info(&self) -> Option<P<dyn AnalyzerNodeInfoReader>> {
         self._annotation_node_info
     }
 }
 
 impl ParseTreeVisitor<bool> for DummyScopeGenerator {
-    fn _default(&self) -> &bool {
-        &self._default
+    fn default_visit_result(&self) -> bool {
+        self._default
     }
 
     // analyzer/binder.ts:4884
@@ -1031,7 +1011,7 @@ impl ParseTreeVisitor<bool> for DummyScopeGenerator {
 
 impl DummyScopeGenerator {
     // analyzer/binder.ts:4876
-    pub fn new(current_scope: Option<P<Scope>>, _node_info: P<AnalyzerNodeInfoAccessor>) -> Self {
+    pub fn new(current_scope: Option<P<Scope>>, _node_info: Rc<AnalyzerNodeInfoAccessor>) -> Self {
         todo!()
     }
 

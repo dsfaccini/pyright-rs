@@ -3,7 +3,7 @@
 import { readFileSync, existsSync } from 'node:fs';
 import { parse } from 'smol-toml';
 
-export type Mode = 'handle' | 'value' | 'owned' | 'opaque';
+export type Mode = 'handle' | 'value' | 'owned' | 'rc' | 'opaque';
 
 export interface TypeEntry {
     rust: string;
@@ -28,6 +28,9 @@ export interface Family {
     typedHandles: boolean;
     // A member with no fields of its own: a variant holding an empty details struct, or a unit variant.
     emptyVariants: 'struct' | 'unit';
+    // The details field and enum are private to the family's module: code elsewhere reaches details
+    // through typed handles and `d()`, and creates objects through the module's create functions.
+    privateDetails: boolean;
 }
 
 export interface Factory {
@@ -40,8 +43,18 @@ export interface Factory {
     wrappers: string[];
 }
 
+// How a trait reads one field of its trait class, where a hand port chose the accessor:
+// a new name, by value instead of by reference, or no accessor at all (`drop`).
+export interface Accessor {
+    name: string | undefined;
+    byValue: boolean;
+    drop: boolean;
+}
+
 export interface TraitEntry {
     receiver: string;
+    // Keyed by the TypeScript field name.
+    accessors: Map<string, Accessor>;
 }
 
 export interface Table {
@@ -55,11 +68,17 @@ export interface Table {
     mutable: Map<string, boolean>;
     flagEnums: Map<string, boolean>;
     skip: Set<string>;
+    // Rust items the table defines, by "<file>:<Name>": emitted verbatim into that file's module.
+    items: Map<string, string>;
 }
 
 export interface Run {
     name: string;
     files: string[];
+    // The heap the run's code allocates in: "eval" for evaluator and checker code (P::new_eval).
+    heap: 'program' | 'eval';
+    // The run's stubs are installed into crates/pyright/src; its check merges ported functions.
+    install: boolean;
 }
 
 type Obj = Record<string, unknown>;
@@ -119,7 +138,7 @@ function readToml(path: string): Obj {
 
 export function loadTable(path: string): Table {
     const root = readToml(path);
-    checkKeys(root, path, ['types', 'modes', 'traits', 'families', 'merge', 'factories', 'sites', 'mutable', 'enums', 'skip']);
+    checkKeys(root, path, ['types', 'modes', 'traits', 'families', 'merge', 'factories', 'sites', 'mutable', 'enums', 'skip', 'items']);
 
     const types = new Map<string, TypeEntry>();
     for (const [k, v] of Object.entries(table(root.types, 'types'))) {
@@ -142,8 +161,8 @@ export function loadTable(path: string): Table {
     const modes = new Map<string, Mode>();
     for (const [k, v] of Object.entries(table(root.modes, 'modes'))) {
         const m = str(v, `modes."${k}"`);
-        if (m !== 'handle' && m !== 'value' && m !== 'owned' && m !== 'opaque') {
-            fail(`modes."${k}"`, 'expected "handle", "value", "owned" or "opaque"');
+        if (m !== 'handle' && m !== 'value' && m !== 'owned' && m !== 'rc' && m !== 'opaque') {
+            fail(`modes."${k}"`, 'expected "handle", "value", "owned", "rc" or "opaque"');
         }
         modes.set(k, m);
     }
@@ -151,15 +170,22 @@ export function loadTable(path: string): Table {
     const traits = new Map<string, TraitEntry>();
     for (const [k, v] of Object.entries(table(root.traits, 'traits'))) {
         const o = table(v, `traits."${k}"`);
-        checkKeys(o, `traits."${k}"`, ['receiver']);
-        traits.set(k, { receiver: optStr(o.receiver, `traits."${k}"`) ?? '&self' });
+        checkKeys(o, `traits."${k}"`, ['receiver', 'accessors']);
+        const accessors = new Map<string, Accessor>();
+        for (const [f, av] of Object.entries(table(o.accessors, `traits."${k}".accessors`))) {
+            const where = `traits."${k}".accessors.${f}`;
+            const a = table(av, where);
+            checkKeys(a, where, ['name', 'by_value', 'drop']);
+            accessors.set(f, { name: optStr(a.name, where), byValue: bool(a.by_value, where, false), drop: bool(a.drop, where, false) });
+        }
+        traits.set(k, { receiver: optStr(o.receiver, `traits."${k}"`) ?? '&self', accessors });
     }
 
     const families: Family[] = [];
     for (const [name, v] of Object.entries(table(root.families, 'families'))) {
         const where = `families.${name}`;
         const o = table(v, where);
-        checkKeys(o, where, ['file', 'base', 'union', 'kind', 'flatten', 'details_field', 'all_fields_mutable', 'root_variant', 'typed_handles', 'empty_variants']);
+        checkKeys(o, where, ['file', 'base', 'union', 'kind', 'flatten', 'details_field', 'all_fields_mutable', 'root_variant', 'typed_handles', 'empty_variants', 'private_details']);
         const empty = optStr(o.empty_variants, where) ?? 'struct';
         if (empty !== 'struct' && empty !== 'unit') {
             fail(where, 'empty_variants must be "struct" or "unit"');
@@ -176,6 +202,7 @@ export function loadTable(path: string): Table {
             rootVariant: optStr(o.root_variant, where),
             typedHandles: bool(o.typed_handles, where, true),
             emptyVariants: empty,
+            privateDetails: bool(o.private_details, where, false),
         });
     }
 
@@ -222,7 +249,12 @@ export function loadTable(path: string): Table {
 
     const skip = new Set(strList(root.skip, 'skip'));
 
-    return { types, modes, traits, families, merge, factories, sites, mutable, flagEnums, skip };
+    const items = new Map<string, string>();
+    for (const [k, v] of Object.entries(table(root.items, 'items'))) {
+        items.set(k, str(v, `items."${k}"`));
+    }
+
+    return { types, modes, traits, families, merge, factories, sites, mutable, flagEnums, skip, items };
 }
 
 export function loadRuns(path: string): Run[] {
@@ -230,8 +262,12 @@ export function loadRuns(path: string): Run[] {
     const runs: Run[] = [];
     for (const [name, v] of Object.entries(table(root.runs, 'runs'))) {
         const o = table(v, `runs.${name}`);
-        checkKeys(o, `runs.${name}`, ['files']);
-        runs.push({ name, files: strList(o.files, `runs.${name}.files`) });
+        checkKeys(o, `runs.${name}`, ['files', 'install', 'heap']);
+        const heap = optStr(o.heap, `runs.${name}.heap`) ?? 'program';
+        if (heap !== 'program' && heap !== 'eval') {
+            fail(`runs.${name}.heap`, 'expected "program" or "eval"');
+        }
+        runs.push({ name, files: strList(o.files, `runs.${name}.files`), install: bool(o.install, `runs.${name}.install`, false), heap });
     }
     return runs;
 }

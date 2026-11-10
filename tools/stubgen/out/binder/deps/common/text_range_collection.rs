@@ -13,5 +13,5 @@ use std::cell::Cell;
 // common/textRangeCollection.ts:17
 pub struct TextRangeCollection<T> {
     pub(crate) _items: Vec<T>,
-    pub(crate) _last_hit_index: Cell<i32>,
+    pub(crate) _last_hit_index: Cell<f64>,
 }

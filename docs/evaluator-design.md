@@ -41,7 +41,7 @@ The generator maps it, and every function configured under `[factories]`, as fol
 ### where the evaluator is passed and stored
 
 - A helper parameter of type `TypeEvaluator` is `&TypeEvaluator`. Inside a method, pass `self` where the TypeScript passes `evaluatorInterface`.
-- A stored evaluator is `P<TypeEvaluator>`: struct fields, and closures stored in types (`ClassDetailsShared.synthesizeMethodsDeferred`) that must be `'static`. Get it with `self.evaluator_interface.get()`.
+- A stored evaluator is `P<TypeEvaluator>`: struct fields, and the stored callbacks of section 3 (`SynthesizeMethodsDeferred.type_evaluator`). Get it with `self.evaluator_interface.get()`.
 - `getCodeFlowEngine(evaluatorInterface, ...)` stores the evaluator, so it takes the `P<TypeEvaluator>` (section 4, stored parameters).
 
 ### other closure factories
@@ -54,7 +54,7 @@ The same rules apply to every `[factories]` entry. `getCodeFlowEngine` is `CodeF
 
 ### for the step 5 agents
 
-- `type_evaluator.rs` holds the struct, `create_type_evaluator` and one `impl TypeEvaluator` block, all in TypeScript order. An agent that owns a line range fills the `todo!()` bodies whose markers fall in that range and leaves the rest alone. Git merges disjoint ranges of one file.
+- `type_evaluator.rs` holds the struct, `create_type_evaluator` and one `impl TypeEvaluator` block, all in TypeScript order. An agent that owns a line range fills the `todo!()` bodies whose markers fall in that range and leaves the rest alone. Git merges disjoint ranges of one file. `docs/step5-shares.md` holds the split.
 - Splitting the file into several modules later is mechanical: Rust allows many `impl TypeEvaluator` blocks, and the methods are already `pub(crate)` or `pub`.
 
 ## 2. Names and markers
@@ -88,6 +88,7 @@ A type alias of `number` (`TypeSourceId`) is one site, so one entry covers every
 - `T | undefined`, `T | null`, `x?: T` and `x?: T` parameters are `Option<T>`. Inside `Option`, parameters keep their borrowed form: `Option<&str>`, `Option<&[T]>`, `Option<&T>`.
 - A union of members of one family is the family root, `P<Root>` (below).
 - A union of members of one enum is that enum.
+- A union of string literals and string-literal aliases (`StructElementType | 'pad'`) is `String`; a union of number literals (`-1 | 0 | 1`) is one number site.
 - A union whose members map to one Rust type is that type (`T | Promise<T>` is `T`).
 - A union named in `[types]` by its sorted members maps as the table says: `"string | string[]"` is `Vec<String>`, param `&[String]`.
 - Any other union renders as its first member followed by `/*? <TypeScript> */`. The run report lists every such site.
@@ -97,15 +98,18 @@ A type alias of `number` (`TypeSourceId`) is one site, so one entry covers every
 | TypeScript | owned | param | param the callee changes |
 | --- | --- | --- | --- |
 | `T[]`, `readonly T[]`, `Array<T>`, iterables | `Vec<T>` | `&[T]` | `&mut Vec<T>` |
+| `Generator<T>`, `IterableIterator<T>` | `Box<dyn Iterator<Item = T>>` | `&mut dyn Iterator<Item = T>` | |
 | `Map<K, V>`, `ReadonlyMap`, `WeakMap`, `Record` | `JsMap<K, V>` | `&JsMap<K, V>` | `&mut JsMap<K, V>` |
 | `Set<T>`, `ReadonlySet`, `WeakSet` | `JsSet<T>` | `&JsSet<T>` | `&mut JsSet<T>` |
 | `[A, B]` | `(A, B)` | `(A, B)` | |
 | `{ [key: string]: T }` | `JsMap<String, T>` | | |
 
+A TS generator (`function*`) runs lazily, interleaved with its caller, so it is an iterator, never a `Vec` (`getClassMemberIterator`, `getClassIterator`).
+
 A collection is a value in Rust and a shared reference in TypeScript. Where two holders share one collection and one of them changes it, map every site that carries it to a shared handle in `[sites]`:
 
 - the binder's code-flow expression set, `P<RefCell<JsSet<String>>>`: the binder, its deferred tasks and the node-info store share it;
-- the evaluator's type caches, `P<RefCell<JsMap<u32, ..>>>`: the speculative type tracker deletes from the map it was handed, and the return-inference caches are swapped per call.
+- the evaluator's type caches and the code-flow node type cache (`CodeFlowTypeCache.cache`), `P<RefCell<JsMap<u32, ..>>>`: the speculative type tracker deletes from the map it was handed, and the return-inference caches are swapped per call. `SpeculativeEntry.cache` holds either kind as a `SpeculativeCache` enum, defined in `[items]`.
 
 A getter that returns live state its callers write to returns a reference into it, also through `[sites]`: `ClassType::get_symbol_table` returns `&'static RefCell<JsMap<..>>`, `TypeBase::add_props` returns `RefMut<'static, TypeBaseProps>`.
 
@@ -115,11 +119,24 @@ A getter that returns live state its callers write to returns a reference into i
 | --- | --- |
 | param | `&mut dyn FnMut(A) -> R` |
 | optional param | `Option<&mut dyn FnMut(A) -> R>` |
-| field, element, type alias | `Rc<dyn Fn(A) -> R>` |
+| field, element, factory local | a stored callback (below) |
+| type alias a field names | a stored callback (below) |
+| other type alias | `Rc<dyn Fn(A) -> R>` |
 | return | `Box<dyn FnMut(A) -> R>` |
 
 - `dyn`, never a generic `impl FnMut`: a generic callback passed down a recursive call instantiates without end.
 - In a class whose methods take `&mut self` (an "owned" class, below), every callback parameter of an inherent method takes the receiver first: `_bindLoopStatement(.., callback: &mut dyn FnMut(&mut Binder))`. The closure cannot capture `self` while the method holds it, so it receives it. tsrs's checker does the same.
+
+### stored callbacks
+
+porting.md "memory": a closure that a struct stores becomes a struct with named fields plus a method, so a collector sees every `P` it holds (`tools/stubgen/src/callbacks.ts`).
+
+- A slot is a field, closure-factory local or container element of function type, or a function type alias that a field names. Its creation sites are the closures assigned to it anywhere on the check path, and named functions passed to it.
+- Each site gets a struct with one field per variable it captures, in first-use order, and `pub fn call(&self, ..)` with a `todo!()` body under the site's marker. The struct lives in the module that declares the slot; its marker names the file of the closure.
+- One site: the struct takes the slot's name (`ClassDetailsShared.synthesizeMethodsDeferred` is `SynthesizeMethodsDeferred`). Several: one struct per site named after its enclosing function, and an enum named after the slot whose `call` dispatches.
+- Captures: a local or parameter of an enclosing function is a field of its type; a closure factory's locals and nested functions are its struct (`type_evaluator: P<TypeEvaluator>`); `this` is the class; a local function or `const` closure the closure calls adds its own captures and a doc line. A captured `let` that the TypeScript reassigns gets a comment: the struct holds a copy.
+- A slot whose every site captures nothing is a `fn` pointer (`typeFormSpecialFormDiagnosticFactories` holds `fn() -> String`).
+- Aliases only passed or returned (`TypeNarrowingCallback`) stay `Rc<dyn Fn>`: no struct keeps them.
 
 ### objects
 
@@ -127,14 +144,31 @@ A class or interface is held one of four ways ("mode"). `[modes]` overrides the 
 
 | mode | Rust | param | default for |
 | --- | --- | --- | --- |
-| `handle` | `P<T>`, identity, shared | `P<T>` | classes; interfaces with a field written after construction, or compared with `===` |
+| `handle` | `P<T>`, identity, shared | `P<T>` | classes and interfaces compared by identity, or written after being stored in a second place |
 | `value` | owned struct, `#[derive(Clone)]` | `&T`, or `&mut T` when the callee writes it | other interfaces |
-| `owned` | owned struct, methods take `&mut self` | `&T` | classes that implement a trait class (walkers) |
+| `owned` | owned struct; methods take `&mut self` when some code writes a field | `&T`, or `&mut T` when the callee changes it | other classes; classes that implement a trait class (walkers) |
+| `rc` | `Rc<T>`, shared and immutable | `&T` | classes stored in a second place and never written |
 | `opaque` | placeholder struct, ported by hand | `&T` | none; `Uri` |
 
 Value types, value enums and inline-object structs derive `Clone`: the TypeScript copies them with spreads and reads them out of containers. Handle, owned and family structs derive nothing.
 
-The default follows porting.md: an object written after construction, or compared with `===`, needs identity. Writes cannot show whether an object is shared, so the default errs toward the handle. The run report lists every interface the default made a handle, with the write that decided it, and every `[modes]` value that some code compares by identity.
+The default follows porting.md "memory": an object is a `P` only when pyright compares it with `===`, or writes to it after storing it elsewhere. The write analysis decides both:
+
+- compared: `a === b` on two objects of the type, or an object of the type used as a `Map` key or `Set` element, which hashes by identity;
+- written: a field assigned outside the constructor, a field's collection changed in place, or a method that does either called on it;
+- stored: an existing object of the type put in a second place: assigned to a field or element, pushed or set into a container, placed in an object or array literal, copied with its container (`[...a]`, `slice`, `Array.from`), or passed to a parameter the callee stores. A fresh object (`new`, a literal) placed straight into one place is not stored.
+
+The analysis is per type, not per object, so it errs toward the handle. The run report lists, for each class and interface of the stubbed files, its mode with the identity, write and store sites that decided it. `[modes]` overrides it; each override in `typemap.toml` says why.
+
+Decisions on the types `docs/research/memory-advice.md` names (2026-11-10):
+
+- `ConstraintSet` stays a handle. `ConstraintTracker.cloneWithSignature` gives the clone the original's set objects (constraintTracker.ts:204) and both trackers later write them.
+- `ConstraintTracker` stays a handle. `validateArgTypeParams` returns the caller's own tracker inside `constraintTrackers` (typeEvaluator.ts:13820, 13871, 13875), and an overload match stores its tracker in `MatchedOverloadInfo` (10089); the tracker is written through `copyFromClone` and `addConstraintSets`. The identity hit at protocols.ts:366 is a false positive: that `===` only runs when one side is `undefined`. An owned tracker needs a proof per call site that no write follows a store.
+- `DiagnosticAddendum` (common/diagnostic.ts) is written after it is stored: `createAddendum` pushes the new child into its parent and returns it, and callers write the child. It stays a handle, as ported.
+- `SpeculativeContext` and `SpeculativeEntry` are values: each lives only in the speculative stack, which `disableSpeculativeMode` moves out and `enableSpeculativeMode` moves back. `SpeculativeEntry.cache` is a `SpeculativeCache` (below).
+- `TypeResult` stays a handle: `getTypeOfExpression` writes `typeResult.type` after `writeTypeCache` stored it.
+- Other types the rule turned from handles into values: `FlowNodeTypeResult`, `ExpectedTypeCacheEntry`, `CallResult`, `InferenceContext`, `ExpectedTypeOptions`, `PrefetchedTypes`, `ClassMember`, `ParamListDetails`, `ParamAssignmentInfo`, `LiteralTypes`, `SignatureWithOffsets`, `ProtocolCompatibilityCheckState`, `TypeVarUsageInfo`. `ConstraintSolution` is an `Rc`. `SpeculativeTypeTracker`, `UniqueNameMap`, `ParamAssignmentTracker`, the `TypeVarTransformer` classes and `NumberReference` are owned; a struct that holds one and is shared (`TypeEvaluator.speculative_type_tracker`) wraps it in a `RefCell`.
+
 `typemap.toml` makes an interface a value only where the TypeScript shows that copying it is safe:
 
 - records copied with a spread before each write, never compared with `===` (`TypedDictEntry`, `ValidateArgTypeParams`, `MatchArgsToParamsResult`);
@@ -143,12 +177,15 @@ The default follows porting.md: an object written after construction, or compare
 
 Results stay handles: the evaluator caches a `TypeResult` and then writes it (typeEvaluator.ts:1348–1353), and returns a cached `EffectiveTypeResult` that its caller writes (24668, 25483). A copy would change pyright's output.
 
+Evaluator and checker code allocates with `P::new_eval`; every stub of a run with `heap = "eval"` (`runs.toml`) says so in its header.
+
 ### mutability
 
 The write analysis reads the whole check path:
 
 - a field assigned outside its own constructor, or deleted, is written;
 - an array, `Map` or `Set` changed in place (`push`, `splice`, `set`, `add`, `delete`, `clear`, `sort`, element assignment, `length = n`) is mutated; so is one passed to a parameter its callee mutates, through any number of calls (the analysis repeats until nothing changes);
+- a method that writes a field of `this`, changes one in place, or calls such a method on `this` changes `this`; calling it changes the receiver, as `push` does;
 - a call through a closure factory's interface (`evaluator.getTypeOfExpression(..)`) reaches the nested function behind it;
 - `x.f.g = v` writes through `f`;
 - a local initialized from a field (`const a = x.f`) stands for the field;
@@ -172,15 +209,17 @@ porting.md "types, classes and unions" and "parse nodes". `[families]` lists the
 - In a family without a kind field, a member's details embed its parent member's details as `base` (`FlowBranchLabelDetails.base: FlowLabelDetails`), so `FlowLabel::d()` works on every label variant.
 - References: the union and the base are `P<Root>`; a member is its typed handle; an alias of a union of members (`ExpressionNode`) is `pub type ExpressionNode = P<ParseNode>`.
 - `all_fields_mutable` makes every field `Cell`/`RefCell` except the kind field and `id`, as porting.md requires for parse nodes.
+- `private_details` makes the details field and enum private to the family's module (`Type`). Other code reaches details only through typed handles and `d()`, and creates objects only through the module's create functions (porting.md "memory": the layout will change).
 - Two options record the shape a hand port chose. `typed_handles = false` drops the typed handles, so a member is `P<Root>`; `empty_variants = "unit"` makes a member without fields of its own a unit variant. `Declaration` uses both, as `crates/pyright/src/analyzer/declaration.rs` does. Tokens name their root variant `None`, as `tokenizer_types.rs` does.
 
 ### traits
 
 `[traits]` lists the classes and interfaces that become traits: those called through an interface or a base class with several implementations.
 
-- A trait interface (`AnalyzerNodeInfoReader`) becomes a trait with one required method per method, and one accessor per data member. Params of its type are `&dyn T`; stored ones, fields and parameters the function stores, are `&'static dyn T`.
+- A trait interface (`AnalyzerNodeInfoReader`) becomes a trait with one required method per method, and one accessor per data member. Params of its type are `&dyn T`; stored ones, fields, returns and parameters the function stores, are `P<dyn T>` (porting.md "memory": never a `&'static`). `P::to_dyn` makes one from the `P` of the implementing struct.
 - A trait class (`ParseTreeWalker`) becomes a trait whose methods have default `todo!()` bodies. Its fields become required accessors; each implementing struct stores them and returns them. Params are `&mut dyn T`, stored ones `Box<dyn T>`.
 - An implementing class gets one `impl Trait for Class` per trait in its ancestry, holding the methods that trait declares, with the trait's signature and the base's type arguments substituted (`_default` is `bool` in `impl ParseTreeVisitor<bool> for Binder`). The marker points at the implementing method. Its other methods go in an inherent `impl`.
+- `accessors` in a `[traits]` entry records how a hand-ported trait reads a trait-class field: a new name (`_default` is `default_visit_result`), by value, or no accessor and no field (`drop`: `_getStringAnnotation` is the method `get_string_annotation`).
 
 ### type aliases
 
@@ -215,6 +254,7 @@ An alias declared inside a function body is inlined.
 - `Promise<T>` is `T`: nothing on the check path awaits.
 - `CancellationToken` is `()`: nothing cancels the CLI check.
 - `any`, `unknown`, `object` and unique symbols render as `()` with a `/*? .. */` marker, unless `[sites]` names the type.
+- `RegExp` is `regex::Regex`. Pyright's patterns have no `u` flag: spell JS-only escapes with the `jsrt::js_regex` fragments.
 - An inline object type is a struct named after its site.
 
 ## 4. Items
@@ -228,6 +268,8 @@ An alias declared inside a function body is inlined.
 - A module `const` with a literal value is a Rust `const`. Every other module variable is a `thread_local!` static: `Cell`/`RefCell` when it is a `let` or some code writes it, with a `todo!()` initializer unless the value is a literal. Its marker sits inside the `thread_local!` block, above the `static`.
 - Variables of a namespace and static fields of a class go in a module named after it: `UnboundType._instance` is `unbound_type::INSTANCE`.
 - A closure factory follows section 1. Its builder function gets no `/// Nested in the TS body:` line: its nested functions are the struct's methods.
+- A declaration in `skip` keeps only its marker (`LogWrapper`, the type of the dropped `wrapWithLogger`).
+- `[items]` defines Rust items verbatim in a file's module, for a type the mapping needs but the TypeScript does not declare (`SpeculativeCache`).
 
 ## 5. Dependency placeholders and the compile check
 
@@ -239,16 +281,27 @@ A run writes `out/<run>/stubs/`, one module per stubbed file, and `out/<run>/dep
   - each placeholder placed where the crate's file is still an empty skeleton;
   - for a partially ported file, the items the stubs name that it lacks, served from the placeholder through a side module the file re-exports. The report lists them: they are requests to the file's owner.
 - So the stubs compile against every real file on `main`; a name mismatch fails the check.
+- A placeholder for a file the crate already ports names no further placeholders, so the check never chases a ported file's own dependencies. A partially ported file is served only the items the placed files import from it.
+
+### install
+
+A run with `install = true` (`runs.toml`) is installed into `crates/pyright/src` by `stubgen --run <run> --install`, and its check places the same files:
+
+- a crate file with no ported function at a marker (a skeleton, a placeholder, an unchanged stub) is replaced;
+- a crate file with ported functions is merged: each ported function replaces the stub function at its marker, and its imports are added (`tools/stubgen/src/merge.ts`). `declaration_utils.rs` keeps `has_type_for_declaration` and `are_declarations_same` this way;
+- the install refuses, and changes nothing, when the merge would drop code: a ported function at no stub marker, or a crate line the new stub lacks.
+
+A run without `install` is a record: a ported crate file supersedes its stub.
 - Where a ported file chose a shape the rules would not give, `typemap.toml` records it: `TextRangeCollection<T>` keeps its generic, `ConsoleInterface` is a trait.
 - `jsrt` items the stubs use but `crates/jsrt` lacks come from `tools/stubgen/jsrt_shim.rs`. The check report lists each: they are requests to the `jsrt` owner.
 
 ## 6. Open
 
-- Collections shared by reference between holders that change them need a `[sites]` entry each; the write analysis does not see aliasing. Mapped so far: the binder's code-flow expression set and the evaluator's type caches. When `typeCacheUtils.ts` is stubbed, `SpeculativeEntry.cache` must hold those same handles, and when `codeFlowEngine.ts` is stubbed, its flow-node type cache (codeFlowEngine.ts:314) needs the same treatment.
+- Collections shared by reference between holders that change them need a `[sites]` entry each; the write analysis does not see aliasing. Mapped so far: the binder's code-flow expression set, the evaluator's type caches and the code-flow node type cache.
 - Interface inheritance between value structs is flattened, so a function that takes the base cannot take a derived struct. In the evaluator, `is_type_cache_entry_valid(Option<&TypeCacheEntry>)` is called with a `TypeFormTypeCacheEntry` (typeEvaluator.ts:821), and `read_contextual_type_cache_entry_for_node` returns one where it is typed `TypeCacheEntry` (788–799). Decide per site: a generic, a conversion, or a `[sites]` type.
-- Handles never free. Results such as `TypeResult` are allocated per evaluation, and stack-like records the default makes handles (`FlowNodeTypeResult`, `SpeculativeContext`, `SpeculativeEntry`, in files not stubbed yet) leak per push. Measure at the step 4 checkpoint. A value form needs proof, per type, that no write follows a store.
-- `RegExp` has no mapping yet; jsrt's `js_regex` translates patterns for the `regex` crate. Neither run uses it.
-- The remaining `/*? .. */` sites in each run's report need a decision: `definedConstants` values (`boolean | string`), `ImportLookup`'s `Uri | AbsoluteModuleDescriptor` parameter, the `any` results in `staticExpressions.ts`.
-- Number sites ending in `?` in `numbers.toml` are unreviewed guesses. The binder group, `typeEvaluator.ts` and `types.ts` have none; the remaining ones sit in files only placeholders cover so far.
+- The handle rule is per type. A type made a handle because some object of it is stored and some object of it is written may have objects that are never both; a per-site proof can move it to a value later, through `[modes]`.
+- Captured `let`s that the TypeScript reassigns (`SynthesizeMethodsDeferred.is_named_tuple_subclass` and others) are copied into the callback struct. Where a write follows the closure, the port needs a shared cell.
+- The remaining `/*? .. */` sites are in files outside the evaluator run: `definedConstants` values (`boolean | string`), `ImportLookup`'s `Uri | AbsoluteModuleDescriptor` parameter, the `any` results in `staticExpressions.ts`.
+- Number sites ending in `?` in `numbers.toml` are unreviewed guesses. The binder group and every file of the evaluator run have none.
 - The evaluator stubs compile against the hand-ported binder group, `parse_nodes.rs`, `tokenizer_types.rs`, `parser.rs` and `common/` files on `main` at the time of the run. A later change to their names fails the check until the table follows.
 - The binder group was ported by hand while the binder run was being built, so the check reports all nine binder stubs as superseded. The run stays as a record of the mapping on those files.

@@ -8,114 +8,9 @@
     clippy::all
 )]
 
-use crate::analyzer::declaration::Declaration;
-use crate::analyzer::symbol::Symbol;
-use crate::common::uri::uri::Uri;
-use crate::parser::parse_nodes::{
-    ArgumentNode, ExpressionNode, NameNode, ParamCategory, TypeAnnotationNode,
-};
-use jsrt::{JsBigInt, JsMap, JsSet, NumberValue, P, flag_ops};
+use jsrt::P;
 use std::cell::{Cell, RefCell};
 use std::ops::Deref;
-use std::rc::Rc;
-
-// analyzer/types.ts:17
-#[repr(i32)]
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub enum TypeCategory {
-    Unbound = 0,
-    Unknown = 1,
-    Any = 2,
-    Never = 3,
-    Function = 4,
-    Overloaded = 5,
-    Class = 6,
-    Module = 7,
-    Union = 8,
-    TypeVar = 9,
-}
-
-// analyzer/types.ts:49
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Default)]
-pub struct TypeFlags(pub u32);
-
-impl TypeFlags {
-    pub const None: TypeFlags = TypeFlags(0);
-    pub const Instantiable: TypeFlags = TypeFlags(1);
-    pub const Instance: TypeFlags = TypeFlags(2);
-    pub const Ambiguous: TypeFlags = TypeFlags(4);
-    pub const TypeCompatibilityMask: TypeFlags = TypeFlags(3);
-}
-
-flag_ops!(TypeFlags);
-
-// analyzer/types.ts:67
-pub type UnionableType = P<Type>;
-
-// analyzer/types.ts:86
-pub struct EnumLiteral {
-    pub class_full_name: String,
-    pub class_name: String,
-    pub item_name: String,
-    pub item_type: P<Type>,
-    pub is_repr_enum: bool,
-}
-
-// analyzer/types.ts:100
-pub struct SentinelLiteral {
-    pub class_full_name: String,
-    pub class_name: String,
-}
-
-// analyzer/types.ts:108
-#[derive(Clone)]
-pub enum LiteralValue {
-    Number(f64),
-    Bigint(JsBigInt),
-    Boolean(bool),
-    String(String),
-    EnumLiteral(P<EnumLiteral>),
-    SentinelLiteral(P<SentinelLiteral>),
-}
-
-// analyzer/types.ts:134
-pub struct TypeAliasSharedInfo {
-    pub name: String,
-    pub full_name: String,
-    pub module_name: String,
-    pub file_uri: Uri,
-    pub type_var_scope_id: String,
-    pub is_type_alias_type: bool,
-    pub type_params: RefCell<Option<Vec<TypeVarType>>>,
-    pub computed_variance: RefCell<Option<Vec<Variance>>>,
-}
-
-// analyzer/types.ts:153
-#[derive(Clone)]
-pub struct TypeAliasInfo {
-    pub shared: P<TypeAliasSharedInfo>,
-    pub type_args: Option<Vec<P<Type>>>,
-}
-
-// analyzer/types.ts:160
-#[derive(Clone)]
-pub struct CachedTypeInfo {
-    pub instantiable_type: Option<P<Type>>,
-    pub instance_type: Option<P<Type>>,
-    pub type_base_instantiable_type: Option<P<Type>>,
-    pub type_base_instance_type: Option<P<Type>>,
-    pub requires_specialization: Option<bool>,
-}
-
-// analyzer/types.ts:174
-#[derive(Clone)]
-pub struct TypeBaseProps {
-    pub instantiable_depth: Option<u32>,
-    pub special_form: Option<ClassType>,
-    pub type_form: Option<P<Type>>,
-    pub type_alias_info: Option<TypeAliasInfo>,
-    pub condition: Option<Vec<TypeCondition>>,
-}
 
 // analyzer/types.ts:195
 pub struct Type {
@@ -123,11 +18,12 @@ pub struct Type {
     pub flags: Cell<TypeFlags>,
     pub props: RefCell<Option<TypeBaseProps>>,
     pub cached: RefCell<Option<CachedTypeInfo>>,
-    pub d: TypeDetails,
+    // Private: reach details through typed handles and `d()`; create through the create functions.
+    d: TypeDetails,
 }
 
 // analyzer/types.ts: one variant per `category` value.
-pub enum TypeDetails {
+enum TypeDetails {
     Unbound(UnboundTypeDetails),
     Unknown(UnknownTypeDetails),
     Module(ModuleTypeDetails),
@@ -171,13 +67,6 @@ impl Deref for UnboundType {
     }
 }
 
-// analyzer/types.ts:412
-#[derive(Clone)]
-pub struct UnknownDetailsPriv {
-    pub is_incomplete: bool,
-    pub possible_type: Option<P<Type>>,
-}
-
 // analyzer/types.ts:424
 pub struct UnknownTypeDetails {
     pub priv_: UnknownDetailsPriv,
@@ -211,17 +100,6 @@ impl Deref for UnknownType {
     }
 }
 
-// analyzer/types.ts:478
-#[derive(Clone)]
-pub struct ModuleDetailsPriv {
-    pub fields: JsMap<String, P<Symbol>>,
-    pub doc_string: Option<String>,
-    pub not_present_field_type: Option<P<Type>>,
-    pub loader_fields: JsMap<String, P<Symbol>>,
-    pub module_name: String,
-    pub file_uri: Uri,
-}
-
 // analyzer/types.ts:497
 pub struct ModuleTypeDetails {
     pub priv_: RefCell<ModuleDetailsPriv>,
@@ -253,163 +131,6 @@ impl Deref for ModuleType {
     fn deref(&self) -> &Type {
         self.0.get()
     }
-}
-
-// analyzer/types.ts:544
-pub struct DataClassEntry {
-    pub name: String,
-    pub class_type: ClassType,
-    pub mro_class: Option<ClassType>,
-    pub is_class_var: bool,
-    pub is_keyword_only: bool,
-    pub alias: Option<String>,
-    pub has_default: Cell<Option<bool>>,
-    pub is_default_factory: Option<bool>,
-    pub name_node: Option<NameNode>,
-    pub type_annotation_node: Option<TypeAnnotationNode>,
-    pub default_expr: Cell<Option<ExpressionNode>>,
-    pub include_in_init: bool,
-    pub type_: Cell<P<Type>>,
-    pub converter: Option<ArgumentNode>,
-}
-
-// analyzer/types.ts:561
-#[derive(Clone)]
-pub struct TypedDictEntry {
-    pub value_type: P<Type>,
-    pub is_required: bool,
-    pub is_read_only: bool,
-    pub is_provided: bool,
-}
-
-// analyzer/types.ts:568
-pub struct TypedDictEntries {
-    pub known_items: RefCell<JsMap<String, TypedDictEntry>>,
-    pub extra_items: RefCell<Option<TypedDictEntry>>,
-}
-
-// analyzer/types.ts:573
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Default)]
-pub struct ClassTypeFlags(pub u32);
-
-impl ClassTypeFlags {
-    pub const None: ClassTypeFlags = ClassTypeFlags(0);
-    pub const BuiltIn: ClassTypeFlags = ClassTypeFlags(1);
-    pub const SpecialBuiltIn: ClassTypeFlags = ClassTypeFlags(2);
-    pub const TypedDictClass: ClassTypeFlags = ClassTypeFlags(4);
-    pub const TypedDictMarkedClosed: ClassTypeFlags = ClassTypeFlags(8);
-    pub const TypedDictEffectivelyClosed: ClassTypeFlags = ClassTypeFlags(0x10);
-    pub const CanOmitDictValues: ClassTypeFlags = ClassTypeFlags(0x20);
-    pub const SupportsAbstractMethods: ClassTypeFlags = ClassTypeFlags(0x40);
-    pub const PropertyClass: ClassTypeFlags = ClassTypeFlags(0x80);
-    pub const Final: ClassTypeFlags = ClassTypeFlags(0x100);
-    pub const ProtocolClass: ClassTypeFlags = ClassTypeFlags(0x200);
-    pub const PseudoGenericClass: ClassTypeFlags = ClassTypeFlags(0x400);
-    pub const RuntimeCheckable: ClassTypeFlags = ClassTypeFlags(0x800);
-    pub const TypingExtensionClass: ClassTypeFlags = ClassTypeFlags(0x1000);
-    pub const PartiallyEvaluated: ClassTypeFlags = ClassTypeFlags(0x2000);
-    pub const HasCustomClassGetItem: ClassTypeFlags = ClassTypeFlags(0x4000);
-    pub const TupleClass: ClassTypeFlags = ClassTypeFlags(0x8000);
-    pub const EnumClass: ClassTypeFlags = ClassTypeFlags(0x10000);
-    pub const ClassProperty: ClassTypeFlags = ClassTypeFlags(0x20000);
-    pub const DefinedInStub: ClassTypeFlags = ClassTypeFlags(0x40000);
-    pub const DisjointBase: ClassTypeFlags = ClassTypeFlags(0x80000);
-    pub const TypeCheckOnly: ClassTypeFlags = ClassTypeFlags(0x100000);
-    pub const NewTypeClass: ClassTypeFlags = ClassTypeFlags(0x200000);
-    pub const ValidTypeAliasClass: ClassTypeFlags = ClassTypeFlags(0x400000);
-    pub const SpecialFormClass: ClassTypeFlags = ClassTypeFlags(0x800000);
-    pub const IllegalIsinstanceClass: ClassTypeFlags = ClassTypeFlags(0x1000000);
-    pub const EnumMemberSetMayBeIncomplete: ClassTypeFlags = ClassTypeFlags(0x2000000);
-    pub const EnumMemberSetMayBeDynamicallyModified: ClassTypeFlags = ClassTypeFlags(0x4000000);
-}
-
-flag_ops!(ClassTypeFlags);
-
-// analyzer/types.ts:686
-pub struct DataClassBehaviors {
-    pub skip_generate_init: Cell<Option<bool>>,
-    pub skip_generate_eq: Cell<Option<bool>>,
-    pub generate_order: Cell<Option<bool>>,
-    pub generate_slots: Cell<Option<bool>>,
-    pub generate_hash: Cell<Option<bool>>,
-    pub match_args: Cell<Option<bool>>,
-    pub keyword_only: Cell<Option<bool>>,
-    pub frozen: Cell<Option<bool>>,
-    pub frozen_default: Cell<Option<bool>>,
-    pub field_descriptor_names: RefCell<Vec<String>>,
-}
-
-// analyzer/types.ts:699
-pub struct ClassDetailsShared {
-    pub name: String,
-    pub full_name: String,
-    pub module_name: String,
-    pub file_uri: Uri,
-    pub flags: Cell<ClassTypeFlags>,
-    pub type_source_id: i32,
-    pub base_classes: RefCell<Vec<P<Type>>>,
-    pub mro: RefCell<Vec<P<Type>>>,
-    pub declaration: Cell<Option<P<Declaration>>>,
-    pub declared_metaclass: Cell<Option<P<Type>>>,
-    pub effective_metaclass: Cell<Option<P<Type>>>,
-    pub fields: RefCell<JsMap<String, P<Symbol>>>,
-    pub type_params: RefCell<Vec<TypeVarType>>,
-    pub type_var_scope_id: RefCell<Option<String>>,
-    pub doc_string: Option<String>,
-    pub data_class_entries: RefCell<Option<Vec<P<DataClassEntry>>>>,
-    pub data_class_behaviors: Cell<Option<P<DataClassBehaviors>>>,
-    pub named_tuple_entries: RefCell<Option<JsSet<String>>>,
-    pub typed_dict_entries: Cell<Option<P<TypedDictEntries>>>,
-    pub typed_dict_extra_items_expr: Cell<Option<ExpressionNode>>,
-    pub local_slots_names: RefCell<Option<Vec<String>>>,
-    pub has_non_empty_slots: Cell<Option<bool>>,
-    pub deprecated_message: RefCell<Option<String>>,
-    pub protocol_compatibility: Cell<Option<() /*? object */>>,
-    pub class_data_class_transform: Cell<Option<P<DataClassBehaviors>>>,
-    pub requires_variance_inference: Cell<Option<bool>>,
-    pub is_instance_hashable: Cell<Option<bool>>,
-    pub synthesize_methods_deferred: RefCell<Option<Rc<dyn Fn()>>>,
-    pub synthesize_data_class_slots_deferred: RefCell<Option<Rc<dyn Fn()>>>,
-    pub calculate_inherited_slots_names_deferred: RefCell<Option<Rc<dyn Fn()>>>,
-    pub inherited_slots_names_cached: RefCell<Option<Vec<String>>>,
-}
-
-// analyzer/types.ts:757
-#[derive(Clone)]
-pub struct TupleTypeArg {
-    pub type_: P<Type>,
-    pub is_unbounded: bool,
-    pub is_optional: Option<bool>,
-}
-
-// analyzer/types.ts:770
-#[derive(Clone)]
-pub struct PropertyMethodInfo {
-    pub method_type: P<Type>,
-    pub class_type: Option<ClassType>,
-}
-
-// analyzer/types.ts:780
-#[derive(Clone)]
-pub struct ClassDetailsPriv {
-    pub type_args: Option<Vec<P<Type>>>,
-    pub is_empty_container: Option<bool>,
-    pub tuple_type_args: Option<Vec<TupleTypeArg>>,
-    pub is_unpacked: Option<bool>,
-    pub is_type_arg_explicit: Option<bool>,
-    pub include_subclasses: Option<bool>,
-    pub include_promotions: Option<bool>,
-    pub literal_value: Option<LiteralValue>,
-    pub alias_name: Option<String>,
-    pub typed_dict_narrowed_entries: Option<JsMap<String, TypedDictEntry>>,
-    pub is_typed_dict_partial: Option<bool>,
-    pub is_asymmetric_descriptor: Option<bool>,
-    pub is_asymmetric_attribute_accessor: Option<bool>,
-    pub fget_info: Option<PropertyMethodInfo>,
-    pub fset_info: Option<PropertyMethodInfo>,
-    pub fdel_info: Option<PropertyMethodInfo>,
-    pub deprecated_instance_message: Option<String>,
-    pub partial_call_type: Option<P<Type>>,
 }
 
 // analyzer/types.ts:862
@@ -446,105 +167,6 @@ impl Deref for ClassType {
     }
 }
 
-// analyzer/types.ts:1589
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Default)]
-pub struct FunctionParamFlags(pub u32);
-
-impl FunctionParamFlags {
-    pub const None: FunctionParamFlags = FunctionParamFlags(0);
-    pub const NameSynthesized: FunctionParamFlags = FunctionParamFlags(1);
-    pub const TypeDeclared: FunctionParamFlags = FunctionParamFlags(2);
-    pub const TypeInferred: FunctionParamFlags = FunctionParamFlags(4);
-}
-
-flag_ops!(FunctionParamFlags);
-
-// analyzer/types.ts:1602
-#[derive(Clone)]
-pub struct FunctionParam {
-    pub category: ParamCategory,
-    pub flags: FunctionParamFlags,
-    pub name: Option<String>,
-    pub _type: P<Type>,
-    pub _default_type: Option<P<Type>>,
-    pub default_expr: Option<ExpressionNode>,
-}
-
-// analyzer/types.ts:1653
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Default)]
-pub struct FunctionTypeFlags(pub u32);
-
-impl FunctionTypeFlags {
-    pub const None: FunctionTypeFlags = FunctionTypeFlags(0);
-    pub const ConstructorMethod: FunctionTypeFlags = FunctionTypeFlags(1);
-    pub const ClassMethod: FunctionTypeFlags = FunctionTypeFlags(2);
-    pub const StaticMethod: FunctionTypeFlags = FunctionTypeFlags(4);
-    pub const AbstractMethod: FunctionTypeFlags = FunctionTypeFlags(8);
-    pub const Generator: FunctionTypeFlags = FunctionTypeFlags(0x10);
-    pub const DisableDefaultChecks: FunctionTypeFlags = FunctionTypeFlags(0x20);
-    pub const SynthesizedMethod: FunctionTypeFlags = FunctionTypeFlags(0x40);
-    pub const TypeCheckOnly: FunctionTypeFlags = FunctionTypeFlags(0x80);
-    pub const Overloaded: FunctionTypeFlags = FunctionTypeFlags(0x100);
-    pub const Async: FunctionTypeFlags = FunctionTypeFlags(0x200);
-    pub const StubDefinition: FunctionTypeFlags = FunctionTypeFlags(0x800);
-    pub const PyTypedDefinition: FunctionTypeFlags = FunctionTypeFlags(0x1000);
-    pub const Final: FunctionTypeFlags = FunctionTypeFlags(0x2000);
-    pub const UnannotatedParams: FunctionTypeFlags = FunctionTypeFlags(0x4000);
-    pub const GradualCallableForm: FunctionTypeFlags = FunctionTypeFlags(0x8000);
-    pub const ParamSpecValue: FunctionTypeFlags = FunctionTypeFlags(0x10000);
-    pub const PartiallyEvaluated: FunctionTypeFlags = FunctionTypeFlags(0x20000);
-    pub const Overridden: FunctionTypeFlags = FunctionTypeFlags(0x40000);
-    pub const NoTypeCheck: FunctionTypeFlags = FunctionTypeFlags(0x80000);
-    pub const BuiltIn: FunctionTypeFlags = FunctionTypeFlags(0x100000);
-}
-
-flag_ops!(FunctionTypeFlags);
-
-// analyzer/types.ts:1729
-pub struct FunctionDetailsShared {
-    pub name: String,
-    pub full_name: String,
-    pub module_name: String,
-    pub flags: Cell<FunctionTypeFlags>,
-    pub type_params: RefCell<Vec<TypeVarType>>,
-    pub parameters: RefCell<Vec<FunctionParam>>,
-    pub declared_return_type: Cell<Option<P<Type>>>,
-    pub declaration: Cell<Option<P<Declaration>>>,
-    pub type_var_scope_id: RefCell<Option<String>>,
-    pub doc_string: RefCell<Option<String>>,
-    pub deprecated_message: RefCell<Option<String>>,
-    pub method_class: Cell<Option<ClassType>>,
-    pub decorator_data_class_behaviors: Cell<Option<P<DataClassBehaviors>>>,
-    pub inferred_return_type: RefCell<Option<FunctionDetailsSharedInferredReturnType>>,
-}
-
-// analyzer/types.ts:1757
-pub struct SpecializedFunctionTypes {
-    pub parameter_types: RefCell<Vec<P<Type>>>,
-    pub parameter_default_types: RefCell<Option<Vec<Option<P<Type>>>>>,
-    pub return_type: Cell<Option<P<Type>>>,
-}
-
-// analyzer/types.ts:1772
-#[derive(Clone)]
-pub struct CallSiteInferenceTypeCacheEntry {
-    pub param_types: Vec<P<Type>>,
-    pub return_type: P<Type>,
-}
-
-// analyzer/types.ts:1782
-#[derive(Clone)]
-pub struct FunctionDetailsPriv {
-    pub constructor_type_var_scope_id: Option<String>,
-    pub specialized_types: Option<P<SpecializedFunctionTypes>>,
-    pub call_site_return_type_cache: Option<Vec<CallSiteInferenceTypeCacheEntry>>,
-    pub stripped_first_param_type: Option<P<Type>>,
-    pub bound_to_type: Option<ClassType>,
-    pub pre_bound_flags: Option<FunctionTypeFlags>,
-    pub overloaded: Option<OverloadedType>,
-    pub is_callable_with_type_args: Option<bool>,
-}
-
 // analyzer/types.ts:1817
 pub struct FunctionTypeDetails {
     pub shared: Cell<P<FunctionDetailsShared>>,
@@ -577,13 +199,6 @@ impl Deref for FunctionType {
     fn deref(&self) -> &Type {
         self.0.get()
     }
-}
-
-// analyzer/types.ts:2422
-#[derive(Clone)]
-pub struct OverloadedDetailsPriv {
-    pub _overloads: Vec<FunctionType>,
-    pub _implementation: Option<P<Type>>,
 }
 
 // analyzer/types.ts:2430
@@ -619,12 +234,6 @@ impl Deref for OverloadedType {
     }
 }
 
-// analyzer/types.ts:2474
-#[derive(Clone)]
-pub struct NeverDetailsPriv {
-    pub is_no_return: bool,
-}
-
 // analyzer/types.ts:2478
 pub struct NeverTypeDetails {
     pub priv_: NeverDetailsPriv,
@@ -656,12 +265,6 @@ impl Deref for NeverType {
     fn deref(&self) -> &Type {
         self.0.get()
     }
-}
-
-// analyzer/types.ts:2519
-#[derive(Clone)]
-pub struct AnyDetailsPriv {
-    pub is_ellipsis: bool,
 }
 
 // analyzer/types.ts:2523
@@ -697,31 +300,6 @@ impl Deref for AnyType {
     }
 }
 
-// analyzer/types.ts:2572
-#[derive(Clone)]
-pub struct TypeCondition {
-    pub type_var: TypeVarType,
-    pub constraint_index: i32,
-}
-
-// analyzer/types.ts:2668
-pub struct LiteralTypes {
-    pub literal_str_map: RefCell<Option<JsMap<String, UnionableType>>>,
-    pub literal_int_map: RefCell<Option<JsMap<NumberValue, UnionableType>>>,
-    pub literal_enum_map: RefCell<Option<JsMap<String, UnionableType>>>,
-}
-
-// analyzer/types.ts:2674
-#[derive(Clone)]
-pub struct UnionDetailsPriv {
-    pub subtypes: Vec<UnionableType>,
-    pub literal_instances: P<LiteralTypes>,
-    pub literal_classes: P<LiteralTypes>,
-    pub type_alias_sources: Option<JsSet<UnionType>>,
-    pub includes_recursive_type_alias: bool,
-    pub includes_enum_literal: bool,
-}
-
 // analyzer/types.ts:2684
 pub struct UnionTypeDetails {
     pub priv_: RefCell<UnionDetailsPriv>,
@@ -753,85 +331,6 @@ impl Deref for UnionType {
     fn deref(&self) -> &Type {
         self.0.get()
     }
-}
-
-// analyzer/types.ts:2821
-#[repr(i32)]
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub enum Variance {
-    Auto = 0,
-    Unknown = 1,
-    Invariant = 2,
-    Covariant = 3,
-    Contravariant = 4,
-}
-
-// analyzer/types.ts:2839
-#[repr(i32)]
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub enum TypeVarKind {
-    TypeVar = 0,
-    TypeVarTuple = 1,
-    ParamSpec = 2,
-}
-
-// analyzer/types.ts:2845
-pub struct TypeVarDetailsShared {
-    pub kind: TypeVarKind,
-    pub name: RefCell<String>,
-    pub constraints: RefCell<Vec<P<Type>>>,
-    pub bound_type: Cell<Option<P<Type>>>,
-    pub is_default_explicit: Cell<bool>,
-    pub default_type: Cell<P<Type>>,
-    pub declared_variance: Cell<Variance>,
-    pub is_synthesized: Cell<bool>,
-    pub is_synthesized_self: Cell<bool>,
-    pub synthesized_index: Cell<Option<i32>>,
-    pub is_exempt_from_bound_check: Cell<bool>,
-    pub is_type_param_syntax: Cell<bool>,
-    pub recursive_alias: Cell<Option<P<TypeAliasSharedInfo>>>,
-}
-
-// analyzer/types.ts:2868
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub enum ParamSpecAccess {
-    Args,
-    Kwargs,
-}
-
-impl ParamSpecAccess {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            ParamSpecAccess::Args => "args",
-            ParamSpecAccess::Kwargs => "kwargs",
-        }
-    }
-}
-
-// analyzer/types.ts:2870
-#[repr(i32)]
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub enum TypeVarScopeType {
-    Class = 0,
-    Function = 1,
-    TypeAlias = 2,
-}
-
-// analyzer/types.ts:2876
-#[derive(Clone)]
-pub struct TypeVarDetailsPriv {
-    pub scope_id: Option<String>,
-    pub scope_name: Option<String>,
-    pub scope_type: Option<TypeVarScopeType>,
-    pub name_with_scope: Option<String>,
-    pub computed_variance: Option<Variance>,
-    pub is_unification_var: Option<bool>,
-    pub free_type_var: Option<TypeVarType>,
-    pub is_unpacked: Option<bool>,
-    // From ParamSpecDetailsPriv.
-    pub param_spec_access: Option<ParamSpecAccess>,
-    // From TypeVarTupleDetailsPriv.
-    pub is_in_union: Option<bool>,
 }
 
 // analyzer/types.ts:2909
@@ -908,12 +407,4 @@ impl Deref for TypeVarTupleType {
     fn deref(&self) -> &Type {
         self.0.get()
     }
-}
-
-// Inline object type at FunctionDetailsShared.inferredReturnType.
-#[derive(Clone)]
-pub struct FunctionDetailsSharedInferredReturnType {
-    pub type_: P<Type>,
-    pub is_incomplete: Option<bool>,
-    pub evaluation_count: Option<u32>,
 }

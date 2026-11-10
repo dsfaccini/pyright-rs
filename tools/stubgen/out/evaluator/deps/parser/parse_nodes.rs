@@ -16,118 +16,12 @@ use jsrt::{NumberValue, P};
 use std::cell::{Cell, RefCell};
 use std::ops::Deref;
 
-// parser/parseNodes.ts:27
-#[repr(i32)]
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub enum ParseNodeType {
-    Error = 0,
-    Argument = 1,
-    Assert = 2,
-    Assignment = 3,
-    AssignmentExpression = 4,
-    AugmentedAssignment = 5,
-    Await = 6,
-    BinaryOperation = 7,
-    Break = 8,
-    Call = 9,
-    Class = 10,
-    Comprehension = 11,
-    ComprehensionFor = 12,
-    ComprehensionIf = 13,
-    Constant = 14,
-    Continue = 15,
-    Decorator = 16,
-    Del = 17,
-    Dictionary = 18,
-    DictionaryExpandEntry = 19,
-    DictionaryKeyEntry = 20,
-    Ellipsis = 21,
-    If = 22,
-    Import = 23,
-    ImportAs = 24,
-    ImportFrom = 25,
-    ImportFromAs = 26,
-    Index = 27,
-    Except = 28,
-    For = 29,
-    FormatString = 30,
-    Function = 31,
-    Global = 32,
-    Lambda = 33,
-    List = 34,
-    MemberAccess = 35,
-    Module = 36,
-    ModuleName = 37,
-    Name = 38,
-    Nonlocal = 39,
-    Number = 40,
-    Parameter = 41,
-    Pass = 42,
-    Raise = 43,
-    Return = 44,
-    Set = 45,
-    Slice = 46,
-    StatementList = 47,
-    StringList = 48,
-    String = 49,
-    Suite = 50,
-    Ternary = 51,
-    Tuple = 52,
-    Try = 53,
-    TypeAnnotation = 54,
-    UnaryOperation = 55,
-    Unpack = 56,
-    While = 57,
-    With = 58,
-    WithItem = 59,
-    Yield = 60,
-    YieldFrom = 61,
-    FunctionAnnotation = 62,
-    Match = 63,
-    Case = 64,
-    PatternSequence = 65,
-    PatternAs = 66,
-    PatternLiteral = 67,
-    PatternClass = 68,
-    PatternCapture = 69,
-    PatternMapping = 70,
-    PatternMappingKeyEntry = 71,
-    PatternMappingExpandEntry = 72,
-    PatternValue = 73,
-    PatternClassArgument = 74,
-    TypeParameter = 75,
-    TypeParameterList = 76,
-    TypeAlias = 77,
-}
-
-// parser/parseNodes.ts:116
-#[repr(i32)]
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub enum ErrorExpressionCategory {
-    MissingIn = 0,
-    MissingElse = 1,
-    MissingExpression = 2,
-    MissingIndexOrSlice = 3,
-    MissingDecoratorCallName = 4,
-    MissingCallCloseParen = 5,
-    MissingIndexCloseBracket = 6,
-    MissingMemberAccessName = 7,
-    MissingTupleCloseParen = 8,
-    MissingListCloseBracket = 9,
-    MissingFunctionParameterList = 10,
-    MissingPattern = 11,
-    MissingPatternSubject = 12,
-    MissingDictValue = 13,
-    MissingKeywordArgValue = 14,
-    MaxDepthExceeded = 15,
-}
-
 // parser/parseNodes.ts:167
 pub struct ParseNode {
     pub node_type: ParseNodeType,
-    pub start: Cell<i32>,
-    pub length: Cell<i32>,
-    pub id: Cell<u32>,
+    pub start: Cell<f64>,
+    pub length: Cell<f64>,
+    pub id: Cell<f64>,
     pub parent: Cell<Option<P<ParseNode>>>,
     pub a: Cell<P<ParseNode>>,
     pub d: ParseNodeDetails,
@@ -988,15 +882,6 @@ impl Deref for AssignmentNode {
     fn deref(&self) -> &ParseNode {
         self.0.get()
     }
-}
-
-// parser/parseNodes.ts:1107
-#[repr(i32)]
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub enum TypeParamKind {
-    TypeVar = 0,
-    TypeVarTuple = 1,
-    ParamSpec = 2,
 }
 
 // parser/parseNodes.ts:1113
@@ -1961,9 +1846,6 @@ impl Deref for DictionaryExpandEntryNode {
     }
 }
 
-// parser/parseNodes.ts:2018
-pub type DictionaryEntryNode = P<ParseNode>;
-
 // parser/parseNodes.ts:2020
 pub struct SetNodeDetails {
     pub items: RefCell<Vec<ExpressionNode>>,
@@ -2619,7 +2501,7 @@ impl Deref for CaseNode {
 // parser/parseNodes.ts:2516
 pub struct PatternSequenceNodeDetails {
     pub entries: RefCell<Vec<PatternAsNode>>,
-    pub star_entry_index: Cell<Option<i32>>,
+    pub star_entry_index: Cell<Option<f64>>,
 }
 
 // parser/parseNodes.ts:2516
@@ -2852,9 +2734,6 @@ impl Deref for PatternMappingNode {
         self.0.get()
     }
 }
-
-// parser/parseNodes.ts:2756
-pub type PatternMappingEntryNode = P<ParseNode>;
 
 // parser/parseNodes.ts:2758
 pub struct PatternMappingKeyEntryNodeDetails {

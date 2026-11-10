@@ -8,51 +8,8 @@
     clippy::all
 )]
 
-use jsrt::{NumberValue, P, flag_ops};
+use jsrt::{NumberValue, P};
 use std::ops::Deref;
-
-// parser/tokenizerTypes.ts:16
-#[repr(i32)]
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub enum TokenType {
-    Invalid = 0,
-    EndOfStream = 1,
-    NewLine = 2,
-    Indent = 3,
-    Dedent = 4,
-    String = 5,
-    Number = 6,
-    Identifier = 7,
-    Keyword = 8,
-    Operator = 9,
-    Colon = 10,
-    Semicolon = 11,
-    Comma = 12,
-    OpenParenthesis = 13,
-    CloseParenthesis = 14,
-    OpenBracket = 15,
-    CloseBracket = 16,
-    OpenCurlyBrace = 17,
-    CloseCurlyBrace = 18,
-    Ellipsis = 19,
-    Dot = 20,
-    Arrow = 21,
-    Backtick = 22,
-    ExclamationMark = 23,
-    FStringStart = 24,
-    FStringMiddle = 25,
-    FStringEnd = 26,
-}
-
-// parser/tokenizerTypes.ts:46
-#[repr(i32)]
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub enum NewLineType {
-    CarriageReturn = 0,
-    LineFeed = 1,
-    CarriageReturnLineFeed = 2,
-    Implied = 3,
-}
 
 // parser/tokenizerTypes.ts:53
 #[repr(i32)]
@@ -103,98 +60,19 @@ pub enum OperatorType {
     NotIn = 42,
 }
 
-// parser/tokenizerTypes.ts:112
-#[repr(i32)]
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub enum KeywordType {
-    And = 0,
-    As = 1,
-    Assert = 2,
-    Async = 3,
-    Await = 4,
-    Break = 5,
-    Case = 6,
-    Class = 7,
-    Continue = 8,
-    Debug = 9,
-    Def = 10,
-    Del = 11,
-    Elif = 12,
-    Else = 13,
-    Except = 14,
-    False = 15,
-    Finally = 16,
-    For = 17,
-    From = 18,
-    Global = 19,
-    If = 20,
-    Import = 21,
-    In = 22,
-    Is = 23,
-    Lambda = 24,
-    Lazy = 25,
-    Match = 26,
-    None = 27,
-    Nonlocal = 28,
-    Not = 29,
-    Or = 30,
-    Pass = 31,
-    Raise = 32,
-    Return = 33,
-    True = 34,
-    Try = 35,
-    Type = 36,
-    While = 37,
-    With = 38,
-    Yield = 39,
-}
-
-// parser/tokenizerTypes.ts:163
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Default)]
-pub struct StringTokenFlags(pub u32);
-
-impl StringTokenFlags {
-    pub const None: StringTokenFlags = StringTokenFlags(0);
-    pub const SingleQuote: StringTokenFlags = StringTokenFlags(1);
-    pub const DoubleQuote: StringTokenFlags = StringTokenFlags(2);
-    pub const Triplicate: StringTokenFlags = StringTokenFlags(4);
-    pub const Raw: StringTokenFlags = StringTokenFlags(8);
-    pub const Unicode: StringTokenFlags = StringTokenFlags(0x10);
-    pub const Bytes: StringTokenFlags = StringTokenFlags(0x20);
-    pub const Format: StringTokenFlags = StringTokenFlags(0x40);
-    pub const Template: StringTokenFlags = StringTokenFlags(0x80);
-    pub const ReplacementFieldStart: StringTokenFlags = StringTokenFlags(0x100);
-    pub const ReplacementFieldEnd: StringTokenFlags = StringTokenFlags(0x200);
-    pub const NamedUnicodeEscape: StringTokenFlags = StringTokenFlags(0x400);
-    pub const Unterminated: StringTokenFlags = StringTokenFlags(0x10000);
-}
-
-flag_ops!(StringTokenFlags);
-
-// parser/tokenizerTypes.ts:187
-#[repr(i32)]
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub enum CommentType {
-    Regular = 0,
-    IPythonMagic = 1,
-    IPythonShellEscape = 2,
-    IPythonCellMagic = 3,
-    IPythonCellShellEscape = 4,
-}
-
 // parser/tokenizerTypes.ts:195
 #[derive(Clone)]
 pub struct Comment {
-    pub start: i32,
-    pub length: i32,
+    pub start: f64,
+    pub length: f64,
     pub type_: CommentType,
     pub value: String,
 }
 
 // parser/tokenizerTypes.ts:208
 pub struct Token {
-    pub start: i32,
-    pub length: i32,
+    pub start: f64,
+    pub length: f64,
     pub type_: TokenType,
     pub comments: Option<Vec<Comment>>,
     pub d: TokenDetails,
@@ -218,7 +96,7 @@ pub enum TokenDetails {
 
 // parser/tokenizerTypes.ts:232
 pub struct IndentTokenDetails {
-    pub indent_amount: i32,
+    pub indent_amount: f64,
     pub is_indent_ambiguous: bool,
 }
 
@@ -252,7 +130,7 @@ impl Deref for IndentToken {
 
 // parser/tokenizerTypes.ts:269
 pub struct DedentTokenDetails {
-    pub indent_amount: i32,
+    pub indent_amount: f64,
     pub matches_indent: bool,
     pub is_dedent_ambiguous: bool,
 }
@@ -355,8 +233,8 @@ impl Deref for KeywordToken {
 pub struct StringTokenDetails {
     pub flags: StringTokenFlags,
     pub escaped_value: String,
-    pub prefix_length: i32,
-    pub quote_mark_length: i32,
+    pub prefix_length: f64,
+    pub quote_mark_length: f64,
 }
 
 // parser/tokenizerTypes.ts:374
@@ -390,8 +268,8 @@ impl Deref for StringToken {
 // parser/tokenizerTypes.ts:425
 pub struct FStringStartTokenDetails {
     pub flags: StringTokenFlags,
-    pub prefix_length: i32,
-    pub quote_mark_length: i32,
+    pub prefix_length: f64,
+    pub quote_mark_length: f64,
 }
 
 // parser/tokenizerTypes.ts:425
