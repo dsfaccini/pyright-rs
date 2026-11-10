@@ -12,16 +12,44 @@ use jsrt::{JsMap, P};
 
 use crate::common::text_range::Range;
 use crate::common::uri::Uri;
-use crate::parser::parse_nodes::{ExpressionNode, NameNode, ParseNode, RaiseNode, ReturnNode};
+use crate::parser::parse_nodes::{
+    ErrorExpressionCategory, ErrorNodeDetails, ExpressionNode, NameNode, ParseNode, ParseNodeDetails,
+    ParseNodeType, RaiseNode, ReturnNode, create_parse_tree_key,
+};
 
 thread_local! {
     // analyzer/declaration.ts:36
     static UNRESOLVED_MODULE_MARKER: Uri = Uri::constant("*** unresolved module ***");
+
+    // Never read: id 0 takes nothing from the parser's node counter, so real nodes
+    // keep pyright's ids; the details are filler.
+    static UNDEFINED_DECLARATION_NODE: P<ParseNode> = P::new(ParseNode {
+        node_type: ParseNodeType::Error,
+        start: Cell::new(0),
+        length: Cell::new(0),
+        id: Cell::new(0),
+        parent: Cell::new(None),
+        a: create_parse_tree_key(),
+        d: ParseNodeDetails::Error(ErrorNodeDetails {
+            category: Cell::new(ErrorExpressionCategory::MissingExpression),
+            child: Cell::new(None),
+            decorators: None,
+        }),
+    });
 }
 
 /// `UnresolvedModuleMarker`: one constant Uri, compared by identity.
 pub fn unresolved_module_marker() -> Uri {
     UNRESOLVED_MODULE_MARKER.with(|uri| *uri)
+}
+
+/// JavaScript `undefined` as a `Declaration.node`, which TypeScript types as
+/// non-optional but leaves undefined in `synthesizeAliasDeclaration`
+/// (`node: undefined!`). One node, identity-distinct from every real node.
+/// Port a TypeScript test `decl.node === undefined` or `!decl.node` as
+/// `decl.node.get() == undefined_declaration_node()`.
+pub fn undefined_declaration_node() -> P<ParseNode> {
+    UNDEFINED_DECLARATION_NODE.with(|node| *node)
 }
 
 // analyzer/declaration.ts:38

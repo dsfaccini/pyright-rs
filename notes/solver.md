@@ -17,17 +17,17 @@ All through `tools/stubgen`:
 - `tools/stubgen/src/merge.ts`: an install carries a ported `thread_local!` initializer (`static X: T = init;` under its marker) like a ported function. Before, an install refused to run once any module variable was ported.
 - `tools/stubgen/src/merge.ts`: a ported crate file without the blanket `#![allow(..)]` keeps it dropped on install, so clippy keeps seeing the port.
 - `tools/stubgen/src/gen.ts`: a `[sites]` value of `"()"` means no return type.
+- `analyzer/declaration.rs`: `undefined_declaration_node()`, JavaScript `undefined` as a `Declaration.node` (`synthesizeAliasDeclaration`'s `node: undefined!`). One node, identity-distinct from every real node, with id 0 so it takes no id from the parser's counter. A TypeScript test `decl.node === undefined` or `!decl.node` ports as `decl.node.get() == undefined_declaration_node()`. `getNameNodeForDeclaration` (declarationUtils.ts:153) is the one such site in share G. The others are unported: sourceMapper.ts:843 and 1038 (`!decl.node`, share I) and checker.ts:4566 (`primaryDeclaration.node && ...`).
+- `analyzer/mod.rs`: the `type_printer_tests` test module.
 - An install rewrites headers and import groups of other shares' files (rustfmt, stub header text). I revert those before each commit; only my files and the generator change.
 
 ## Needs from others
 
-- Share E: `FunctionReturnTypeCallback::call` (typeEvaluator.ts:30313) in `type_printer.rs`.
-- Share A: the typeUtils.rs bodies every file here calls.
-- A decision on `synthesizeAliasDeclaration` (declarationUtils.ts:214), still `todo!()`: TypeScript builds the declaration with `node: undefined!`, and the hand-ported `Declaration.node` is a non-optional `Cell<P<ParseNode>>`. It is reached on the check path through `_addSymbolDeclInfo` (typeEvaluator.ts:23628) and the import-alias branch of `getDeclInfoForNameNode` (23785). `getNameNodeForDeclaration` tests `declaration.node === undefined` for exactly this declaration.
+None. Share E ported `FunctionReturnTypeCallback::call` and share B all of typeUtils.
 
 ## Doubts
 
-- `typePrinter.test.ts` is not ported yet. Its tests pass their own return-type callback; the Rust `FunctionReturnTypeCallback` is a struct holding a `P<TypeEvaluator>`, since the check path has one creation site. Porting the tests needs a test variant of that callback, and share A's type constructors.
+- `typePrinter.test.ts` (`analyzer/type_printer_tests.rs`) passes its own return-type callback, `declaredReturnType ?? UnknownType.create(true)`. The Rust `FunctionReturnTypeCallback` has one form, a struct holding a `P<TypeEvaluator>`, since the check path has one creation site. The tests build an evaluator with an empty import lookup and node-info store and use that callback: it returns the declared return type, and for the one test function without one, inference gives `Unknown`, which prints the same.
 - `printFunctionPartsInternal` with `PythonSyntax` prints `*args: [object Object].args`: the TypeScript interpolates the ParamSpec object. Ported as is.
 - `printLiteralValue` stringifies a `SentinelLiteral` as `[object Object]`, as JavaScript would. Its callers print sentinels before reaching it.
 - `operations.ts` maps its literal-math `BigInt` throws (conversion of a non-integer, `**` and `<<` past V8's size limit) to the `checked_*` methods of `jsrt::JsBigInt`; a `None` takes the TypeScript catch path. The unary `~` path has no catch in TypeScript and `expect`s instead.

@@ -67,6 +67,8 @@ pub mod type_evaluator;
 pub mod type_evaluator_types;
 pub mod type_guards;
 pub mod type_printer;
+#[cfg(test)]
+mod type_printer_tests;
 pub mod type_printer_utils;
 pub mod type_utils;
 #[cfg(test)]
