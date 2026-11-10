@@ -1,6 +1,7 @@
 //! Binds the files of a reference dump and writes Rust bind and flow dumps, for `oracle/compare.py`.
 //!
 //!     cargo run --release --example oracle_bind -- [--path PREFIX]... <reference dump dir> <out dir>
+//!     cargo run --release --example oracle_bind -- [--path PREFIX]... --timing <reference dump dir>
 //!
 //! An interim harness until infra's `Program` runs the binder: it parses each
 //! file named by `<reference>/bind/`, replays the import results that the
@@ -8,6 +9,13 @@
 //! `Program._bindFile` does: builtins first, builtins scope chained, import
 //! lookups bind their target on demand. It also compares each file's bind
 //! diagnostics with the `bind:` list of the reference diag dump.
+//!
+//! `--timing` writes no dumps (and takes no out dir) and prints the time spent
+//! in pyright's `--stats` phases Tokenize, Parse and Bind (the timers at
+//! `parser.ts:275`, `parser.ts:283` and `sourceFile.ts:922`), the file count
+//! and the arena bytes, which only grow, so the last count is the peak. File
+//! reading, import replay, dump writing and the bind diagnostic comparison run
+//! outside the timers.
 //!
 //! Options give the corpus config: `--python-version 3.11` (default 3.13),
 //! `--mode strict|standard|basic|off` (default standard), and `--rule
@@ -23,6 +31,7 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::rc::Rc;
 
+use jsrt::arena::arena_allocated_bytes;
 use jsrt::{JsMap, JsSet, JsString, P};
 use pyright::analyzer::analyzer_file_info::{AnalyzerFileInfo, ImportLookupKey, ImportLookupResult};
 use pyright::analyzer::analyzer_node_info::{
@@ -39,6 +48,7 @@ use pyright::common::case_sensitivity_detector::CaseSensitiveDetector;
 use pyright::common::config_options::{ConfigOptions, DiagnosticLevel, DiagnosticRuleSet, ExecutionEnvironment};
 use pyright::common::diagnostic_rules::DiagnosticRule;
 use pyright::common::python_version::PythonVersion;
+use pyright::common::timing::timing_stats;
 use pyright::common::diagnostic::Diagnostic;
 use pyright::common::diagnostic_sink::{DiagnosticSink, TextRangeDiagnosticSink};
 use pyright::common::uri::Uri;
@@ -110,7 +120,8 @@ struct Harness {
     python_version: PythonVersion,
     rule_set: DiagnosticRuleSet,
     reference: PathBuf,
-    out: PathBuf,
+    /// `None` with `--timing`: no dumps.
+    out: Option<PathBuf>,
     fork: PathBuf,
     context: P<AnalyzerNodeInfoContextImpl>,
     files: RefCell<HashMap<String, Rc<FileState>>>,
@@ -301,11 +312,17 @@ impl Harness {
             return;
         }
         state.binding.set(true);
+        let bind_time = &timing_stats().bind_time;
 
+        // A file bound from an import lookup runs inside the importer's Bind
+        // timer, as in pyright. Reading and replay stay outside it.
         let source = self.source_path(mapped).expect("source path");
-        let bytes = fs::read(&source).unwrap_or_else(|e| panic!("cannot read {}: {e}", source.display()));
-        let text: Vec<u16> = String::from_utf8_lossy(&bytes).encode_utf16().collect();
         let source_text = source.to_string_lossy().into_owned();
+        let text = bind_time.subtract_from_time(|| {
+            let bytes = fs::read(&source).unwrap_or_else(|e| panic!("cannot read {}: {e}", source.display()));
+            let text: Vec<u16> = String::from_utf8_lossy(&bytes).encode_utf16().collect();
+            JsString::from(text)
+        });
         let file_uri = Uri::file(&source_text, &CaseSensitiveDetector, false);
         let is_stub_file = source_text.ends_with("pyi");
 
@@ -314,79 +331,49 @@ impl Harness {
             python_version: self.python_version,
             ..ParseOptions::new()
         };
-        let parse_results = Parser::new().parse_source_file(
-            JsString::from(text),
-            parse_options,
-            P::new(DiagnosticSink::new(None)),
-            None,
-        );
+        let parse_results =
+            Parser::new().parse_source_file(text, parse_options, P::new(DiagnosticSink::new(None)), None);
         let parse_tree = parse_results.parser_output.parse_tree;
         let lines = parse_results.parser_output.lines;
 
-        // The reference dump: import results to replay, and the module name.
-        let reference_text = fs::read_to_string(self.reference.join("bind").join(format!("{mapped}.txt")))
-            .unwrap_or_default();
-        let reference = parse_dump(&reference_text);
-        let mut by_ref: HashMap<String, P<ParseNode>> = HashMap::new();
-        let walk = walk_tree(parse_tree.node());
-        for node in &walk {
-            by_ref.entry(node_ref(node)).or_insert(*node);
-        }
-
-        let session = self.context.begin_write(parse_tree);
-        let node_info = create_analyzer_node_info_accessor(session.get(), Some(session.get()));
-        let mut module_name = String::new();
-        for section in &reference {
-            if section.key == "nodes" {
-                for entry in &section.children {
-                    if let Some(import_info) = entry.child("importInfo") {
-                        match by_ref.get(&entry.key) {
-                            Some(node) => node_info.set_import_info(*node, P::new(self.import_result(import_info))),
-                            None => eprintln!("oracle_bind: {mapped}: no node {}", entry.key),
+        // The reference dump: import results to replay, the module name and
+        // `isInPyTypedPackage`.
+        let (walk, import_info, module_name, is_in_py_typed_package) = bind_time.subtract_from_time(|| {
+            let reference_text = fs::read_to_string(self.reference.join("bind").join(format!("{mapped}.txt")))
+                .unwrap_or_default();
+            let reference = parse_dump(&reference_text);
+            let mut by_ref: HashMap<String, P<ParseNode>> = HashMap::new();
+            let walk = walk_tree(parse_tree.node());
+            for node in &walk {
+                by_ref.entry(node_ref(node)).or_insert(*node);
+            }
+            let mut import_info: Vec<(P<ParseNode>, P<ImportResult>)> = Vec::new();
+            let mut module_name = String::new();
+            for section in &reference {
+                if section.key == "nodes" {
+                    for entry in &section.children {
+                        if let Some(info) = entry.child("importInfo") {
+                            match by_ref.get(&entry.key) {
+                                Some(node) => import_info.push((*node, P::new(self.import_result(info)))),
+                                None => eprintln!("oracle_bind: {mapped}: no node {}", entry.key),
+                            }
                         }
                     }
                 }
-            }
-            if section.key == "scopes" {
-                let name_decl = section
-                    .child("[0]")
-                    .and_then(|s| s.child("symbolTable"))
-                    .and_then(|t| t.child("\"__name__\""))
-                    .and_then(|s| s.child("_declarations"))
-                    .and_then(|d| d.child("[0]"));
-                if let Some(value) = name_decl.and_then(|d| d.value_of("moduleName")) {
-                    module_name = json_string(value);
+                if section.key == "scopes" {
+                    let name_decl = section
+                        .child("[0]")
+                        .and_then(|s| s.child("symbolTable"))
+                        .and_then(|t| t.child("\"__name__\""))
+                        .and_then(|s| s.child("_declarations"))
+                        .and_then(|d| d.child("[0]"));
+                    if let Some(value) = name_decl.and_then(|d| d.value_of("moduleName")) {
+                        module_name = json_string(value);
+                    }
                 }
             }
-        }
-
-        let builtins_scope = if mapped == BUILTINS {
-            None
-        } else {
-            self.state(BUILTINS)
-                .module
-                .get()
-                .and_then(|m| get_scope(m, self.context.get()))
-        };
-
-        let path_ends_with = |suffix: &str| source_text.ends_with(suffix);
-        let file_name = source.file_name().unwrap().to_string_lossy().into_owned();
-        let is_built_in_stub_file = is_stub_file
-            && [
-                "stdlib/collections/__init__.pyi",
-                "stdlib/asyncio/futures.pyi",
-                "stdlib/asyncio/tasks.pyi",
-                "stdlib/builtins.pyi",
-                "stdlib/_importlib_modulespec.pyi",
-                "stdlib/dataclasses.pyi",
-                "stdlib/abc.pyi",
-                "stdlib/enum.pyi",
-                "stdlib/queue.pyi",
-                "stdlib/types.pyi",
-                "stdlib/warnings.pyi",
-            ]
-            .iter()
-            .any(|s| path_ends_with(s));
+            (walk, import_info, module_name, Self::is_in_py_typed_package(&reference_text))
+        });
 
         // SourceFile.parse: the file's `# pyright:` comments adjust the rule set.
         let env_rule_set = self.rule_set.clone();
@@ -398,66 +385,109 @@ impl Harness {
             false,
             &mut comment_diagnostics,
         );
-        let harness = self.clone();
-        let file_info = P::new(AnalyzerFileInfo {
-            import_lookup: Rc::new(move |key, options| {
-                harness.import_lookup(key, options.is_some_and(|o| o.skip_parsing == Some(true)))
-            }),
-            future_imports: JsSet::default(),
-            builtins_scope,
-            diagnostic_sink: TextRangeDiagnosticSink::new(lines, None),
-            execution_environment: P::new(ExecutionEnvironment::new(
-                "python".to_string(),
-                Uri::empty(),
-                &env_rule_set,
-                Some(self.python_version),
-                Some("Linux".to_string()),
-                None,
-                false,
-            )),
-            diagnostic_rule_set: rule_set,
-            lines,
-            typing_symbol_aliases: parse_results.parser_output.typing_symbol_aliases.clone(),
-            defined_constants: JsMap::default(),
-            file_id: String::new(),
-            file_uri,
-            module_name,
-            is_stub_file,
-            is_typing_stub_file: is_stub_file
-                && (path_ends_with("stdlib/typing.pyi") || file_name == "typing_extensions.pyi"),
-            is_typing_extensions_stub_file: is_stub_file && file_name == "typing_extensions.pyi",
-            is_typeshed_stub_file: is_stub_file
-                && (path_ends_with("stdlib/_typeshed/__init__.pyi")
-                    || path_ends_with("stdlib/_typeshed/_type_checker_internals.pyi")),
-            is_built_in_stub_file,
-            is_in_py_typed_package: Self::is_in_py_typed_package(&reference_text),
-            ipython_mode: IPythonMode::None,
-            accessed_symbol_set: Default::default(),
-        });
-        node_info.set_file_info(parse_tree, file_info);
 
-        let mut binder = Binder::new(file_info, None, None, node_info);
-        binder.bind_module(parse_tree);
-        let bind_diagnostics = file_info.diagnostic_sink.fetch_and_clear();
-        self.context.publish(session);
+        // sourceFile.ts:922: the Bind timer.
+        let (file_info, bind_diagnostics) = bind_time.time_operation(|| {
+            let session = self.context.begin_write(parse_tree);
+            let node_info = create_analyzer_node_info_accessor(session.get(), Some(session.get()));
+            for (node, import_result) in &import_info {
+                node_info.set_import_info(*node, *import_result);
+            }
+
+            let builtins_scope = if mapped == BUILTINS {
+                None
+            } else {
+                self.state(BUILTINS)
+                    .module
+                    .get()
+                    .and_then(|m| get_scope(m, self.context.get()))
+            };
+
+            let path_ends_with = |suffix: &str| source_text.ends_with(suffix);
+            let file_name = source.file_name().unwrap().to_string_lossy().into_owned();
+            let is_built_in_stub_file = is_stub_file
+                && [
+                    "stdlib/collections/__init__.pyi",
+                    "stdlib/asyncio/futures.pyi",
+                    "stdlib/asyncio/tasks.pyi",
+                    "stdlib/builtins.pyi",
+                    "stdlib/_importlib_modulespec.pyi",
+                    "stdlib/dataclasses.pyi",
+                    "stdlib/abc.pyi",
+                    "stdlib/enum.pyi",
+                    "stdlib/queue.pyi",
+                    "stdlib/types.pyi",
+                    "stdlib/warnings.pyi",
+                ]
+                .iter()
+                .any(|s| path_ends_with(s));
+
+            let harness = self.clone();
+            let file_info = P::new(AnalyzerFileInfo {
+                import_lookup: Rc::new(move |key, options| {
+                    harness.import_lookup(key, options.is_some_and(|o| o.skip_parsing == Some(true)))
+                }),
+                future_imports: JsSet::default(),
+                builtins_scope,
+                diagnostic_sink: TextRangeDiagnosticSink::new(lines, None),
+                execution_environment: P::new(ExecutionEnvironment::new(
+                    "python".to_string(),
+                    Uri::empty(),
+                    &env_rule_set,
+                    Some(self.python_version),
+                    Some("Linux".to_string()),
+                    None,
+                    false,
+                )),
+                diagnostic_rule_set: rule_set,
+                lines,
+                typing_symbol_aliases: parse_results.parser_output.typing_symbol_aliases.clone(),
+                defined_constants: JsMap::default(),
+                file_id: String::new(),
+                file_uri,
+                module_name,
+                is_stub_file,
+                is_typing_stub_file: is_stub_file
+                    && (path_ends_with("stdlib/typing.pyi") || file_name == "typing_extensions.pyi"),
+                is_typing_extensions_stub_file: is_stub_file && file_name == "typing_extensions.pyi",
+                is_typeshed_stub_file: is_stub_file
+                    && (path_ends_with("stdlib/_typeshed/__init__.pyi")
+                        || path_ends_with("stdlib/_typeshed/_type_checker_internals.pyi")),
+                is_built_in_stub_file,
+                is_in_py_typed_package,
+                ipython_mode: IPythonMode::None,
+                accessed_symbol_set: Default::default(),
+            });
+            node_info.set_file_info(parse_tree, file_info);
+
+            let mut binder = Binder::new(file_info, None, None, node_info);
+            binder.bind_module(parse_tree);
+            let bind_diagnostics = file_info.diagnostic_sink.fetch_and_clear();
+            self.context.publish(session);
+            (file_info, bind_diagnostics)
+        });
 
         state.module.set(Some(parse_tree));
         state.file_info.set(Some(file_info));
         state.binding.set(false);
         state.bound.set(true);
 
-        let reader: &dyn AnalyzerNodeInfoReader = self.context.get();
-        let numbering = number_scopes(&walk, reader);
-        for (stage, text) in [
-            ("bind", dump_bind(&walk, &numbering, reader)),
-            ("flow", dump_flow(&walk, &numbering, reader)),
-        ] {
-            let target = self.out.join(stage).join(format!("{mapped}.txt"));
-            fs::create_dir_all(target.parent().unwrap()).unwrap();
-            fs::write(&target, text).unwrap();
-        }
+        bind_time.subtract_from_time(|| {
+            if let Some(out) = &self.out {
+                let reader: &dyn AnalyzerNodeInfoReader = self.context.get();
+                let numbering = number_scopes(&walk, reader);
+                for (stage, text) in [
+                    ("bind", dump_bind(&walk, &numbering, reader)),
+                    ("flow", dump_flow(&walk, &numbering, reader)),
+                ] {
+                    let target = out.join(stage).join(format!("{mapped}.txt"));
+                    fs::create_dir_all(target.parent().unwrap()).unwrap();
+                    fs::write(&target, text).unwrap();
+                }
+            }
 
-        self.compare_bind_diagnostics(mapped, &bind_diagnostics);
+            self.compare_bind_diagnostics(mapped, &bind_diagnostics);
+        });
     }
 
     fn compare_bind_diagnostics(&self, mapped: &str, diagnostics: &[P<Diagnostic>]) {
@@ -514,10 +544,12 @@ fn run() -> ExitCode {
     let mut python_version = PythonVersion::from_string("3.13").unwrap();
     let mut mode = "standard".to_string();
     let mut rules: Vec<(DiagnosticRule, DiagnosticLevel)> = vec![];
+    let mut timing = false;
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--path" => prefixes.push(args.next().expect("--path needs a value")),
+            "--timing" => timing = true,
             "--python-version" => {
                 python_version =
                     PythonVersion::from_string(&args.next().expect("--python-version needs a value")).expect("version")
@@ -540,9 +572,14 @@ fn run() -> ExitCode {
     for (rule, level) in rules {
         rule_set.set_level(rule, level);
     }
-    let [reference, out] = positional.as_slice() else {
-        eprintln!("usage: oracle_bind [--path PREFIX]... <reference dump dir> <out dir>");
-        return ExitCode::from(2);
+    let (reference, out) = match (positional.as_slice(), timing) {
+        ([reference], true) => (reference, None),
+        ([reference, out], false) => (reference, Some(PathBuf::from(out))),
+        _ => {
+            eprintln!("usage: oracle_bind [options] <reference dump dir> <out dir>");
+            eprintln!("       oracle_bind [options] --timing <reference dump dir>");
+            return ExitCode::from(2);
+        }
     };
     let fork = std::env::var_os("PYRIGHT_ORACLE_FORK")
         .map(PathBuf::from)
@@ -551,7 +588,7 @@ fn run() -> ExitCode {
         python_version,
         rule_set,
         reference: PathBuf::from(reference),
-        out: PathBuf::from(out),
+        out,
         fork,
         context: AnalyzerNodeInfoContextImpl::new(),
         files: RefCell::new(HashMap::new()),
@@ -576,6 +613,19 @@ fn run() -> ExitCode {
         "oracle_bind: bound {count} files, {} bind diagnostic lists differ",
         harness.bind_diag_mismatches.get()
     );
+    if timing {
+        let stats = timing_stats();
+        let bound = harness.files.borrow().values().filter(|state| state.bound.get()).count();
+        println!("Files:                {bound}");
+        for (name, stat) in [
+            ("Tokenize:             ", &stats.tokenize_file_time),
+            ("Parse:                ", &stats.parse_file_time),
+            ("Bind:                 ", &stats.bind_time),
+        ] {
+            println!("{name}{} ({:.1} ms)", stat.print_time(), stat.total_time.get());
+        }
+        println!("Peak arena bytes:     {}", arena_allocated_bytes());
+    }
     ExitCode::SUCCESS
 }
 

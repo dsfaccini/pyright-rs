@@ -37,6 +37,7 @@ use crate::common::python_version::{
 use crate::common::string_utils::{StringFingerprint, get_string_fingerprint};
 use crate::common::text_range::{HasTextRange, TextRange};
 use crate::common::text_range_collection::TextRangeCollection;
+use crate::common::timing::timing_stats;
 use crate::localization::localize::{LocAddendum, LocMessage};
 
 // parser/parser.ts:157
@@ -251,14 +252,16 @@ impl Parser {
         self._has_type_annotations = false;
         self._string_annotations = create_string_annotation_info();
         let length = file_contents.len() as i32;
-        self._start_new_parse(
-            file_contents.clone(),
-            0,
-            length,
-            parse_options,
-            diag_sink,
-            0,
-        );
+        timing_stats().tokenize_file_time.time_operation(|| {
+            self._start_new_parse(
+                file_contents.clone(),
+                0,
+                length,
+                parse_options,
+                diag_sink,
+                0,
+            );
+        });
 
         let module_node = ModuleNode::create(&TextRange {
             start: 0,
@@ -267,33 +270,35 @@ impl Parser {
         self._owner_key = Some(module_node.a);
         self._created_owner_key = true;
 
-        while !self._at_eof() {
-            if !self._consume_token_if_type(TokenType::NewLine) {
-                // Handle a common error case and try to recover.
-                let next_token = self._peek_token(0);
-                if next_token.type_ == TokenType::Indent {
-                    self._get_next_token();
-                    let indent_token = IndentToken::cast(next_token).unwrap();
-                    if indent_token.d().is_indent_ambiguous {
-                        self._add_syntax_error(LocMessage::inconsistent_tabs(), &indent_token);
-                    } else {
-                        self._add_syntax_error(LocMessage::unexpected_indent(), &next_token);
+        timing_stats().parse_file_time.time_operation(|| {
+            while !self._at_eof() {
+                if !self._consume_token_if_type(TokenType::NewLine) {
+                    // Handle a common error case and try to recover.
+                    let next_token = self._peek_token(0);
+                    if next_token.type_ == TokenType::Indent {
+                        self._get_next_token();
+                        let indent_token = IndentToken::cast(next_token).unwrap();
+                        if indent_token.d().is_indent_ambiguous {
+                            self._add_syntax_error(LocMessage::inconsistent_tabs(), &indent_token);
+                        } else {
+                            self._add_syntax_error(LocMessage::unexpected_indent(), &next_token);
+                        }
                     }
-                }
 
-                let statement = self._parse_statement();
-                match statement {
-                    None => {
-                        // Perform basic error recovery to get to the next line.
-                        self._consume_tokens_until_type(&[TokenType::NewLine]);
-                    }
-                    Some(statement) => {
-                        statement.parent.set(Some(module_node.0));
-                        module_node.d().statements.borrow_mut().push(statement);
+                    let statement = self._parse_statement();
+                    match statement {
+                        None => {
+                            // Perform basic error recovery to get to the next line.
+                            self._consume_tokens_until_type(&[TokenType::NewLine]);
+                        }
+                        Some(statement) => {
+                            statement.parent.set(Some(module_node.0));
+                            module_node.d().statements.borrow_mut().push(statement);
+                        }
                     }
                 }
             }
-        }
+        });
 
         self._attach_parser_string_annotations();
 
