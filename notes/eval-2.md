@@ -21,4 +21,21 @@ Share C of step 5: the bodies under `typeEvaluator.ts:7678-15241` in `analyzer/t
 
 ## Needs from others
 
+- Every share C body calls functions of other shares that may still be `todo!()`; nothing ran yet with `PYRIGHT_RS_CHECKER=1`.
+
 ## Doubts
+
+Judgment calls made while porting, by TypeScript line. Each keeps pyright's observable behavior as far as the port can tell.
+
+- 8056 `getTypeOfIndexWithBaseType`: pyright returns the `{ type, node }` object from `createSpecializedTypeAlias` as the `TypeResult`; the port returns a fresh `TypeResult` with only `type` set.
+- 8719 `getTypeArgs`: the nested `getTypeArgTypeResult` writes the outer `adjFlags`; the port captures it in an `FnMut` closure, so later arguments see the write.
+- 8540 `getTypeOfIndexedObjectOrClass`: `typeof literalValue === 'number'` matches `LiteralValue::Number` only, so a bigint literal takes the slice branch, as in pyright.
+- 9273, 9290, 9550: `priv.literalValue` is read before the `ClassType.isBuiltIn` / `isSameGenericClass` checks, so no `RefCell` borrow spans those calls. Both are pure reads.
+- 11030, 11063 `expandArgTypes`: a read past the array end is `undefined` and a write past it grows the array, as in JavaScript. Callers pass arrays of one length.
+- 11350, 11373 `validateCallForFunction`: an undefined `skipUnknownArgCheck` passed to `validateArgs` takes the default `false`.
+- 10019, 10817: `MatchArgsToParamsResult` handles are shared as pyright shares the objects; an argument-type override builds a new handle with the fields copied, as the TypeScript spread does.
+- 12085 `matchArgsToParams`: index locals are `i32` so `findIndex`'s -1 compares as in TypeScript; the initial `paramCategory` value, never read, is left out; TypeScript `assert` is `assert!`.
+- 13878 `validateArgType`: `message + diag?.getString()` appends `"undefined"` without a `diag`, as JavaScript does; pyright never reaches that branch.
+- 14179, 14420, 14512, 14656, 14821: a name joined from string-list parts decodes the UTF-16 units once, so a lone surrogate becomes U+FFFD (porting.md, strings, known gap). `createTypeAliasType` compares names as UTF-16.
+- JavaScript truthiness of an optional string (`if (paramName)`, scope ids) treats `""` as absent throughout.
+- TypeScript non-null assertions (`x!`) are `unwrap()` or `expect(..)`; they panic where JavaScript would throw later.
