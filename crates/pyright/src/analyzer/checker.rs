@@ -116,12 +116,26 @@ impl ParseTreeVisitor<bool> for Checker {
 
     // analyzer/checker.ts:304
     fn visit_suite(&mut self, node: SuiteNode) -> bool {
-        todo!()
+        let statements = node.d().statements.borrow().clone();
+        self._walk_statements_and_report_unreachable(&statements);
+        false
     }
 
     // analyzer/checker.ts:309
     fn visit_statement_list(&mut self, node: StatementListNode) -> bool {
-        todo!()
+        let statements = node.d().statements.borrow().clone();
+        for statement in statements {
+            if parser::parse_nodes::is_expression_node(&statement) {
+                // Evaluate the expression in case it wasn't otherwise evaluated
+                // through lazy analysis. This will mark referenced symbols as
+                // accessed and report any errors associated with it.
+                self._evaluator.get_type(statement);
+
+                self._report_unused_expression(statement);
+            }
+        }
+
+        true
     }
 
     // analyzer/checker.ts:324
@@ -729,237 +743,1166 @@ impl ParseTreeVisitor<bool> for Checker {
 
     // analyzer/checker.ts:823
     fn visit_call(&mut self, node: CallNode) -> bool {
-        todo!()
+        self._validate_is_instance_call(node);
+
+        self._validate_illegal_default_param_initializer(node.0);
+
+        self._validate_standard_collection_instantiation(node);
+
+        if self._file_info.diagnostic_rule_set.report_unused_call_result != common::config_options::DiagnosticLevel::None
+            || self._file_info.diagnostic_rule_set.report_unused_coroutine
+                != common::config_options::DiagnosticLevel::None
+        {
+            if node.parent.get().is_some_and(|parent| parent.node_type == ParseNodeType::StatementList) {
+                let left_expr = node.d().left_expr.get();
+                let is_reveal_type_call =
+                    NameNode::cast(left_expr).is_some_and(|name| name.d().value == "reveal_type");
+                let return_type = self._evaluator.get_type(node.0);
+
+                if !is_reveal_type_call {
+                    if let Some(return_type) = return_type {
+                        if self._is_type_valid_for_unused_value_test(return_type) {
+                            self._evaluator.add_diagnostic(
+                                DiagnosticRule::reportUnusedCallResult,
+                                &LocMessage::unused_call_result()
+                                    .format(&[("type", &self._evaluator.print_type(return_type, None))]),
+                                node.0,
+                                None,
+                            );
+
+                            if analyzer::types::is_class_instance(return_type)
+                                && ClassType::is_built_in(
+                                    ClassType(return_type),
+                                    Some(&["Coroutine".to_string(), "CoroutineType".to_string()]),
+                                )
+                            {
+                                self._evaluator.add_diagnostic(
+                                    DiagnosticRule::reportUnusedCoroutine,
+                                    &LocMessage::unused_coroutine(),
+                                    node.0,
+                                    None,
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        true
     }
 
     // analyzer/checker.ts:865
     fn visit_await(&mut self, node: AwaitNode) -> bool {
-        todo!()
+        if self._file_info.diagnostic_rule_set.report_unused_call_result != common::config_options::DiagnosticLevel::None {
+            if node.parent.get().is_some_and(|parent| parent.node_type == ParseNodeType::StatementList)
+                && node.d().expr.get().node_type == ParseNodeType::Call
+            {
+                let return_type = self._evaluator.get_type(node.0);
+
+                if let Some(return_type) = return_type {
+                    if self._is_type_valid_for_unused_value_test(return_type) {
+                        self._evaluator.add_diagnostic(
+                            DiagnosticRule::reportUnusedCallResult,
+                            &LocMessage::unused_call_result()
+                                .format(&[("type", &self._evaluator.print_type(return_type, None))]),
+                            node.0,
+                            None,
+                        );
+                    }
+                }
+            }
+        }
+
+        true
     }
 
     // analyzer/checker.ts:885
     fn visit_for(&mut self, node: ForNode) -> bool {
-        todo!()
+        self._evaluator.evaluate_types_for_statement(node.0);
+
+        if let Some(type_comment) = node.d().type_comment.get() {
+            self._evaluator.add_diagnostic_for_text_range(
+                self._file_info,
+                DiagnosticRule::reportInvalidTypeForm,
+                &LocMessage::annotation_not_supported(),
+                &common::text_range::TextRange { start: type_comment.start, length: type_comment.length },
+            );
+        }
+        true
     }
 
     // analyzer/checker.ts:899
     fn visit_list(&mut self, node: ListNode) -> bool {
-        todo!()
+        self._validate_illegal_default_param_initializer(node.0);
+        true
     }
 
     // analyzer/checker.ts:904
     fn visit_set(&mut self, node: SetNode) -> bool {
-        todo!()
+        self._validate_illegal_default_param_initializer(node.0);
+        true
     }
 
     // analyzer/checker.ts:909
     fn visit_dictionary(&mut self, node: DictionaryNode) -> bool {
-        todo!()
+        self._validate_illegal_default_param_initializer(node.0);
+        true
     }
 
     // analyzer/checker.ts:914
     fn visit_comprehension(&mut self, node: ComprehensionNode) -> bool {
-        todo!()
+        self._scoped_nodes.push(node.0);
+        true
     }
 
     // analyzer/checker.ts:919
     fn visit_comprehension_if(&mut self, node: ComprehensionIfNode) -> bool {
-        todo!()
+        self._validate_conditional_is_bool(node.d().test_expr.get());
+        self._report_unnecessary_condition_expression(node.d().test_expr.get());
+        true
     }
 
     // analyzer/checker.ts:925
     fn visit_if(&mut self, node: IfNode) -> bool {
-        todo!()
+        self._validate_conditional_is_bool(node.d().test_expr.get());
+        self._report_unnecessary_condition_expression(node.d().test_expr.get());
+        true
     }
 
     // analyzer/checker.ts:931
     fn visit_while(&mut self, node: WhileNode) -> bool {
-        todo!()
+        self._validate_conditional_is_bool(node.d().test_expr.get());
+        self._report_unnecessary_condition_expression(node.d().test_expr.get());
+        true
     }
 
     // analyzer/checker.ts:937
     fn visit_with(&mut self, node: WithNode) -> bool {
-        todo!()
+        let with_items = node.d().with_items.borrow().clone();
+        for item in with_items {
+            self._evaluator.evaluate_types_for_statement(item.0);
+        }
+
+        if let Some(type_comment) = node.d().type_comment.get() {
+            self._evaluator.add_diagnostic_for_text_range(
+                self._file_info,
+                DiagnosticRule::reportInvalidTypeForm,
+                &LocMessage::annotation_not_supported(),
+                &common::text_range::TextRange { start: type_comment.start, length: type_comment.length },
+            );
+        }
+
+        true
     }
 
     // analyzer/checker.ts:954
     fn visit_return(&mut self, node: ReturnNode) -> bool {
-        todo!()
+        let enclosing_function_node = analyzer::parse_tree_utils::get_enclosing_function(node.0);
+        let declared_return_type =
+            enclosing_function_node.and_then(|enclosing| self._evaluator.get_declared_return_type(enclosing));
+
+        let return_type_result: P<TypeResult> = if let Some(expr) = node.d().expr.get() {
+            self._evaluator.get_type_result(expr).unwrap_or_else(|| {
+                P::new_eval(TypeResult::new(analyzer::types::UnknownType::create(false).0))
+            })
+        } else {
+            // There is no return expression, so "None" is assumed.
+            P::new_eval(TypeResult::new(self._evaluator.get_none_type()))
+        };
+
+        let mut return_type = return_type_result.type_.get();
+
+        // If this type is a special form, use the special form instead.
+        let special_form = return_type.props.borrow().as_ref().and_then(|props| props.special_form);
+        if let Some(special_form) = special_form {
+            return_type = special_form.0;
+        }
+
+        // If the enclosing function is async and a generator, the return
+        // statement is not allowed to have an argument. A syntax error occurs
+        // at runtime in this case.
+        if let Some(enclosing_function_node) = enclosing_function_node {
+            if enclosing_function_node.d().is_async.get() {
+                if let Some(expr) = node.d().expr.get() {
+                    let function_decl = self._node_info.get_declaration(enclosing_function_node.0);
+                    if function_decl.is_some_and(|decl| {
+                        decl.type_ == analyzer::declaration::DeclarationType::Function
+                            && decl.function().is_some_and(|f| f.is_generator.get())
+                    }) {
+                        self._evaluator.add_diagnostic(
+                            DiagnosticRule::reportGeneralTypeIssues,
+                            &LocMessage::return_in_async_generator(),
+                            expr,
+                            None,
+                        );
+                    }
+                }
+            }
+        }
+
+        if self._evaluator.is_node_reachable(node.0, None) && enclosing_function_node.is_some() {
+            if let Some(declared) = declared_return_type {
+                if analyzer::types::is_never(declared) {
+                    self._evaluator.add_diagnostic(
+                        DiagnosticRule::reportGeneralTypeIssues,
+                        &LocMessage::no_return_contains_return(),
+                        node.0,
+                        None,
+                    );
+                } else {
+                    let live_scopes =
+                        analyzer::parse_tree_utils::get_type_var_scopes_for_node(node.0, self._node_info.reader());
+                    let declared = self._evaluator.strip_type_guard(declared);
+                    let mut adj_return_type = analyzer::type_utils::make_type_vars_bound(declared, Some(&live_scopes));
+
+                    let mut diag_addendum = DiagnosticAddendum::new();
+                    let mut return_type_matches = false;
+
+                    if self._evaluator.assign_type(
+                        adj_return_type,
+                        return_type,
+                        Some(diag_addendum),
+                        None,
+                        analyzer::type_evaluator_types::AssignTypeFlags::Default,
+                        0,
+                    ) {
+                        return_type_matches = true;
+                    } else {
+                        // See if the declared return type includes one or more constrained TypeVars. If so,
+                        // try to narrow these TypeVars to a single type.
+                        let unique_type_vars = analyzer::type_utils::get_type_var_args_recursive(declared, 0);
+
+                        if unique_type_vars.iter().any(|type_var| TypeVarType::has_constraints(*type_var)) {
+                            let constraints = analyzer::constraint_tracker::ConstraintTracker::new();
+
+                            for type_var in &unique_type_vars {
+                                if TypeVarType::has_constraints(*type_var) {
+                                    let narrowed_type = self
+                                        ._evaluator
+                                        .narrow_constrained_type_var(node.0, TypeVarType::clone_as_bound(*type_var));
+                                    if let Some(narrowed_type) = narrowed_type {
+                                        constraints.set_bounds(*type_var, Some(narrowed_type), None, None);
+                                    }
+                                }
+                            }
+
+                            if !constraints.is_empty() {
+                                adj_return_type =
+                                    self._evaluator.solve_and_apply_constraints(declared, constraints, None, None);
+                                adj_return_type =
+                                    analyzer::type_utils::make_type_vars_bound(adj_return_type, Some(&live_scopes));
+
+                                if self._evaluator.assign_type(
+                                    adj_return_type,
+                                    return_type,
+                                    Some(diag_addendum),
+                                    None,
+                                    analyzer::type_evaluator_types::AssignTypeFlags::Default,
+                                    0,
+                                ) {
+                                    return_type_matches = true;
+                                }
+                            }
+                        }
+                    }
+
+                    if !return_type_matches {
+                        // If we have more detailed diagnostic information from
+                        // bidirectional type inference, use that.
+                        let expected_type_diag_addendum = return_type_result.expected_type_diag_addendum.get();
+                        if let Some(expected_type_diag_addendum) = expected_type_diag_addendum {
+                            diag_addendum = expected_type_diag_addendum;
+                        }
+
+                        self._evaluator.add_diagnostic(
+                            DiagnosticRule::reportReturnType,
+                            &(LocMessage::return_type_mismatch().format(&[
+                                ("exprType", &self._evaluator.print_type(return_type, None)),
+                                ("returnType", &self._evaluator.print_type(declared, None)),
+                            ]) + &diag_addendum.get_string(
+                                common::diagnostic::DEFAULT_MAX_DIAGNOSTIC_DEPTH,
+                                common::diagnostic::DEFAULT_MAX_DIAGNOSTIC_LINE_COUNT,
+                            )),
+                            node.d().expr.get().unwrap_or(node.0),
+                            expected_type_diag_addendum
+                                .and_then(|addendum| addendum.get_effective_text_range())
+                                .as_ref(),
+                        );
+                    }
+                }
+            }
+
+            if analyzer::types::is_unknown(return_type) {
+                self._evaluator.add_diagnostic(
+                    DiagnosticRule::reportUnknownVariableType,
+                    &LocMessage::return_type_unknown(),
+                    node.d().expr.get().unwrap_or(node.0),
+                    None,
+                );
+            } else if analyzer::type_utils::is_partly_unknown(return_type, 0) {
+                self._evaluator.add_diagnostic(
+                    DiagnosticRule::reportUnknownVariableType,
+                    &LocMessage::return_type_partially_unknown().format(&[(
+                        "returnType",
+                        &self._evaluator.print_type(
+                            return_type,
+                            Some(&analyzer::type_evaluator_types::PrintTypeOptions {
+                                expand_type_alias: Some(true),
+                                ..Default::default()
+                            }),
+                        ),
+                    )]),
+                    node.d().expr.get().unwrap_or(node.0),
+                    None,
+                );
+            }
+        }
+
+        true
     }
 
     // analyzer/checker.ts:1083
     fn visit_yield(&mut self, node: YieldNode) -> bool {
-        todo!()
+        let yield_type_result = match node.d().expr.get() {
+            Some(expr) => self._evaluator.get_type_result(expr),
+            None => Some(P::new_eval(TypeResult::new(self._evaluator.get_none_type()))),
+        };
+        self._validate_yield_type(
+            node.0,
+            yield_type_result
+                .map(|r| r.type_.get())
+                .unwrap_or_else(|| analyzer::types::UnknownType::create(false).0),
+            yield_type_result.and_then(|r| r.expected_type_diag_addendum.get()),
+            None,
+        );
+        true
     }
 
     // analyzer/checker.ts:1095
     fn visit_yield_from(&mut self, node: YieldFromNode) -> bool {
-        todo!()
+        let yield_from_type = self
+            ._evaluator
+            .get_type(node.d().expr.get())
+            .unwrap_or_else(|| analyzer::types::UnknownType::create(false).0);
+        let mut yield_type: P<Type>;
+        let mut send_type: Option<P<Type>> = None;
+
+        if analyzer::types::is_class_instance(yield_from_type)
+            && ClassType::is_built_in(
+                ClassType(yield_from_type),
+                Some(&["Coroutine".to_string(), "CoroutineType".to_string()]),
+            )
+        {
+            // Handle the case of old-style (pre-await) coroutines.
+            yield_type = analyzer::types::UnknownType::create(false).0;
+        } else {
+            yield_type = self
+                ._evaluator
+                .get_type_of_iterable(P::new_eval(TypeResult::new(yield_from_type)), false, node.0, true)
+                .map(|r| r.type_.get())
+                .unwrap_or_else(|| analyzer::types::UnknownType::create(false).0);
+
+            // Does the iterator return a Generator? If so, get the yield type from it.
+            // If the iterator doesn't return a Generator, use the iterator return type
+            // directly.
+            let generator_type_args = analyzer::type_utils::get_generator_type_args(yield_type);
+            if let Some(generator_type_args) = generator_type_args {
+                yield_type = if !generator_type_args.is_empty() {
+                    generator_type_args[0]
+                } else {
+                    analyzer::types::UnknownType::create(false).0
+                };
+                send_type = if generator_type_args.len() >= 2 { Some(generator_type_args[1]) } else { None };
+            } else {
+                yield_type = self
+                    ._evaluator
+                    .get_type_of_iterator(P::new_eval(TypeResult::new(yield_from_type)), false, node.0, true)
+                    .map(|r| r.type_.get())
+                    .unwrap_or_else(|| analyzer::types::UnknownType::create(false).0);
+            }
+        }
+
+        self._validate_yield_type(node.0, yield_type, None, send_type);
+
+        true
     }
 
     // analyzer/checker.ts:1127
     fn visit_raise(&mut self, node: RaiseNode) -> bool {
-        todo!()
+        if let Some(expr) = node.d().expr.get() {
+            self._evaluator.verify_raise_exception_type(expr, false);
+        }
+
+        if let Some(from_expr) = node.d().from_expr.get() {
+            self._evaluator.verify_raise_exception_type(from_expr, true);
+        }
+
+        true
     }
 
     // analyzer/checker.ts:1139
     fn visit_except(&mut self, node: ExceptNode) -> bool {
-        todo!()
+        if let Some(type_expr) = node.d().type_expr.get() {
+            self._evaluator.evaluate_types_for_statement(node.0);
+
+            let exception_type = self._evaluator.get_type(type_expr);
+            if let Some(exception_type) = exception_type {
+                self._validate_exception_type(exception_type, type_expr, node.d().is_except_group.get());
+            }
+        }
+
+        true
     }
 
     // analyzer/checker.ts:1152
     fn visit_assert(&mut self, node: AssertNode) -> bool {
-        todo!()
+        if let Some(exception_expr) = node.d().exception_expr.get() {
+            self._evaluator.get_type(exception_expr);
+        }
+
+        self._validate_conditional_is_bool(node.d().test_expr.get());
+
+        // Specifically look for a common programming error where the two arguments
+        // to an assert are enclosed in parens and interpreted as a two-element tuple.
+        //   assert (x > 3, "bad value x")
+        let type_ = self._evaluator.get_type(node.d().test_expr.get());
+        if let Some(type_) = type_ {
+            if analyzer::types::is_class_instance(type_) {
+                let class_type = ClassType(type_);
+                if analyzer::type_utils::is_tuple_class(class_type) {
+                    let tuple_type_args_len =
+                        class_type.d().priv_.borrow().tuple_type_args.as_ref().map(|args| args.len());
+                    if let Some(tuple_type_args_len) = tuple_type_args_len {
+                        if tuple_type_args_len > 0
+                            && !analyzer::type_utils::is_unbounded_tuple_class(class_type).unwrap_or(false)
+                        {
+                            let test_expr = node.d().test_expr.get();
+                            self._evaluator.add_diagnostic_for_text_range(
+                                self._file_info,
+                                DiagnosticRule::reportAssertAlwaysTrue,
+                                &LocMessage::assert_always_true(),
+                                &common::text_range::TextRange { start: test_expr.start.get(), length: test_expr.length.get() },
+                            );
+                        }
+                    }
+                }
+            }
+        }
+
+        true
     }
 
     // analyzer/checker.ts:1181
     fn visit_assignment(&mut self, node: AssignmentNode) -> bool {
-        todo!()
+        self._evaluator.evaluate_types_for_statement(node.0);
+
+        if let Some(annotation_comment) = node.d().annotation_comment.get() {
+            self._evaluator.get_type(annotation_comment);
+
+            if self._file_info.diagnostic_rule_set.report_type_comment_usage
+                != common::config_options::DiagnosticLevel::None
+                && common::python_version::PythonVersion::is_greater_or_equal_to(
+                    &self._file_info.execution_environment.python_version,
+                    &common::python_version::PYTHON_VERSION3_6,
+                )
+            {
+                self._evaluator.add_diagnostic(
+                    DiagnosticRule::reportTypeCommentUsage,
+                    &LocMessage::type_comment_deprecated(),
+                    annotation_comment,
+                    None,
+                );
+            }
+        }
+
+        // If this isn't a class or global scope, explicit type aliases are not allowed.
+        if let Some(type_annotation) = TypeAnnotationNode::cast(node.d().left_expr.get()) {
+            let annotation = type_annotation.d().annotation.get();
+            let annotation_type = self._evaluator.get_type_of_annotation(annotation, None);
+
+            if analyzer::types::is_class_instance(annotation_type)
+                && ClassType::is_built_in(ClassType(annotation_type), Some(&["TypeAlias".to_string()]))
+            {
+                let scope = analyzer::scope_utils::get_scope_for_node(node.0, self._node_info.reader());
+                if let Some(scope) = scope {
+                    if scope.type_ != ScopeType::Class
+                        && scope.type_ != ScopeType::Module
+                        && scope.type_ != ScopeType::Builtin
+                    {
+                        self._evaluator.add_diagnostic(
+                            DiagnosticRule::reportGeneralTypeIssues,
+                            &LocMessage::type_alias_not_in_module_or_class(),
+                            annotation,
+                            None,
+                        );
+                    }
+                }
+            }
+        }
+
+        true
     }
 
     // analyzer/checker.ts:1224
     fn visit_assignment_expression(&mut self, node: AssignmentExpressionNode) -> bool {
-        todo!()
+        self._evaluator.get_type(node.0);
+        true
     }
 
     // analyzer/checker.ts:1229
     fn visit_augmented_assignment(&mut self, node: AugmentedAssignmentNode) -> bool {
-        todo!()
+        let type_result = self._evaluator.get_type_result(node.0);
+        self._report_deprecated_use_for_operation(node.d().dest_expr.get(), type_result);
+
+        true
     }
 
     // analyzer/checker.ts:1236
     fn visit_index(&mut self, node: IndexNode) -> bool {
-        todo!()
+        self._evaluator.get_type(node.0);
+
+        // If the index is a literal integer, see if this is a tuple with
+        // a known length and the integer value exceeds the length.
+        let base_type = self._evaluator.get_type(node.d().left_expr.get());
+        if let Some(base_type) = base_type {
+            let evaluator = self._evaluator;
+            analyzer::type_utils::do_for_each_subtype(
+                base_type,
+                &mut |subtype, _index, _all_subtypes| {
+                    let tuple_type = analyzer::type_utils::get_specialized_tuple_type(subtype);
+
+                    let Some(tuple_type) = tuple_type else {
+                        return;
+                    };
+                    if !analyzer::types::is_class_instance(subtype)
+                        || tuple_type.d().priv_.borrow().tuple_type_args.is_none()
+                        || analyzer::type_utils::is_unbounded_tuple_class(tuple_type).unwrap_or(false)
+                    {
+                        return;
+                    }
+
+                    let tuple_length =
+                        tuple_type.d().priv_.borrow().tuple_type_args.as_ref().map_or(0, |args| args.len()) as f64;
+
+                    let items = node.d().items.borrow().clone();
+                    if items.len() != 1
+                        || node.d().trailing_comma.get()
+                        || items[0].d().arg_category.get() != parser::parse_nodes::ArgCategory::Simple
+                        || items[0].d().name.get().is_some()
+                    {
+                        return;
+                    }
+
+                    let subscript_type = evaluator.get_type(items[0].d().value_expr.get());
+                    let Some(subscript_type) = subscript_type else {
+                        return;
+                    };
+                    if !analyzer::types::is_class_instance(subscript_type)
+                        || !ClassType::is_built_in(ClassType(subscript_type), Some(&["int".to_string()]))
+                        || !analyzer::type_utils::is_literal_type(ClassType(subscript_type))
+                    {
+                        return;
+                    }
+                    let literal_value = match ClassType(subscript_type).d().priv_.borrow().literal_value {
+                        Some(analyzer::types::LiteralValue::Number(value)) => value,
+                        _ => return,
+                    };
+
+                    if (literal_value < 0.0 || literal_value < tuple_length)
+                        && (literal_value >= 0.0 || literal_value + tuple_length >= 0.0)
+                    {
+                        return;
+                    }
+
+                    // This can be an expensive check, so we save it for the end once we
+                    // are about to emit a diagnostic.
+                    if evaluator.is_type_subsumed_by_other_type(tuple_type.0, base_type, false, 0) {
+                        return;
+                    }
+
+                    evaluator.add_diagnostic(
+                        DiagnosticRule::reportGeneralTypeIssues,
+                        &LocMessage::tuple_index_out_of_range().format(&[
+                            ("index", &jsrt::number::number_to_string(literal_value)),
+                            ("type", &evaluator.print_type(subtype, None)),
+                        ]),
+                        node.0,
+                        None,
+                    );
+                },
+                false,
+            );
+        }
+
+        true
     }
 
     // analyzer/checker.ts:1299
     fn visit_binary_operation(&mut self, node: BinaryOperationNode) -> bool {
-        todo!()
+        let operator = node.d().operator.get();
+        if operator == parser::tokenizer_types::OperatorType::Equals
+            || operator == parser::tokenizer_types::OperatorType::NotEquals
+        {
+            // Don't apply this rule if it's within an assert.
+            if !analyzer::parse_tree_utils::is_within_assert_expression(node.0) {
+                self._validate_comparison_types(node);
+            }
+        } else if operator == parser::tokenizer_types::OperatorType::Is
+            || operator == parser::tokenizer_types::OperatorType::IsNot
+        {
+            // Don't apply this rule if it's within an assert.
+            if !analyzer::parse_tree_utils::is_within_assert_expression(node.0) {
+                self._validate_comparison_types(node);
+            }
+        } else if operator == parser::tokenizer_types::OperatorType::In
+            || operator == parser::tokenizer_types::OperatorType::NotIn
+        {
+            // Don't apply this rule if it's within an assert.
+            if !analyzer::parse_tree_utils::is_within_assert_expression(node.0) {
+                self._validate_containment_types(node);
+            }
+        }
+
+        let type_result = self._evaluator.get_type_result(node.0);
+        self._report_deprecated_use_for_operation(node.d().left_expr.get(), type_result);
+
+        true
     }
 
     // analyzer/checker.ts:1323
     fn visit_slice(&mut self, node: SliceNode) -> bool {
-        todo!()
+        self._evaluator.get_type(node.0);
+        true
     }
 
     // analyzer/checker.ts:1328
     fn visit_unpack(&mut self, node: UnpackNode) -> bool {
-        todo!()
+        self._evaluator.get_type(node.0);
+        true
     }
 
     // analyzer/checker.ts:1333
     fn visit_tuple(&mut self, node: TupleNode) -> bool {
-        todo!()
+        self._evaluator.get_type(node.0);
+        true
     }
 
     // analyzer/checker.ts:1338
     fn visit_unary_operation(&mut self, node: UnaryOperationNode) -> bool {
-        todo!()
+        if node.d().operator.get() == parser::tokenizer_types::OperatorType::Not {
+            self._validate_conditional_is_bool(node.d().expr.get());
+        }
+
+        let type_result = self._evaluator.get_type_result(node.0);
+        self._report_deprecated_use_for_operation(node.d().expr.get(), type_result);
+
+        true
     }
 
     // analyzer/checker.ts:1349
     fn visit_ternary(&mut self, node: TernaryNode) -> bool {
-        todo!()
+        self._evaluator.get_type(node.0);
+        self._validate_conditional_is_bool(node.d().test_expr.get());
+        self._report_unnecessary_condition_expression(node.d().test_expr.get());
+        true
     }
 
     // analyzer/checker.ts:1356
     fn visit_string_list(&mut self, node: StringListNode) -> bool {
-        todo!()
+        use parser::tokenizer_types::{
+            FStringMiddleToken, FStringStartToken, StringToken, StringTokenFlags, Token, TokenType,
+        };
+
+        // The `token.flags` of a `StringNode | FormatStringNode`.
+        fn string_node_flags(string_node: P<ParseNode>) -> StringTokenFlags {
+            if let Some(string_node) = StringNode::cast(string_node) {
+                string_node.d().token.get().d().flags
+            } else {
+                FormatStringNode::cast(string_node).unwrap().d().token.get().d().flags
+            }
+        }
+
+        // If this is Python 3.11 or older, there are several restrictions
+        // associated with f-strings that we need to validate. Determine whether
+        // we're within an f-string (or multiple f-strings if nesting is used).
+        let mut f_string_containers: Vec<FormatStringNode> = Vec::new();
+        if common::python_version::PythonVersion::is_less_than(
+            &self._file_info.execution_environment.python_version,
+            &common::python_version::PYTHON_VERSION3_12,
+        ) {
+            let mut cur_node: Option<P<ParseNode>> = Some(node.0);
+            while let Some(cur) = cur_node {
+                if let Some(format_string) = FormatStringNode::cast(cur) {
+                    f_string_containers.push(format_string);
+                }
+                cur_node = cur.parent.get();
+            }
+        }
+
+        let strings = node.d().strings.borrow().clone();
+        for string_node in strings.iter().copied() {
+            let string_tokens: Vec<P<Token>> = if let Some(string) = StringNode::cast(string_node) {
+                vec![string.d().token.get().0]
+            } else {
+                FormatStringNode::cast(string_node)
+                    .unwrap()
+                    .d()
+                    .middle_tokens
+                    .borrow()
+                    .iter()
+                    .map(|token| token.0)
+                    .collect()
+            };
+
+            for token in string_tokens {
+                let unescaped_result = parser::string_token_utils::get_unescaped_string(&token, true);
+                let mut start = token.start;
+                if token.type_ == TokenType::String {
+                    let string_token = StringToken::cast(token).unwrap();
+                    start += string_token.d().prefix_length + string_token.d().quote_mark_length;
+                }
+
+                for error in &unescaped_result.unescape_errors {
+                    if error.error_type == parser::string_token_utils::UnescapeErrorType::InvalidEscapeSequence {
+                        self._evaluator.add_diagnostic_for_text_range(
+                            self._file_info,
+                            DiagnosticRule::reportInvalidStringEscapeSequence,
+                            &if strings
+                                .iter()
+                                .any(|string| string_node_flags(*string).any(StringTokenFlags::Bytes))
+                            {
+                                LocMessage::bytes_unsupported_escape()
+                            } else {
+                                LocMessage::string_unsupported_escape()
+                            },
+                            &common::text_range::TextRange { start: start + error.offset, length: error.length },
+                        );
+                    }
+                }
+
+                // Prior to Python 3.12, it was not allowed to include a slash in an f-string.
+                if !f_string_containers.is_empty() {
+                    let escaped_value = if let Some(string_token) = StringToken::cast(token) {
+                        string_token.d().escaped_value.clone()
+                    } else {
+                        FStringMiddleToken::cast(token).unwrap().d().escaped_value.clone()
+                    };
+                    let escape_offset = jsrt::JsStr::js_index_of(&*escaped_value, &[u16::from(b'\\')][..], 0);
+                    if escape_offset >= 0 {
+                        self._evaluator.add_diagnostic_for_text_range(
+                            self._file_info,
+                            DiagnosticRule::reportGeneralTypeIssues,
+                            &LocMessage::format_string_escape(),
+                            &common::text_range::TextRange { start, length: 1 },
+                        );
+                    }
+                }
+            }
+
+            // Prior to Python 3.12, it was not allowed to nest strings that
+            // used the same quote scheme within an f-string.
+            if !f_string_containers.is_empty() {
+                let quote_type_mask =
+                    StringTokenFlags::SingleQuote.0 | StringTokenFlags::DoubleQuote.0 | StringTokenFlags::Triplicate.0;
+                let string_flags = string_node_flags(string_node).0;
+                if f_string_containers.iter().any(|f_string_container| {
+                    let container_token: FStringStartToken = f_string_container.d().token.get();
+                    (container_token.d().flags.0 & quote_type_mask) == (string_flags & quote_type_mask)
+                }) {
+                    self._evaluator.add_diagnostic(
+                        DiagnosticRule::reportGeneralTypeIssues,
+                        &LocMessage::format_string_nested_quote(),
+                        string_node,
+                        None,
+                    );
+                }
+            }
+        }
+
+        if analyzer::analyzer_node_info::get_string_annotation(
+            node,
+            self._evaluator.get_analyzer_node_info_reader().get(),
+        )
+        .is_some()
+        {
+            self._evaluator.get_type(node.0);
+        }
+
+        if strings.len() > 1 && !node.d().has_parens.get() {
+            self._evaluator.add_diagnostic_for_text_range(
+                self._file_info,
+                DiagnosticRule::reportImplicitStringConcatenation,
+                &LocMessage::implicit_string_concat(),
+                &common::text_range::TextRange { start: node.start.get(), length: node.length.get() },
+            );
+        }
+
+        true
     }
 
     // analyzer/checker.ts:1446
     fn visit_format_string(&mut self, node: FormatStringNode) -> bool {
-        todo!()
+        let field_exprs = node.d().field_exprs.borrow().clone();
+        for expr in field_exprs {
+            self._evaluator.get_type(expr);
+        }
+
+        let format_exprs = node.d().format_exprs.borrow().clone();
+        for expr in format_exprs {
+            self._evaluator.get_type(expr);
+        }
+
+        true
     }
 
     // analyzer/checker.ts:1458
     fn visit_global(&mut self, node: GlobalNode) -> bool {
-        todo!()
+        self._suppress_unbound_check(&mut |checker: &mut Checker| {
+            let targets = node.d().targets.borrow().clone();
+            for name in targets {
+                checker._evaluator.get_type(name.0);
+
+                checker.walk(name.0);
+            }
+        });
+
+        false
     }
 
     // analyzer/checker.ts:1470
     fn visit_nonlocal(&mut self, node: NonlocalNode) -> bool {
-        todo!()
+        self._suppress_unbound_check(&mut |checker: &mut Checker| {
+            let targets = node.d().targets.borrow().clone();
+            for name in targets {
+                checker._evaluator.get_type(name.0);
+
+                checker.walk(name.0);
+
+                checker._validate_nonlocal_type_param(name);
+            }
+        });
+
+        false
     }
 
     // analyzer/checker.ts:1484
     fn visit_name(&mut self, node: NameNode) -> bool {
-        todo!()
+        // Determine if we should log information about private usage.
+        self._conditionally_report_private_usage(node);
+
+        // Determine if the name is possibly unbound.
+        if !self._is_unbound_check_suppressed {
+            self._report_unbound_name(node);
+        }
+
+        // Report the use of a deprecated symbol.
+        let type_ = self._evaluator.get_type(node.0);
+        self._report_deprecated_use_for_type(node, type_, false);
+
+        true
     }
 
     // analyzer/checker.ts:1500
     fn visit_del(&mut self, node: DelNode) -> bool {
-        todo!()
+        let targets = node.d().targets.borrow().clone();
+        for expr in targets {
+            self._evaluator.verify_delete_expression(expr);
+
+            self.walk(expr);
+        }
+
+        false
     }
 
     // analyzer/checker.ts:1510
     fn visit_member_access(&mut self, node: MemberAccessNode) -> bool {
-        todo!()
+        let member = node.d().member.get();
+        let type_result = self._evaluator.get_type_result(member.0);
+        let type_ = type_result
+            .map(|r| r.type_.get())
+            .unwrap_or_else(|| analyzer::types::UnknownType::create(false).0);
+
+        let left_expr_type = self._evaluator.get_type(node.d().left_expr.get());
+        let module_name = left_expr_type
+            .filter(|t| analyzer::types::is_module(*t))
+            .map(|t| analyzer::types::ModuleType(t).d().priv_.borrow().module_name.clone());
+        let is_imported_from_typing = module_name.as_deref() == Some("typing")
+            || module_name.as_deref() == Some("typing_extensions");
+        self._report_deprecated_use_for_type(member, Some(type_), is_imported_from_typing);
+
+        if let Some(type_result) = type_result {
+            if let Some(member_access_deprecation_info) = &type_result.member_access_deprecation_info {
+                self._report_deprecated_use_for_member_access(member, member_access_deprecation_info);
+            }
+        }
+
+        self._conditionally_report_private_usage(member);
+
+        // Walk the leftExpression but not the memberName.
+        self.walk(node.d().left_expr.get());
+
+        false
     }
 
     // analyzer/checker.ts:1531
     fn visit_import_as(&mut self, node: ImportAsNode) -> bool {
-        todo!()
+        self._evaluator.evaluate_types_for_statement(node.0);
+
+        let name_parts_len = node.d().module.get().d().name_parts.borrow().len();
+        if name_parts_len > 1 && node.d().alias.get().is_none() {
+            self._multipart_imports.push(node);
+        }
+
+        true
     }
 
     // analyzer/checker.ts:1542
     fn visit_import_from(&mut self, node: ImportFromNode) -> bool {
-        todo!()
+        // Verify that any "__future__" import occurs at the top of the file.
+        let module = node.d().module.get();
+        if module.d().leading_dots.get() == 0
+            && module.d().name_parts.borrow().len() == 1
+            && module.d().name_parts.borrow()[0].d().value == "__future__"
+        {
+            if !analyzer::parse_tree_utils::is_valid_location_for_future_import(node) {
+                self._evaluator.add_diagnostic(
+                    DiagnosticRule::reportGeneralTypeIssues,
+                    &LocMessage::future_import_location_not_allowed(),
+                    node.0,
+                    None,
+                );
+            }
+        }
+
+        if !node.d().is_wildcard_import.get() {
+            let imports = node.d().imports.borrow().clone();
+            for import_as in imports {
+                self._evaluator.evaluate_types_for_statement(import_as.0);
+            }
+        } else {
+            self._evaluator.evaluate_types_for_statement(node.0);
+
+            let import_info = self._node_info.get_import_info(module.0);
+            if let Some(import_info) = import_info {
+                if import_info.is_import_found
+                    && import_info.import_type != analyzer::import_result::ImportType::Local
+                    && !self._file_info.is_stub_file
+                {
+                    let range = match node.d().wildcard_token.get() {
+                        Some(token) => common::text_range::TextRange { start: token.start, length: token.length },
+                        None => common::text_range::TextRange { start: node.start.get(), length: node.length.get() },
+                    };
+                    self._evaluator.add_diagnostic_for_text_range(
+                        self._file_info,
+                        DiagnosticRule::reportWildcardImportFromLibrary,
+                        &LocMessage::wildcard_library_import(),
+                        &range,
+                    );
+                }
+            }
+        }
+
+        true
     }
 
     // analyzer/checker.ts:1584
     fn visit_import_from_as(&mut self, node: ImportFromAsNode) -> bool {
-        todo!()
+        if self._file_info.is_stub_file {
+            return false;
+        }
+
+        let decls = self._evaluator.get_decl_info_for_name_node(node.d().name.get(), false).map(|info| info.decls);
+        let Some(decls) = decls else {
+            return false;
+        };
+
+        for decl in decls {
+            let submodule_fallback = decl.alias().and_then(|alias| alias.submodule_fallback.get());
+            if !analyzer::declaration::is_alias_declaration(&decl)
+                || submodule_fallback.is_none()
+                || decl.node.get() != node.0
+            {
+                // If it is not implicitly imported module, move to next.
+                continue;
+            }
+
+            let resolved_alias = self._evaluator.resolve_alias_declaration(decl, true, None);
+            let resolved_alias_uri = resolved_alias.map(|resolved| resolved.uri.get());
+            let Some(resolved_alias_uri) = resolved_alias_uri.filter(|uri| !uri.is_empty()) else {
+                continue;
+            };
+            if !analyzer::source_mapper::is_stub_file(&resolved_alias_uri) {
+                continue;
+            }
+
+            let import_result = self._get_import_result(node, &resolved_alias_uri);
+            let Some(import_result) = import_result else {
+                continue;
+            };
+
+            self._add_missing_module_source_diagnostic_if_needed(import_result, node.d().name.get().0);
+            break;
+        }
+
+        let mut is_import_from_typing = false;
+        if let Some(parent) = node.parent.get().and_then(ImportFromNode::cast) {
+            let module = parent.d().module.get();
+            if module.d().leading_dots.get() == 0 && module.d().name_parts.borrow().len() == 1 {
+                let name_part = module.d().name_parts.borrow()[0].d().value.clone();
+                if name_part == "typing" || name_part == "typing_extensions" {
+                    is_import_from_typing = true;
+                }
+            }
+        }
+
+        let type_ = self._evaluator.get_type(node.d().alias.get().unwrap_or(node.d().name.get()).0);
+        self._report_deprecated_use_for_type(node.d().name.get(), type_, is_import_from_typing);
+
+        false
     }
 
     // analyzer/checker.ts:1631
     fn visit_module_name(&mut self, node: ModuleNameNode) -> bool {
-        todo!()
+        if self._file_info.is_stub_file {
+            return false;
+        }
+
+        let import_result = self._node_info.get_import_info(node.0);
+        common::debug::assert(import_result.is_some(), None);
+
+        self._add_missing_module_source_diagnostic_if_needed(import_result.unwrap(), node.0);
+        false
     }
 
     // analyzer/checker.ts:1643
     fn visit_type_parameter_list(&mut self, node: TypeParameterListNode) -> bool {
-        todo!()
+        self._type_param_lists.push(node);
+        true
     }
 
     // analyzer/checker.ts:1648
     fn visit_type_parameter(&mut self, node: TypeParameterNode) -> bool {
-        todo!()
+        // Verify that there are no live type variables with the same
+        // name in outer scopes.
+        let mut cur_node: Option<P<ParseNode>> = node
+            .parent
+            .get()
+            .and_then(|p| p.parent.get())
+            .and_then(|p| p.parent.get());
+        let mut found_duplicate = false;
+        let name = node.d().name.get().d().value.clone();
+
+        while let Some(cur) = cur_node {
+            let type_var_scope_node = analyzer::parse_tree_utils::get_type_var_scope_node(cur);
+            let Some(type_var_scope_node) = type_var_scope_node else {
+                break;
+            };
+
+            if let Some(class_node) = ClassNode::cast(type_var_scope_node) {
+                let class_type = self._evaluator.get_type_of_class(class_node).map(|r| r.class_type);
+
+                if class_type.is_some_and(|class_type| {
+                    class_type.d().shared.get().type_params.borrow().iter().any(|param| *param.d().shared.get().name.borrow() == name)
+                }) {
+                    found_duplicate = true;
+                    break;
+                }
+            } else if let Some(function_node) = FunctionNode::cast(type_var_scope_node) {
+                let function_type = self._evaluator.get_type_of_function(function_node).map(|r| r.function_type);
+
+                if function_type.is_some_and(|function_type| {
+                    function_type
+                        .d()
+                        .shared
+                        .get()
+                        .type_params
+                        .borrow()
+                        .iter()
+                        .any(|param| *param.d().shared.get().name.borrow() == name)
+                }) {
+                    found_duplicate = true;
+                    break;
+                }
+            }
+
+            cur_node = type_var_scope_node.parent.get();
+        }
+
+        if found_duplicate {
+            self._evaluator.add_diagnostic(
+                DiagnosticRule::reportGeneralTypeIssues,
+                &LocMessage::type_var_used_by_outer_scope().format(&[("name", &name)]),
+                node.d().name.get().0,
+                None,
+            );
+        }
+
+        false
     }
 
     // analyzer/checker.ts:1690
     fn visit_type_alias(&mut self, node: TypeAliasNode) -> bool {
-        todo!()
+        let scope = analyzer::scope_utils::get_scope_for_node(node.0, self._node_info.reader());
+        if let Some(scope) = scope {
+            if scope.type_ != ScopeType::Class && scope.type_ != ScopeType::Module && scope.type_ != ScopeType::Builtin {
+                self._evaluator.add_diagnostic(
+                    DiagnosticRule::reportGeneralTypeIssues,
+                    &LocMessage::type_alias_statement_bad_scope(),
+                    node.d().name.get().0,
+                    None,
+                );
+            }
+        }
+
+        true
     }
 
     // analyzer/checker.ts:1705
     fn visit_type_annotation(&mut self, node: TypeAnnotationNode) -> bool {
-        todo!()
+        self._evaluator.get_type(node.d().annotation.get());
+        true
     }
 
     // analyzer/checker.ts:1710
     fn visit_match(&mut self, node: MatchNode) -> bool {
-        todo!()
+        self._evaluator.get_type(node.d().expr.get());
+        self._validate_exhaustive_match(node);
+        true
     }
 
     // analyzer/checker.ts:1716
     fn visit_case(&mut self, node: CaseNode) -> bool {
-        todo!()
+        if let Some(guard_expr) = node.d().guard_expr.get() {
+            self._validate_conditional_is_bool(guard_expr);
+        }
+
+        self._evaluator.evaluate_types_for_statement(node.d().pattern.get());
+        true
     }
 
     // analyzer/checker.ts:1725
     fn visit_pattern_class(&mut self, node: PatternClassNode) -> bool {
-        todo!()
+        analyzer::pattern_matching::validate_class_pattern(&self._evaluator, node);
+        true
     }
 
     // analyzer/checker.ts:1730
     fn visit_try(&mut self, node: TryNode) -> bool {
-        todo!()
+        self._report_unused_except_statements(node);
+        true
     }
 
     // analyzer/checker.ts:1735
     fn visit_error(&mut self, node: ErrorNode) -> bool {
-        todo!()
+        // Get the type of the child so it's available to
+        // the completion provider.
+        if let Some(child) = node.d().child.get() {
+            self._evaluator.get_type(child);
+        }
+
+        // Don't explore further.
+        false
     }
 }
 
@@ -1044,12 +1987,81 @@ impl Checker {
 
     // analyzer/checker.ts:1746
     pub(crate) fn _report_unused_multipart_imports(&mut self) {
-        todo!()
+        let multipart_imports = self._multipart_imports.clone();
+        for node in multipart_imports {
+            let name_parts = node.d().module.get().d().name_parts.borrow().clone();
+
+            if self._is_multipart_import_unused(node) {
+                let multipart_name =
+                    name_parts.iter().map(|np| np.d().value.clone()).collect::<Vec<_>>().join(".");
+                let mut text_range = common::text_range::TextRange {
+                    start: name_parts[0].start.get(),
+                    length: name_parts[0].length.get(),
+                };
+                text_range = common::text_range::TextRange::extend(&text_range, &*name_parts[name_parts.len() - 1].0);
+
+                self._file_info.diagnostic_sink.add_unused_code_with_text_range(
+                    LocMessage::unaccessed_symbol().format(&[("name", &multipart_name)]),
+                    text_range,
+                    Some(common::diagnostic::DiagnosticAction {
+                        action: "pyright.unusedImport".to_string(),
+                        module_name: None,
+                    }),
+                );
+
+                self._evaluator.add_diagnostic_for_text_range(
+                    self._file_info,
+                    DiagnosticRule::reportUnusedImport,
+                    &LocMessage::unaccessed_import().format(&[("name", &multipart_name)]),
+                    &text_range,
+                );
+            }
+        }
     }
 
     // analyzer/checker.ts:1771
     pub(crate) fn _is_multipart_import_unused(&mut self, node: ImportAsNode) -> bool {
-        todo!()
+        let name_parts = node.d().module.get().d().name_parts.borrow().clone();
+        common::debug::assert(name_parts.len() > 1, None);
+
+        // Get the top-level module type associated with this import.
+        let evaluator = self._evaluator;
+        let module_type = evaluator
+            .evaluate_type_for_subnode(node.0, &mut || {
+                evaluator.evaluate_types_for_statement(node.0);
+            })
+            .map(|r| r.type_.get());
+
+        let Some(mut module_type) = module_type.filter(|t| analyzer::types::is_module(*t)) else {
+            return false;
+        };
+
+        // Walk the module hierarchy to get the submodules in the
+        // multi-name import path until we get to the second-to-the-last
+        // part.
+        for name_part in name_parts.iter().take(name_parts.len() - 1).skip(1) {
+            let symbol = analyzer::types::ModuleType::get_field(analyzer::types::ModuleType(module_type), &name_part.d().value);
+            let Some(symbol) = symbol else {
+                return false;
+            };
+
+            let submodule_type = symbol.get_synthesized_type();
+            let Some(submodule_type) = submodule_type.filter(|t| analyzer::types::is_module(t.type_)) else {
+                return false;
+            };
+
+            module_type = submodule_type.type_;
+        }
+
+        // Look up the last part of the import to get its symbol ID.
+        let last_part_name = name_parts[name_parts.len() - 1].d().value.clone();
+        let symbol = analyzer::types::ModuleType::get_field(analyzer::types::ModuleType(module_type), &last_part_name);
+
+        let Some(symbol) = symbol else {
+            return false;
+        };
+
+        !self._file_info.accessed_symbol_set.borrow().contains(&symbol.id)
     }
 
     // analyzer/checker.ts:1812
@@ -1058,7 +2070,31 @@ impl Checker {
         node: ImportFromAsNode,
         uri: &Uri,
     ) -> Option<P<ImportResult>> {
-        todo!()
+        let config_options = self._import_resolver.get_config_options();
+        let exec_env = config_options.find_exec_environment(*uri);
+        let module_name_node = ImportFromNode::cast(node.parent.get().unwrap()).unwrap().d().module.get();
+
+        // Handle both absolute and relative imports.
+        let module_name = if module_name_node.d().leading_dots.get() == 0 {
+            Some(self._import_resolver.get_module_name_for_import(*uri, &exec_env, false, false).module_name)
+        } else {
+            analyzer::import_statement_utils::get_relative_module_name(
+                self._import_resolver.file_system(),
+                self._file_info.file_uri,
+                *uri,
+                &self._import_resolver.get_config_options(),
+                false,
+                None,
+            )
+        };
+
+        let module_name = module_name.filter(|name| !name.is_empty())?;
+
+        Some(self._import_resolver.resolve_import(
+            self._file_info.file_uri,
+            &exec_env,
+            &analyzer::import_resolver::create_imported_module_descriptor(&module_name),
+        ))
     }
 
     // analyzer/checker.ts:1838
@@ -1067,7 +2103,31 @@ impl Checker {
         import_result: P<ImportResult>,
         node: P<ParseNode>,
     ) {
-        todo!()
+        let non_stub_import_result = import_result.non_stub_import_result.clone();
+        if import_result.is_native_lib
+            || !import_result.is_stub_file
+            || import_result.import_type == analyzer::import_result::ImportType::BuiltIn
+            || non_stub_import_result.is_none()
+            || non_stub_import_result.as_ref().is_some_and(|r| r.is_import_found)
+            // The non-stub resolution can report `isImportFound === false` yet `isNativeLib === true`
+            // when a compiled extension (.pyd/.so) backs a path segment of the import. A compiled
+            // extension has no Python source, but the module itself exists at runtime via the native
+            // lib, so "could not be resolved from source" is misleading.
+            || non_stub_import_result.as_ref().is_some_and(|r| r.is_native_lib)
+        {
+            return;
+        }
+
+        // Type stub found, but source is missing.
+        self._evaluator.add_diagnostic(
+            DiagnosticRule::reportMissingModuleSource,
+            &LocMessage::import_source_resolve_failure().format(&[
+                ("importName", &import_result.import_name),
+                ("venv", &self._file_info.execution_environment.name),
+            ]),
+            node,
+            None,
+        );
     }
 
     // analyzer/checker.ts:1865
