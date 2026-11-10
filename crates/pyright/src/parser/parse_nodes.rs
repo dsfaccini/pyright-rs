@@ -332,6 +332,7 @@ macro_rules! node_handle {
 }
 
 /// The per-type details of a node, one variant per `ParseNodeType`.
+#[derive(Clone)]
 pub enum ParseNodeDetails {
     Error(ErrorNodeDetails),
     Argument(ArgumentNodeDetails),
@@ -417,6 +418,7 @@ pub enum ParseNodeDetails {
 // Module
 
 // parser/parseNodes.ts:199
+#[derive(Clone)]
 pub struct ModuleNodeDetails {
     pub statements: RefCell<Vec<StatementNode>>,
 }
@@ -445,6 +447,7 @@ impl ModuleNode {
 }
 
 // parser/parseNodes.ts:224
+#[derive(Clone)]
 pub struct SuiteNodeDetails {
     pub statements: RefCell<Vec<StatementNode>>,
     pub type_comment: Cell<Option<StringToken>>,
@@ -469,6 +472,7 @@ impl SuiteNode {
 }
 
 // parser/parseNodes.ts:250
+#[derive(Clone)]
 pub struct IfNodeDetails {
     pub first_token: Cell<P<Token>>,
     pub test_expr: Cell<ExpressionNode>,
@@ -515,6 +519,7 @@ impl IfNode {
 }
 
 // parser/parseNodes.ts:296
+#[derive(Clone)]
 pub struct WhileNodeDetails {
     pub first_token: Cell<P<Token>>,
     pub test_expr: Cell<ExpressionNode>,
@@ -554,6 +559,7 @@ impl WhileNode {
 }
 
 // parser/parseNodes.ts:330
+#[derive(Clone)]
 pub struct ForNodeDetails {
     pub first_token: Cell<P<Token>>,
     pub is_async: Cell<Option<bool>>,
@@ -606,6 +612,7 @@ impl ForNode {
 pub type ComprehensionForIfNode = P<ParseNode>;
 
 // parser/parseNodes.ts:378
+#[derive(Clone)]
 pub struct ComprehensionForNodeDetails {
     pub is_async: Cell<Option<bool>>,
     pub async_token: Cell<Option<P<Token>>>,
@@ -650,6 +657,7 @@ impl ComprehensionForNode {
 }
 
 // parser/parseNodes.ts:417
+#[derive(Clone)]
 pub struct ComprehensionIfNodeDetails {
     pub test_expr: Cell<ExpressionNode>,
 }
@@ -685,6 +693,7 @@ impl ComprehensionIfNode {
 }
 
 // parser/parseNodes.ts:443
+#[derive(Clone)]
 pub struct TryNodeDetails {
     pub first_token: Cell<P<Token>>,
     pub try_suite: Cell<SuiteNode>,
@@ -720,6 +729,7 @@ impl TryNode {
 }
 
 // parser/parseNodes.ts:477
+#[derive(Clone)]
 pub struct ExceptNodeDetails {
     pub type_expr: Cell<Option<ExpressionNode>>,
     pub name: Cell<Option<NameNode>>,
@@ -760,6 +770,7 @@ impl ExceptNode {
 }
 
 // parser/parseNodes.ts:511
+#[derive(Clone)]
 pub struct FunctionNodeDetails {
     pub first_token: Cell<P<Token>>,
     pub decorators: RefCell<Vec<DecoratorNode>>,
@@ -823,6 +834,7 @@ pub enum ParamCategory {
 }
 
 // parser/parseNodes.ts:572
+#[derive(Clone)]
 pub struct ParameterNodeDetails {
     pub category: Cell<ParamCategory>,
     pub name: Cell<Option<NameNode>>,
@@ -856,6 +868,7 @@ impl ParameterNode {
 }
 
 // parser/parseNodes.ts:604
+#[derive(Clone)]
 pub struct ClassNodeDetails {
     pub first_token: Cell<P<Token>>,
     pub decorators: RefCell<Vec<DecoratorNode>>,
@@ -982,6 +995,7 @@ impl ClassNode {
 }
 
 // parser/parseNodes.ts:715
+#[derive(Clone)]
 pub struct WithNodeDetails {
     pub first_token: Cell<P<Token>>,
     pub is_async: Cell<Option<bool>>,
@@ -1019,6 +1033,7 @@ impl WithNode {
 }
 
 // parser/parseNodes.ts:750
+#[derive(Clone)]
 pub struct WithItemNodeDetails {
     pub expr: Cell<ExpressionNode>,
     pub target: Cell<Option<ExpressionNode>>,
@@ -1046,6 +1061,7 @@ impl WithItemNode {
 }
 
 // parser/parseNodes.ts:775
+#[derive(Clone)]
 pub struct DecoratorNodeDetails {
     pub expr: Cell<ExpressionNode>,
 }
@@ -1073,6 +1089,7 @@ impl DecoratorNode {
 }
 
 // parser/parseNodes.ts:801
+#[derive(Clone)]
 pub struct StatementListNodeDetails {
     pub first_token: Cell<P<Token>>,
     pub statements: RefCell<Vec<P<ParseNode>>>,
@@ -1142,6 +1159,7 @@ pub fn is_expression_node(node: &ParseNode) -> bool {
 }
 
 // parser/parseNodes.ts:913
+#[derive(Clone)]
 pub struct ErrorNodeDetails {
     pub category: Cell<ErrorExpressionCategory>,
     pub child: Cell<Option<ExpressionNode>>,
@@ -1192,6 +1210,7 @@ impl ErrorNode {
 }
 
 // parser/parseNodes.ts:962
+#[derive(Clone)]
 pub struct UnaryOperationNodeDetails {
     pub expr: Cell<ExpressionNode>,
     pub operator_token: Cell<P<Token>>,
@@ -1234,6 +1253,7 @@ impl UnaryOperationNode {
 }
 
 // parser/parseNodes.ts:996
+#[derive(Clone)]
 pub struct BinaryOperationNodeDetails {
     pub left_expr: Cell<ExpressionNode>,
     pub operator_token: Cell<P<Token>>,
@@ -1280,6 +1300,7 @@ impl BinaryOperationNode {
 }
 
 // parser/parseNodes.ts:1039
+#[derive(Clone)]
 pub struct AssignmentExpressionNodeDetails {
     pub name: Cell<NameNode>,
     pub walrus_token: Cell<P<Token>>,
@@ -1323,6 +1344,7 @@ impl AssignmentExpressionNode {
 }
 
 // parser/parseNodes.ts:1074
+#[derive(Clone)]
 pub struct AssignmentNodeDetails {
     pub left_expr: Cell<ExpressionNode>,
     pub right_expr: Cell<ExpressionNode>,
@@ -1370,6 +1392,7 @@ pub enum TypeParamKind {
 }
 
 // parser/parseNodes.ts:1113
+#[derive(Clone)]
 pub struct TypeParameterNodeDetails {
     pub name: Cell<NameNode>,
     pub type_param_kind: Cell<TypeParamKind>,
@@ -1417,6 +1440,7 @@ impl TypeParameterNode {
 }
 
 // parser/parseNodes.ts:1161
+#[derive(Clone)]
 pub struct TypeParameterListNodeDetails {
     pub params: RefCell<Vec<TypeParameterNode>>,
 }
@@ -1456,6 +1480,7 @@ impl TypeParameterListNode {
 }
 
 // parser/parseNodes.ts:1190
+#[derive(Clone)]
 pub struct TypeAliasNodeDetails {
     pub first_token: Cell<P<Token>>,
     pub name: Cell<NameNode>,
@@ -1500,6 +1525,7 @@ impl TypeAliasNode {
 }
 
 // parser/parseNodes.ts:1235
+#[derive(Clone)]
 pub struct TypeAnnotationNodeDetails {
     pub value_expr: Cell<ExpressionNode>,
     pub annotation: Cell<ExpressionNode>,
@@ -1538,6 +1564,7 @@ impl TypeAnnotationNode {
 }
 
 // parser/parseNodes.ts:1266
+#[derive(Clone)]
 pub struct FunctionAnnotationNodeDetails {
     pub is_ellipsis: Cell<bool>,
     pub param_annotations: RefCell<Vec<ExpressionNode>>,
@@ -1582,6 +1609,7 @@ impl FunctionAnnotationNode {
 }
 
 // parser/parseNodes.ts:1307
+#[derive(Clone)]
 pub struct AugmentedAssignmentNodeDetails {
     pub left_expr: Cell<ExpressionNode>,
     pub operator: Cell<OperatorType>,
@@ -1631,6 +1659,7 @@ impl AugmentedAssignmentNode {
 }
 
 // parser/parseNodes.ts:1353
+#[derive(Clone)]
 pub struct AwaitNodeDetails {
     pub expr: Cell<ExpressionNode>,
     pub await_token: Cell<P<Token>>,
@@ -1662,6 +1691,7 @@ impl AwaitNode {
 }
 
 // parser/parseNodes.ts:1381
+#[derive(Clone)]
 pub struct TernaryNodeDetails {
     pub if_expr: Cell<ExpressionNode>,
     pub test_expr: Cell<ExpressionNode>,
@@ -1700,6 +1730,7 @@ impl TernaryNode {
 }
 
 // parser/parseNodes.ts:1420
+#[derive(Clone)]
 pub struct UnpackNodeDetails {
     pub expr: Cell<ExpressionNode>,
     pub star_token: Cell<P<Token>>,
@@ -1729,6 +1760,7 @@ impl UnpackNode {
 }
 
 // parser/parseNodes.ts:1450
+#[derive(Clone)]
 pub struct TupleNodeDetails {
     pub items: RefCell<Vec<ExpressionNode>>,
     pub has_parens: Cell<bool>,
@@ -1757,6 +1789,7 @@ impl TupleNode {
 }
 
 // parser/parseNodes.ts:1476
+#[derive(Clone)]
 pub struct CallNodeDetails {
     pub left_expr: Cell<ExpressionNode>,
     pub args: RefCell<Vec<ArgumentNode>>,
@@ -1798,6 +1831,7 @@ impl CallNode {
 }
 
 // parser/parseNodes.ts:1513
+#[derive(Clone)]
 pub struct ComprehensionNodeDetails {
     pub expr: Cell<P<ParseNode>>,
     pub for_if_nodes: RefCell<Vec<ComprehensionForIfNode>>,
@@ -1829,6 +1863,7 @@ impl ComprehensionNode {
 }
 
 // parser/parseNodes.ts:1545
+#[derive(Clone)]
 pub struct IndexNodeDetails {
     pub left_expr: Cell<ExpressionNode>,
     pub items: RefCell<Vec<ArgumentNode>>,
@@ -1869,6 +1904,7 @@ impl IndexNode {
 }
 
 // parser/parseNodes.ts:1586
+#[derive(Clone)]
 pub struct SliceNodeDetails {
     pub start_value: Cell<Option<ExpressionNode>>,
     pub end_value: Cell<Option<ExpressionNode>>,
@@ -1895,6 +1931,7 @@ impl SliceNode {
 }
 
 // parser/parseNodes.ts:1610
+#[derive(Clone)]
 pub struct YieldNodeDetails {
     pub expr: Cell<Option<ExpressionNode>>,
 }
@@ -1927,6 +1964,7 @@ impl YieldNode {
 }
 
 // parser/parseNodes.ts:1637
+#[derive(Clone)]
 pub struct YieldFromNodeDetails {
     pub expr: Cell<ExpressionNode>,
 }
@@ -1954,6 +1992,7 @@ impl YieldFromNode {
 }
 
 // parser/parseNodes.ts:1663
+#[derive(Clone)]
 pub struct MemberAccessNodeDetails {
     pub left_expr: Cell<ExpressionNode>,
     pub member: Cell<NameNode>,
@@ -1988,6 +2027,7 @@ impl MemberAccessNode {
 }
 
 // parser/parseNodes.ts:1694
+#[derive(Clone)]
 pub struct LambdaNodeDetails {
     pub params: RefCell<Vec<ParameterNode>>,
     pub expr: Cell<ExpressionNode>,
@@ -2017,6 +2057,7 @@ impl LambdaNode {
 }
 
 // parser/parseNodes.ts:1724
+#[derive(Clone)]
 pub struct NameNodeDetails {
     pub token: Cell<IdentifierToken>,
     pub value: String,
@@ -2040,6 +2081,7 @@ impl NameNode {
 }
 
 // parser/parseNodes.ts:1750
+#[derive(Clone)]
 pub struct ConstantNodeDetails {
     pub const_type: Cell<KeywordType>,
 }
@@ -2061,6 +2103,7 @@ impl ConstantNode {
 }
 
 // parser/parseNodes.ts:1772
+#[derive(Clone)]
 pub struct EllipsisNodeDetails {}
 node_handle!(EllipsisNode, Ellipsis, EllipsisNodeDetails);
 
@@ -2079,6 +2122,7 @@ impl EllipsisNode {
 }
 
 // parser/parseNodes.ts:1790
+#[derive(Clone)]
 pub struct NumberNodeDetails {
     pub value: NumberValue,
     pub is_integer: Cell<bool>,
@@ -2104,6 +2148,7 @@ impl NumberNode {
 }
 
 // parser/parseNodes.ts:1818
+#[derive(Clone)]
 pub struct StringNodeDetails {
     pub token: Cell<StringToken>,
     pub value: JsString,
@@ -2128,6 +2173,7 @@ impl StringNode {
 
 // Used for both f-strings and t-strings
 // parser/parseNodes.ts:1845
+#[derive(Clone)]
 pub struct FormatStringNodeDetails {
     pub token: Cell<FStringStartToken>,
     pub middle_tokens: RefCell<Vec<FStringMiddleToken>>,
@@ -2182,6 +2228,7 @@ impl FormatStringNode {
 }
 
 // parser/parseNodes.ts:1902
+#[derive(Clone)]
 pub struct StringListNodeDetails {
     /// `StringNode | FormatStringNode`.
     pub strings: RefCell<Vec<P<ParseNode>>>,
@@ -2217,6 +2264,7 @@ impl StringListNode {
 }
 
 // parser/parseNodes.ts:1937
+#[derive(Clone)]
 pub struct DictionaryNodeDetails {
     pub items: RefCell<Vec<DictionaryEntryNode>>,
     pub trailing_comma_token: Cell<Option<P<Token>>>,
@@ -2241,6 +2289,7 @@ impl DictionaryNode {
 }
 
 // parser/parseNodes.ts:1963
+#[derive(Clone)]
 pub struct DictionaryKeyEntryNodeDetails {
     pub key_expr: Cell<ExpressionNode>,
     pub value_expr: Cell<ExpressionNode>,
@@ -2279,6 +2328,7 @@ impl DictionaryKeyEntryNode {
 }
 
 // parser/parseNodes.ts:1994
+#[derive(Clone)]
 pub struct DictionaryExpandEntryNodeDetails {
     pub expr: Cell<ExpressionNode>,
 }
@@ -2312,6 +2362,7 @@ impl DictionaryExpandEntryNode {
 pub type DictionaryEntryNode = P<ParseNode>;
 
 // parser/parseNodes.ts:2020
+#[derive(Clone)]
 pub struct SetNodeDetails {
     pub items: RefCell<Vec<ExpressionNode>>,
 }
@@ -2334,6 +2385,7 @@ impl SetNode {
 }
 
 // parser/parseNodes.ts:2040
+#[derive(Clone)]
 pub struct ListNodeDetails {
     pub items: RefCell<Vec<ExpressionNode>>,
 }
@@ -2365,6 +2417,7 @@ pub enum ArgCategory {
 }
 
 // parser/parseNodes.ts:2068
+#[derive(Clone)]
 pub struct ArgumentNodeDetails {
     pub arg_category: Cell<ArgCategory>,
     pub name: Cell<Option<NameNode>>,
@@ -2407,6 +2460,7 @@ impl ArgumentNode {
 }
 
 // parser/parseNodes.ts:2105
+#[derive(Clone)]
 pub struct DelNodeDetails {
     pub targets: RefCell<Vec<ExpressionNode>>,
 }
@@ -2428,6 +2482,7 @@ impl DelNode {
 }
 
 // parser/parseNodes.ts:2127
+#[derive(Clone)]
 pub struct PassNodeDetails {}
 node_handle!(PassNode, Pass, PassNodeDetails);
 
@@ -2446,6 +2501,7 @@ impl PassNode {
 }
 
 // parser/parseNodes.ts:2145
+#[derive(Clone)]
 pub struct ImportNodeDetails {
     pub list: RefCell<Vec<ImportAsNode>>,
     pub is_lazy: Cell<Option<bool>>,
@@ -2472,6 +2528,7 @@ impl ImportNode {
 }
 
 // parser/parseNodes.ts:2169
+#[derive(Clone)]
 pub struct ModuleNameNodeDetails {
     pub leading_dots: Cell<i32>,
     pub name_parts: RefCell<Vec<NameNode>>,
@@ -2500,6 +2557,7 @@ impl ModuleNameNode {
 }
 
 // parser/parseNodes.ts:2198
+#[derive(Clone)]
 pub struct ImportAsNodeDetails {
     pub module: Cell<ModuleNameNode>,
     pub alias: Cell<Option<NameNode>>,
@@ -2527,6 +2585,7 @@ impl ImportAsNode {
 }
 
 // parser/parseNodes.ts:2223
+#[derive(Clone)]
 pub struct ImportFromNodeDetails {
     pub module: Cell<ModuleNameNode>,
     pub imports: RefCell<Vec<ImportFromAsNode>>,
@@ -2572,6 +2631,7 @@ impl ImportFromNode {
 }
 
 // parser/parseNodes.ts:2261
+#[derive(Clone)]
 pub struct ImportFromAsNodeDetails {
     pub name: Cell<NameNode>,
     pub alias: Cell<Option<NameNode>>,
@@ -2599,6 +2659,7 @@ impl ImportFromAsNode {
 }
 
 // parser/parseNodes.ts:2286
+#[derive(Clone)]
 pub struct GlobalNodeDetails {
     pub targets: RefCell<Vec<NameNode>>,
 }
@@ -2621,6 +2682,7 @@ impl GlobalNode {
 }
 
 // parser/parseNodes.ts:2308
+#[derive(Clone)]
 pub struct NonlocalNodeDetails {
     pub targets: RefCell<Vec<NameNode>>,
 }
@@ -2643,6 +2705,7 @@ impl NonlocalNode {
 }
 
 // parser/parseNodes.ts:2330
+#[derive(Clone)]
 pub struct AssertNodeDetails {
     pub test_expr: Cell<ExpressionNode>,
     pub exception_expr: Cell<Option<ExpressionNode>>,
@@ -2676,6 +2739,7 @@ impl AssertNode {
 }
 
 // parser/parseNodes.ts:2357
+#[derive(Clone)]
 pub struct BreakNodeDetails {}
 node_handle!(BreakNode, Break, BreakNodeDetails);
 
@@ -2694,6 +2758,7 @@ impl BreakNode {
 }
 
 // parser/parseNodes.ts:2375
+#[derive(Clone)]
 pub struct ContinueNodeDetails {}
 node_handle!(ContinueNode, Continue, ContinueNodeDetails);
 
@@ -2712,6 +2777,7 @@ impl ContinueNode {
 }
 
 // parser/parseNodes.ts:2393
+#[derive(Clone)]
 pub struct ReturnNodeDetails {
     pub expr: Cell<Option<ExpressionNode>>,
 }
@@ -2734,6 +2800,7 @@ impl ReturnNode {
 }
 
 // parser/parseNodes.ts:2415
+#[derive(Clone)]
 pub struct RaiseNodeDetails {
     pub expr: Cell<Option<ExpressionNode>>,
     pub from_expr: Cell<Option<ExpressionNode>>,
@@ -2758,6 +2825,7 @@ impl RaiseNode {
 }
 
 // parser/parseNodes.ts:2438
+#[derive(Clone)]
 pub struct MatchNodeDetails {
     pub first_token: Cell<P<Token>>,
     pub expr: Cell<ExpressionNode>,
@@ -2789,6 +2857,7 @@ impl MatchNode {
 }
 
 // parser/parseNodes.ts:2470
+#[derive(Clone)]
 pub struct CaseNodeDetails {
     pub pattern: Cell<PatternAtomNode>,
     pub is_irrefutable: Cell<bool>,
@@ -2835,6 +2904,7 @@ impl CaseNode {
 }
 
 // parser/parseNodes.ts:2516
+#[derive(Clone)]
 pub struct PatternSequenceNodeDetails {
     pub entries: RefCell<Vec<PatternAsNode>>,
     pub star_entry_index: Cell<Option<i32>>,
@@ -2891,6 +2961,7 @@ impl PatternSequenceNode {
 }
 
 // parser/parseNodes.ts:2557
+#[derive(Clone)]
 pub struct PatternAsNodeDetails {
     pub or_patterns: RefCell<Vec<PatternAtomNode>>,
     pub target: Cell<Option<NameNode>>,
@@ -2933,6 +3004,7 @@ impl PatternAsNode {
 }
 
 // parser/parseNodes.ts:2596
+#[derive(Clone)]
 pub struct PatternLiteralNodeDetails {
     pub expr: Cell<ExpressionNode>,
 }
@@ -2962,6 +3034,7 @@ impl PatternLiteralNode {
 }
 
 // parser/parseNodes.ts:2620
+#[derive(Clone)]
 pub struct PatternClassNodeDetails {
     /// `NameNode | MemberAccessNode`.
     pub class_name: Cell<P<ParseNode>>,
@@ -3001,6 +3074,7 @@ impl PatternClassNode {
 }
 
 // parser/parseNodes.ts:2659
+#[derive(Clone)]
 pub struct PatternClassArgumentNodeDetails {
     pub name: Cell<Option<NameNode>>,
     pub pattern: Cell<PatternAsNode>,
@@ -3041,6 +3115,7 @@ impl PatternClassArgumentNode {
 }
 
 // parser/parseNodes.ts:2692
+#[derive(Clone)]
 pub struct PatternCaptureNodeDetails {
     pub target: Cell<NameNode>,
     pub is_star: Cell<bool>,
@@ -3082,6 +3157,7 @@ impl PatternCaptureNode {
 }
 
 // parser/parseNodes.ts:2726
+#[derive(Clone)]
 pub struct PatternMappingNodeDetails {
     pub entries: RefCell<Vec<PatternMappingEntryNode>>,
 }
@@ -3126,6 +3202,7 @@ impl PatternMappingNode {
 pub type PatternMappingEntryNode = P<ParseNode>;
 
 // parser/parseNodes.ts:2758
+#[derive(Clone)]
 pub struct PatternMappingKeyEntryNodeDetails {
     /// `PatternLiteralNode | PatternValueNode | ErrorNode`.
     pub key_pattern: Cell<P<ParseNode>>,
@@ -3166,6 +3243,7 @@ impl PatternMappingKeyEntryNode {
 }
 
 // parser/parseNodes.ts:2793
+#[derive(Clone)]
 pub struct PatternMappingExpandEntryNodeDetails {
     pub target: Cell<NameNode>,
 }
@@ -3202,6 +3280,7 @@ impl PatternMappingExpandEntryNode {
 }
 
 // parser/parseNodes.ts:2819
+#[derive(Clone)]
 pub struct PatternValueNodeDetails {
     pub expr: Cell<MemberAccessNode>,
 }
