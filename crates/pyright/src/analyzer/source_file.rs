@@ -1092,7 +1092,7 @@ impl SourceFile {
             }
 
             // Avoid importing module from the module file itself.
-            if import_result.resolved_uris.is_empty() || import_result.resolved_uris[0] != self.uri {
+            if import_result.resolved_uris.is_empty() || !Uri::ptr_eq(import_result.resolved_uris[0], self.uri) {
                 imports.push(import_result);
                 return Some(import_result);
             }

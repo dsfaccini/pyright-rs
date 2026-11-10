@@ -15,7 +15,7 @@
 
 use std::cell::{Cell, RefCell};
 
-use jsrt::{JsMap, JsSet, JsStr, P};
+use jsrt::{FxHashSet, JsMap, JsSet, JsStr, P};
 
 use crate::parser::tokenizer::Tokenizer;
 use crate::analyzer::import_logger::ImportLogger;
@@ -380,15 +380,11 @@ impl ImportResolver {
             .map(|p| self.file_system().real_case_path(p))
             .collect();
 
-            // Remove duplicates (yes, it happens). pyright's `Set` compares
-            // Uri objects, which match keys while `createFileUri`'s LRU holds them.
-            *self._cached_python_search_paths.borrow_mut() = Some(
-                paths
-                    .into_iter()
-                    .collect::<JsSet<Uri>>()
-                    .into_iter()
-                    .collect(),
-            );
+            // Remove duplicates (yes, it happens). `new Set(paths)` compares
+            // the Uri objects by identity and keeps the first of each.
+            let mut seen: FxHashSet<usize> = FxHashSet::default();
+            *self._cached_python_search_paths.borrow_mut() =
+                Some(paths.into_iter().filter(|p| seen.insert(p.object_id())).collect());
         }
 
         self._cached_python_search_paths
@@ -1852,13 +1848,11 @@ impl ImportResolver {
         // If a library is fully py.typed, then we have found the best match,
         // unless the execution environment is typeshed itself, in which case
         // we don't want to favor py.typed libraries. Use the typeshed lookup below.
-        // pyright compares the Uri objects with `!==`, which matches keys
-        // while `createFileUri`'s LRU holds them.
-        if exec_env.root
-            != self
-                ._get_typeshed_info_provider()
-                .get_typeshed_root(config_options.typeshed_path, import_logger)
-        {
+        // pyright compares the Uri objects with `!==`.
+        if !Uri::ptr_eq_opt(
+            exec_env.root,
+            self._get_typeshed_info_provider().get_typeshed_root(config_options.typeshed_path, import_logger),
+        ) {
             if best_result_so_far
                 .as_ref()
                 .is_some_and(|b| b.py_typed_info.is_some() && !b.is_partly_resolved)

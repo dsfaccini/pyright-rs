@@ -2,7 +2,7 @@
 
 use jsrt::JsStr;
 use jsrt::vscode_uri::URI;
-use jsrt::{FxHashMap, P};
+use jsrt::P;
 
 use crate::common::path_utils::{
     ensure_trailing_directory_separator, get_directory_path, get_file_extension, get_file_name,
@@ -10,6 +10,7 @@ use crate::common::path_utils::{
     resolve_paths, strip_file_extension,
 };
 use crate::common::uri::base_uri::combine_path_elements;
+use crate::common::uri::memoization::cache_static_func;
 use crate::common::uri::uri::{Uri, UriData, UriKind};
 
 // common/uri/fileUri.ts:32
@@ -21,15 +22,6 @@ pub struct FileUriData {
     pub(crate) is_case_sensitive: bool,
 }
 
-type CacheKey = (String, String, String, Option<String>, bool);
-
-thread_local! {
-    /// `@cacheStaticFunc` on `createFileUri`. Pyright keeps the newest 8192
-    /// entries; this cache keeps all of them. Equal arguments give an equal
-    /// Uri either way, and no caller compares Uris by identity.
-    static FILE_URI_CACHE: std::cell::RefCell<FxHashMap<CacheKey, Uri>> = Default::default();
-}
-
 // common/uri/fileUri.ts:84
 pub fn create_file_uri(
     file_path: &str,
@@ -38,20 +30,24 @@ pub fn create_file_uri(
     original_string: Option<&str>,
     is_case_sensitive: bool,
 ) -> Uri {
-    // The memoization key stringifies `undefined` as an empty string.
-    let cache_key: CacheKey = (
-        file_path.to_string(),
-        query.to_string(),
-        fragment.to_string(),
-        original_string
-            .filter(|s| !s.is_empty())
-            .map(str::to_string),
-        is_case_sensitive,
+    // `@cacheStaticFunc`: `undefined?.toString()` joins as an empty string.
+    let cache_key = format!(
+        "createFileUri+{file_path},{query},{fragment},{},{is_case_sensitive}",
+        original_string.unwrap_or("")
     );
-    if let Some(uri) = FILE_URI_CACHE.with(|c| c.borrow().get(&cache_key).copied()) {
-        return uri;
-    }
+    cache_static_func(cache_key, || {
+        create_file_uri_uncached(file_path, query, fragment, original_string, is_case_sensitive)
+    })
+}
 
+/// The body of `createFileUri`, which `cacheStaticFunc` wraps.
+fn create_file_uri_uncached(
+    file_path: &str,
+    query: &str,
+    fragment: &str,
+    original_string: Option<&str>,
+    is_case_sensitive: bool,
+) -> Uri {
     let file_path = if is_disk_path_root(file_path) {
         ensure_trailing_directory_separator(file_path)
     } else {
@@ -71,9 +67,7 @@ pub fn create_file_uri(
         original_string: original_string.map(str::to_string),
         is_case_sensitive,
     };
-    let uri = Uri(P::new(UriData::new(key, UriKind::File(data))));
-    FILE_URI_CACHE.with(|c| c.borrow_mut().insert(cache_key, uri));
-    uri
+    Uri(P::new(UriData::new(key, UriKind::File(data))))
 }
 
 // common/uri/fileUri.ts:316
