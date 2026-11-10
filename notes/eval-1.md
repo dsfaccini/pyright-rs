@@ -9,6 +9,7 @@
 - `tools/stubgen` install (`merge.ts`, `check.ts`): an unported `todo!()` item or a generated struct or enum at a marker the new stub has is regenerated, so a signature or field change no longer reads as dropped code.
 - `TypeVarTransformer` (typeUtils.ts:3687) is a trait class (`[traits]`, receiver `&mut self`): `apply` and the transform methods call the six subclasses' overrides through `this`. Generator rule: a `&mut self` trait-class method's callback receives `&mut Self` (`do_for_each_constraint_set`), in the trait and in each implementation. Six override `recursionCount` number sites reviewed as `u32`.
 - `validate_type_var_default(.., invalid_type_vars: &mut JsSet<String>)` (typemap `[sites]`, was `&JsSet`): `TypeVarDefaultValidator` adds to the caller's set (typeUtils.ts:4271) and the caller reads it back (typeEvaluator.ts:19681); the set moves into the validator for `apply` and back.
+- `tools/stubgen` install (`merge.ts`, `check.ts`): a ported crate file is the base of the merge; only unported items change, nothing else is rewritten or reformatted, and a marked local function inside a ported body is part of that body. On main (3d0b74d) `--install` changes no file.
 
 ## Shared-file edits
 

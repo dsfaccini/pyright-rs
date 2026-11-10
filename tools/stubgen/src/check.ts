@@ -95,32 +95,6 @@ function ensureModDecl(srcRoot: string, rel: string) {
 
 // Code lines of a crate file outside the given line ranges that the new stub does not hold: what a
 // merge would drop. Imports, attributes and comments do not count.
-function codeOutside(text: string, ranges: [number, number][], stub: string): string[] {
-    const stubLines = new Set(stub.split('\n').map((l) => l.trim()));
-    const lines = text.split('\n');
-    const out: string[] = [];
-    let inUse = false;
-    lines.forEach((l, i) => {
-        if (ranges.some(([a, b]) => i >= a && i <= b)) {
-            return;
-        }
-        const t = l.trim();
-        if (inUse) {
-            inUse = !t.endsWith(';');
-            return;
-        }
-        if (/^(pub\s+)?use\s/.test(t)) {
-            inUse = !t.endsWith(';');
-            return;
-        }
-        if (t === '' || t.startsWith('//') || t.startsWith('#') || stubLines.has(t)) {
-            return;
-        }
-        out.push(`${i + 1}: ${t}`);
-    });
-    return out;
-}
-
 export interface Placement {
     // Stubs written, relative to the source root.
     placed: string[];
@@ -128,8 +102,10 @@ export interface Placement {
     superseded: string[];
     // Ported functions carried into the stub, per file.
     merged: string[];
-    // Merge failures: ported code at no stub marker.
+    // Merge failures: the install changes nothing when there is one.
     lost: string[];
+    // What a merge kept as it was or could not place, per file: the owner's to resolve.
+    warnings: string[];
 }
 
 function crateModPath(rel: string): string {
@@ -139,7 +115,7 @@ function crateModPath(rel: string): string {
 // Writes a run's stubs under `targetSrc`. A crate file (under `crateSrc`) with ported functions
 // either supersedes its stub (a run that does not install) or is merged into it (an installed run).
 export function placeStubs(runDir: string, crateSrc: string, targetSrc: string, install: boolean): Placement {
-    const res: Placement = { placed: [], superseded: [], merged: [], lost: [] };
+    const res: Placement = { placed: [], superseded: [], merged: [], lost: [], warnings: [] };
     for (const f of walk(path.join(runDir, 'stubs'))) {
         const rel = path.relative(path.join(runDir, 'stubs'), f);
         const target = path.join(targetSrc, rel);
@@ -154,14 +130,20 @@ export function placeStubs(runDir: string, crateSrc: string, targetSrc: string, 
         const crateText = existsSync(real) ? readFileSync(real, 'utf8') : '';
         const m = mergePorted(text, crateText, crateModPath(rel));
         // A crate file with no ported function at a marker (a skeleton, a placeholder, an
-        // unchanged stub) is replaced.
+        // unchanged stub) is replaced; a ported one changes only in its unported items.
         if (install && (m.kept.length > 0 || m.lost.length > 0)) {
-            const dropped = [...m.lost.map((l) => `ported function at ${l} has no stub marker`), ...codeOutside(crateText, [...m.keptRanges, ...m.regeneratedRanges], m.text)];
-            if (dropped.length) {
-                res.lost.push(...dropped.map((d) => `${rel}: ${d}`));
-                continue;
+            res.warnings.push(
+                ...m.lost.map((l) => `${rel}: ported function at ${l} has no stub marker; kept as is`),
+                ...m.pending.map((l) => `${rel}: not placed: ${l}`)
+            );
+            const changes = [
+                m.updated.length ? `updated ${m.updated.join(', ')}` : '',
+                m.inserted.length ? `inserted ${m.inserted.join(', ')}` : '',
+                m.removed.length ? `removed ${m.removed.join(', ')}` : '',
+            ].filter((x) => x);
+            if (changes.length) {
+                res.merged.push(`${rel}: ${changes.join('; ')}`);
             }
-            res.merged.push(`${rel}: ${m.kept.join(', ')}`);
             text = m.text;
         }
         mkdirSync(path.dirname(target), { recursive: true });
@@ -172,10 +154,7 @@ export function placeStubs(runDir: string, crateSrc: string, targetSrc: string, 
         }
         res.placed.push(rel);
     }
-    const fmt = spawnSync('rustfmt', ['--edition', '2024', ...res.placed.map((r) => path.join(targetSrc, r))], { encoding: 'utf8' });
-    if (fmt.status !== 0) {
-        res.lost.push(`rustfmt failed: ${fmt.stderr}`);
-    }
+    // No rustfmt here: the generator formats the stubs, and a ported file keeps its own layout.
     return res;
 }
 
@@ -289,8 +268,9 @@ export function checkRun(repoRoot: string, runDir: string, install: boolean): bo
         `cargo check -p pyright: ${r.status === 0 ? 'pass' : 'FAIL'} (${errors.length} error lines, ${warnings.length} warning lines)`,
         `files placed: ${placed.length}; ported crate files used instead of placeholders: ${keptReal.join(', ') || 'none'}`,
         `stubs not placed because the crate file is already ported: ${superseded.join(', ') || 'none'}`,
-        `ported functions merged into their stubs: ${placement.merged.join('; ') || 'none'}`,
+        `unported items a merge changed in ported files: ${placement.merged.join('; ') || 'none'}`,
         `ported code a merge would drop (the stub was not placed): ${placement.lost.join('; ') || 'none'}`,
+        `merge warnings (kept as is or not placed, for the file's owner): ${placement.warnings.join('; ') || 'none'}`,
         `items missing from ported files, served from placeholders (needed from their owners): ${filled.join('; ') || 'none'}`,
         `jsrt items shimmed (needed from the jsrt owner): ${shimmed.join(', ') || 'none'}`,
         `jsrt items with no shim: ${missing.join(', ') || 'none'}`,
@@ -318,11 +298,24 @@ export function installRun(repoRoot: string, runDir: string): boolean {
         console.error(`install: not installed; ported code a merge would drop:\n${p.lost.join('\n')}`);
         return false;
     }
+    let written = 0;
     for (const rel of p.placed) {
-        mkdirSync(path.dirname(path.join(src, rel)), { recursive: true });
-        writeFileSync(path.join(src, rel), readFileSync(path.join(scratch, rel)));
+        const dest = path.join(src, rel);
+        const text = readFileSync(path.join(scratch, rel));
+        // An unchanged file is not rewritten.
+        if (!existsSync(dest) || !readFileSync(dest).equals(text)) {
+            mkdirSync(path.dirname(dest), { recursive: true });
+            writeFileSync(dest, text);
+            written++;
+        }
         ensureModDecl(src, rel);
     }
-    console.log(`installed ${p.placed.length} files into crates/pyright/src; merged: ${p.merged.join('; ') || 'none'}`);
+    console.log(`installed ${p.placed.length} files into crates/pyright/src, ${written} changed`);
+    for (const m of p.merged) {
+        console.log(`  ${m}`);
+    }
+    if (p.warnings.length) {
+        console.log(`merge warnings (kept as is or not placed, for the file's owner):\n  ${p.warnings.join('\n  ')}`);
+    }
     return true;
 }

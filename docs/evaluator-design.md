@@ -294,9 +294,11 @@ A run writes `out/<run>/stubs/`, one module per stubbed file, and `out/<run>/dep
 A run with `install = true` (`runs.toml`) is installed into `crates/pyright/src` by `stubgen --run <run> --install`, and its check places the same files:
 
 - a crate file with no ported function at a marker (a skeleton, a placeholder, an unchanged stub) is replaced;
-- a crate file with ported functions is merged: each ported function replaces the stub function at its marker, and its imports are added (`tools/stubgen/src/merge.ts`). `declaration_utils.rs` keeps `has_type_for_declaration` and `are_declarations_same` this way;
-- the install refuses, and changes nothing, when the merge would drop code: a ported function at no stub marker, or a crate line the new stub lacks. Lines of an unported `todo!()` item, and of a generated struct or enum, whose marker the new stub has are regenerated, not dropped: a signature or field type changed through the table installs.
-- a ported function keeps its own signature. After a signature change, update each ported function's signature by hand.
+- a crate file with ported functions is the base of its merge (`tools/stubgen/src/merge.ts`), and only its unported items change: a `todo!()` function or static, or a generated struct or enum, takes the stub's text when it differs; a new stub item goes in after its predecessor; an unported item the stub no longer has is removed. Its header, imports, ported functions and every other line stay byte for byte. An unchanged file is not rewritten, and the install runs no rustfmt;
+- an item is a marker plus the function, static, struct or enum under it, keyed by marker and kind. A marked item inside another (a local function in a ported body) belongs to the outer one;
+- a ported function keeps its own signature. After a signature change, update each ported function's signature by hand;
+- what the merge cannot place is reported and left alone: a ported function whose marker the stub lost, a new item with no placed predecessor, and stub lines outside items that the file lacks (impl headers, accessors, `[items]` blocks). The file's owner adds those by hand;
+- an import that a changed or inserted item names and the file lacks is added after the file's last import.
 
 A run without `install` is a record: a ported crate file supersedes its stub.
 - Where a ported file chose a shape the rules would not give, `typemap.toml` records it: `TextRangeCollection<T>` keeps its generic, `ConsoleInterface` is a trait.
