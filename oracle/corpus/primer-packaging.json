@@ -1,0 +1,15 @@
+{
+    "corpus": "primer-packaging",
+    "description": "mypy_primer project packaging with no dependencies installed, its own pyright config, and the mypy_primer paths.",
+    "cwd": "~/pyright-rs-data/corpus/primer/packaging",
+    "args": [
+        "--pythonpath",
+        "~/pyright-rs-data/corpus/primer/packaging-venv/bin/python",
+        "src"
+    ],
+    "pin": {
+        "repo": "https://github.com/pypa/packaging",
+        "commit": "b1c439b0f1fb1a8c541a5f0770946983c5d38b8c",
+        "python": "3.13"
+    }
+}

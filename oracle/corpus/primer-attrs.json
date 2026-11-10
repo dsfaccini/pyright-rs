@@ -1,0 +1,17 @@
+{
+    "corpus": "primer-attrs",
+    "description": "mypy_primer project attrs with no dependencies installed, its own pyright config, and the mypy_primer paths.",
+    "cwd": "~/pyright-rs-data/corpus/primer/attrs",
+    "args": [
+        "--pythonpath",
+        "~/pyright-rs-data/corpus/primer/attrs-venv/bin/python",
+        "src/attrs",
+        "src/attr",
+        "typing_tests"
+    ],
+    "pin": {
+        "repo": "https://github.com/python-attrs/attrs",
+        "commit": "9d9f94a043de7fc4012459853a4ed597a5577855",
+        "python": "3.13"
+    }
+}

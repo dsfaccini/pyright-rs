@@ -1,0 +1,16 @@
+{
+    "corpus": "typeshed",
+    "description": "The typeshed stdlib stubs bundled with the checker, checked as project files.",
+    "cwd": "~/pyright-rs-data/corpus/typeshed",
+    "pyrightconfig": {
+        "pythonVersion": "3.13",
+        "pythonPlatform": "Linux"
+    },
+    "args": [
+        "-p",
+        "pyrightconfig.json",
+        "--pythonpath",
+        "~/pyright-rs-data/venvs/plain/bin/python",
+        "{typeshed}/stdlib"
+    ]
+}

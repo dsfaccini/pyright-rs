@@ -1,0 +1,16 @@
+{
+    "corpus": "samples",
+    "description": "pyright's test samples at the spec commit, checked as one program.",
+    "cwd": "~/pyright-rs-data/corpus/samples",
+    "pyrightconfig": {
+        "pythonVersion": "3.13",
+        "pythonPlatform": "Linux"
+    },
+    "args": [
+        "-p",
+        "pyrightconfig.json",
+        "--pythonpath",
+        "~/pyright-rs-data/venvs/plain/bin/python",
+        "~/pyright/packages/pyright-internal/src/tests/samples"
+    ]
+}

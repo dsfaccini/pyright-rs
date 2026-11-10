@@ -1,0 +1,15 @@
+{
+    "corpus": "primer-more-itertools",
+    "description": "mypy_primer project more-itertools with no dependencies installed, its own pyright config, and the mypy_primer paths.",
+    "cwd": "~/pyright-rs-data/corpus/primer/more-itertools",
+    "args": [
+        "--pythonpath",
+        "~/pyright-rs-data/corpus/primer/more-itertools-venv/bin/python",
+        "more_itertools"
+    ],
+    "pin": {
+        "repo": "https://github.com/more-itertools/more-itertools",
+        "commit": "ceafee8ce96f4bc1eb74c528bc247c91d648a0bb",
+        "python": "3.13"
+    }
+}
