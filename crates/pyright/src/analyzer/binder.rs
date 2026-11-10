@@ -1808,8 +1808,8 @@ impl ParseTreeVisitor<bool> for Binder {
                 node.d().test_expr.get(),
                 &this._file_info.execution_environment,
                 &this._file_info.defined_constants,
-                &this._typing_import_aliases,
-                &this._sys_import_aliases,
+                Some(&this._typing_import_aliases),
+                Some(&this._sys_import_aliases),
             );
             this._node_info.set_static_condition_value(node, const_expr_value);
 
@@ -1857,8 +1857,8 @@ impl ParseTreeVisitor<bool> for Binder {
             node.d().test_expr.get(),
             &self._file_info.execution_environment,
             &self._file_info.defined_constants,
-            &self._typing_import_aliases,
-            &self._sys_import_aliases,
+            Some(&self._typing_import_aliases),
+            Some(&self._sys_import_aliases),
         );
 
         let pre_loop_label = self._create_loop_label();
@@ -3778,8 +3778,8 @@ impl Binder {
             expression,
             &self._file_info.execution_environment,
             &self._file_info.defined_constants,
-            &self._typing_import_aliases,
-            &self._sys_import_aliases,
+            Some(&self._typing_import_aliases),
+            Some(&self._sys_import_aliases),
         );
         if (static_value == Some(true) && flags.any(FlowFlags::FalseCondition))
             || (static_value == Some(false) && flags.any(FlowFlags::TrueCondition))
@@ -4245,12 +4245,10 @@ impl Binder {
         let scoped_expressions = self.cur_code_flow_expressions();
 
         if let Some(saved_expressions) = saved_expressions {
-            if saved_expressions != scoped_expressions {
-                let values: Vec<String> = scoped_expressions.borrow().iter().cloned().collect();
-                let mut saved = saved_expressions.borrow_mut();
-                for value in values {
-                    saved.insert(value);
-                }
+            let values: Vec<String> = scoped_expressions.borrow().iter().cloned().collect();
+            let mut saved = saved_expressions.borrow_mut();
+            for value in values {
+                saved.insert(value);
             }
         }
 
