@@ -18,7 +18,6 @@ use crate::parser::parse_nodes::{
     ArgumentNode, CallNode, ClassNode, ExpressionNode, NameNode, ParseNode,
 };
 use jsrt::{JsSet, P};
-use std::rc::Rc;
 
 // analyzer/dataClasses.ts:91
 pub(crate) fn get_inherited_data_class_slots_names(class_type: ClassType) -> JsSet<String> {

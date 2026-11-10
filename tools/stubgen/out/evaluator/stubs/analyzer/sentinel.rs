@@ -15,7 +15,6 @@ use crate::analyzer::type_evaluator_types::Arg;
 use crate::analyzer::types::{ClassType, Type};
 use crate::parser::parse_nodes::ExpressionNode;
 use jsrt::P;
-use std::rc::Rc;
 
 // analyzer/sentinel.ts:19
 pub fn create_sentinel_type(

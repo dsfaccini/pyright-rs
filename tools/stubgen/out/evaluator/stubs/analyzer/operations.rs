@@ -20,7 +20,6 @@ use crate::parser::parse_nodes::{
 };
 use crate::parser::tokenizer_types::OperatorType;
 use jsrt::{JsMap, P};
-use std::rc::Rc;
 
 thread_local! {
     // analyzer/operations.ts:67

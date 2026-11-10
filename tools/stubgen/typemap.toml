@@ -68,6 +68,9 @@ Promise = "$0"
 # `srcDetails` parameter. Its one caller (28256) passes a local fresh from getParamListDetails
 # (28248, 28251); no array, field or longer-lived variable holds one, so `&mut` reaches every holder.
 "analyzer/parameterUtils.ts:ParamListDetails" = "value"
+# Written only through the `checkState` parameter chain from its creator (protocols.ts:324, 572, 637);
+# no holder keeps it, so `&mut` is the whole path (docs/evaluator-design.md, section 3, "objects").
+"analyzer/protocols.ts:ProtocolCompatibilityCheckState" = "value"
 # TypeResult, EffectiveTypeResult and other results keep the default (handle): the evaluator
 # caches the object and writes it after storing it (typeEvaluator.ts:1348-1353, 24668, 25483).
 # Rewritten from behavior (PLAN.md): one Rust type, its shape chosen by whoever ports common/uri.

@@ -17,7 +17,6 @@ use crate::analyzer::types::{ClassType, Type};
 use crate::parser::parse_nodes::{ExpressionNode, ParseNode};
 use jsrt::P;
 use std::cell::RefCell;
-use std::rc::Rc;
 
 // analyzer/enums.ts:40
 #[derive(Clone)]
