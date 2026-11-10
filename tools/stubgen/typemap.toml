@@ -73,6 +73,9 @@ Promise = "$0"
 "analyzer/protocols.ts:ProtocolCompatibilityCheckState" = "value"
 # TypeResult, EffectiveTypeResult and other results keep the default (handle): the evaluator
 # caches the object and writes it after storing it (typeEvaluator.ts:1348-1353, 24668, 25483).
+# Written in place after its caller handed it on (typeEvaluator.ts:1251, 15248, 15855, tuples.ts:159):
+# every holder of the context sees the write, so it is shared, not copied.
+"analyzer/typeUtils.ts:InferenceContext" = "handle"
 # Rewritten from behavior (PLAN.md): one Rust type, its shape chosen by whoever ports common/uri.
 "common/uri/uri.ts:Uri" = "opaque"
 
@@ -205,6 +208,11 @@ interface = "analyzer/codeFlowEngine.ts:CodeFlowAnalyzer"
 "analyzer/types.ts:FunctionDetailsShared.parameters" = "jsrt::P<std::cell::RefCell<Vec<crate::analyzer::types::FunctionParam>>>"
 "analyzer/types.ts:SpecializedFunctionTypes.parameterTypes" = "jsrt::P<std::cell::RefCell<Vec<jsrt::P<crate::analyzer::types::Type>>>>"
 "analyzer/types.ts:SpecializedFunctionTypes.parameterDefaultTypes" = "Option<jsrt::P<std::cell::RefCell<Vec<Option<jsrt::P<crate::analyzer::types::Type>>>>>>"
+# A type alias caches its variance array before inferring it and fills it in place
+# (typeEvaluator.ts:8355-8484): a re-entrant read during the traversal sees the partial array.
+"analyzer/types.ts:TypeAliasSharedInfo.computedVariance" = "Option<jsrt::P<std::cell::RefCell<Vec<crate::analyzer::types::Variance>>>>"
+"analyzer/typeEvaluator.ts:createTypeEvaluator.inferVarianceForTypeAlias.return" = "Option<jsrt::P<std::cell::RefCell<Vec<crate::analyzer::types::Variance>>>>"
+"analyzer/typeEvaluator.ts:createTypeEvaluator.updateUsageVariancesRecursive.usageVariances" = "jsrt::P<std::cell::RefCell<Vec<crate::analyzer::types::Variance>>>"
 # Getters that return live state their callers write to.
 "analyzer/types.ts:TypeBase.addProps.return" = "std::cell::RefMut<'static, crate::analyzer::types::TypeBaseProps>"
 # The type caches are passed by reference to the speculative type tracker, which deletes from the

@@ -705,14 +705,14 @@ impl TypeEvaluator {
         node: P<ParseNode>,
         type_result: P<TypeResult>,
         flags: Option<EvalFlags>,
-        inference_context: Option<&InferenceContext>,
+        inference_context: Option<P<InferenceContext>>,
         allow_speculative_caching: bool,
     ) {
         let use_type_form_cache = flags.is_some_and(|flags| (flags & EvalFlags::TypeFormArg) != EvalFlags::None)
-            || inference_context.is_some_and(|context| self.expected_type_wants_type_form(context.expected_type));
+            || inference_context.is_some_and(|context| self.expected_type_wants_type_form(context.expected_type.get()));
 
         if use_type_form_cache {
-            let expected_type = inference_context.map(|context| context.expected_type);
+            let expected_type = inference_context.map(|context| context.expected_type.get());
 
             // Speculative TypeForm results are not retained, so they must not invalidate
             // persistent incomplete entries through the global generation counter.
@@ -773,7 +773,7 @@ impl TypeEvaluator {
                     node,
                     type_result,
                     self.incomplete_gen_count.get(),
-                    inference_context.map(|context| context.expected_type),
+                    inference_context.map(|context| context.expected_type.get()),
                 );
             }
         }
@@ -975,9 +975,9 @@ impl TypeEvaluator {
 
                         let type_alias_info = type_alias_type.props.borrow().as_ref().and_then(|props| props.type_alias_info.clone());
                         if let Some(type_alias_info) = type_alias_info {
-                            let computed_variance = type_alias_info.shared.computed_variance.borrow().clone();
+                            let computed_variance = type_alias_info.shared.computed_variance.get();
                             if let Some(computed_variance) = computed_variance {
-                                let computed_variance = computed_variance[type_param_index];
+                                let computed_variance = computed_variance.borrow()[type_param_index];
 
                                 type_ = Some(TypeVarType::clone_with_computed_variance(type_var_type, computed_variance).0);
                             }
@@ -1223,21 +1223,20 @@ impl TypeEvaluator {
         &self,
         node: ExpressionNode,
         flags: EvalFlags,
-        mut inference_context: Option<&mut InferenceContext>,
+        inference_context: Option<P<InferenceContext>>,
     ) -> P<TypeResult> {
         let mut flags = flags;
         let mut use_type_form_cache = flags.any(EvalFlags::TypeFormArg);
-        if let Some(inference_context) = inference_context.as_deref_mut() {
-            inference_context.expected_type =
-                analyzer::type_utils::transform_possible_recursive_type_alias(
-                    Some(inference_context.expected_type),
+        if let Some(inference_context) = inference_context {
+            inference_context.expected_type.set(analyzer::type_utils::transform_possible_recursive_type_alias(
+                    Some(inference_context.expected_type.get()),
                     0,
                 )
-                .unwrap();
+                .unwrap());
             use_type_form_cache = use_type_form_cache
-                || self.expected_type_wants_type_form(inference_context.expected_type);
+                || self.expected_type_wants_type_form(inference_context.expected_type.get());
 
-            if self.expected_type_requires_type_form(inference_context.expected_type) {
+            if self.expected_type_requires_type_form(inference_context.expected_type.get()) {
                 flags |= EvalFlags::TypeFormArg;
             }
         }
@@ -1247,7 +1246,7 @@ impl TypeEvaluator {
         }
 
         // Is this type already cached?
-        let expected_type = inference_context.as_deref().map(|c| c.expected_type);
+        let expected_type = inference_context.map(|c| c.expected_type.get());
         let cache_entry = if use_type_form_cache {
             self.read_type_form_type_cache_entry(node, expected_type)
                 .map(|entry| (entry.type_result, entry.incomplete_gen_count))
@@ -1333,7 +1332,7 @@ impl TypeEvaluator {
         self.initialize_prefetched_types(node);
 
         let mut type_result =
-            self.get_type_of_expression_core(node, flags, inference_context.as_deref_mut());
+            self.get_type_of_expression_core(node, flags, inference_context);
 
         // Should we disable type promotions for bytes?
         let result_type = type_result.type_.get();
@@ -1355,10 +1354,10 @@ impl TypeEvaluator {
             }
         }
 
-        if let Some(inference_context) = inference_context.as_deref() {
+        if let Some(inference_context) = inference_context {
             // Handle TypeForm assignments.
             type_result.type_.set(
-                self.convert_to_type_form_type(inference_context.expected_type, type_result.type_.get()),
+                self.convert_to_type_form_type(inference_context.expected_type.get(), type_result.type_.get()),
             );
         }
 
@@ -1371,7 +1370,7 @@ impl TypeEvaluator {
             node,
             type_result,
             Some(flags),
-            inference_context.as_deref(),
+            inference_context,
             allow_speculative_caching,
         );
 
@@ -1386,11 +1385,11 @@ impl TypeEvaluator {
         }
 
         // If there was an expected type, make sure that the result type is compatible.
-        if let Some(inference_context) = inference_context.as_deref() {
-            if !analyzer::types::is_any_or_unknown(inference_context.expected_type)
-                && !analyzer::types::is_never(inference_context.expected_type)
+        if let Some(inference_context) = inference_context {
+            if !analyzer::types::is_any_or_unknown(inference_context.expected_type.get())
+                && !analyzer::types::is_never(inference_context.expected_type.get())
             {
-                self.add_expected_type_cache_entry(node, inference_context.expected_type);
+                self.add_expected_type_cache_entry(node, inference_context.expected_type.get());
 
                 if !type_result.is_incomplete.get().unwrap_or(false)
                     && type_result.expected_type_diag_addendum.get().is_none()
@@ -1399,7 +1398,7 @@ impl TypeEvaluator {
 
                     // Make sure the resulting type is assignable to the expected type.
                     if !self.assign_type(
-                        inference_context.expected_type,
+                        inference_context.expected_type.get(),
                         type_result.type_.get(),
                         Some(diag),
                         None,
@@ -1452,7 +1451,7 @@ impl TypeEvaluator {
         &self,
         node: ExpressionNode,
         flags: EvalFlags,
-        mut inference_context: Option<&mut InferenceContext>,
+        inference_context: Option<P<InferenceContext>>,
     ) -> P<TypeResult> {
         use parser::parse_nodes::ParseNodeType as NT;
 
@@ -1477,7 +1476,7 @@ impl TypeEvaluator {
             NT::Call => {
                 let call_node = CallNode::cast(node).unwrap();
                 type_result = Some(self.use_signature_tracker(node, &mut || {
-                    self.get_type_of_call(call_node, flags, inference_context.as_deref_mut())
+                    self.get_type_of_call(call_node, flags, inference_context)
                 }));
             }
 
@@ -1486,7 +1485,7 @@ impl TypeEvaluator {
                     self,
                     parser::parse_nodes::TupleNode::cast(node).unwrap(),
                     flags,
-                    inference_context.as_deref(),
+                    inference_context,
                     &self.node_info,
                 ));
             }
@@ -1506,7 +1505,7 @@ impl TypeEvaluator {
                 type_result = Some(self.get_type_of_string_list(
                     StringListNode::cast(node).unwrap(),
                     flags,
-                    inference_context.as_deref(),
+                    inference_context,
                 ));
             }
 
@@ -1524,7 +1523,7 @@ impl TypeEvaluator {
                     self,
                     parser::parse_nodes::UnaryOperationNode::cast(node).unwrap(),
                     flags,
-                    inference_context.as_deref(),
+                    inference_context,
                 ));
             }
 
@@ -1545,7 +1544,7 @@ impl TypeEvaluator {
                     self,
                     binary_node,
                     effective_flags,
-                    inference_context.as_deref(),
+                    inference_context,
                     &self.node_info,
                 ));
             }
@@ -1554,7 +1553,7 @@ impl TypeEvaluator {
                 type_result = Some(analyzer::operations::get_type_of_augmented_assignment(
                     self,
                     AugmentedAssignmentNode::cast(node).unwrap(),
-                    inference_context.as_deref(),
+                    inference_context,
                 ));
             }
 
@@ -1562,7 +1561,7 @@ impl TypeEvaluator {
                 type_result = Some(self.get_type_of_list_or_set(
                     node,
                     flags,
-                    inference_context.as_deref(),
+                    inference_context,
                 ));
             }
 
@@ -1574,7 +1573,7 @@ impl TypeEvaluator {
                 type_result = Some(self.get_type_of_await_operator(
                     AwaitNode::cast(node).unwrap(),
                     flags,
-                    inference_context.as_deref(),
+                    inference_context,
                 ));
             }
 
@@ -1583,7 +1582,7 @@ impl TypeEvaluator {
                     self,
                     parser::parse_nodes::TernaryNode::cast(node).unwrap(),
                     flags,
-                    inference_context.as_deref_mut(),
+                    inference_context,
                     &self.node_info,
                 ));
             }
@@ -1592,7 +1591,7 @@ impl TypeEvaluator {
                 type_result = Some(self.get_type_of_comprehension(
                     ComprehensionNode::cast(node).unwrap(),
                     flags,
-                    inference_context.as_deref(),
+                    inference_context,
                 ));
             }
 
@@ -1600,14 +1599,14 @@ impl TypeEvaluator {
                 type_result = Some(self.get_type_of_dictionary(
                     DictionaryNode::cast(node).unwrap(),
                     flags,
-                    inference_context.as_deref(),
+                    inference_context,
                 ));
             }
 
             NT::Lambda => {
                 type_result = Some(self.get_type_of_lambda(
                     LambdaNode::cast(node).unwrap(),
-                    inference_context.as_deref_mut(),
+                    inference_context,
                 ));
             }
 
@@ -1616,7 +1615,7 @@ impl TypeEvaluator {
                 let assigned_type_result = self.get_type_of_expression(
                     assignment_node.d().right_expr.get(),
                     flags,
-                    inference_context.as_deref_mut(),
+                    inference_context,
                 );
                 type_result = Some(assigned_type_result);
                 self.assign_type_to_expression(
@@ -1644,7 +1643,7 @@ impl TypeEvaluator {
                 let assigned_type_result = self.get_type_of_expression(
                     assignment_node.d().right_expr.get(),
                     flags,
-                    inference_context.as_deref_mut(),
+                    inference_context,
                 );
                 type_result = Some(assigned_type_result);
                 self.assign_type_to_expression(
@@ -1670,7 +1669,7 @@ impl TypeEvaluator {
                 type_result = Some(self.get_type_of_unpack_operator(
                     UnpackNode::cast(node).unwrap(),
                     flags,
-                    inference_context.as_deref(),
+                    inference_context,
                 ));
             }
 
@@ -1889,7 +1888,7 @@ impl TypeEvaluator {
         &self,
         node: AwaitNode,
         flags: EvalFlags,
-        inference_context: Option<&InferenceContext>,
+        inference_context: Option<P<InferenceContext>>,
     ) -> P<TypeResult> {
         if flags.any(EvalFlags::TypeExpression) {
             self.add_diagnostic(
@@ -1904,7 +1903,7 @@ impl TypeEvaluator {
         let expected_type = inference_context.map(|inference_context| {
             self.create_awaitable_return_type(
                 node.node(),
-                inference_context.expected_type,
+                inference_context.expected_type.get(),
                 /* isGenerator */ false,
                 /* useCoroutine */ false,
             )
@@ -1913,7 +1912,7 @@ impl TypeEvaluator {
         let expr_type_result = self.get_type_of_expression(
             node.d().expr.get(),
             flags,
-            analyzer::type_utils::make_inference_context(expected_type, None, None).as_mut(),
+            analyzer::type_utils::make_inference_context(expected_type, None, None),
         );
         let awaitable_result =
             self.get_type_of_awaitable(expr_type_result, Some(node.d().expr.get()));
@@ -1999,7 +1998,7 @@ impl TypeEvaluator {
         &self,
         node: UnpackNode,
         flags: EvalFlags,
-        inference_context: Option<&InferenceContext>,
+        inference_context: Option<P<InferenceContext>>,
     ) -> P<TypeResult> {
         let type_result;
         let mut iter_expected_type: Option<P<Type>> = None;
@@ -2011,7 +2010,7 @@ impl TypeEvaluator {
                     ClassType::clone_as_instance(
                         ClassType::specialize(
                             ClassType(iterable_type),
-                            Some(&[inference_context.expected_type]),
+                            Some(&[inference_context.expected_type.get()]),
                             None,
                             false,
                             None,
@@ -2027,7 +2026,7 @@ impl TypeEvaluator {
         let iter_type_result = self.get_type_of_expression(
             node.d().expr.get(),
             flags,
-            analyzer::type_utils::make_inference_context(iter_expected_type, None, None).as_mut(),
+            analyzer::type_utils::make_inference_context(iter_expected_type, None, None),
         );
         let iter_type = iter_type_result.type_.get();
         if !flags.any(EvalFlags::NoTypeVarTuple)
@@ -2085,7 +2084,7 @@ impl TypeEvaluator {
         &self,
         node: StringListNode,
         flags: EvalFlags,
-        inference_context: Option<&InferenceContext>,
+        inference_context: Option<P<InferenceContext>>,
     ) -> P<TypeResult> {
         use parser::tokenizer_types::StringTokenFlags;
 
@@ -2232,7 +2231,7 @@ impl TypeEvaluator {
         let wants_type_form = flags.any(EvalFlags::TypeFormArg)
             || match inference_context {
                 Some(inference_context) => {
-                    self.expected_type_wants_type_form(inference_context.expected_type)
+                    self.expected_type_wants_type_form(inference_context.expected_type.get())
                 }
                 None => false,
             };
@@ -11055,8 +11054,8 @@ impl TypeEvaluator {
                 if flags.any(EvalFlags::EnforceVarianceConsistency) {
                     let usage_variances = self.infer_variance_for_type_alias(alias_base_type);
                     if let Some(usage_variances) = usage_variances {
-                        if index < usage_variances.len() {
-                            let usage_variance = usage_variances[index];
+                        if index < usage_variances.borrow().len() {
+                            let usage_variance = usage_variances.borrow()[index];
 
                             if !analyzer::type_utils::is_variance_of_type_arg_compatible(
                                 type_arg_type,
@@ -11192,7 +11191,10 @@ impl TypeEvaluator {
     }
 
     // analyzer/typeEvaluator.ts:8355
-    pub(crate) fn infer_variance_for_type_alias(&self, type_: P<Type>) -> Option<Vec<Variance>> {
+    pub(crate) fn infer_variance_for_type_alias(
+        &self,
+        type_: P<Type>,
+    ) -> Option<P<RefCell<Vec<Variance>>>> {
         todo!()
     }
 
@@ -11203,7 +11205,7 @@ impl TypeEvaluator {
         &self,
         type_: P<Type>,
         type_alias_type_params: &[TypeVarType],
-        usage_variances: &mut Vec<Variance>,
+        usage_variances: P<RefCell<Vec<Variance>>>,
         variance_context: Variance,
         pending_types: &mut Vec<P<Type>>,
         recursion_count: u32,
@@ -11267,7 +11269,7 @@ impl TypeEvaluator {
         &self,
         node: CallNode,
         flags: EvalFlags,
-        inference_context: Option<&mut InferenceContext>,
+        inference_context: Option<P<InferenceContext>>,
     ) -> P<TypeResult> {
         todo!()
     }
@@ -11277,7 +11279,7 @@ impl TypeEvaluator {
     pub(crate) fn get_type_of_lambda_for_call(
         &self,
         node: CallNode,
-        inference_context: Option<&InferenceContext>,
+        inference_context: Option<P<InferenceContext>>,
     ) -> P<TypeResult> {
         todo!()
     }
@@ -11342,7 +11344,7 @@ impl TypeEvaluator {
     pub(crate) fn get_type_of_assert_type(
         &self,
         node: CallNode,
-        inference_context: Option<&mut InferenceContext>,
+        inference_context: Option<P<InferenceContext>>,
     ) -> P<TypeResult> {
         todo!()
     }
@@ -11356,7 +11358,7 @@ impl TypeEvaluator {
     pub(crate) fn get_type_of_reveal_type(
         &self,
         node: CallNode,
-        inference_context: Option<&mut InferenceContext>,
+        inference_context: Option<P<InferenceContext>>,
     ) -> P<TypeResult> {
         todo!()
     }
@@ -11384,7 +11386,7 @@ impl TypeEvaluator {
         arg_param_matches: &[P<MatchArgsToParamsResult>],
         constraints: Option<P<ConstraintTracker>>,
         skip_unknown_arg_check: Option<bool>,
-        inference_context: Option<&InferenceContext>,
+        inference_context: Option<P<InferenceContext>>,
     ) -> CallResult {
         todo!()
     }
@@ -11488,7 +11490,7 @@ impl TypeEvaluator {
         type_result: P<TypeResult>,
         constraints: Option<P<ConstraintTracker>>,
         skip_unknown_arg_check: Option<bool>,
-        inference_context: Option<&InferenceContext>,
+        inference_context: Option<P<InferenceContext>>,
     ) -> CallResult {
         todo!()
     }
@@ -11516,7 +11518,7 @@ impl TypeEvaluator {
         call_type_result: P<TypeResult>,
         constraints: Option<P<ConstraintTracker>>,
         skip_unknown_arg_check: Option<bool>,
-        inference_context: Option<&InferenceContext>,
+        inference_context: Option<P<InferenceContext>>,
         recursion_count: u32,
     ) -> CallResult {
         todo!()
@@ -11533,7 +11535,7 @@ impl TypeEvaluator {
         is_call_type_incomplete: bool,
         constraints: Option<P<ConstraintTracker>>,
         skip_unknown_arg_check: Option<bool>,
-        inference_context: Option<&InferenceContext>,
+        inference_context: Option<P<InferenceContext>>,
         recursion_count: u32,
     ) -> CallResult {
         todo!()
@@ -11548,7 +11550,7 @@ impl TypeEvaluator {
         is_call_type_incomplete: bool,
         constraints: Option<P<ConstraintTracker>>,
         skip_unknown_arg_check: Option<bool>,
-        inference_context: Option<&InferenceContext>,
+        inference_context: Option<P<InferenceContext>>,
     ) -> CallResult {
         todo!()
     }
@@ -11571,7 +11573,7 @@ impl TypeEvaluator {
         is_call_type_incomplete: bool,
         constraints: Option<P<ConstraintTracker>>,
         skip_unknown_arg_check: Option<bool>,
-        inference_context: Option<&InferenceContext>,
+        inference_context: Option<P<InferenceContext>>,
     ) -> CallResult {
         todo!()
     }
@@ -11584,7 +11586,7 @@ impl TypeEvaluator {
         expanded_call_type: ClassType,
         unexpanded_call_type: P<Type>,
         skip_unknown_arg_check: Option<bool>,
-        inference_context: Option<&InferenceContext>,
+        inference_context: Option<P<InferenceContext>>,
     ) -> CallResult {
         todo!()
     }
@@ -11598,7 +11600,7 @@ impl TypeEvaluator {
         unexpanded_call_type: P<Type>,
         constraints: Option<P<ConstraintTracker>>,
         skip_unknown_arg_check: Option<bool>,
-        inference_context: Option<&InferenceContext>,
+        inference_context: Option<P<InferenceContext>>,
         recursion_count: u32,
     ) -> CallResult {
         todo!()
@@ -11638,7 +11640,7 @@ impl TypeEvaluator {
         match_results: P<MatchArgsToParamsResult>,
         constraints: P<ConstraintTracker>,
         skip_unknown_arg_check: bool,
-        inference_context: Option<&InferenceContext>,
+        inference_context: Option<P<InferenceContext>>,
     ) -> CallResult {
         todo!()
     }
@@ -11696,7 +11698,7 @@ impl TypeEvaluator {
         type_result: P<TypeResult>,
         constraints: Option<P<ConstraintTracker>>,
         skip_unknown_arg_check: bool,
-        inference_context: Option<&InferenceContext>,
+        inference_context: Option<P<InferenceContext>>,
     ) -> CallResult {
         todo!()
     }
@@ -11859,7 +11861,7 @@ impl TypeEvaluator {
         method_name: &str,
         arg_list: &[P<TypeResult>],
         error_node: ExpressionNode,
-        inference_context: Option<&InferenceContext>,
+        inference_context: Option<P<InferenceContext>>,
         diag: Option<P<DiagnosticAddendum>>,
     ) -> Option<P<TypeResult>> {
         todo!()
@@ -11870,7 +11872,7 @@ impl TypeEvaluator {
         &self,
         node: DictionaryNode,
         flags: EvalFlags,
-        inference_context: Option<&InferenceContext>,
+        inference_context: Option<P<InferenceContext>>,
     ) -> P<TypeResult> {
         todo!()
     }
@@ -11881,17 +11883,16 @@ impl TypeEvaluator {
         &self,
         node: DictionaryNode,
         flags: EvalFlags,
-        inference_context: &mut InferenceContext,
+        inference_context: P<InferenceContext>,
         expected_diag_addendum: Option<P<DiagnosticAddendum>>,
     ) -> Option<P<TypeResult>> {
-        inference_context.expected_type =
-            analyzer::type_utils::transform_possible_recursive_type_alias(
-                Some(inference_context.expected_type),
+        inference_context.expected_type.set(analyzer::type_utils::transform_possible_recursive_type_alias(
+                Some(inference_context.expected_type.get()),
                 0,
             )
-            .unwrap();
+            .unwrap());
         let mut concrete_expected_type =
-            self.make_top_level_type_vars_concrete(inference_context.expected_type, false, None);
+            self.make_top_level_type_vars_concrete(inference_context.expected_type.get(), false, None);
 
         if !analyzer::types::is_class_instance(concrete_expected_type) {
             return None;
@@ -11964,9 +11965,9 @@ impl TypeEvaluator {
         let expected_key_type: P<Type>;
         let expected_value_type: P<Type>;
 
-        if analyzer::types::is_any_or_unknown(inference_context.expected_type) {
-            expected_key_type = inference_context.expected_type;
-            expected_value_type = inference_context.expected_type;
+        if analyzer::types::is_any_or_unknown(inference_context.expected_type.get()) {
+            expected_key_type = inference_context.expected_type.get();
+            expected_value_type = inference_context.expected_type.get();
         } else {
             let built_in_dict = self.get_built_in_object(node.0, "dict", None);
             if !analyzer::types::is_class_instance(built_in_dict) {
@@ -11977,7 +11978,7 @@ impl TypeEvaluator {
             if !analyzer::constraint_solver::add_constraints_for_expected_type(
                 self,
                 ClassType(built_in_dict),
-                inference_context.expected_type,
+                inference_context.expected_type.get(),
                 dict_constraints,
                 Some(&self.get_type_var_scopes_for_node(node.0)),
                 Some(node.start.get()),
@@ -12006,8 +12007,8 @@ impl TypeEvaluator {
         // cannot be narrowed further. Other super-types like Mapping, Collection,
         // and Iterable use covariant value types, so they can be narrowed.
         let mut is_value_type_invariant = false;
-        if analyzer::types::is_class_instance(inference_context.expected_type) {
-            let type_params = ClassType(inference_context.expected_type)
+        if analyzer::types::is_class_instance(inference_context.expected_type.get()) {
+            let type_params = ClassType(inference_context.expected_type.get())
                 .d()
                 .shared
                 .get()
@@ -12045,7 +12046,7 @@ impl TypeEvaluator {
         }
 
         let specialized_key_type = self.infer_type_arg_from_expected_entry_type(
-            &analyzer::type_utils::make_inference_context(Some(expected_key_type), None, None)
+            analyzer::type_utils::make_inference_context(Some(expected_key_type), None, None)
                 .unwrap(),
             &key_types
                 .iter()
@@ -12054,7 +12055,7 @@ impl TypeEvaluator {
             /* isNarrowable */ false,
         );
         let specialized_value_type = self.infer_type_arg_from_expected_entry_type(
-            &analyzer::type_utils::make_inference_context(Some(expected_value_type), None, None)
+            analyzer::type_utils::make_inference_context(Some(expected_value_type), None, None)
                 .unwrap(),
             &value_types
                 .iter()
@@ -12294,8 +12295,7 @@ impl TypeEvaluator {
                         }),
                         None,
                         None,
-                    )
-                    .as_mut(),
+                    ),
                 );
 
                 if key_type_result.is_incomplete.get().unwrap_or(false) {
@@ -12324,7 +12324,7 @@ impl TypeEvaluator {
                 }
 
                 let mut value_type_result: P<TypeResult>;
-                let mut entry_inference_context: Option<InferenceContext>;
+                let entry_inference_context: Option<P<InferenceContext>>;
 
                 let typed_dict_key = expected_typed_dict_entries.and_then(|entries| {
                     if !analyzer::types::is_class_instance(key_type) {
@@ -12379,7 +12379,7 @@ impl TypeEvaluator {
                     value_type_result = self.get_type_of_expression(
                         value_expr,
                         flags | EvalFlags::StripTupleLiterals,
-                        entry_inference_context.as_mut(),
+                        entry_inference_context,
                     );
                 } else {
                     let mut effective_value_type =
@@ -12404,11 +12404,11 @@ impl TypeEvaluator {
                     value_type_result = self.get_type_of_expression(
                         value_expr,
                         flags | EvalFlags::StripTupleLiterals,
-                        entry_inference_context.as_mut(),
+                        entry_inference_context,
                     );
                 }
 
-                if let Some(entry_inference_context) = &entry_inference_context {
+                if let Some(entry_inference_context) = entry_inference_context {
                     if !value_type_result.type_errors.get().unwrap_or(false) {
                         let from_expected_type = self.infer_type_arg_from_expected_entry_type(
                             entry_inference_context,
@@ -12507,15 +12507,15 @@ impl TypeEvaluator {
                     }
                 }
 
-                let mut entry_inference_context =
+                let entry_inference_context =
                     analyzer::type_utils::make_inference_context(expected_type, None, None);
                 let mut unexpanded_type_result = self.get_type_of_expression(
                     entry_node.d().expr.get(),
                     flags | EvalFlags::StripTupleLiterals,
-                    entry_inference_context.as_mut(),
+                    entry_inference_context,
                 );
 
-                if let Some(entry_inference_context) = &entry_inference_context {
+                if let Some(entry_inference_context) = entry_inference_context {
                     if !unexpanded_type_result.type_errors.get().unwrap_or(false) {
                         let from_expected_type = self.infer_type_arg_from_expected_entry_type(
                             entry_inference_context,
@@ -12706,7 +12706,7 @@ impl TypeEvaluator {
         &self,
         node: P<ParseNode>,
         flags: EvalFlags,
-        inference_context: Option<&InferenceContext>,
+        inference_context: Option<P<InferenceContext>>,
     ) -> P<TypeResult> {
         if flags.any(EvalFlags::TypeExpression)
             && node.node_type == parser::parse_nodes::ParseNodeType::List
@@ -12734,16 +12734,16 @@ impl TypeEvaluator {
 
         // If the expected type is a union, recursively call for each of the subtypes
         // to find one that matches.
-        let mut expected_type = inference_context.map(|c| c.expected_type);
+        let mut expected_type = inference_context.map(|c| c.expected_type.get());
 
         if let Some(inference_context) =
-            inference_context.filter(|c| analyzer::types::is_union(c.expected_type))
+            inference_context.filter(|c| analyzer::types::is_union(c.expected_type.get()))
         {
             let mut matching_subtype: Option<P<Type>> = None;
             let mut matching_subtype_result: Option<P<TypeResult>> = None;
 
             analyzer::type_utils::do_for_each_subtype(
-                inference_context.expected_type,
+                inference_context.expected_type.get(),
                 &mut |subtype, _, _| {
                     // Use shortcut if we've already found a match.
                     if let Some(matching_subtype_result) = matching_subtype_result {
@@ -12758,7 +12758,7 @@ impl TypeEvaluator {
                             self.get_type_of_list_or_set_with_context(
                                 node,
                                 flags,
-                                &mut analyzer::type_utils::make_inference_context(
+                                analyzer::type_utils::make_inference_context(
                                     Some(subtype),
                                     None,
                                     None,
@@ -12805,7 +12805,7 @@ impl TypeEvaluator {
             let result = self.get_type_of_list_or_set_with_context(
                 node,
                 flags,
-                &mut analyzer::type_utils::make_inference_context(Some(expected_type), None, None)
+                analyzer::type_utils::make_inference_context(Some(expected_type), None, None)
                     .unwrap(),
             );
             if let Some(result) = result {
@@ -12834,19 +12834,18 @@ impl TypeEvaluator {
         &self,
         node: P<ParseNode>,
         flags: EvalFlags,
-        inference_context: &mut InferenceContext,
+        inference_context: P<InferenceContext>,
     ) -> Option<P<TypeResult>> {
         let built_in_class_name = if node.node_type == parser::parse_nodes::ParseNodeType::List {
             "list"
         } else {
             "set"
         };
-        inference_context.expected_type =
-            analyzer::type_utils::transform_possible_recursive_type_alias(
-                Some(inference_context.expected_type),
+        inference_context.expected_type.set(analyzer::type_utils::transform_possible_recursive_type_alias(
+                Some(inference_context.expected_type.get()),
                 0,
             )
-            .unwrap();
+            .unwrap());
 
         let mut is_incomplete = false;
         let mut type_errors = false;
@@ -12883,8 +12882,7 @@ impl TypeEvaluator {
                         Some(expected_entry_type),
                         None,
                         None,
-                    )
-                    .as_mut(),
+                    ),
                 )
             };
 
@@ -12916,8 +12914,8 @@ impl TypeEvaluator {
 
         let mut is_type_invariant = false;
 
-        if analyzer::types::is_class_instance(inference_context.expected_type) {
-            let expected_class = ClassType(inference_context.expected_type);
+        if analyzer::types::is_class_instance(inference_context.expected_type.get()) {
+            let expected_class = ClassType(inference_context.expected_type.get());
             self.infer_variance_for_class(expected_class);
 
             let type_params = expected_class.d().shared.get().type_params.borrow().clone();
@@ -12930,7 +12928,7 @@ impl TypeEvaluator {
         }
 
         let Some(specialized_entry_type) = self.infer_type_arg_from_expected_entry_type(
-            &analyzer::type_utils::make_inference_context(Some(expected_entry_type), None, None)
+            analyzer::type_utils::make_inference_context(Some(expected_entry_type), None, None)
                 .unwrap(),
             &entry_types,
             !is_type_invariant,
@@ -12958,18 +12956,18 @@ impl TypeEvaluator {
         &self,
         node: P<ParseNode>,
         expected_class_type: Option<P<Type>>,
-        inference_context: Option<&InferenceContext>,
+        inference_context: Option<P<InferenceContext>>,
     ) -> Option<P<Type>> {
         let inference_context = inference_context?;
 
         let expected_class_type =
             expected_class_type.filter(|t| analyzer::types::is_instantiable_class(*t))?;
 
-        if analyzer::types::is_any_or_unknown(inference_context.expected_type) {
-            return Some(inference_context.expected_type);
+        if analyzer::types::is_any_or_unknown(inference_context.expected_type.get()) {
+            return Some(inference_context.expected_type.get());
         }
 
-        if !analyzer::types::is_class_instance(inference_context.expected_type) {
+        if !analyzer::types::is_class_instance(inference_context.expected_type.get()) {
             return None;
         }
 
@@ -12977,7 +12975,7 @@ impl TypeEvaluator {
         if !analyzer::constraint_solver::add_constraints_for_expected_type(
             self,
             ClassType::clone_as_instance(ClassType(expected_class_type), true),
-            inference_context.expected_type,
+            inference_context.expected_type.get(),
             constraints,
             Some(&self.get_type_var_scopes_for_node(node)),
             Some(node.start.get()),
@@ -13190,17 +13188,17 @@ impl TypeEvaluator {
     // analyzer/typeEvaluator.ts:16079
     pub(crate) fn infer_type_arg_from_expected_entry_type(
         &self,
-        inference_context: &InferenceContext,
+        inference_context: P<InferenceContext>,
         entry_types: &[P<Type>],
         is_narrowable: bool,
     ) -> Option<P<Type>> {
         // If the expected type is Any, the resulting type becomes Any.
-        if analyzer::types::is_any(inference_context.expected_type) {
-            return Some(inference_context.expected_type);
+        if analyzer::types::is_any(inference_context.expected_type.get()) {
+            return Some(inference_context.expected_type.get());
         }
 
         let constraints = ConstraintTracker::new();
-        let expected_type = inference_context.expected_type;
+        let expected_type = inference_context.expected_type.get();
         let mut is_compatible = true;
 
         for entry_type in entry_types {
@@ -13226,7 +13224,7 @@ impl TypeEvaluator {
             let combined_types = analyzer::types::combine_types(entry_types, None);
             return Some(
                 if analyzer::type_utils::contains_literal_type(
-                    inference_context.expected_type,
+                    inference_context.expected_type.get(),
                     false,
                 ) {
                     combined_types
@@ -13238,7 +13236,7 @@ impl TypeEvaluator {
 
         Some(analyzer::type_utils::map_subtypes(
             self.solve_and_apply_constraints(
-                inference_context.expected_type,
+                inference_context.expected_type.get(),
                 constraints,
                 Some(&ApplyTypeVarOptions {
                     type_class_type: None,
@@ -13340,8 +13338,7 @@ impl TypeEvaluator {
             let expr_result = self.get_type_of_expression(
                 expr,
                 /* flags */ EvalFlags::None,
-                analyzer::type_utils::make_inference_context(expected_yield_type, None, None)
-                    .as_mut(),
+                analyzer::type_utils::make_inference_context(expected_yield_type, None, None),
             );
             if expr_result.is_incomplete.get().unwrap_or(false) {
                 is_incomplete = true;
@@ -13419,12 +13416,12 @@ impl TypeEvaluator {
     pub(crate) fn get_type_of_lambda(
         &self,
         node: LambdaNode,
-        mut inference_context: Option<&mut InferenceContext>,
+        inference_context: Option<P<InferenceContext>>,
     ) -> P<TypeResult> {
         let mut expected_function_types: Vec<FunctionType> = Vec::new();
-        if let Some(inference_context) = inference_context.as_deref() {
+        if let Some(inference_context) = inference_context {
             analyzer::type_utils::map_subtypes(
-                inference_context.expected_type,
+                inference_context.expected_type.get(),
                 &mut |subtype| {
                     if analyzer::types::is_function(subtype) {
                         expected_function_types.push(FunctionType(subtype));
@@ -13471,7 +13468,7 @@ impl TypeEvaluator {
                 let result = self.get_type_of_lambda_with_expected_type(
                     node,
                     Some(subtype),
-                    inference_context.as_deref_mut(),
+                    inference_context,
                     /* forceSpeculative */ true,
                 );
 
@@ -13499,7 +13496,7 @@ impl TypeEvaluator {
         &self,
         node: LambdaNode,
         expected_type: Option<FunctionType>,
-        mut inference_context: Option<&mut InferenceContext>,
+        inference_context: Option<P<InferenceContext>>,
         force_speculative: bool,
     ) -> P<TypeResult> {
         let mut is_incomplete = inference_context
@@ -13595,7 +13592,7 @@ impl TypeEvaluator {
                             self.get_type_of_expression(
                                 default_value,
                                 EvalFlags::None,
-                                inference_context.as_deref_mut(),
+                                inference_context,
                             )
                             .type_
                             .get(),
@@ -13711,7 +13708,7 @@ impl TypeEvaluator {
             None
         };
         let speculative_options = SpeculativeModeOptions {
-            dependent_type: inference_context.as_deref().map(|c| c.expected_type),
+            dependent_type: inference_context.map(|c| c.expected_type.get()),
             allow_diagnostics: Some(
                 !force_speculative
                     && !self.can_skip_diagnostic_for_node(node.0)
@@ -13724,8 +13721,7 @@ impl TypeEvaluator {
                 let return_type_result = self.get_type_of_expression(
                     node.d().expr.get(),
                     /* flags */ EvalFlags::None,
-                    analyzer::type_utils::make_inference_context(expected_return_type, None, None)
-                        .as_mut(),
+                    analyzer::type_utils::make_inference_context(expected_return_type, None, None),
                 );
 
                 *function_type
@@ -13815,7 +13811,7 @@ impl TypeEvaluator {
         &self,
         node: ComprehensionNode,
         flags: EvalFlags,
-        inference_context: Option<&InferenceContext>,
+        inference_context: Option<P<InferenceContext>>,
     ) -> P<TypeResult> {
         let mut is_incomplete = false;
         let mut type_errors = false;
@@ -14055,8 +14051,7 @@ impl TypeEvaluator {
             let key_type_result = self.get_type_of_expression(
                 expr.d().key_expr.get(),
                 flags,
-                analyzer::type_utils::make_inference_context(expected_key_type, None, None)
-                    .as_mut(),
+                analyzer::type_utils::make_inference_context(expected_key_type, None, None),
             );
             if key_type_result.is_incomplete.get().unwrap_or(false) {
                 is_incomplete = true;
@@ -14078,8 +14073,7 @@ impl TypeEvaluator {
                     expected_value_or_element_type,
                     None,
                     None,
-                )
-                .as_mut(),
+                ),
             );
             if value_type_result.is_incomplete.get().unwrap_or(false) {
                 is_incomplete = true;
@@ -14119,8 +14113,7 @@ impl TypeEvaluator {
                     expected_value_or_element_type,
                     None,
                     None,
-                )
-                .as_mut(),
+                ),
             );
         } else if parser::parse_nodes::is_expression_node(node.0.get()) {
             let expr_type_result = self.get_type_of_expression(
@@ -14130,8 +14123,7 @@ impl TypeEvaluator {
                     expected_value_or_element_type,
                     None,
                     None,
-                )
-                .as_mut(),
+                ),
             );
             if expr_type_result.is_incomplete.get().unwrap_or(false) {
                 is_incomplete = true;
@@ -16765,7 +16757,7 @@ impl TypeEvaluator {
                 let src_type_result = self.get_type_of_expression(
                     right_expr,
                     flags,
-                    analyzer::type_utils::make_inference_context(declared_type, None, None).as_mut(),
+                    analyzer::type_utils::make_inference_context(declared_type, None, None),
                 );
 
                 let mut right_hand_type = src_type_result.type_.get();
@@ -16891,7 +16883,7 @@ impl TypeEvaluator {
             type_var_scope_id: type_var_scope_id.clone(),
             is_type_alias_type,
             type_params: RefCell::new(None),
-            computed_variance: RefCell::new(None),
+            computed_variance: Cell::new(None),
         })));
         placeholder.d().priv_.borrow_mut().scope_id = Some(type_var_scope_id);
 
@@ -18732,7 +18724,7 @@ impl TypeEvaluator {
                         P::new_eval(TypeResult::new(init_subclass_method_type)),
                         /* constraints */ None,
                         /* skipUnknownArgCheck */ Some(false),
-                        analyzer::type_utils::make_inference_context(Some(self.get_none_type()), None, None).as_ref(),
+                        analyzer::type_utils::make_inference_context(Some(self.get_none_type()), None, None),
                         0,
                     );
 
@@ -19100,7 +19092,7 @@ impl TypeEvaluator {
     pub fn get_type_of_arg(
         &self,
         arg: &Arg,
-        inference_context: Option<&mut InferenceContext>,
+        inference_context: Option<P<InferenceContext>>,
     ) -> P<TypeResult> {
         let arg_type_result = match arg {
             Arg::ArgWithType(arg) => Some(arg.type_result),
@@ -24171,7 +24163,7 @@ impl TypeEvaluator {
 
         let mut is_assignable = true;
         let src_type_args = src_alias_info.type_args.clone().unwrap();
-        let variances = dest_alias_info.shared.computed_variance.borrow().clone();
+        let variances = dest_alias_info.shared.computed_variance.get();
 
         let dest_type_args = dest_alias_info.type_args.clone().unwrap();
         for (index, &dest_type_arg) in dest_type_args.iter().enumerate() {
@@ -24182,8 +24174,8 @@ impl TypeEvaluator {
             };
 
             let mut adj_flags = flags;
-            let variance = match &variances {
-                Some(variances) if index < variances.len() => variances[index],
+            let variance = match variances {
+                Some(variances) if index < variances.borrow().len() => variances.borrow()[index],
                 _ => Variance::Covariant,
             };
 

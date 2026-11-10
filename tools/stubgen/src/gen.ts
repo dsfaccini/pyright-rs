@@ -348,6 +348,36 @@ export class Gen {
         return parts.join('; ');
     }
 
+    // Parameters of each interface or class type through which some code writes a field, directly or
+    // by passing the parameter on to one that does (the write analysis follows calls). A value-mode
+    // type with such a parameter loses the write at the caller: the callee writes its own copy.
+    private writtenThroughParams?: Map<ts.Node, string[]>;
+
+    writtenThroughParamSites(key: string): string[] {
+        if (!this.writtenThroughParams) {
+            const byDecl = new Map<ts.Node, string[]>();
+            for (const p of this.writes.writtenThrough) {
+                if (!ts.isParameter(p)) {
+                    continue;
+                }
+                const t = this.checker.getNonNullableType(this.checker.getTypeAtLocation(p));
+                const fn = p.parent;
+                const fnName = fn.name && (ts.isIdentifier(fn.name) || ts.isPrivateIdentifier(fn.name)) ? fn.name.text : '<anonymous>';
+                const sf = p.getSourceFile();
+                const line = sf.getLineAndCharacterOfPosition(p.getStart(sf)).line + 1;
+                const site = `${fnName}(${p.name.getText()}) at ${sf.fileName.replace(/.*\/src\//, '')}:${line}`;
+                for (const part of t.isUnion() ? t.types : [t]) {
+                    const d = part.flags & ts.TypeFlags.Object ? part.getSymbol()?.declarations?.[0] : undefined;
+                    if (d && (ts.isInterfaceDeclaration(d) || ts.isClassDeclaration(d)) && !d.getSourceFile().isDeclarationFile) {
+                        byDecl.set(d, [...(byDecl.get(d) ?? []), site]);
+                    }
+                }
+            }
+            this.writtenThroughParams = byDecl;
+        }
+        return (this.decls.get(key) ?? []).flatMap((d) => this.writtenThroughParams?.get(d) ?? []);
+    }
+
     // Where code compares two objects of this type with `===`, if anywhere.
     identityComparedAt(key: string): string | undefined {
         for (const d of this.decls.get(key) ?? []) {

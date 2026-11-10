@@ -37,7 +37,7 @@ pub fn get_type_of_tuple(
     evaluator: &TypeEvaluator,
     node: TupleNode,
     flags: EvalFlags,
-    inference_context: Option<&InferenceContext>,
+    inference_context: Option<P<InferenceContext>>,
     node_info: &AnalyzerNodeInfoAccessor,
 ) -> P<TypeResult> {
     todo!()
@@ -48,7 +48,7 @@ pub fn get_type_of_tuple_with_context(
     evaluator: &TypeEvaluator,
     node: TupleNode,
     flags: EvalFlags,
-    inference_context: &mut InferenceContext,
+    inference_context: P<InferenceContext>,
     node_info: &AnalyzerNodeInfoAccessor,
 ) -> Option<P<TypeResult>> {
     todo!()

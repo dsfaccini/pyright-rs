@@ -48,7 +48,7 @@ pub fn validate_binary_operation(
     left_type_result: P<TypeResult>,
     right_type_result: P<TypeResult>,
     error_node: ExpressionNode,
-    inference_context: Option<&InferenceContext>,
+    inference_context: Option<P<InferenceContext>>,
     diag: P<DiagnosticAddendum>,
     options: &BinaryOperationOptions,
 ) -> P<TypeResult> {
@@ -60,7 +60,7 @@ pub fn get_type_of_binary_operation(
     evaluator: &TypeEvaluator,
     node: BinaryOperationNode,
     flags: EvalFlags,
-    inference_context: Option<&InferenceContext>,
+    inference_context: Option<P<InferenceContext>>,
     node_info: &AnalyzerNodeInfoAccessor,
 ) -> P<TypeResult> {
     todo!()
@@ -70,7 +70,7 @@ pub fn get_type_of_binary_operation(
 pub fn get_type_of_augmented_assignment(
     evaluator: &TypeEvaluator,
     node: AugmentedAssignmentNode,
-    inference_context: Option<&InferenceContext>,
+    inference_context: Option<P<InferenceContext>>,
 ) -> P<TypeResult> {
     todo!()
 }
@@ -80,7 +80,7 @@ pub fn get_type_of_unary_operation(
     evaluator: &TypeEvaluator,
     node: UnaryOperationNode,
     flags: EvalFlags,
-    inference_context: Option<&InferenceContext>,
+    inference_context: Option<P<InferenceContext>>,
 ) -> P<TypeResult> {
     todo!()
 }
@@ -90,7 +90,7 @@ pub fn get_type_of_ternary_operation(
     evaluator: &TypeEvaluator,
     node: TernaryNode,
     flags: EvalFlags,
-    inference_context: Option<&mut InferenceContext>,
+    inference_context: Option<P<InferenceContext>>,
     node_info: &AnalyzerNodeInfoAccessor,
 ) -> P<TypeResult> {
     todo!()
@@ -165,7 +165,7 @@ pub(crate) fn validate_arithmetic_operation(
     left_type_result: P<TypeResult>,
     right_type_result: P<TypeResult>,
     error_node: ExpressionNode,
-    inference_context: Option<&InferenceContext>,
+    inference_context: Option<P<InferenceContext>>,
     diag: P<DiagnosticAddendum>,
     options: &BinaryOperationOptions,
 ) -> P<TypeResult> {

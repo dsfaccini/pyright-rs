@@ -497,7 +497,7 @@ impl TypeEvaluator {
         node: P<ParseNode>,
         type_result: P<TypeResult>,
         flags: Option<EvalFlags>,
-        inference_context: Option<&InferenceContext>,
+        inference_context: Option<P<InferenceContext>>,
         allow_speculative_caching: bool,
     ) {
         todo!()
@@ -619,7 +619,7 @@ impl TypeEvaluator {
         &self,
         node: ExpressionNode,
         flags: EvalFlags,
-        inference_context: Option<&mut InferenceContext>,
+        inference_context: Option<P<InferenceContext>>,
     ) -> P<TypeResult> {
         todo!()
     }
@@ -630,7 +630,7 @@ impl TypeEvaluator {
         &self,
         node: ExpressionNode,
         flags: EvalFlags,
-        inference_context: Option<&mut InferenceContext>,
+        inference_context: Option<P<InferenceContext>>,
     ) -> P<TypeResult> {
         todo!()
     }
@@ -655,7 +655,7 @@ impl TypeEvaluator {
         &self,
         node: AwaitNode,
         flags: EvalFlags,
-        inference_context: Option<&InferenceContext>,
+        inference_context: Option<P<InferenceContext>>,
     ) -> P<TypeResult> {
         todo!()
     }
@@ -684,7 +684,7 @@ impl TypeEvaluator {
         &self,
         node: UnpackNode,
         flags: EvalFlags,
-        inference_context: Option<&InferenceContext>,
+        inference_context: Option<P<InferenceContext>>,
     ) -> P<TypeResult> {
         todo!()
     }
@@ -694,7 +694,7 @@ impl TypeEvaluator {
         &self,
         node: StringListNode,
         flags: EvalFlags,
-        inference_context: Option<&InferenceContext>,
+        inference_context: Option<P<InferenceContext>>,
     ) -> P<TypeResult> {
         todo!()
     }
@@ -1503,7 +1503,10 @@ impl TypeEvaluator {
     }
 
     // analyzer/typeEvaluator.ts:8355
-    pub(crate) fn infer_variance_for_type_alias(&self, type_: P<Type>) -> Option<Vec<Variance>> {
+    pub(crate) fn infer_variance_for_type_alias(
+        &self,
+        type_: P<Type>,
+    ) -> Option<P<RefCell<Vec<Variance>>>> {
         todo!()
     }
 
@@ -1514,7 +1517,7 @@ impl TypeEvaluator {
         &self,
         type_: P<Type>,
         type_alias_type_params: &[TypeVarType],
-        usage_variances: &mut Vec<Variance>,
+        usage_variances: P<RefCell<Vec<Variance>>>,
         variance_context: Variance,
         pending_types: &mut Vec<P<Type>>,
         recursion_count: u32,
@@ -1578,7 +1581,7 @@ impl TypeEvaluator {
         &self,
         node: CallNode,
         flags: EvalFlags,
-        inference_context: Option<&mut InferenceContext>,
+        inference_context: Option<P<InferenceContext>>,
     ) -> P<TypeResult> {
         todo!()
     }
@@ -1588,7 +1591,7 @@ impl TypeEvaluator {
     pub(crate) fn get_type_of_lambda_for_call(
         &self,
         node: CallNode,
-        inference_context: Option<&InferenceContext>,
+        inference_context: Option<P<InferenceContext>>,
     ) -> P<TypeResult> {
         todo!()
     }
@@ -1653,7 +1656,7 @@ impl TypeEvaluator {
     pub(crate) fn get_type_of_assert_type(
         &self,
         node: CallNode,
-        inference_context: Option<&mut InferenceContext>,
+        inference_context: Option<P<InferenceContext>>,
     ) -> P<TypeResult> {
         todo!()
     }
@@ -1667,7 +1670,7 @@ impl TypeEvaluator {
     pub(crate) fn get_type_of_reveal_type(
         &self,
         node: CallNode,
-        inference_context: Option<&mut InferenceContext>,
+        inference_context: Option<P<InferenceContext>>,
     ) -> P<TypeResult> {
         todo!()
     }
@@ -1695,7 +1698,7 @@ impl TypeEvaluator {
         arg_param_matches: &[P<MatchArgsToParamsResult>],
         constraints: Option<P<ConstraintTracker>>,
         skip_unknown_arg_check: Option<bool>,
-        inference_context: Option<&InferenceContext>,
+        inference_context: Option<P<InferenceContext>>,
     ) -> CallResult {
         todo!()
     }
@@ -1799,7 +1802,7 @@ impl TypeEvaluator {
         type_result: P<TypeResult>,
         constraints: Option<P<ConstraintTracker>>,
         skip_unknown_arg_check: Option<bool>,
-        inference_context: Option<&InferenceContext>,
+        inference_context: Option<P<InferenceContext>>,
     ) -> CallResult {
         todo!()
     }
@@ -1827,7 +1830,7 @@ impl TypeEvaluator {
         call_type_result: P<TypeResult>,
         constraints: Option<P<ConstraintTracker>>,
         skip_unknown_arg_check: Option<bool>,
-        inference_context: Option<&InferenceContext>,
+        inference_context: Option<P<InferenceContext>>,
         recursion_count: u32,
     ) -> CallResult {
         todo!()
@@ -1844,7 +1847,7 @@ impl TypeEvaluator {
         is_call_type_incomplete: bool,
         constraints: Option<P<ConstraintTracker>>,
         skip_unknown_arg_check: Option<bool>,
-        inference_context: Option<&InferenceContext>,
+        inference_context: Option<P<InferenceContext>>,
         recursion_count: u32,
     ) -> CallResult {
         todo!()
@@ -1859,7 +1862,7 @@ impl TypeEvaluator {
         is_call_type_incomplete: bool,
         constraints: Option<P<ConstraintTracker>>,
         skip_unknown_arg_check: Option<bool>,
-        inference_context: Option<&InferenceContext>,
+        inference_context: Option<P<InferenceContext>>,
     ) -> CallResult {
         todo!()
     }
@@ -1882,7 +1885,7 @@ impl TypeEvaluator {
         is_call_type_incomplete: bool,
         constraints: Option<P<ConstraintTracker>>,
         skip_unknown_arg_check: Option<bool>,
-        inference_context: Option<&InferenceContext>,
+        inference_context: Option<P<InferenceContext>>,
     ) -> CallResult {
         todo!()
     }
@@ -1895,7 +1898,7 @@ impl TypeEvaluator {
         expanded_call_type: ClassType,
         unexpanded_call_type: P<Type>,
         skip_unknown_arg_check: Option<bool>,
-        inference_context: Option<&InferenceContext>,
+        inference_context: Option<P<InferenceContext>>,
     ) -> CallResult {
         todo!()
     }
@@ -1909,7 +1912,7 @@ impl TypeEvaluator {
         unexpanded_call_type: P<Type>,
         constraints: Option<P<ConstraintTracker>>,
         skip_unknown_arg_check: Option<bool>,
-        inference_context: Option<&InferenceContext>,
+        inference_context: Option<P<InferenceContext>>,
         recursion_count: u32,
     ) -> CallResult {
         todo!()
@@ -1949,7 +1952,7 @@ impl TypeEvaluator {
         match_results: P<MatchArgsToParamsResult>,
         constraints: P<ConstraintTracker>,
         skip_unknown_arg_check: bool,
-        inference_context: Option<&InferenceContext>,
+        inference_context: Option<P<InferenceContext>>,
     ) -> CallResult {
         todo!()
     }
@@ -2007,7 +2010,7 @@ impl TypeEvaluator {
         type_result: P<TypeResult>,
         constraints: Option<P<ConstraintTracker>>,
         skip_unknown_arg_check: bool,
-        inference_context: Option<&InferenceContext>,
+        inference_context: Option<P<InferenceContext>>,
     ) -> CallResult {
         todo!()
     }
@@ -2170,7 +2173,7 @@ impl TypeEvaluator {
         method_name: &str,
         arg_list: &[P<TypeResult>],
         error_node: ExpressionNode,
-        inference_context: Option<&InferenceContext>,
+        inference_context: Option<P<InferenceContext>>,
         diag: Option<P<DiagnosticAddendum>>,
     ) -> Option<P<TypeResult>> {
         todo!()
@@ -2181,7 +2184,7 @@ impl TypeEvaluator {
         &self,
         node: DictionaryNode,
         flags: EvalFlags,
-        inference_context: Option<&InferenceContext>,
+        inference_context: Option<P<InferenceContext>>,
     ) -> P<TypeResult> {
         todo!()
     }
@@ -2191,7 +2194,7 @@ impl TypeEvaluator {
         &self,
         node: DictionaryNode,
         flags: EvalFlags,
-        inference_context: &mut InferenceContext,
+        inference_context: P<InferenceContext>,
         expected_diag_addendum: Option<P<DiagnosticAddendum>>,
     ) -> Option<P<TypeResult>> {
         todo!()
@@ -2229,7 +2232,7 @@ impl TypeEvaluator {
         &self,
         node: P<ParseNode>,
         flags: EvalFlags,
-        inference_context: Option<&InferenceContext>,
+        inference_context: Option<P<InferenceContext>>,
     ) -> P<TypeResult> {
         todo!()
     }
@@ -2239,7 +2242,7 @@ impl TypeEvaluator {
         &self,
         node: P<ParseNode>,
         flags: EvalFlags,
-        inference_context: &mut InferenceContext,
+        inference_context: P<InferenceContext>,
     ) -> Option<P<TypeResult>> {
         todo!()
     }
@@ -2249,7 +2252,7 @@ impl TypeEvaluator {
         &self,
         node: P<ParseNode>,
         expected_class_type: Option<P<Type>>,
-        inference_context: Option<&InferenceContext>,
+        inference_context: Option<P<InferenceContext>>,
     ) -> Option<P<Type>> {
         todo!()
     }
@@ -2277,7 +2280,7 @@ impl TypeEvaluator {
     // analyzer/typeEvaluator.ts:16079
     pub(crate) fn infer_type_arg_from_expected_entry_type(
         &self,
-        inference_context: &InferenceContext,
+        inference_context: P<InferenceContext>,
         entry_types: &[P<Type>],
         is_narrowable: bool,
     ) -> Option<P<Type>> {
@@ -2298,7 +2301,7 @@ impl TypeEvaluator {
     pub(crate) fn get_type_of_lambda(
         &self,
         node: LambdaNode,
-        inference_context: Option<&mut InferenceContext>,
+        inference_context: Option<P<InferenceContext>>,
     ) -> P<TypeResult> {
         todo!()
     }
@@ -2308,7 +2311,7 @@ impl TypeEvaluator {
         &self,
         node: LambdaNode,
         expected_type: Option<FunctionType>,
-        inference_context: Option<&mut InferenceContext>,
+        inference_context: Option<P<InferenceContext>>,
         force_speculative: bool,
     ) -> P<TypeResult> {
         todo!()
@@ -2319,7 +2322,7 @@ impl TypeEvaluator {
         &self,
         node: ComprehensionNode,
         flags: EvalFlags,
-        inference_context: Option<&InferenceContext>,
+        inference_context: Option<P<InferenceContext>>,
     ) -> P<TypeResult> {
         todo!()
     }
@@ -2979,7 +2982,7 @@ impl TypeEvaluator {
     pub fn get_type_of_arg(
         &self,
         arg: &Arg,
-        inference_context: Option<&mut InferenceContext>,
+        inference_context: Option<P<InferenceContext>>,
     ) -> P<TypeResult> {
         todo!()
     }

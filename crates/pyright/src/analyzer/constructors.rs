@@ -58,7 +58,7 @@ pub fn validate_constructor_args(
     arg_list: &[Arg],
     type_: ClassType,
     skip_unknown_arg_check: Option<bool>,
-    inference_context: Option<&InferenceContext>,
+    inference_context: Option<P<InferenceContext>>,
 ) -> CallResult {
     todo!()
 }
@@ -70,7 +70,7 @@ pub(crate) fn validate_new_and_init_methods(
     arg_list: &[Arg],
     type_: ClassType,
     skip_unknown_arg_check: Option<bool>,
-    inference_context: Option<&InferenceContext>,
+    inference_context: Option<P<InferenceContext>>,
     new_method_type_result: Option<P<TypeResult>>,
 ) -> CallResult {
     todo!()
@@ -83,7 +83,7 @@ pub(crate) fn validate_new_method(
     arg_list: &[Arg],
     type_: ClassType,
     skip_unknown_arg_check: Option<bool>,
-    inference_context: Option<&InferenceContext>,
+    inference_context: Option<P<InferenceContext>>,
     new_method_type_result: P<TypeResult>,
     use_speculative_mode_for_args: bool,
 ) -> CallResult {
@@ -97,7 +97,7 @@ pub(crate) fn validate_init_method(
     arg_list: &[Arg],
     type_: ClassType,
     skip_unknown_arg_check: Option<bool>,
-    inference_context: Option<&InferenceContext>,
+    inference_context: Option<P<InferenceContext>>,
     init_method_type: P<Type>,
 ) -> CallResult {
     todo!()
@@ -109,7 +109,7 @@ pub(crate) fn validate_fallback_constructor_call(
     error_node: ExpressionNode,
     arg_list: &[Arg],
     type_: ClassType,
-    inference_context: Option<&InferenceContext>,
+    inference_context: Option<P<InferenceContext>>,
 ) -> CallResult {
     todo!()
 }
@@ -121,7 +121,7 @@ pub(crate) fn validate_metaclass_call(
     arg_list: &[Arg],
     type_: ClassType,
     skip_unknown_arg_check: Option<bool>,
-    inference_context: Option<&InferenceContext>,
+    inference_context: Option<P<InferenceContext>>,
     use_speculative_mode_for_args: bool,
 ) -> Option<CallResult> {
     todo!()
@@ -141,7 +141,7 @@ pub(crate) fn apply_expected_subtype_for_constructor(
 pub(crate) fn apply_expected_type_for_constructor(
     evaluator: &TypeEvaluator,
     type_: ClassType,
-    inference_context: Option<&InferenceContext>,
+    inference_context: Option<P<InferenceContext>>,
     constraints: P<ConstraintTracker>,
 ) -> P<Type> {
     todo!()
@@ -150,7 +150,7 @@ pub(crate) fn apply_expected_type_for_constructor(
 // analyzer/constructors.ts:708
 pub(crate) fn apply_expected_type_for_tuple_constructor(
     type_: ClassType,
-    inference_context: Option<&InferenceContext>,
+    inference_context: Option<P<InferenceContext>>,
 ) -> ClassType {
     todo!()
 }

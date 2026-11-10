@@ -195,7 +195,7 @@ How each class and interface of the stubbed files is held (docs/porting.md "memo
 - `analyzer/types.ts:TypeVarDetailsPriv`: value; [modes]
 - `analyzer/types.ts:CombineTypesOptions`: value; never written after construction; never stored in a second place
 - `analyzer/typeUtils.ts:ClassMember`: value; written: isClassMember at analyzer/typeUtils.ts:1784; never stored in a second place
-- `analyzer/typeUtils.ts:InferenceContext`: value; written: expectedType at analyzer/typeEvaluator.ts:1369; never stored in a second place
+- `analyzer/typeUtils.ts:InferenceContext`: handle; [modes]
 - `analyzer/typeUtils.ts:RequiresSpecializationOptions`: value; never written after construction; never stored in a second place
 - `analyzer/typeUtils.ts:IsInstantiableOptions`: value; never written after construction; never stored in a second place
 - `analyzer/typeUtils.ts:SelfSpecializeOptions`: value; never written after construction; never stored in a second place
@@ -252,3 +252,13 @@ How each class and interface of the stubbed files is held (docs/porting.md "memo
 
 [modes] values that some code compares by identity (porting.md wants a handle): 0.
 
+
+Value-mode types whose fields some code writes through a parameter, directly or through calls (the caller does not see a write to a copy): 7.
+
+- `analyzer/analysis.ts:AnalysisResults`: 1 params, e.g. convertAnalysisResults(result) at backgroundAnalysisBase.ts:793
+- `analyzer/importStatementUtils.ts:ImportStatements`: 1 params, e.g. _processImportFromNode(localImports) at analyzer/importStatementUtils.ts:722
+- `analyzer/packageTypeReport.ts:PackageTypeReport`: 9 params, e.g. _reportMissingClassDocstring(report) at analyzer/packageTypeVerifier.ts:687; _reportMissingFunctionDocstring(report) at analyzer/packageTypeVerifier.ts:707; _getSymbolForClass(report) at analyzer/packageTypeVerifier.ts:1153
+- `analyzer/parameterUtils.ts:ParamListDetails`: 1 params, e.g. adjustSourceParamDetailsForDestVariadic(srcDetails) at analyzer/typeEvaluator.ts:28091
+- `analyzer/protocols.ts:ProtocolCompatibilityCheckState`: 1 params, e.g. assignToProtocolInternal(checkState) at analyzer/protocols.ts:380
+- `common/textRange.ts:Range`: 1 params, e.g. extendRange(range) at common/textRange.ts:186
+- `workspaceFactory.ts:NormalWorkspace`: 1 params, e.g. <anonymous>(w) at workspaceFactory.ts:174

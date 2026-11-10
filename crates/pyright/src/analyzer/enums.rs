@@ -658,13 +658,13 @@ pub fn transform_type_for_enum_member(
             && let Some(assignment) = name_node.parent.get().and_then(AssignmentNode::cast)
             && assignment.d().left_expr.get() == name_node.0
         {
-            let mut inference_context = make_inference_context(declared_type, None, None);
+            let inference_context = make_inference_context(declared_type, None, None);
             assigned_type = Some(
                 evaluator
                     .get_type_of_expression(
                         assignment.d().right_expr.get(),
                         /* flags */ EvalFlags::None,
-                        inference_context.as_mut(),
+                        inference_context,
                     )
                     .type_
                     .get(),

@@ -304,12 +304,12 @@ pub(crate) fn apply_partial_transform_to_function(
                         FunctionType::get_param_type(orig_function_type, args_param.index);
                     let diag = DiagnosticAddendum::new();
 
-                    let mut inference_context =
+                    let inference_context =
                         make_inference_context(Some(param_type), None, None);
                     let arg_type_result = evaluator.get_type_of_expression(
                         value_expression,
                         /* flags */ EvalFlags::None,
-                        inference_context.as_mut(),
+                        inference_context,
                     );
 
                     if !evaluator.assign_type(
@@ -370,11 +370,11 @@ pub(crate) fn apply_partial_transform_to_function(
                 let diag = DiagnosticAddendum::new();
                 let param_name = param_info.param.name.clone().unwrap_or_default();
 
-                let mut inference_context = make_inference_context(Some(param_type), None, None);
+                let inference_context = make_inference_context(Some(param_type), None, None);
                 let arg_type_result = evaluator.get_type_of_expression(
                     value_expression,
                     /* flags */ EvalFlags::None,
-                    inference_context.as_mut(),
+                    inference_context,
                 );
 
                 if !evaluator.assign_type(
@@ -440,11 +440,11 @@ pub(crate) fn apply_partial_transform_to_function(
             let param_type = FunctionType::get_param_type(orig_function_type, kwargs_param.index);
             let diag = DiagnosticAddendum::new();
 
-            let mut inference_context = make_inference_context(Some(param_type), None, None);
+            let inference_context = make_inference_context(Some(param_type), None, None);
             let arg_type_result = evaluator.get_type_of_expression(
                 value_expression,
                 /* flags */ EvalFlags::None,
-                inference_context.as_mut(),
+                inference_context,
             );
 
             if !evaluator.assign_type(
@@ -497,11 +497,11 @@ pub(crate) fn apply_partial_transform_to_function(
         } else {
             let diag = DiagnosticAddendum::new();
 
-            let mut inference_context = make_inference_context(Some(param_type), None, None);
+            let inference_context = make_inference_context(Some(param_type), None, None);
             let arg_type_result = evaluator.get_type_of_expression(
                 value_expression,
                 /* flags */ EvalFlags::None,
-                inference_context.as_mut(),
+                inference_context,
             );
 
             if !evaluator.assign_type(
