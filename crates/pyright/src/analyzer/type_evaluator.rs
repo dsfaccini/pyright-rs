@@ -5440,22 +5440,80 @@ impl TypeEvaluator {
 
     // analyzer/typeEvaluator.ts:30162
     pub fn is_final_variable(&self, symbol: P<Symbol>) -> bool {
-        todo!()
+        symbol
+            .get_declarations()
+            .into_iter()
+            .any(|decl| self.is_final_variable_declaration(decl))
     }
 
     // analyzer/typeEvaluator.ts:30166
     pub fn is_final_variable_declaration(&self, decl: P<Declaration>) -> bool {
-        todo!()
+        decl.type_ == analyzer::declaration::DeclarationType::Variable
+            && decl.variable().unwrap().is_final.get().unwrap_or(false)
     }
 
     // analyzer/typeEvaluator.ts:30170
     pub fn is_explicit_type_alias_declaration(&self, decl: P<Declaration>) -> bool {
-        todo!()
+        let type_annotation_node = decl.variable().and_then(|variable| variable.type_annotation_node.get());
+        let Some(type_annotation_node) = type_annotation_node.filter(|_| {
+            decl.type_ == analyzer::declaration::DeclarationType::Variable
+        }) else {
+            return false;
+        };
+
+        if type_annotation_node.node_type != parser::parse_nodes::ParseNodeType::Name
+            && type_annotation_node.node_type != parser::parse_nodes::ParseNodeType::MemberAccess
+            && type_annotation_node.node_type != parser::parse_nodes::ParseNodeType::StringList
+        {
+            return false;
+        }
+
+        let type_ = self.get_type_of_annotation(
+            type_annotation_node,
+            Some(&ExpectedTypeOptions {
+                allow_final: None,
+                allow_required: None,
+                allow_read_only: None,
+                allow_unpacked_tuple: None,
+                allow_unpacked_typed_dict: None,
+                allow_param_spec: None,
+                allow_class_var: Some(true),
+                var_type_annotation: Some(true),
+                type_var_gets_cur_scope: None,
+                allow_type_vars_without_scope_id: None,
+                enforce_class_type_var_scope: None,
+                parses_string_literal: None,
+                not_parsed: None,
+                no_non_type_special_forms: None,
+                type_form_arg: None,
+                forward_refs: None,
+                type_expression: None,
+                runtime_type_expression: None,
+                convert_ellipsis_to_any: None,
+                allow_ellipsis: None,
+            }),
+        );
+        analyzer::types::is_class_instance(type_)
+            && ClassType::is_built_in(ClassType::cast(type_).unwrap(), Some(&["TypeAlias".to_owned()]))
     }
 
     // analyzer/typeEvaluator.ts:30187
     pub(crate) fn is_possible_type_alias_declaration(&self, decl: P<Declaration>) -> bool {
-        todo!()
+        let Some(variable) = decl.variable().filter(|_| decl.type_ == analyzer::declaration::DeclarationType::Variable)
+        else {
+            return false;
+        };
+        if variable.type_alias_name.get().is_none() || variable.type_annotation_node.get().is_some() {
+            return false;
+        }
+
+        let Some(assignment) = decl.node.get().parent.get().and_then(AssignmentNode::cast) else {
+            return false;
+        };
+
+        // Perform a sanity check on the RHS expression. Some expression
+        // forms should never be considered legitimate for type aliases.
+        self.is_legal_type_alias_expression_form(assignment.d().right_expr.get(), /* allow_str_literal */ false)
     }
 
     // analyzer/typeEvaluator.ts:30201
@@ -5464,27 +5522,149 @@ impl TypeEvaluator {
         node: ExpressionNode,
         allow_str_literal: bool,
     ) -> bool {
-        todo!()
+        match node.node_type {
+            parser::parse_nodes::ParseNodeType::Error
+            | parser::parse_nodes::ParseNodeType::UnaryOperation
+            | parser::parse_nodes::ParseNodeType::AssignmentExpression
+            | parser::parse_nodes::ParseNodeType::TypeAnnotation
+            | parser::parse_nodes::ParseNodeType::Await
+            | parser::parse_nodes::ParseNodeType::Ternary
+            | parser::parse_nodes::ParseNodeType::Unpack
+            | parser::parse_nodes::ParseNodeType::Tuple
+            | parser::parse_nodes::ParseNodeType::Call
+            | parser::parse_nodes::ParseNodeType::Comprehension
+            | parser::parse_nodes::ParseNodeType::Slice
+            | parser::parse_nodes::ParseNodeType::Yield
+            | parser::parse_nodes::ParseNodeType::YieldFrom
+            | parser::parse_nodes::ParseNodeType::Lambda
+            | parser::parse_nodes::ParseNodeType::Number
+            | parser::parse_nodes::ParseNodeType::Dictionary
+            | parser::parse_nodes::ParseNodeType::List
+            | parser::parse_nodes::ParseNodeType::Set => false,
+
+            parser::parse_nodes::ParseNodeType::StringList | parser::parse_nodes::ParseNodeType::String => allow_str_literal,
+
+            parser::parse_nodes::ParseNodeType::Constant => {
+                ConstantNode::cast(node).unwrap().d().const_type.get() == parser::tokenizer_types::KeywordType::None
+            }
+
+            parser::parse_nodes::ParseNodeType::BinaryOperation => {
+                let binary_operation = parser::parse_nodes::BinaryOperationNode::cast(node).unwrap();
+                binary_operation.d().operator.get() == parser::tokenizer_types::OperatorType::BitwiseOr
+                    && self.is_legal_type_alias_expression_form(
+                        binary_operation.d().left_expr.get(),
+                        /* allow_str_literal */ true,
+                    )
+                    && self.is_legal_type_alias_expression_form(
+                        binary_operation.d().right_expr.get(),
+                        /* allow_str_literal */ true,
+                    )
+            }
+
+            parser::parse_nodes::ParseNodeType::Index => self.is_legal_type_alias_expression_form(
+                IndexNode::cast(node).unwrap().d().left_expr.get(),
+                allow_str_literal,
+            ),
+
+            parser::parse_nodes::ParseNodeType::MemberAccess => self.is_legal_type_alias_expression_form(
+                MemberAccessNode::cast(node).unwrap().d().left_expr.get(),
+                allow_str_literal,
+            ),
+
+            _ => true,
+        }
     }
 
     // analyzer/typeEvaluator.ts:30247
     pub(crate) fn is_legal_implicit_type_alias_type(&self, type_: P<Type>) -> bool {
-        todo!()
+        // We explicitly exclude "..." and "Unknown".
+        if analyzer::type_utils::is_ellipsis_type(type_) {
+            return false;
+        }
+
+        if analyzer::types::is_unknown(type_) {
+            // If this is a union type, we'll assume that it was meant as a type
+            // alias even though all of the union subtypes are Unknown.
+            let special_form = type_.props.borrow().as_ref().and_then(|props| props.special_form);
+            if let Some(special_form) = special_form {
+                if ClassType::is_built_in(special_form, Some(&["UnionType".to_owned()])) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        // Look at the subtypes within the union. If any of them are not
+        // instantiable (other than "None" which is special-cased), it is
+        // not a legal type alias type.
+        let mut is_legal = true;
+        analyzer::type_utils::do_for_each_subtype(
+            type_,
+            &mut |subtype, _, _| {
+                if !analyzer::types::TypeBase::is_instantiable(subtype)
+                    && !analyzer::type_utils::is_none_instance(subtype)
+                {
+                    is_legal = false;
+                }
+            },
+            false,
+        );
+
+        is_legal
     }
 
     // analyzer/typeEvaluator.ts:30275
     pub(crate) fn is_possible_type_alias_or_typed_dict(&self, decl: P<Declaration>) -> bool {
-        todo!()
+        self.is_possible_type_alias_declaration(decl) || self.is_possible_type_dict_factory_call(decl)
     }
 
     // analyzer/typeEvaluator.ts:30279
     pub(crate) fn is_possible_type_dict_factory_call(&self, decl: P<Declaration>) -> bool {
-        todo!()
+        if decl.type_ != analyzer::declaration::DeclarationType::Variable {
+            return false;
+        }
+        let Some(assignment) = decl.node.get().parent.get().and_then(AssignmentNode::cast) else {
+            return false;
+        };
+        let Some(call_node) = CallNode::cast(assignment.d().right_expr.get()) else {
+            return false;
+        };
+
+        let call_left_node = call_node.d().left_expr.get();
+
+        // Use a simple heuristic to determine whether this is potentially
+        // a call to the TypedDict call. This avoids the expensive (and potentially
+        // recursive) call to getTypeOfExpression in cases where it's not needed.
+        let is_typed_dict_name =
+            NameNode::cast(call_left_node).is_some_and(|name| name.d().value == "TypedDict");
+        let is_typed_dict_member_access = MemberAccessNode::cast(call_left_node).is_some_and(|member_access| {
+            member_access.d().member.get().d().value == "TypedDict"
+                && member_access.d().left_expr.get().node_type == parser::parse_nodes::ParseNodeType::Name
+        });
+        if is_typed_dict_name || is_typed_dict_member_access {
+            // See if this is a call to TypedDict. We want to support
+            // recursive type references in a TypedDict call.
+            let call_type = self.get_type_of_expression(call_left_node, EvalFlags::CallBaseDefaults, None).type_.get();
+
+            if analyzer::types::is_instantiable_class(call_type)
+                && ClassType::is_built_in(ClassType::cast(call_type).unwrap(), Some(&["TypedDict".to_owned()]))
+            {
+                return true;
+            }
+        }
+
+        false
     }
 
     // analyzer/typeEvaluator.ts:30312
     pub(crate) fn print_object_type_for_class(&self, type_: ClassType) -> String {
-        todo!()
+        analyzer::type_printer::print_object_type_for_class(
+            type_,
+            self.evaluator_options.print_type_flags,
+            &analyzer::type_printer::FunctionReturnTypeCallback {
+                type_evaluator: *self.evaluator_interface.get().unwrap(),
+            },
+        )
     }
 
     // analyzer/typeEvaluator.ts:30316
@@ -5493,7 +5673,17 @@ impl TypeEvaluator {
         type_: FunctionType,
         extra_flags: Option<PrintTypeFlags>,
     ) -> (Vec<String>, String) {
-        todo!()
+        let flags = match extra_flags {
+            Some(extra_flags) if extra_flags != PrintTypeFlags::None => self.evaluator_options.print_type_flags | extra_flags,
+            _ => self.evaluator_options.print_type_flags,
+        };
+        analyzer::type_printer::print_function_parts(
+            type_,
+            flags,
+            &analyzer::type_printer::FunctionReturnTypeCallback {
+                type_evaluator: *self.evaluator_interface.get().unwrap(),
+            },
+        )
     }
 
     // analyzer/typeEvaluator.ts:30323
@@ -5503,12 +5693,82 @@ impl TypeEvaluator {
         dest_type: P<Type>,
         options: Option<&PrintTypeOptions>,
     ) -> CreateTypeEvaluatorPrintSrcDestTypesReturn {
-        todo!()
+        let simple_src_type = self.print_type(src_type, options);
+        let simple_dest_type = self.print_type(dest_type, options);
+
+        if simple_src_type != simple_dest_type {
+            return CreateTypeEvaluatorPrintSrcDestTypesReturn {
+                source_type: simple_src_type,
+                dest_type: simple_dest_type,
+            };
+        }
+
+        let fully_qualified_options = PrintTypeOptions {
+            use_fully_qualified_names: Some(true),
+            ..options.cloned().unwrap_or(PrintTypeOptions {
+                expand_type_alias: None,
+                enforce_python_syntax: None,
+                use_fully_qualified_names: None,
+                use_typing_unpack: None,
+                print_unknown_with_any: None,
+                print_type_var_variance: None,
+                omit_type_args_if_unknown: None,
+                disable_pep604: None,
+            })
+        };
+        let full_src_type = self.print_type(src_type, Some(&fully_qualified_options));
+        let full_dest_type = self.print_type(dest_type, Some(&fully_qualified_options));
+
+        if full_src_type != full_dest_type {
+            return CreateTypeEvaluatorPrintSrcDestTypesReturn {
+                source_type: full_src_type,
+                dest_type: full_dest_type,
+            };
+        }
+
+        CreateTypeEvaluatorPrintSrcDestTypesReturn {
+            source_type: simple_src_type,
+            dest_type: simple_dest_type,
+        }
     }
 
     // analyzer/typeEvaluator.ts:30345
     pub fn print_type(&self, type_: P<Type>, options: Option<&PrintTypeOptions>) -> String {
-        todo!()
+        let mut flags = self.evaluator_options.print_type_flags;
+        let option = |get: fn(&PrintTypeOptions) -> Option<bool>| options.and_then(get).unwrap_or(false);
+
+        if option(|o| o.expand_type_alias) {
+            flags |= PrintTypeFlags::ExpandTypeAlias;
+        }
+        if option(|o| o.enforce_python_syntax) {
+            flags |= PrintTypeFlags::PythonSyntax;
+        }
+        if option(|o| o.use_typing_unpack) {
+            flags |= PrintTypeFlags::UseTypingUnpack;
+        }
+        if option(|o| o.print_unknown_with_any) {
+            flags |= PrintTypeFlags::PrintUnknownWithAny;
+        }
+        if option(|o| o.print_type_var_variance) {
+            flags |= PrintTypeFlags::PrintTypeVarVariance;
+        }
+        if option(|o| o.omit_type_args_if_unknown) {
+            flags |= PrintTypeFlags::OmitTypeArgsIfUnknown;
+        }
+        if option(|o| o.use_fully_qualified_names) {
+            flags |= PrintTypeFlags::UseFullyQualifiedNames;
+        }
+        if option(|o| o.disable_pep604) {
+            flags &= !PrintTypeFlags::PEP604;
+        }
+
+        analyzer::type_printer::print_type(
+            type_,
+            flags,
+            &analyzer::type_printer::FunctionReturnTypeCallback {
+                type_evaluator: *self.evaluator_interface.get().unwrap(),
+            },
+        )
     }
 
     // analyzer/typeEvaluator.ts:30383
@@ -5517,7 +5777,72 @@ impl TypeEvaluator {
         node: StringListNode,
         report_errors: bool,
     ) -> Option<ExpressionNode> {
-        todo!()
+        let file_info = self.node_info.get_file_info(node.0);
+        let mut parser = parser::parser::Parser::new();
+        let first_string = node.d().strings.borrow()[0];
+        let text_value = match parser::parse_nodes::StringNode::cast(first_string) {
+            Some(string_node) => string_node.d().value.clone(),
+            None => parser::parse_nodes::FormatStringNode::cast(first_string).unwrap().d().value.clone(),
+        };
+
+        // Determine the offset within the file where the string
+        // literal's contents begin.
+        let mut value_offset = first_string.start.get();
+        if let Some(string_node) = parser::parse_nodes::StringNode::cast(first_string) {
+            let token = string_node.d().token.get();
+            value_offset += token.d().prefix_length + token.d().quote_mark_length;
+        }
+
+        // Construct a temporary dummy string with the text value at the appropriate
+        // offset so as to mimic the original file. This will keep all of the token
+        // and diagnostic offsets correct.
+        let dummy_file_contents =
+            jsrt::JsString::from(" ".repeat(value_offset as usize).as_str()).concat(text_value.units());
+
+        let mut parse_options = parser::parser::ParseOptions::new();
+        parse_options.is_stub_file = file_info.is_stub_file;
+        parse_options.python_version = file_info.execution_environment.python_version.clone();
+        parse_options.report_errors_for_parsed_string_contents = true;
+
+        let parse_results = parser.parse_text_expression(
+            dummy_file_contents,
+            value_offset,
+            text_value.units().len() as i32,
+            parse_options,
+            parser::parser::ParseTextMode::Expression,
+            /* initial_paren_depth */ 0,
+            Some(&file_info.typing_symbol_aliases),
+            Some(node.a),
+        );
+
+        if let Some(parse_tree) = parse_results.parse_tree {
+            // If there are errors but we are not reporting them, return
+            // undefined to indicate that the parse failed.
+            if !report_errors && !parse_results.diagnostics.is_empty() {
+                return None;
+            }
+
+            let file_info = self.node_info.get_file_info(node.0);
+            for diag in &parse_results.diagnostics {
+                file_info.diagnostic_sink.add_diagnostic_with_text_range(
+                    DiagnosticLevel::Error,
+                    diag.message.clone(),
+                    common::text_range::HasTextRange::text_range(&node),
+                );
+            }
+
+            parse_tree.parent.set(Some(node.0));
+
+            // Optionally add the new subtree to the parse tree so it can
+            // participate in language server operations like find and replace.
+            if report_errors {
+                self.node_info.set_string_annotation(node, parse_tree, &parse_results.string_annotations);
+            }
+
+            return Some(parse_tree);
+        }
+
+        None
     }
 
     // analyzer/typeEvaluator.ts:30445
@@ -5526,17 +5851,29 @@ impl TypeEvaluator {
         node: P<ParseNode>,
         type_var: TypeVarType,
     ) -> Option<P<Type>> {
-        todo!()
+        let flow_node = self.node_info.get_flow_node(node)?;
+
+        self.code_flow_engine
+            .get()
+            .unwrap()
+            .narrow_constrained_type_var(flow_node, type_var)
+            .map(|class_type| class_type.0)
     }
 
     // analyzer/typeEvaluator.ts:30455
     pub(crate) fn get_print_expression_types_spaces(&self) -> String {
-        todo!()
+        " ".repeat(self.print_expression_space_count.get() as usize)
     }
 
     // analyzer/typeEvaluator.ts:30459
     pub(crate) fn get_line_num(&self, node: P<ParseNode>) -> String {
-        todo!()
+        let file_info = self.node_info.get_file_info(node);
+        let range = common::position_utils::convert_offsets_to_range(
+            node.start.get(),
+            node.start.get() + node.length.get(),
+            file_info.lines,
+        );
+        jsrt::number::number_to_string(f64::from(range.start.line + 1))
     }
 
     // analyzer/typeEvaluator.ts:30465
@@ -5547,7 +5884,10 @@ impl TypeEvaluator {
         call_name: &str,
         logger: &dyn ConsoleInterface,
     ) {
-        todo!()
+        self.code_flow_engine
+            .get()
+            .unwrap()
+            .print_control_flow_graph(flow_node, reference, call_name, logger)
     }
 
     // analyzer/typeEvaluator.ts:30475
@@ -5557,13 +5897,13 @@ impl TypeEvaluator {
         type_: FunctionType,
         call_site_info: Option<&CallSiteEvaluationInfo>,
     ) -> P<TypeResult> {
-        todo!()
+        self._get_inferred_return_type_result(type_, call_site_info)
     }
 
     // analyzer/typeEvaluator.ts:30479
     /// An arrow function in the returned object.
     pub fn get_analyzer_node_info_reader(&self) -> P<dyn AnalyzerNodeInfoReader> {
-        todo!()
+        self.evaluator_options.node_info_reader
     }
 }
 

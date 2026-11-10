@@ -242,6 +242,6 @@ pub struct FunctionReturnTypeCallback {
 impl FunctionReturnTypeCallback {
     // analyzer/typeEvaluator.ts:30313
     pub fn call(&self, type_: FunctionType) -> P<Type> {
-        todo!()
+        self.type_evaluator.get_effective_return_type(type_)
     }
 }
