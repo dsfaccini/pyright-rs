@@ -18128,7 +18128,265 @@ impl TypeEvaluator {
         recursion_count: u32,
         report_errors_using_obj_type: bool,
     ) -> bool {
-        todo!()
+        let mut src_type = src_type;
+
+        // If the source or dest types are partially evaluated (i.e. they are in the
+        // process of being constructed), assume they are assignable rather than risk
+        // emitting false positives.
+        if ClassType::is_hierarchy_partially_evaluated(dest_type) || ClassType::is_hierarchy_partially_evaluated(src_type) {
+            return true;
+        }
+
+        // Handle typed dicts. They also use a form of structural typing for type
+        // checking, as defined in PEP 589.
+        if ClassType::is_typed_dict_class(src_type) {
+            if ClassType::is_typed_dict_class(dest_type) && !ClassType::is_same_generic_class(dest_type, src_type, 0) {
+                if !analyzer::typed_dicts::assign_typed_dict_to_typed_dict(
+                    self,
+                    dest_type,
+                    src_type,
+                    diag,
+                    constraints,
+                    flags,
+                    recursion_count,
+                ) {
+                    return false;
+                }
+
+                // If invariance is being enforced, the two TypedDicts must be assignable to each other.
+                if flags.any(AssignTypeFlags::Invariant) {
+                    return analyzer::typed_dicts::assign_typed_dict_to_typed_dict(
+                        self,
+                        src_type,
+                        dest_type,
+                        /* diag */ None,
+                        /* constraints */ None,
+                        flags,
+                        recursion_count,
+                    );
+                }
+
+                return true;
+            }
+
+            // Handle some special cases where a TypedDict can act like
+            // a Mapping[str, T] or a dict[str, T].
+            if ClassType::is_built_in(dest_type, Some(&["Mapping".to_owned()])) {
+                let mapping_value_type = analyzer::typed_dicts::get_typed_dict_mapping_equivalent(self, src_type);
+
+                let (mapping_class, str_class) = {
+                    let prefetched = self.prefetched.borrow();
+                    (
+                        prefetched.as_ref().and_then(|p| p.mapping_class),
+                        prefetched.as_ref().and_then(|p| p.str_class),
+                    )
+                };
+                if let Some(mapping_value_type) = mapping_value_type
+                    && let Some(mapping_class) = mapping_class
+                    && analyzer::types::is_instantiable_class(mapping_class)
+                    && let Some(str_class) = str_class
+                    && analyzer::types::is_instantiable_class(str_class)
+                {
+                    src_type = ClassType::specialize(
+                        ClassType::cast(mapping_class).unwrap(),
+                        Some(&[
+                            ClassType::clone_as_instance(ClassType::cast(str_class).unwrap(), true).0,
+                            mapping_value_type,
+                        ]),
+                        None,
+                        false,
+                        None,
+                        None,
+                    );
+                }
+            } else if ClassType::is_built_in(dest_type, Some(&["dict".to_owned(), "MutableMapping".to_owned()])) {
+                let dict_value_type =
+                    analyzer::typed_dicts::get_typed_dict_dict_equivalent(self, src_type, recursion_count);
+
+                let (dict_class, str_class) = {
+                    let prefetched = self.prefetched.borrow();
+                    (
+                        prefetched.as_ref().and_then(|p| p.dict_class),
+                        prefetched.as_ref().and_then(|p| p.str_class),
+                    )
+                };
+                if let Some(dict_value_type) = dict_value_type
+                    && let Some(dict_class) = dict_class
+                    && analyzer::types::is_instantiable_class(dict_class)
+                    && let Some(str_class) = str_class
+                    && analyzer::types::is_instantiable_class(str_class)
+                {
+                    src_type = ClassType::specialize(
+                        ClassType::cast(dict_class).unwrap(),
+                        Some(&[
+                            ClassType::clone_as_instance(ClassType::cast(str_class).unwrap(), true).0,
+                            dict_value_type,
+                        ]),
+                        None,
+                        false,
+                        None,
+                        None,
+                    );
+                }
+            }
+        }
+
+        // Handle special-case type promotions.
+        let include_promotions = dest_type.d().priv_.borrow().include_promotions.unwrap_or(false);
+        if include_promotions {
+            let dest_full_name = dest_type.d().shared.get().full_name.clone();
+            let promotion_list = TYPE_PROMOTIONS.with(|promotions| promotions.get(&dest_full_name).cloned());
+            if let Some(promotion_list) = promotion_list
+                && promotion_list.iter().any(|src_name| {
+                    let mro = src_type.d().shared.get().mro.borrow().clone();
+                    mro.iter().any(|&mro_class| {
+                        analyzer::types::is_class(mro_class)
+                            && *src_name == ClassType::cast(mro_class).unwrap().d().shared.get().full_name
+                    })
+                })
+            {
+                if !flags.any(AssignTypeFlags::Invariant) {
+                    return true;
+                }
+            }
+        }
+
+        // A class value normally remains unspecialized so it can be subscripted.
+        // If every type parameter has an explicit default, apply those defaults
+        // when comparing it against a type specialization. Classes with defaultless
+        // parameters or defaults that resolve directly to Any or Unknown retain
+        // their unspecialized behavior, so they don't degrade inference.
+        let src_has_type_form = src_type.props.borrow().as_ref().and_then(|p| p.type_form).is_some();
+        let src_has_type_args = src_type.d().priv_.borrow().type_args.is_some();
+        let src_include_subclasses = src_type.d().priv_.borrow().include_subclasses.unwrap_or(false);
+        let src_type_params = src_type.d().shared.get().type_params.borrow().clone();
+        if analyzer::types::TypeBase::is_instantiable(src_type.0)
+            && src_has_type_form
+            && !src_has_type_args
+            && !src_include_subclasses
+            && !src_type_params.is_empty()
+            && src_type_params.iter().all(|type_param| type_param.d().shared.get().is_default_explicit.get())
+        {
+            let specialized_src_type = analyzer::type_utils::specialize_with_default_type_args(src_type);
+            let specialized_type_args: Option<Vec<P<Type>>> = {
+                let specialized_priv = specialized_src_type.d().priv_.borrow();
+                specialized_priv.type_args.clone().or_else(|| {
+                    specialized_priv
+                        .tuple_type_args
+                        .as_ref()
+                        .map(|tuple_type_args| tuple_type_args.iter().map(|tuple_type_arg| tuple_type_arg.type_).collect())
+                })
+            };
+            let has_gradual_type_arg = specialized_type_args.as_ref().map(|specialized_type_args| {
+                specialized_type_args.iter().any(|&type_arg| {
+                    analyzer::type_utils::contains_any_or_unknown(type_arg, /* recurse */ false).is_some()
+                        || (analyzer::types::is_function(type_arg)
+                            && FunctionType::is_gradual_callable_form(FunctionType::cast(type_arg).unwrap()))
+                        || (analyzer::types::is_unpacked_class(type_arg)
+                            && analyzer::type_utils::contains_any_or_unknown(type_arg, /* recurse */ true).is_some())
+                })
+            });
+            if has_gradual_type_arg == Some(false) {
+                src_type = specialized_src_type;
+            }
+        }
+
+        // Is it a structural type (i.e. a protocol)? If so, we need to
+        // perform a member-by-member check.
+        let mut inheritance_chain: Vec<P<Type>> = Vec::new();
+        let is_derived_from = ClassType::is_derived_from(src_type, dest_type, Some(&mut inheritance_chain));
+
+        // Use the slow path for protocols if the dest doesn't explicitly
+        // derive from the source. We also need to use this path if we're
+        // testing to see if the metaclass matches the protocol.
+        if ClassType::is_protocol_class(dest_type) && !is_derived_from {
+            if !analyzer::protocols::assign_class_to_protocol(
+                self,
+                dest_type,
+                ClassType::clone_as_instance(src_type, true),
+                diag.map(|d| d.create_addendum()),
+                constraints,
+                flags,
+                recursion_count,
+            ) {
+                if let Some(diag) = diag {
+                    diag.add_message(crate::localization::localize::LocAddendum::protocol_incompatible().format(&[
+                        (
+                            "sourceType",
+                            &self.print_type(analyzer::type_utils::convert_to_instance(src_type.0, true), None),
+                        ),
+                        (
+                            "destType",
+                            &self.print_type(analyzer::type_utils::convert_to_instance(dest_type.0, true), None),
+                        ),
+                    ]));
+                }
+                return false;
+            }
+
+            return true;
+        }
+
+        if !flags.any(AssignTypeFlags::Invariant) || ClassType::is_same_generic_class(src_type, dest_type, 0) {
+            if is_derived_from {
+                assert!(!inheritance_chain.is_empty());
+
+                if self.assign_class_with_type_args(
+                    dest_type,
+                    src_type,
+                    &inheritance_chain,
+                    diag.map(|d| d.create_addendum()),
+                    constraints,
+                    flags,
+                    recursion_count,
+                ) {
+                    return true;
+                }
+            }
+        }
+
+        // Everything is assignable to an object.
+        if ClassType::is_built_in(dest_type, Some(&["object".to_owned()])) {
+            if !flags.any(AssignTypeFlags::Invariant) {
+                return true;
+            }
+        }
+
+        if let Some(diag) = diag {
+            let dest_error_type =
+                if report_errors_using_obj_type { ClassType::clone_as_instance(dest_type, true) } else { dest_type };
+            let src_error_type =
+                if report_errors_using_obj_type { ClassType::clone_as_instance(src_type, true) } else { src_type };
+
+            let mut dest_error_type_text = self.print_type(dest_error_type.0, None);
+            let mut src_error_type_text = self.print_type(src_error_type.0, None);
+
+            // If the text is the same, use the fully-qualified name rather than the short name.
+            let dest_full_name = dest_type.d().shared.get().full_name.clone();
+            let src_full_name = src_type.d().shared.get().full_name.clone();
+            if dest_error_type_text == src_error_type_text && !dest_full_name.is_empty() && !src_full_name.is_empty() {
+                dest_error_type_text = dest_full_name;
+                src_error_type_text = src_full_name;
+            }
+
+            diag.add_message(crate::localization::localize::LocAddendum::type_incompatible().format(&[
+                ("sourceType", &src_error_type_text),
+                ("destType", &dest_error_type_text),
+            ]));
+
+            // Tell the user about the disableBytesTypePromotions if that is involved.
+            if ClassType::is_built_in(dest_type, Some(&["bytes".to_owned()])) {
+                let dest_full_name = dest_type.d().shared.get().full_name.clone();
+                let promotions = TYPE_PROMOTIONS.with(|promotions| promotions.get(&dest_full_name).cloned());
+                if let Some(promotions) = promotions
+                    && promotions.iter().any(|name| *name == src_type.d().shared.get().full_name)
+                {
+                    diag.add_message(crate::localization::localize::LocAddendum::bytes_type_promotions());
+                }
+            }
+        }
+
+        false
     }
 
     // analyzer/typeEvaluator.ts:25758
@@ -18141,7 +18399,189 @@ impl TypeEvaluator {
         ignore_base_class_variance: bool,
         recursion_count: u32,
     ) -> bool {
-        todo!()
+        assert!(ClassType::is_same_generic_class(dest_type, src_type, 0));
+        assert!(!dest_type.d().shared.get().type_params.borrow().is_empty());
+
+        let src_type = ClassType::cast(analyzer::type_utils::make_type_vars_bound(
+            src_type.0,
+            Some(&analyzer::type_utils::get_type_var_scope_ids(src_type.0)),
+        ))
+        .unwrap();
+        let dest_type = ClassType::cast(analyzer::type_utils::make_type_vars_bound(
+            dest_type.0,
+            Some(&analyzer::type_utils::get_type_var_scope_ids(dest_type.0)),
+        ))
+        .unwrap();
+
+        let mut is_assignable = true;
+
+        // Use a try/catch block here to make sure that we reset
+        // the assignClassToSelfClass to undefined if an exception occurs.
+        // Stash the current class type so any references to it are treated
+        // as though all type parameters are invariant.
+        self.assign_class_to_self_stack
+            .borrow_mut()
+            .push(AssignClassToSelfInfo { class: dest_type, assumed_variance });
+
+        // The `finally` block: every exit of `try_body` pops the stack below.
+        let result = 'try_body: {
+            ClassType::get_symbol_table(dest_type).for_each(|symbol, name| {
+                if !is_assignable || symbol.is_ignored_for_protocol_match() {
+                    return;
+                }
+
+                // Constructor methods are exempt from variance calculations.
+                if name == "__new__" || name == "__init__" {
+                    return;
+                }
+
+                let member_info =
+                    analyzer::type_utils::look_up_class_member(src_type, name, MemberAccessFlags::Default, None);
+                assert!(member_info.is_some());
+                let member_info = member_info.unwrap();
+
+                let mut dest_member_type = self.get_effective_type_of_symbol(symbol);
+                let src_member_type = self.get_type_of_member(&member_info);
+                dest_member_type = analyzer::type_utils::partially_specialize_type(
+                    dest_member_type,
+                    dest_type,
+                    self.get_type_class_type(),
+                    None,
+                );
+
+                // Properties require special processing.
+                if analyzer::types::is_class_instance(dest_member_type)
+                    && ClassType::is_property_class(ClassType::cast(dest_member_type).unwrap())
+                    && analyzer::types::is_class_instance(src_member_type)
+                    && ClassType::is_property_class(ClassType::cast(src_member_type).unwrap())
+                {
+                    if !analyzer::properties::assign_property(
+                        self,
+                        ClassType::clone_as_instantiable(ClassType::cast(dest_member_type).unwrap(), true),
+                        ClassType::clone_as_instantiable(ClassType::cast(src_member_type).unwrap(), true),
+                        dest_type,
+                        src_type.0,
+                        /* diag */ None,
+                        /* constraints */ None,
+                        /* selfConstraints */ None,
+                        recursion_count,
+                    ) {
+                        is_assignable = false;
+                    }
+                } else {
+                    let primary_decl = symbol.get_declarations().first().copied();
+
+                    let mut flags = AssignTypeFlags::Default;
+                    if let Some(primary_decl) = primary_decl
+                        && primary_decl.type_ == analyzer::declaration::DeclarationType::Variable
+                        && !self.is_final_variable_declaration(primary_decl)
+                        && !analyzer::type_utils::is_member_read_only(dest_type, name)
+                    {
+                        // Class and instance variables that are mutable need to
+                        // enforce invariance. We will exempt variables that are
+                        // private or protected, since these are presumably
+                        // not modifiable outside of the class.
+                        if !analyzer::symbol_name_utils::is_private_or_protected_name(name) {
+                            flags |= AssignTypeFlags::Invariant;
+                        }
+                    }
+
+                    if !self.assign_type(
+                        dest_member_type,
+                        src_member_type,
+                        /* diag */ None,
+                        /* constraints */ None,
+                        flags | AssignTypeFlags::SkipSelfClsParamCheck,
+                        recursion_count,
+                    ) {
+                        is_assignable = false;
+                    }
+                }
+            });
+
+            if !is_assignable {
+                break 'try_body false;
+            }
+
+            // Now handle generic base classes.
+            let base_classes = dest_type.d().shared.get().base_classes.borrow().clone();
+            for base_class in base_classes {
+                if !is_assignable
+                    || !analyzer::types::is_instantiable_class(base_class)
+                    || ClassType::is_built_in(
+                        ClassType::cast(base_class).unwrap(),
+                        Some(&["object".to_owned(), "Protocol".to_owned(), "Generic".to_owned()]),
+                    )
+                    || ClassType::cast(base_class).unwrap().d().shared.get().type_params.borrow().is_empty()
+                {
+                    continue;
+                }
+                let base_class = ClassType::cast(base_class).unwrap();
+
+                let specialized_dest_base_class = analyzer::type_utils::specialize_for_base_class(dest_type, base_class);
+                let specialized_src_base_class = analyzer::type_utils::specialize_for_base_class(src_type, base_class);
+
+                if !ignore_base_class_variance {
+                    let type_params = specialized_dest_base_class.d().shared.get().type_params.borrow().clone();
+                    for (index, param) in type_params.into_iter().enumerate() {
+                        if analyzer::types::is_param_spec(param.0)
+                            || analyzer::types::is_type_var_tuple(param.0)
+                            || param.d().shared.get().is_synthesized.get()
+                        {
+                            continue;
+                        }
+
+                        let src_type_args = specialized_src_base_class.d().priv_.borrow().type_args.clone();
+                        let dest_type_args = specialized_dest_base_class.d().priv_.borrow().type_args.clone();
+                        let (Some(src_type_args), Some(dest_type_args)) = (src_type_args, dest_type_args) else {
+                            continue;
+                        };
+                        if index >= src_type_args.len() || index >= dest_type_args.len() {
+                            continue;
+                        }
+
+                        let param_variance = param.d().shared.get().declared_variance.get();
+                        if analyzer::types::is_type_var(src_type_args[index]) {
+                            if param_variance == Variance::Invariant || param_variance == Variance::Contravariant {
+                                is_assignable = false;
+                                continue;
+                            }
+                        }
+
+                        if analyzer::types::is_type_var(dest_type_args[index]) {
+                            if param_variance == Variance::Invariant || param_variance == Variance::Covariant {
+                                is_assignable = false;
+                                continue;
+                            }
+                        }
+                    }
+                }
+
+                if !is_assignable {
+                    continue;
+                }
+
+                // Handle tuples specially since their type arguments are variadic.
+                if ClassType::is_tuple_class(specialized_dest_base_class) {
+                    continue;
+                }
+
+                if !self.assign_class_to_self(
+                    specialized_dest_base_class,
+                    specialized_src_base_class,
+                    assumed_variance,
+                    ignore_base_class_variance,
+                    recursion_count,
+                ) {
+                    is_assignable = false;
+                }
+            }
+
+            is_assignable
+        };
+
+        self.assign_class_to_self_stack.borrow_mut().pop();
+        result
     }
 
     // analyzer/typeEvaluator.ts:25932
@@ -18155,12 +18595,150 @@ impl TypeEvaluator {
         flags: AssignTypeFlags,
         recursion_count: u32,
     ) -> bool {
-        todo!()
+        let mut cur_src_type = src_type;
+        let mut prev_src_type: Option<ClassType> = None;
+
+        self.infer_variance_for_class(dest_type);
+
+        // If we're enforcing invariance, literal types must match.
+        if flags.any(AssignTypeFlags::Invariant) {
+            let src_is_literal = analyzer::type_utils::is_literal_like_type(src_type);
+            let dest_is_literal = analyzer::type_utils::is_literal_like_type(dest_type);
+
+            if src_is_literal != dest_is_literal {
+                return false;
+            }
+        }
+
+        for ancestor_index in (0..inheritance_chain.len()).rev() {
+            let ancestor_type = inheritance_chain[ancestor_index];
+
+            // If we've hit an "unknown", all bets are off, and we need to assume
+            // that the type is assignable. If the destType is marked "@final",
+            // we should be able to assume that it's not assignable, but we can't do
+            // this in the general case because it breaks assumptions with the
+            // NotImplemented symbol exported by typeshed's builtins.pyi. Instead,
+            // we'll special-case only None.
+            if analyzer::types::is_unknown(ancestor_type) {
+                return !analyzer::type_utils::is_none_type_class(dest_type.0);
+            }
+            let ancestor_type = ClassType::cast(ancestor_type).unwrap();
+
+            // If this isn't the first time through the loop, specialize
+            // for the next ancestor in the chain.
+            if ancestor_index < inheritance_chain.len() - 1 {
+                // If the curSrcType is a NamedTuple and the ancestorType is a tuple,
+                // we need to handle this as a special case because the NamedTuple may
+                // include typeParams from its parent class.
+                let mut effective_cur_src_type = cur_src_type;
+                if ClassType::is_built_in(cur_src_type, Some(&["NamedTuple".to_owned()]))
+                    && ClassType::is_built_in(ancestor_type, Some(&["tuple".to_owned()]))
+                    && let Some(prev_src_type) = prev_src_type
+                {
+                    effective_cur_src_type = prev_src_type;
+                }
+
+                cur_src_type = analyzer::type_utils::specialize_for_base_class(effective_cur_src_type, ancestor_type);
+            }
+
+            // If there are no type parameters on this class, we're done.
+            let ancestor_type_params = ClassType::get_type_params(ancestor_type);
+            if ancestor_type_params.is_empty() {
+                continue;
+            }
+
+            // If the dest type isn't specialized, there are no type args to validate.
+            if ancestor_type.d().priv_.borrow().type_args.is_none() {
+                return true;
+            }
+
+            prev_src_type = Some(cur_src_type);
+        }
+
+        // Handle tuple, which supports a variable number of type arguments.
+        let dest_has_tuple_type_args = dest_type.d().priv_.borrow().tuple_type_args.is_some();
+        let cur_src_has_tuple_type_args = cur_src_type.d().priv_.borrow().tuple_type_args.is_some();
+        if dest_has_tuple_type_args && cur_src_has_tuple_type_args {
+            return analyzer::tuples::assign_tuple_type_args(
+                self,
+                dest_type,
+                cur_src_type,
+                diag,
+                constraints,
+                flags,
+                recursion_count,
+            );
+        }
+
+        let dest_has_type_args = dest_type.d().priv_.borrow().type_args.is_some();
+        if dest_has_type_args {
+            // If the dest type is specialized, make sure the specialized source
+            // type arguments are assignable to the dest type arguments.
+            return self.assign_type_args(
+                dest_type,
+                cur_src_type,
+                // Don't emit a diag addendum if we're in an invariant context. It's
+                // sufficient to simply indicate that the types are not the same
+                // in this case. Adding more information is unnecessary and confusing.
+                if !flags.any(AssignTypeFlags::Invariant) { diag } else { None },
+                constraints,
+                flags,
+                recursion_count,
+            );
+        }
+
+        let cur_src_type_args = cur_src_type.d().priv_.borrow().type_args.clone();
+        if let Some(constraints) = constraints
+            && let Some(src_type_args) = cur_src_type_args
+        {
+            // Populate the typeVar map with type arguments of the source.
+            let mut i = 0;
+            while i < dest_type.d().shared.get().type_params.borrow().len() {
+                let type_arg_type: P<Type>;
+                let type_param = dest_type.d().shared.get().type_params.borrow()[i];
+                let variance = TypeVarType::get_variance(type_param);
+
+                let cur_src_tuple_type_args = cur_src_type.d().priv_.borrow().tuple_type_args.clone();
+                if let Some(cur_src_tuple_type_args) = cur_src_tuple_type_args {
+                    type_arg_type = analyzer::type_utils::convert_to_instance(
+                        analyzer::tuples::make_tuple_object(self, &cur_src_tuple_type_args, /* isUnpacked */ true),
+                        true,
+                    );
+                } else {
+                    type_arg_type = if i < src_type_args.len() {
+                        src_type_args[i]
+                    } else {
+                        analyzer::types::UnknownType::create(false).0
+                    };
+                }
+
+                constraints.set_bounds(
+                    type_param,
+                    if variance != Variance::Contravariant { Some(type_arg_type) } else { None },
+                    if variance != Variance::Covariant { Some(type_arg_type) } else { None },
+                    /* retainLiterals */ Some(true),
+                );
+                i += 1;
+            }
+        }
+
+        true
     }
 
     // analyzer/typeEvaluator.ts:26058
     pub fn get_getter_type_from_property(&self, property_class: ClassType) -> Option<P<Type>> {
-        todo!()
+        if !ClassType::is_property_class(property_class) {
+            return None;
+        }
+
+        let fget_info = property_class.d().priv_.borrow().fget_info.clone();
+        if let Some(fget_info) = fget_info
+            && analyzer::types::is_function(fget_info.method_type)
+        {
+            return Some(self.get_effective_return_type(FunctionType::cast(fget_info.method_type).unwrap()));
+        }
+
+        None
     }
 
     // analyzer/typeEvaluator.ts:26070
@@ -18173,7 +18751,164 @@ impl TypeEvaluator {
         flags: AssignTypeFlags,
         recursion_count: u32,
     ) -> bool {
-        todo!()
+        assert!(ClassType::is_same_generic_class(dest_type, src_type, 0));
+
+        self.infer_variance_for_class(dest_type);
+
+        let dest_type_params = ClassType::get_type_params(dest_type);
+        let dest_type_args: Vec<P<Type>>;
+        let src_type_args: Option<Vec<P<Type>>>;
+
+        // Are we performing protocol variance validation for this class? If so,
+        // treat all of the type parameters as invariant even if they are declared
+        // otherwise.
+        let assign_class_to_self_stack = self.assign_class_to_self_stack.borrow().clone();
+        let assign_class_to_self_info = assign_class_to_self_stack
+            .iter()
+            .find(|info| ClassType::is_same_generic_class(info.class, dest_type, 0));
+        let assumed_variance = assign_class_to_self_info.map(|info| info.assumed_variance);
+
+        // If either source or dest type arguments are missing, they are
+        // treated as "Any", so they are assumed to be assignable.
+        let dest_has_type_args = dest_type.d().priv_.borrow().type_args.is_some();
+        let src_has_type_args = src_type.d().priv_.borrow().type_args.is_some();
+        if !dest_has_type_args || !src_has_type_args {
+            return true;
+        }
+
+        if ClassType::is_tuple_class(dest_type) {
+            dest_type_args = dest_type
+                .d()
+                .priv_
+                .borrow()
+                .tuple_type_args
+                .as_ref()
+                .map(|tuple_type_args| tuple_type_args.iter().map(|t| t.type_).collect())
+                .unwrap_or_default();
+            src_type_args = src_type
+                .d()
+                .priv_
+                .borrow()
+                .tuple_type_args
+                .as_ref()
+                .map(|tuple_type_args| tuple_type_args.iter().map(|t| t.type_).collect());
+        } else {
+            dest_type_args = dest_type.d().priv_.borrow().type_args.clone().unwrap();
+            src_type_args = src_type.d().priv_.borrow().type_args.clone();
+        }
+
+        let mut is_compatible = true;
+
+        if let Some(src_type_args) = src_type_args {
+            for (src_arg_index, &src_type_arg) in src_type_args.iter().enumerate() {
+                // In most cases, the number of type args should match the number
+                // of type arguments, but there are a few special cases where this
+                // isn't true (e.g. assigning a Tuple[X, Y, Z] to a tuple[W]).
+                let dest_arg_index: i32 = if src_arg_index >= dest_type_args.len() {
+                    dest_type_args.len() as i32 - 1
+                } else {
+                    src_arg_index as i32
+                };
+                let dest_type_arg = if dest_arg_index >= 0 {
+                    dest_type_args[dest_arg_index as usize]
+                } else {
+                    analyzer::types::UnknownType::create(false).0
+                };
+                // JS `destTypeParams[-1]` is undefined, so a negative index gives no param.
+                let dest_type_param = if dest_arg_index >= 0 && (dest_arg_index as usize) < dest_type_params.len() {
+                    Some(dest_type_params[dest_arg_index as usize])
+                } else {
+                    None
+                };
+                let assignment_diag = DiagnosticAddendum::new();
+                let variance = assumed_variance.unwrap_or_else(|| {
+                    if let Some(dest_type_param) = dest_type_param {
+                        TypeVarType::get_variance(dest_type_param)
+                    } else {
+                        Variance::Covariant
+                    }
+                });
+                let mut effective_flags: AssignTypeFlags;
+                let error_source: fn() -> crate::localization::localize::ParameterizedString;
+                let mut include_diag_addendum = true;
+
+                if variance == Variance::Covariant {
+                    effective_flags = flags | AssignTypeFlags::RetainLiteralsForTypeVar;
+                    error_source = crate::localization::localize::LocAddendum::type_var_is_covariant;
+                } else if variance == Variance::Contravariant {
+                    effective_flags =
+                        flags | AssignTypeFlags::Contravariant | AssignTypeFlags::RetainLiteralsForTypeVar;
+                    error_source = crate::localization::localize::LocAddendum::type_var_is_contravariant;
+                } else {
+                    effective_flags = flags | AssignTypeFlags::Invariant | AssignTypeFlags::RetainLiteralsForTypeVar;
+                    error_source = crate::localization::localize::LocAddendum::type_var_is_invariant;
+
+                    // Omit the diagnostic addendum for the invariant case because it's obvious
+                    // why two types are not the same.
+                    include_diag_addendum = false;
+                }
+
+                // Special-case TypeForm to retain literals when solving TypeVars.
+                if ClassType::is_built_in(dest_type, Some(&["TypeForm".to_owned()])) {
+                    effective_flags |= AssignTypeFlags::RetainLiteralsForTypeVar;
+                }
+
+                if !self.assign_type(
+                    if variance == Variance::Contravariant { src_type_arg } else { dest_type_arg },
+                    if variance == Variance::Contravariant { dest_type_arg } else { src_type_arg },
+                    Some(assignment_diag),
+                    constraints,
+                    effective_flags,
+                    recursion_count,
+                ) {
+                    // Don't report errors with type variables in "pseudo-random"
+                    // classes since these type variables are not real.
+                    if !ClassType::is_pseudo_generic_class(dest_type) {
+                        if let Some(diag) = diag {
+                            if let Some(dest_type_param) = dest_type_param {
+                                let child_diag = diag.create_addendum();
+
+                                let error_message = error_source();
+                                let name = TypeVarType::get_readable_name(dest_type_param, true);
+                                let src_dest_types = self.print_src_dest_types(src_type_arg, dest_type_arg, None);
+                                child_diag.add_message(error_message.format(&[
+                                    ("name", &name),
+                                    ("sourceType", &src_dest_types.source_type),
+                                    ("destType", &src_dest_types.dest_type),
+                                ]));
+
+                                if include_diag_addendum {
+                                    child_diag.add_addendum(assignment_diag);
+                                }
+
+                                if is_compatible && ClassType::is_same_generic_class(dest_type, src_type, 0) {
+                                    // Add additional notes to help the user if this is a common type mismatch.
+                                    if ClassType::is_built_in(dest_type, Some(&["dict".to_owned()])) && src_arg_index == 1
+                                    {
+                                        child_diag.add_message(
+                                            crate::localization::localize::LocAddendum::invariant_suggestion_dict(),
+                                        );
+                                    } else if ClassType::is_built_in(dest_type, Some(&["list".to_owned()])) {
+                                        child_diag.add_message(
+                                            crate::localization::localize::LocAddendum::invariant_suggestion_list(),
+                                        );
+                                    } else if ClassType::is_built_in(dest_type, Some(&["set".to_owned()])) {
+                                        child_diag.add_message(
+                                            crate::localization::localize::LocAddendum::invariant_suggestion_set(),
+                                        );
+                                    }
+                                }
+                            } else {
+                                diag.add_addendum(assignment_diag);
+                            }
+                        }
+                        is_compatible = false;
+                    }
+                }
+            }
+        }
+
+        is_compatible
     }
 
     // analyzer/typeEvaluator.ts:26199
@@ -18187,7 +18922,1096 @@ impl TypeEvaluator {
         flags: AssignTypeFlags,
         recursion_count: u32,
     ) -> bool {
-        todo!()
+        let mut dest_type = dest_type;
+        let mut src_type = src_type;
+        let mut flags = flags;
+        let mut recursion_count = recursion_count;
+
+        // Handle the case where the dest and src types are the same object.
+        // We can normally shortcut this and say that they are compatible,
+        // but if the type includes TypeVars, we need to go through
+        // the rest of the logic.
+        if dest_type == src_type && !analyzer::type_utils::requires_specialization(dest_type, None, 0) {
+            return true;
+        }
+
+        // If the source type is a special form, use the literal special form
+        // class rather than the symbolic form.
+        let special_form = src_type.props.borrow().as_ref().and_then(|p| p.special_form);
+        if let Some(special_form) = special_form {
+            let mut is_special_form_exempt = false;
+
+            // A few special forms that are normally not compatible with type[T]
+            // are compatible specifically in the context of isinstance and issubclass.
+            if flags.any(AssignTypeFlags::AllowIsinstanceSpecialForms) {
+                if ClassType::is_built_in(
+                    special_form,
+                    Some(&["Callable".to_owned(), "UnionType".to_owned(), "Generic".to_owned()]),
+                ) {
+                    is_special_form_exempt = true;
+                }
+            }
+
+            if !is_special_form_exempt {
+                let src_type_form = src_type.props.borrow().as_ref().and_then(|p| p.type_form);
+                let special_form_type_form = special_form.props.borrow().as_ref().and_then(|p| p.type_form);
+                if src_type_form.is_some() && special_form_type_form.is_none() {
+                    src_type = analyzer::types::TypeBase::clone_with_type_form(special_form.0, src_type_form);
+                } else {
+                    src_type = special_form.0;
+                }
+            }
+        }
+
+        // A subscripted runtime built-in such as list[int] is represented as its
+        // precise class type, but it is also a types.GenericAlias object at runtime.
+        if analyzer::types::is_class_instance(dest_type)
+            && ClassType::is_built_in(ClassType::cast(dest_type).unwrap(), Some(&["GenericAlias".to_owned()]))
+            && analyzer::types::is_instantiable_class(src_type)
+        {
+            let src_class = ClassType::cast(src_type).unwrap();
+            // Read out first: no `RefCell` borrow may live across `classGetItemReturnsGenericAlias`.
+            let src_alias_name_is_falsy = src_class.d().priv_.borrow().alias_name.as_ref().is_none_or(|n| n.is_empty());
+            let src_has_type_args = src_class.d().priv_.borrow().type_args.is_some();
+            let src_has_type_form = src_type.props.borrow().as_ref().and_then(|p| p.type_form).is_some();
+            if !ClassType::is_special_built_in(src_class, None)
+                && src_alias_name_is_falsy
+                && src_class.d().shared.get().module_name == "builtins"
+                && src_has_type_args
+                && src_has_type_form
+                && self.class_get_item_returns_generic_alias(src_class)
+            {
+                return true;
+            }
+        }
+
+        // If the source is a class-like type created by a call to NewType, treat it
+        // as a FunctionClass instance rather than an instantiable class for
+        // purposes of assignability. This reflects its actual runtime type.
+        if analyzer::types::is_instantiable_class(src_type)
+            && ClassType::is_new_type_class(ClassType::cast(src_type).unwrap())
+            && !ClassType::cast(src_type).unwrap().d().priv_.borrow().include_subclasses.unwrap_or(false)
+        {
+            let function_class = self.prefetched.borrow().as_ref().and_then(|p| p.function_class);
+            if let Some(function_class) = function_class
+                && analyzer::types::is_instantiable_class(function_class)
+            {
+                src_type = ClassType::clone_as_instance(ClassType::cast(function_class).unwrap(), true).0;
+            }
+        }
+
+        if recursion_count > analyzer::types::MAX_TYPE_RECURSION_COUNT {
+            return true;
+        }
+        recursion_count += 1;
+
+        // If the source and dest refer to the recursive type aliases, handle
+        // the case specially to avoid recursing down both type aliases.
+        if analyzer::types::is_type_var(dest_type)
+            && TypeVarType::cast(dest_type).unwrap().d().shared.get().recursive_alias.get().is_some()
+            && analyzer::types::is_type_var(src_type)
+            && TypeVarType::cast(src_type).unwrap().d().shared.get().recursive_alias.get().is_some()
+        {
+            let dest_alias_info = dest_type.props.borrow().as_ref().and_then(|p| p.type_alias_info.clone());
+            let src_alias_info = src_type.props.borrow().as_ref().and_then(|p| p.type_alias_info.clone());
+            let dest_recursive_alias =
+                TypeVarType::cast(dest_type).unwrap().d().shared.get().recursive_alias.get().unwrap();
+            let src_recursive_alias =
+                TypeVarType::cast(src_type).unwrap().d().shared.get().recursive_alias.get().unwrap();
+
+            // Do the source and dest refer to the same recursive type alias?
+            if let Some(dest_alias_info) = dest_alias_info.as_ref().filter(|info| info.type_args.is_some())
+                && let Some(src_alias_info) = src_alias_info.as_ref().filter(|info| info.type_args.is_some())
+                && dest_recursive_alias.type_var_scope_id == src_recursive_alias.type_var_scope_id
+            {
+                return self.assign_recursive_type_alias_to_self(
+                    dest_alias_info,
+                    src_alias_info,
+                    diag,
+                    constraints,
+                    flags,
+                    recursion_count,
+                );
+            } else {
+                // Have we already recursed once?
+                if flags.any(AssignTypeFlags::SkipRecursiveTypeCheck) {
+                    return true;
+                }
+
+                // Note that we are comparing two recursive types and do
+                // not recursive more than once.
+                flags |= AssignTypeFlags::SkipRecursiveTypeCheck;
+            }
+        }
+
+        // If one or both of the types has an instantiable depth greater than
+        // zero, convert both to instances first.
+        if analyzer::types::TypeBase::is_instantiable(dest_type) && analyzer::types::TypeBase::is_instantiable(src_type) {
+            if analyzer::types::TypeBase::get_instantiable_depth(dest_type) > 0
+                || analyzer::types::TypeBase::get_instantiable_depth(src_type) > 0
+            {
+                return self.assign_type(
+                    analyzer::type_utils::convert_to_instance(dest_type, true),
+                    analyzer::type_utils::convert_to_instance(src_type, true),
+                    diag,
+                    constraints,
+                    flags,
+                    recursion_count,
+                );
+            }
+        }
+
+        // Transform recursive type aliases if necessary.
+        let transformed_dest_type =
+            analyzer::type_utils::transform_possible_recursive_type_alias(Some(dest_type), 0).unwrap();
+        let transformed_src_type =
+            analyzer::type_utils::transform_possible_recursive_type_alias(Some(src_type), 0).unwrap();
+
+        // Did either the source or dest include recursive type aliases?
+        // If so, we could be dealing with different recursive type aliases
+        // or a recursive type alias and a recursive protocol definition.
+        if (transformed_dest_type != dest_type && analyzer::types::is_union(transformed_dest_type))
+            || (transformed_src_type != src_type && analyzer::types::is_union(transformed_src_type))
+        {
+            // Use a smaller recursive limit in this case to prevent runaway recursion.
+            if recursion_count > MAX_RECURSIVE_TYPE_ALIAS_RECURSION_COUNT {
+                // Add a special case for when the source is a str, which is itself
+                // a recursive type (since it derives from Sequence[str]).
+                if analyzer::types::is_class_instance(src_type)
+                    && ClassType::is_built_in(ClassType::cast(src_type).unwrap(), Some(&["str".to_owned()]))
+                    && analyzer::types::is_union(transformed_dest_type)
+                {
+                    let subtypes = UnionType::cast(transformed_dest_type).unwrap().d().priv_.borrow().subtypes.clone();
+                    return subtypes.iter().any(|&subtype| {
+                        analyzer::types::is_class_instance(subtype)
+                            && ClassType::is_built_in(
+                                ClassType::cast(subtype).unwrap(),
+                                Some(&["object".to_owned(), "str".to_owned()]),
+                            )
+                    });
+                }
+                return true;
+            }
+        }
+
+        dest_type = transformed_dest_type;
+        src_type = transformed_src_type;
+
+        // If the source or dest is unbound, allow the assignment. The
+        // error will be reported elsewhere.
+        if analyzer::types::is_unbound(dest_type) || analyzer::types::is_unbound(src_type) {
+            return true;
+        }
+
+        if analyzer::types::is_type_var(dest_type) {
+            let dest_type_var = TypeVarType::cast(dest_type).unwrap();
+            if analyzer::type_utils::is_type_var_same(dest_type_var, src_type) {
+                return true;
+            }
+
+            // If the dest is a constrained or bound type variable and all of the
+            // types in the source are conditioned on that same type variable
+            // and have compatible types, we'll consider it assignable.
+            if self.assign_conditional_type_to_type_var(dest_type_var, src_type, recursion_count) {
+                return true;
+            }
+
+            // If the source is a conditional type associated with a bound TypeVar
+            // and the bound TypeVar matches the condition, the types are compatible.
+            if analyzer::types::TypeBase::is_instantiable(dest_type) == analyzer::types::TypeBase::is_instantiable(src_type)
+            {
+                let src_condition = src_type.props.borrow().as_ref().and_then(|p| p.condition.clone());
+                if let Some(src_condition) = src_condition
+                    && src_condition.iter().any(|cond| {
+                        !TypeVarType::has_constraints(cond.type_var)
+                            && cond.type_var.d().priv_.borrow().name_with_scope
+                                == dest_type_var.d().priv_.borrow().name_with_scope
+                    })
+                {
+                    return true;
+                }
+            }
+
+            if analyzer::types::is_union(src_type) {
+                let src_without_any =
+                    analyzer::types::remove_from_union(src_type, &mut |type_| analyzer::types::is_any_or_unknown(type_));
+                if analyzer::types::is_type_same(
+                    dest_type,
+                    src_without_any,
+                    &analyzer::types::TypeSameOptions {
+                        ignore_pseudo_generic: None,
+                        ignore_type_flags: None,
+                        ignore_conditions: None,
+                        ignore_typed_dict_narrow_entries: None,
+                        honor_type_form: None,
+                        honor_is_type_arg_explicit: None,
+                        treat_any_same_as_unknown: None,
+                    },
+                    0,
+                ) {
+                    return true;
+                }
+            }
+
+            // Handle the special case where both types are Self types. We'll allow
+            // them to be treated as equivalent to handle certain common idioms.
+            if analyzer::types::is_type_var(src_type) {
+                let src_type_var = TypeVarType::cast(src_type).unwrap();
+                if TypeVarType::is_self(src_type_var)
+                    && TypeVarType::has_bound(src_type_var)
+                    && TypeVarType::is_self(dest_type_var)
+                    && TypeVarType::has_bound(dest_type_var)
+                    && TypeVarType::is_bound(dest_type_var) == TypeVarType::is_bound(src_type_var)
+                    && analyzer::types::TypeBase::is_instance(src_type)
+                        == analyzer::types::TypeBase::is_instance(dest_type)
+                {
+                    if !flags.any(AssignTypeFlags::Contravariant) && constraints.is_some() {
+                        analyzer::constraint_solver::assign_type_var(
+                            self,
+                            dest_type_var,
+                            src_type,
+                            diag,
+                            constraints,
+                            flags,
+                            recursion_count,
+                        );
+                    }
+                    return true;
+                }
+            }
+
+            // If the dest is a TypeVarTuple, and the source is a tuple
+            // with a single entry that is the same TypeVarTuple, it's a match.
+            if analyzer::types::is_type_var_tuple(dest_type)
+                && analyzer::types::is_class_instance(src_type)
+                && analyzer::type_utils::is_tuple_class(ClassType::cast(src_type).unwrap())
+            {
+                let src_tuple_type_args = ClassType::cast(src_type).unwrap().d().priv_.borrow().tuple_type_args.clone();
+                if let Some(src_tuple_type_args) = src_tuple_type_args
+                    && src_tuple_type_args.len() == 1
+                {
+                    if analyzer::types::is_type_same(
+                        dest_type,
+                        src_tuple_type_args[0].type_,
+                        &analyzer::types::TypeSameOptions {
+                            ignore_pseudo_generic: None,
+                            ignore_type_flags: None,
+                            ignore_conditions: None,
+                            ignore_typed_dict_narrow_entries: None,
+                            honor_type_form: None,
+                            honor_is_type_arg_explicit: None,
+                            treat_any_same_as_unknown: None,
+                        },
+                        recursion_count,
+                    ) {
+                        return true;
+                    }
+                }
+            }
+
+            if !flags.any(AssignTypeFlags::Contravariant) || !analyzer::types::is_type_var(src_type) {
+                if !analyzer::constraint_solver::assign_type_var(
+                    self,
+                    dest_type_var,
+                    src_type,
+                    diag,
+                    constraints,
+                    flags,
+                    recursion_count,
+                ) {
+                    return false;
+                }
+
+                if analyzer::types::is_any_or_unknown(src_type) && flags.any(AssignTypeFlags::OverloadOverlap) {
+                    return false;
+                }
+
+                return true;
+            }
+        }
+
+        if analyzer::types::is_type_var(src_type) {
+            let src_type_var = TypeVarType::cast(src_type).unwrap();
+            if flags.any(AssignTypeFlags::Contravariant) {
+                if TypeVarType::is_bound(src_type_var) {
+                    return self.assign_type(
+                        self.make_top_level_type_vars_concrete(dest_type, false, None),
+                        self.make_top_level_type_vars_concrete(src_type, false, None),
+                        diag,
+                        /* constraints */ None,
+                        flags,
+                        recursion_count,
+                    );
+                }
+
+                if analyzer::constraint_solver::assign_type_var(
+                    self,
+                    src_type_var,
+                    dest_type,
+                    diag,
+                    constraints,
+                    flags,
+                    recursion_count,
+                ) {
+                    return true;
+                }
+
+                // If the dest type is a union, only one of the subtypes needs to match.
+                let mut is_assignable = false;
+                if analyzer::types::is_union(dest_type) {
+                    analyzer::type_utils::do_for_each_subtype(
+                        dest_type,
+                        &mut |dest_subtype, _, _| {
+                            if analyzer::constraint_solver::assign_type_var(
+                                self,
+                                src_type_var,
+                                dest_subtype,
+                                diag,
+                                constraints,
+                                flags,
+                                recursion_count,
+                            ) {
+                                is_assignable = true;
+                            }
+                        },
+                        false,
+                    );
+                }
+                return is_assignable;
+            }
+
+            if flags.any(AssignTypeFlags::Invariant) {
+                if analyzer::types::is_any_or_unknown(dest_type) {
+                    return true;
+                }
+
+                // If the source is a ParamSpec and the dest is a "...", this is
+                // effectively like an "Any" signature, so we'll treat it as though
+                // it's Any.
+                if analyzer::types::is_param_spec(src_type)
+                    && analyzer::types::is_function(dest_type)
+                    && FunctionType::is_gradual_callable_form(FunctionType::cast(dest_type).unwrap())
+                    && FunctionType::cast(dest_type).unwrap().d().shared.get().parameters.get().borrow().len() <= 2
+                {
+                    return true;
+                }
+
+                // If the source is an unpacked TypeVarTuple and the dest is a
+                // *tuple[Any, ...], we'll treat it as compatible.
+                if analyzer::types::is_unpacked_type_var_tuple(src_type)
+                    && analyzer::types::is_class_instance(dest_type)
+                    && analyzer::types::is_unpacked_class(dest_type)
+                {
+                    let dest_tuple_type_args =
+                        ClassType::cast(dest_type).unwrap().d().priv_.borrow().tuple_type_args.clone();
+                    if let Some(dest_tuple_type_args) = dest_tuple_type_args
+                        && dest_tuple_type_args.len() == 1
+                        && dest_tuple_type_args[0].is_unbounded
+                        && analyzer::types::is_any_or_unknown(dest_tuple_type_args[0].type_)
+                    {
+                        return true;
+                    }
+                }
+
+                if !analyzer::types::is_union(dest_type) {
+                    if let Some(diag) = diag {
+                        let src_dest_types = self.print_src_dest_types(src_type, dest_type, None);
+                        diag.add_message(
+                            crate::localization::localize::LocAddendum::type_assignment_mismatch().format(&[
+                                ("sourceType", &src_dest_types.source_type),
+                                ("destType", &src_dest_types.dest_type),
+                            ]),
+                        );
+                    }
+                    return false;
+                }
+            }
+        }
+
+        if analyzer::types::is_any_or_unknown(dest_type) {
+            return true;
+        }
+
+        if analyzer::types::is_any_or_unknown(src_type)
+            && src_type.props.borrow().as_ref().and_then(|p| p.special_form).is_none()
+        {
+            if let Some(constraints) = constraints {
+                // If it's an ellipsis type, convert it to a regular "Any"
+                // type. These are functionally equivalent, but "Any" looks
+                // better in the text representation.
+                let type_var_substitution = if analyzer::type_utils::is_ellipsis_type(src_type) {
+                    analyzer::types::AnyType::create(false).0
+                } else {
+                    src_type
+                };
+                self.set_constraints_for_free_type_vars(dest_type, type_var_substitution, constraints);
+            }
+            if !flags.any(AssignTypeFlags::OverloadOverlap) {
+                return true;
+            }
+        }
+
+        if analyzer::types::is_never(src_type) {
+            if flags.any(AssignTypeFlags::Invariant) {
+                if analyzer::types::is_never(dest_type) {
+                    return true;
+                }
+
+                if let Some(diag) = diag {
+                    let src_dest_types = self.print_src_dest_types(src_type, dest_type, None);
+                    diag.add_message(crate::localization::localize::LocAddendum::type_assignment_mismatch().format(&[
+                        ("sourceType", &src_dest_types.source_type),
+                        ("destType", &src_dest_types.dest_type),
+                    ]));
+                }
+                return false;
+            }
+
+            if let Some(constraints) = constraints {
+                self.set_constraints_for_free_type_vars(
+                    dest_type,
+                    analyzer::types::UnknownType::create(false).0,
+                    constraints,
+                );
+            }
+            return true;
+        }
+
+        let is_invariant = flags.any(AssignTypeFlags::Invariant);
+        src_type =
+            self.expand_enum_type_for_literal_comparison(src_type, dest_type, /* concretizeTypeVars */ !is_invariant);
+        if is_invariant {
+            dest_type =
+                self.expand_enum_type_for_literal_comparison(dest_type, src_type, /* concretizeTypeVars */ false);
+        }
+
+        if analyzer::types::is_union(dest_type) {
+            // If both the source and dest are unions, use assignFromUnionType which has
+            // special-case logic to handle this case.
+            if analyzer::types::is_union(src_type) {
+                return self.assign_from_union_type(
+                    dest_type,
+                    UnionType::cast(src_type).unwrap(),
+                    diag,
+                    constraints,
+                    flags,
+                    recursion_count,
+                );
+            }
+
+            // `ConstraintTracker::clone`, not `P::clone`: the TS clones the tracker.
+            let cloned_constraints = constraints.map(|constraints| ConstraintTracker::clone(&constraints));
+            if self.assign_to_union_type(
+                UnionType::cast(dest_type).unwrap(),
+                src_type,
+                /* diag */ None,
+                cloned_constraints,
+                flags,
+                recursion_count,
+            ) {
+                if let Some(constraints) = constraints
+                    && let Some(cloned_constraints) = cloned_constraints
+                {
+                    constraints.copy_from_clone(cloned_constraints);
+                }
+                return true;
+            }
+        }
+
+        let expanded_src_type = self.make_top_level_type_vars_concrete(src_type, false, None);
+        if analyzer::types::is_union(expanded_src_type) {
+            return self.assign_from_union_type(
+                dest_type,
+                UnionType::cast(expanded_src_type).unwrap(),
+                diag,
+                constraints,
+                flags,
+                recursion_count,
+            );
+        }
+
+        if analyzer::types::is_union(dest_type) {
+            return self.assign_to_union_type(
+                UnionType::cast(dest_type).unwrap(),
+                src_type,
+                diag,
+                constraints,
+                flags,
+                recursion_count,
+            );
+        }
+
+        // Is the src a specialized "type" object?
+        if analyzer::types::is_class_instance(expanded_src_type)
+            && ClassType::is_built_in(ClassType::cast(expanded_src_type).unwrap(), Some(&["type".to_owned()]))
+        {
+            let src_type_args = ClassType::cast(expanded_src_type).unwrap().d().priv_.borrow().type_args.clone();
+            let type_type_arg: P<Type>;
+
+            if let Some(src_type_args) = src_type_args.filter(|src_type_args| src_type_args.len() >= 1) {
+                type_type_arg = src_type_args[0];
+            } else {
+                type_type_arg = analyzer::types::UnknownType::create(false).0;
+            }
+
+            if analyzer::types::is_any_or_unknown(type_type_arg) {
+                if analyzer::type_utils::is_effectively_instantiable(dest_type, None, 0) {
+                    return true;
+                }
+            } else if analyzer::types::is_class_instance(type_type_arg) || analyzer::types::is_type_var(type_type_arg) {
+                if self.assign_type(
+                    dest_type,
+                    analyzer::type_utils::convert_to_instantiable(type_type_arg, true),
+                    diag.map(|d| d.create_addendum()),
+                    constraints,
+                    flags,
+                    recursion_count,
+                ) {
+                    return true;
+                }
+
+                if let Some(diag) = diag {
+                    let src_dest_types = self.print_src_dest_types(src_type, dest_type, None);
+                    diag.add_message(crate::localization::localize::LocAddendum::type_assignment_mismatch().format(&[
+                        ("sourceType", &src_dest_types.source_type),
+                        ("destType", &src_dest_types.dest_type),
+                    ]));
+                }
+                return false;
+            }
+        }
+
+        if analyzer::types::is_instantiable_class(dest_type) {
+            let dest_class = ClassType::cast(dest_type).unwrap();
+            if analyzer::types::is_instantiable_class(expanded_src_type) {
+                let expanded_src_class = ClassType::cast(expanded_src_type).unwrap();
+
+                // PEP 544 says that if the dest type is a type[Proto] class,
+                // the source must be a "concrete" (non-protocol) class.
+                if ClassType::is_protocol_class(dest_class) {
+                    if !flags.any(AssignTypeFlags::AllowProtocolClassSource)
+                        && ClassType::is_protocol_class(expanded_src_class)
+                        && analyzer::types::is_instantiable_class(src_type)
+                        && !ClassType::cast(src_type).unwrap().d().priv_.borrow().include_subclasses.unwrap_or(false)
+                    {
+                        if let Some(diag) = diag {
+                            diag.add_message(
+                                crate::localization::localize::LocAddendum::protocol_source_is_not_concrete().format(&[
+                                    (
+                                        "sourceType",
+                                        &self.print_type(analyzer::type_utils::convert_to_instance(src_type, true), None),
+                                    ),
+                                    ("destType", &self.print_type(dest_type, None)),
+                                ]),
+                            );
+                        }
+                        return false;
+                    }
+                }
+
+                if ClassType::is_built_in(dest_class, Some(&["type".to_owned()]))
+                    && src_type.props.borrow().as_ref().and_then(|p| p.instantiable_depth).unwrap_or(0) > 0
+                {
+                    return true;
+                }
+
+                if self.is_special_form_class(expanded_src_class, flags) {
+                    // Special form classes are compatible only with other special form
+                    // classes, not with 'object' or 'type'.
+                    let dest_special_form =
+                        dest_type.props.borrow().as_ref().and_then(|p| p.special_form).unwrap_or(dest_class);
+                    if self.is_special_form_class(dest_special_form, flags) {
+                        return self.assign_type(
+                            dest_special_form.0,
+                            expanded_src_type,
+                            diag,
+                            constraints,
+                            flags,
+                            recursion_count,
+                        );
+                    }
+                } else if self.assign_class(
+                    dest_class,
+                    expanded_src_class,
+                    diag,
+                    constraints,
+                    flags,
+                    recursion_count,
+                    /* reportErrorsUsingObjType */ false,
+                ) {
+                    return true;
+                }
+
+                if let Some(diag) = diag {
+                    let src_dest_types = self.print_src_dest_types(src_type, dest_type, None);
+                    diag.add_message(crate::localization::localize::LocAddendum::type_assignment_mismatch().format(&[
+                        ("sourceType", &src_dest_types.source_type),
+                        ("destType", &src_dest_types.dest_type),
+                    ]));
+                }
+                return false;
+            }
+        }
+
+        if analyzer::types::is_class_instance(dest_type) {
+            let dest_class = ClassType::cast(dest_type).unwrap();
+            if ClassType::is_built_in(dest_class, Some(&["type".to_owned()])) {
+                if analyzer::types::is_instantiable_class(src_type)
+                    && self.is_special_form_class(ClassType::cast(src_type).unwrap(), flags)
+                    && analyzer::types::TypeBase::get_instantiable_depth(src_type) == 0
+                {
+                    return false;
+                }
+
+                if analyzer::types::is_any_or_unknown(src_type) && flags.any(AssignTypeFlags::OverloadOverlap) {
+                    return false;
+                }
+
+                let dest_type_args = dest_class.d().priv_.borrow().type_args.clone();
+                if let Some(dest_type_args) = dest_type_args
+                    && dest_type_args.len() >= 1
+                {
+                    if analyzer::types::TypeBase::is_instance(dest_type_args[0])
+                        && analyzer::types::TypeBase::is_instantiable(src_type)
+                    {
+                        return self.assign_type(
+                            dest_type_args[0],
+                            analyzer::type_utils::convert_to_instance(src_type, true),
+                            diag,
+                            constraints,
+                            flags,
+                            recursion_count,
+                        );
+                    }
+                }
+
+                // Is the dest a "type" object? Assume that all instantiable
+                // types are assignable to "type".
+                if analyzer::types::TypeBase::is_instantiable(src_type) {
+                    let is_literal = analyzer::types::is_class(src_type)
+                        && ClassType::cast(src_type).unwrap().d().priv_.borrow().literal_value.is_some();
+                    return !is_literal;
+                }
+            }
+
+            let mut concrete_src_type = self.make_top_level_type_vars_concrete(src_type, false, None);
+
+            // Handle the TypeForm special form. Add a special case for
+            // type[T] to be assignable to TypeForm[T].
+            if ClassType::is_built_in(dest_class, Some(&["TypeForm".to_owned()])) {
+                let dest_class_type_args = dest_class.d().priv_.borrow().type_args.clone();
+                let dest_type_arg = if let Some(dest_class_type_args) = dest_class_type_args
+                    && dest_class_type_args.len() > 0
+                {
+                    dest_class_type_args[0]
+                } else {
+                    analyzer::types::AnyType::create(false).0
+                };
+
+                let mut src_type_arg: Option<P<Type>> = None;
+                if analyzer::types::is_class_instance(concrete_src_type)
+                    && ClassType::is_built_in(ClassType::cast(concrete_src_type).unwrap(), Some(&["type".to_owned()]))
+                {
+                    src_type_arg = Some(concrete_src_type);
+                } else if analyzer::types::is_instantiable_class(concrete_src_type) {
+                    src_type_arg = Some(analyzer::type_utils::convert_to_instance(concrete_src_type, true));
+                }
+
+                if let Some(src_type_arg) = src_type_arg {
+                    return self.assign_type(dest_type_arg, src_type_arg, diag, constraints, flags, recursion_count);
+                }
+            }
+
+            if analyzer::types::is_class(concrete_src_type) && analyzer::types::TypeBase::is_instance(concrete_src_type) {
+                let concrete_src_class = ClassType::cast(concrete_src_type).unwrap();
+
+                // Handle the case where the source is an unpacked tuple.
+                let dest_is_unpacked = dest_class.d().priv_.borrow().is_unpacked.unwrap_or(false);
+                let concrete_src_is_unpacked = concrete_src_class.d().priv_.borrow().is_unpacked.unwrap_or(false);
+                let concrete_src_tuple_type_args = concrete_src_class.d().priv_.borrow().tuple_type_args.clone();
+                if !dest_is_unpacked
+                    && concrete_src_is_unpacked
+                    && let Some(concrete_src_tuple_type_args) = concrete_src_tuple_type_args
+                {
+                    return self.assign_type(
+                        dest_type,
+                        analyzer::type_utils::combine_tuple_type_args(&concrete_src_tuple_type_args),
+                        diag,
+                        constraints,
+                        flags,
+                        recursion_count,
+                    );
+                }
+
+                let dest_has_literal = dest_class.d().priv_.borrow().literal_value.is_some();
+                if dest_has_literal && ClassType::is_same_generic_class(dest_class, concrete_src_class, 0) {
+                    let src_literal_is_undefined = concrete_src_class.d().priv_.borrow().literal_value.is_none();
+                    if src_literal_is_undefined || !ClassType::is_literal_value_same(concrete_src_class, dest_class) {
+                        if let Some(diag) = diag {
+                            diag.add_message(
+                                crate::localization::localize::LocAddendum::literal_assignment_mismatch().format(&[
+                                    ("sourceType", &self.print_type(src_type, None)),
+                                    ("destType", &self.print_type(dest_type, None)),
+                                ]),
+                            );
+                        }
+
+                        return false;
+                    }
+                }
+
+                // Handle LiteralString special form.
+                if ClassType::is_built_in(dest_class, Some(&["LiteralString".to_owned()])) {
+                    let concrete_src_has_literal = concrete_src_class.d().priv_.borrow().literal_value.is_some();
+                    if ClassType::is_built_in(concrete_src_class, Some(&["str".to_owned()])) && concrete_src_has_literal {
+                        return !flags.any(AssignTypeFlags::Invariant);
+                    } else if ClassType::is_built_in(concrete_src_class, Some(&["LiteralString".to_owned()])) {
+                        return true;
+                    }
+                } else if ClassType::is_built_in(concrete_src_class, Some(&["LiteralString".to_owned()])) {
+                    let str_class = self.prefetched.borrow().as_ref().and_then(|p| p.str_class);
+                    if let Some(str_class) = str_class
+                        && analyzer::types::is_instantiable_class(str_class)
+                        && !flags.any(AssignTypeFlags::Invariant)
+                    {
+                        concrete_src_type = ClassType::clone_as_instance(ClassType::cast(str_class).unwrap(), true).0;
+                    }
+                }
+
+                if !self.assign_class(
+                    ClassType::clone_as_instantiable(dest_class, true),
+                    ClassType::clone_as_instantiable(ClassType::cast(concrete_src_type).unwrap(), true),
+                    diag,
+                    constraints,
+                    flags,
+                    recursion_count,
+                    /* reportErrorsUsingObjType */ true,
+                ) {
+                    return false;
+                }
+
+                return true;
+            } else if analyzer::types::is_function_or_overloaded(concrete_src_type) {
+                // Is the destination a callback protocol (defined in PEP 544)?
+                let dest_callback_type = self.get_callback_protocol_type(dest_class, recursion_count);
+                if let Some(dest_callback_type) = dest_callback_type {
+                    return self.assign_type(
+                        dest_callback_type,
+                        concrete_src_type,
+                        diag,
+                        constraints,
+                        flags,
+                        recursion_count,
+                    );
+                }
+
+                // All functions are considered instances of "types.FunctionType" or "types.MethodType".
+                let alt_class = if analyzer::types::is_method_type(concrete_src_type) {
+                    self.prefetched.borrow().as_ref().and_then(|p| p.method_class)
+                } else {
+                    self.prefetched.borrow().as_ref().and_then(|p| p.function_class)
+                };
+                if let Some(alt_class) = alt_class {
+                    return self.assign_type(
+                        dest_type,
+                        analyzer::type_utils::convert_to_instance(alt_class, true),
+                        diag,
+                        constraints,
+                        flags,
+                        recursion_count,
+                    );
+                }
+            } else if analyzer::types::is_module(concrete_src_type) {
+                // Is the destination the built-in "ModuleType"?
+                if ClassType::is_built_in(dest_class, Some(&["ModuleType".to_owned()])) {
+                    return true;
+                }
+
+                if ClassType::is_protocol_class(dest_class) {
+                    return analyzer::protocols::assign_module_to_protocol(
+                        self,
+                        ClassType::clone_as_instantiable(dest_class, true),
+                        analyzer::types::ModuleType::cast(concrete_src_type).unwrap(),
+                        diag,
+                        constraints,
+                        flags,
+                        recursion_count,
+                    );
+                }
+            } else if analyzer::types::is_instantiable_class(concrete_src_type) {
+                // See if the destType is an instantiation of a Protocol
+                // class that is effectively a function.
+                let callback_type = self.get_callback_protocol_type(dest_class, recursion_count);
+                if let Some(callback_type) = callback_type {
+                    return self.assign_type(callback_type, concrete_src_type, diag, constraints, flags, recursion_count);
+                }
+
+                // If the destType is an instantiation of a Protocol,
+                // see if the class type itself satisfies the protocol.
+                if ClassType::is_protocol_class(dest_class) {
+                    return analyzer::protocols::assign_class_to_protocol(
+                        self,
+                        ClassType::clone_as_instantiable(dest_class, true),
+                        ClassType::cast(concrete_src_type).unwrap(),
+                        diag,
+                        constraints,
+                        flags,
+                        recursion_count,
+                    );
+                }
+
+                // Determine if the metaclass can be assigned to the object.
+                let metaclass = ClassType::cast(concrete_src_type).unwrap().d().shared.get().effective_metaclass.get();
+                if let Some(metaclass) = metaclass {
+                    if !analyzer::types::is_any_or_unknown(metaclass) {
+                        if self.assign_class(
+                            ClassType::clone_as_instantiable(dest_class, true),
+                            ClassType::cast(metaclass).unwrap(),
+                            /* diag */ None,
+                            constraints,
+                            flags,
+                            recursion_count,
+                            /* reportErrorsUsingObjType */ true,
+                        ) {
+                            return true;
+                        }
+                    }
+                }
+            } else if analyzer::types::is_any_or_unknown(concrete_src_type)
+                && concrete_src_type.props.borrow().as_ref().and_then(|p| p.special_form).is_none()
+            {
+                return !flags.any(AssignTypeFlags::OverloadOverlap);
+            } else if analyzer::types::is_union(concrete_src_type) {
+                return self.assign_type(dest_type, concrete_src_type, diag, constraints, flags, recursion_count);
+            }
+        }
+
+        if analyzer::types::is_function(dest_type) {
+            let dest_function = FunctionType::cast(dest_type).unwrap();
+            let mut concrete_src_type = self.make_top_level_type_vars_concrete(src_type, false, None);
+
+            if analyzer::types::is_class_instance(concrete_src_type) {
+                let bound_method = self.get_bound_magic_method(
+                    ClassType::cast(concrete_src_type).unwrap(),
+                    "__call__",
+                    /* selfType */ None,
+                    /* errorNode */ None,
+                    /* diag */ None,
+                    recursion_count,
+                );
+                if let Some(bound_method) = bound_method {
+                    concrete_src_type = bound_method;
+                }
+            }
+
+            // If it's a class, use the constructor for type compatibility checking.
+            if analyzer::types::is_instantiable_class(concrete_src_type)
+                && ClassType::cast(concrete_src_type).unwrap().d().priv_.borrow().literal_value.is_none()
+            {
+                let constructor = analyzer::constructors::create_function_from_constructor(
+                    self,
+                    ClassType::cast(concrete_src_type).unwrap(),
+                    if analyzer::types::is_type_var(src_type) {
+                        Some(analyzer::type_utils::convert_to_instance(src_type, true))
+                    } else {
+                        None
+                    },
+                    recursion_count,
+                );
+                if let Some(constructor) = constructor {
+                    concrete_src_type = constructor;
+
+                    // The constructor conversion may result in a union of the
+                    // __init__ and __new__ callables.
+                    if analyzer::types::is_union(concrete_src_type) {
+                        return self.assign_type(
+                            dest_type,
+                            concrete_src_type,
+                            diag,
+                            constraints,
+                            flags,
+                            recursion_count,
+                        );
+                    }
+                }
+            }
+
+            if analyzer::types::is_any_or_unknown(concrete_src_type) {
+                return !flags.any(AssignTypeFlags::OverloadOverlap);
+            }
+
+            if analyzer::types::is_overloaded(concrete_src_type) {
+                // If this is the first pass of an argument assignment, skip
+                // all attempts to assign an overloaded function to a function
+                // because we probably don't have enough information to properly
+                // filter the overloads at this time. We will do this work on
+                // subsequent passes.
+                if flags.any(AssignTypeFlags::ArgAssignmentFirstPass) {
+                    return true;
+                }
+
+                // Find all of the overloaded functions that match the parameters.
+                let overloads = OverloadedType::get_overloads(OverloadedType::cast(concrete_src_type).unwrap());
+                let mut filtered_overloads: Vec<FunctionType> = Vec::new();
+                let mut type_var_signatures: Vec<P<ConstraintSet>> = Vec::new();
+
+                for overload in overloads {
+                    let overload_scope_id = analyzer::type_utils::get_type_var_scope_id(overload.0).unwrap_or_default();
+                    let constraints_clone =
+                        constraints.map(|constraints| constraints.clone_with_signature(&overload_scope_id));
+
+                    if self.assign_type(dest_type, overload.0, /* diag */ None, constraints_clone, flags, recursion_count) {
+                        filtered_overloads.push(overload);
+
+                        if let Some(constraints_clone) = constraints_clone {
+                            common::collection_utils::append_array(
+                                &mut type_var_signatures,
+                                &constraints_clone.get_constraint_sets(),
+                            );
+                        }
+                    }
+                }
+
+                if filtered_overloads.is_empty() {
+                    if let Some(diag) = diag {
+                        diag.add_message(
+                            crate::localization::localize::LocAddendum::no_overload_assignable()
+                                .format(&[("type", &self.print_type(dest_type, None))]),
+                        );
+                    }
+                    return false;
+                }
+
+                if filtered_overloads.len() == 1 || !flags.any(AssignTypeFlags::ArgAssignmentFirstPass) {
+                    if let Some(constraints) = constraints {
+                        constraints.add_constraint_sets(&type_var_signatures);
+                    }
+                }
+
+                return true;
+            }
+
+            if analyzer::types::is_function(concrete_src_type) {
+                if self.assign_function(
+                    dest_function,
+                    FunctionType::cast(concrete_src_type).unwrap(),
+                    diag.map(|d| d.create_addendum()),
+                    constraints.unwrap_or_else(ConstraintTracker::new),
+                    flags,
+                    recursion_count,
+                ) {
+                    return true;
+                }
+            }
+        }
+
+        if analyzer::types::is_overloaded(dest_type) {
+            let overload_diag = diag.map(|d| d.create_addendum());
+
+            // All overloads in the dest must be assignable.
+            let dest_overloads = OverloadedType::get_overloads(OverloadedType::cast(dest_type).unwrap());
+
+            // If the source is also an overload with the same number of overloads,
+            // there's a good chance that there's a one-to-one mapping. Try this
+            // first before using an n^2 algorithm.
+            if analyzer::types::is_overloaded(src_type) {
+                let src_overloads = OverloadedType::get_overloads(OverloadedType::cast(src_type).unwrap());
+                if dest_overloads.len() == src_overloads.len() {
+                    if dest_overloads.iter().enumerate().all(|(index, &dest_overload)| {
+                        let src_overload = src_overloads[index];
+                        self.assign_type(
+                            dest_overload.0,
+                            src_overload.0,
+                            /* diag */ None,
+                            constraints,
+                            flags,
+                            recursion_count,
+                        )
+                    }) {
+                        return true;
+                    }
+                }
+            }
+
+            let is_assignable = dest_overloads.iter().all(|&dest_overload| {
+                let result = self.assign_type(
+                    dest_overload.0,
+                    src_type,
+                    overload_diag.map(|d| d.create_addendum()),
+                    constraints,
+                    flags,
+                    recursion_count,
+                );
+                result
+            });
+
+            if !is_assignable {
+                let overloads = OverloadedType::get_overloads(OverloadedType::cast(dest_type).unwrap());
+
+                if let Some(overload_diag) = overload_diag
+                    && !overloads.is_empty()
+                {
+                    overload_diag.add_message(
+                        crate::localization::localize::LocAddendum::overload_not_assignable()
+                            .format(&[("name", &overloads[0].d().shared.get().name)]),
+                    );
+                }
+                return false;
+            }
+
+            return true;
+        }
+
+        if analyzer::types::is_class(dest_type)
+            && ClassType::is_built_in(ClassType::cast(dest_type).unwrap(), Some(&["object".to_owned()]))
+        {
+            if (analyzer::types::is_instantiable_class(dest_type) && analyzer::types::TypeBase::is_instantiable(src_type))
+                || analyzer::types::is_class_instance(dest_type)
+            {
+                if !flags.any(AssignTypeFlags::Invariant) {
+                    // All types (including None, Module, Overloaded) derive from object.
+                    return true;
+                }
+            }
+        }
+
+        // Are we trying to assign None to a protocol?
+        if analyzer::type_utils::is_none_instance(src_type)
+            && analyzer::types::is_class_instance(dest_type)
+            && ClassType::is_protocol_class(ClassType::cast(dest_type).unwrap())
+        {
+            let none_type_class = self.prefetched.borrow().as_ref().and_then(|p| p.none_type_class);
+            if let Some(none_type_class) = none_type_class
+                && analyzer::types::is_instantiable_class(none_type_class)
+            {
+                return analyzer::protocols::assign_class_to_protocol(
+                    self,
+                    ClassType::clone_as_instantiable(ClassType::cast(dest_type).unwrap(), true),
+                    ClassType::clone_as_instance(ClassType::cast(none_type_class).unwrap(), true),
+                    diag,
+                    constraints,
+                    flags,
+                    recursion_count,
+                );
+            }
+        }
+
+        if analyzer::type_utils::is_none_instance(dest_type) {
+            if let Some(diag) = diag {
+                diag.add_message(crate::localization::localize::LocAddendum::assign_to_none());
+            }
+            return false;
+        }
+
+        if let Some(diag) = diag {
+            let src_dest_types = self.print_src_dest_types(src_type, dest_type, None);
+            diag.add_message(crate::localization::localize::LocAddendum::type_assignment_mismatch().format(&[
+                ("sourceType", &src_dest_types.source_type),
+                ("destType", &src_dest_types.dest_type),
+            ]));
+        }
+
+        false
     }
 
     // analyzer/typeEvaluator.ts:27054
@@ -18201,32 +20025,97 @@ impl TypeEvaluator {
         flags: AssignTypeFlags,
         recursion_count: u32,
     ) -> bool {
-        todo!()
+        common::debug::assert(dest_alias_info.type_args.is_some(), None);
+        common::debug::assert(src_alias_info.type_args.is_some(), None);
+
+        let mut is_assignable = true;
+        let src_type_args = src_alias_info.type_args.clone().unwrap();
+        let variances = dest_alias_info.shared.computed_variance.borrow().clone();
+
+        let dest_type_args = dest_alias_info.type_args.clone().unwrap();
+        for (index, &dest_type_arg) in dest_type_args.iter().enumerate() {
+            let src_type_arg = if index < src_type_args.len() {
+                src_type_args[index]
+            } else {
+                analyzer::types::UnknownType::create(false).0
+            };
+
+            let mut adj_flags = flags;
+            let variance = match &variances {
+                Some(variances) if index < variances.len() => variances[index],
+                _ => Variance::Covariant,
+            };
+
+            if variance == Variance::Invariant {
+                adj_flags |= AssignTypeFlags::Invariant;
+            } else if variance == Variance::Contravariant {
+                adj_flags = AssignTypeFlags(adj_flags.0 ^ AssignTypeFlags::Contravariant.0);
+            }
+
+            if !self.assign_type(dest_type_arg, src_type_arg, diag, constraints, adj_flags, recursion_count) {
+                is_assignable = false;
+            }
+        }
+
+        is_assignable
     }
 
     // analyzer/typeEvaluator.ts:27089
     pub(crate) fn is_type_form_class(&self, type_: ClassType) -> bool {
-        todo!()
+        ClassType::is_built_in(type_, Some(&["TypeForm".to_owned()]))
+            || (ClassType::is_special_built_in(type_, None)
+                && (type_.d().shared.get().name == "TypeForm"
+                    || type_.d().priv_.borrow().alias_name.as_deref() == Some("TypeForm")))
     }
 
     // analyzer/typeEvaluator.ts:27097
     pub(crate) fn is_type_form_type(&self, type_: P<Type>) -> bool {
-        todo!()
+        analyzer::types::is_class_instance(type_) && self.is_type_form_class(ClassType::cast(type_).unwrap())
     }
 
     // analyzer/typeEvaluator.ts:27101
     pub(crate) fn class_get_item_returns_generic_alias(&self, class_type: ClassType) -> bool {
-        todo!()
+        let member = analyzer::type_utils::look_up_class_member(
+            class_type,
+            "__class_getitem__",
+            MemberAccessFlags::SkipInstanceMembers,
+            None,
+        );
+        let Some(member) = member else {
+            return false;
+        };
+
+        let member_type = self.get_type_of_member(&member);
+        let function_returns_generic_alias = |function_type: FunctionType| -> bool {
+            let return_type = FunctionType::get_effective_return_type(function_type, true);
+            return_type.is_some_and(|return_type| {
+                analyzer::types::is_class_instance(return_type)
+                    && ClassType::is_built_in(ClassType::cast(return_type).unwrap(), Some(&["GenericAlias".to_owned()]))
+            })
+        };
+
+        if analyzer::types::is_function(member_type) {
+            return function_returns_generic_alias(FunctionType::cast(member_type).unwrap());
+        }
+
+        if analyzer::types::is_overloaded(member_type) {
+            return OverloadedType::get_overloads(OverloadedType::cast(member_type).unwrap())
+                .into_iter()
+                .all(function_returns_generic_alias);
+        }
+
+        false
     }
 
     // analyzer/typeEvaluator.ts:27124
     pub(crate) fn expected_type_requires_type_form(&self, expected_type: P<Type>) -> bool {
-        todo!()
+        analyzer::type_utils::some_subtypes(expected_type, &mut |subtype| self.is_type_form_type(subtype))
+            && !analyzer::type_utils::some_subtypes(expected_type, &mut |subtype| !self.is_type_form_type(subtype))
     }
 
     // analyzer/typeEvaluator.ts:27131
     pub(crate) fn expected_type_wants_type_form(&self, expected_type: P<Type>) -> bool {
-        todo!()
+        analyzer::type_utils::some_subtypes(expected_type, &mut |subtype| self.is_type_form_type(subtype))
     }
 
     // analyzer/typeEvaluator.ts:27138
@@ -18235,7 +20124,77 @@ impl TypeEvaluator {
         expected_type: P<Type>,
         src_type: P<Type>,
     ) -> P<Type> {
-        todo!()
+        // Is the source is a TypeForm type?
+        if src_type.props.borrow().as_ref().and_then(|props| props.type_form).is_none() {
+            return src_type;
+        }
+
+        let mut src_type_form_type: Option<P<Type>> = None;
+
+        // Is the source is a TypeForm type?
+        let src_type_form = src_type.props.borrow().as_ref().and_then(|props| props.type_form);
+        if let Some(src_type_form) = src_type_form {
+            src_type_form_type = Some(src_type_form);
+        } else if analyzer::types::is_class(src_type) {
+            let src_class = ClassType::cast(src_type).unwrap();
+            if analyzer::types::TypeBase::is_instantiable(src_type) {
+                if !ClassType::is_special_built_in(src_class, None) {
+                    src_type_form_type = Some(ClassType::clone_as_instance(src_class, true).0);
+                }
+            } else if ClassType::is_built_in(src_class, Some(&["type".to_owned()])) {
+                let type_args = src_class.d().priv_.borrow().type_args.clone();
+                src_type_form_type = Some(match type_args {
+                    Some(type_args) if !type_args.is_empty() => type_args[0],
+                    _ => analyzer::types::UnknownType::create(false).0,
+                });
+            }
+        } else if analyzer::types::is_type_var(src_type) && analyzer::types::TypeBase::is_instantiable(src_type) {
+            if !analyzer::types::is_type_var_tuple(src_type)
+                || !TypeVarType::cast(src_type).unwrap().d().priv_.borrow().is_in_union.unwrap_or(false)
+            {
+                src_type_form_type = Some(analyzer::type_utils::convert_to_instance(src_type, true));
+            }
+        }
+
+        let Some(src_type_form_type) = src_type_form_type else {
+            return src_type;
+        };
+
+        let mut result_type: Option<P<Type>> = None;
+
+        analyzer::type_utils::do_for_each_subtype(
+            expected_type,
+            &mut |subtype, _index, _all_subtypes| {
+                if result_type.is_some()
+                    || !analyzer::types::is_class_instance(subtype)
+                    || !ClassType::is_built_in(ClassType::cast(subtype).unwrap(), Some(&["TypeForm".to_owned()]))
+                {
+                    return;
+                }
+                let subtype = ClassType::cast(subtype).unwrap();
+
+                let type_args = subtype.d().priv_.borrow().type_args.clone();
+                let dest_type_form_type = match type_args {
+                    Some(type_args) if !type_args.is_empty() => type_args[0],
+                    _ => analyzer::types::AnyType::create(false).0,
+                };
+
+                if self.assign_type(
+                    dest_type_form_type,
+                    src_type_form_type,
+                    None,
+                    None,
+                    AssignTypeFlags::Default,
+                    0,
+                ) {
+                    result_type =
+                        Some(ClassType::specialize(subtype, Some(&[src_type_form_type]), None, false, None, None).0);
+                }
+            },
+            false,
+        );
+
+        result_type.unwrap_or(src_type)
     }
 
     // analyzer/typeEvaluator.ts:27188
@@ -18248,12 +20207,325 @@ impl TypeEvaluator {
         flags: AssignTypeFlags,
         recursion_count: u32,
     ) -> bool {
-        todo!()
+        let no_options = analyzer::types::TypeSameOptions {
+            ignore_pseudo_generic: None,
+            ignore_type_flags: None,
+            ignore_conditions: None,
+            ignore_typed_dict_narrow_entries: None,
+            honor_type_form: None,
+            honor_is_type_arg_explicit: None,
+            treat_any_same_as_unknown: None,
+        };
+
+        // Start by checking for an exact match. This is needed to handle unions
+        // that contain recursive type aliases.
+        if analyzer::types::is_type_same(src_type.0, dest_type, &no_options, recursion_count) {
+            return true;
+        }
+
+        let src_subtypes = src_type.d().priv_.borrow().subtypes.clone();
+        if flags.any(AssignTypeFlags::OverloadOverlap)
+            && src_subtypes.iter().any(|&subtype| analyzer::types::is_any_or_unknown(subtype))
+        {
+            return false;
+        }
+
+        // Sort the subtypes so we have a deterministic order for unions.
+        let src_subtypes = src_type.d().priv_.borrow().subtypes.clone();
+        let mut sorted_src_types: Vec<P<Type>> = analyzer::type_utils::sort_types(&src_subtypes);
+        let mut matched_some_subtypes = false;
+
+        // Handle the case where the source and dest are both unions. Try
+        // to eliminate as many exact type matches between the src and dest.
+        if analyzer::types::is_union(dest_type) {
+            let dest_union = UnionType::cast(dest_type).unwrap();
+
+            // Handle the special case where the dest is a union of Any and
+            // a type variable. This occurs, for example, with the return type of
+            // the getattr function.
+            let dest_subtypes = dest_union.d().priv_.borrow().subtypes.clone();
+            let non_any_subtypes: Vec<P<Type>> = dest_subtypes
+                .iter()
+                .copied()
+                .filter(|&t| !analyzer::types::is_any_or_unknown(t))
+                .collect();
+            if non_any_subtypes.len() == 1 && analyzer::types::is_type_var(non_any_subtypes[0]) {
+                self.assign_type(non_any_subtypes[0], src_type.0, None, constraints, flags, recursion_count);
+
+                // This always succeeds because the destination contains Any.
+                return true;
+            }
+
+            let mut remaining_dest_subtypes: Vec<P<Type>> = Vec::new();
+            // In the TS, `remainingSrcSubtypes` starts as the same array object as
+            // `sortedSrcTypes`, so the splices of the first pass below remove from
+            // both. The first pass splices `sorted_src_types`; `remaining_src_subtypes`
+            // takes its value after that pass. Neither array is changed in place later.
+            let mut can_use_fast_path = true;
+
+            // First attempt to match all of the non-generic types in the dest
+            // to non-generic types in the source.
+            let dest_subtypes = dest_union.d().priv_.borrow().subtypes.clone();
+            for dest_subtype in analyzer::type_utils::sort_types(&dest_subtypes) {
+                if analyzer::type_utils::requires_specialization(dest_subtype, None, 0) {
+                    remaining_dest_subtypes.push(dest_subtype);
+                } else {
+                    let src_type_index = sorted_src_types.iter().position(|&src_subtype| {
+                        analyzer::types::is_type_same(src_subtype, dest_subtype, &no_options, recursion_count)
+                    });
+
+                    if let Some(src_type_index) = src_type_index {
+                        sorted_src_types.remove(src_type_index);
+                        matched_some_subtypes = true;
+                    } else {
+                        remaining_dest_subtypes.push(dest_subtype);
+                    }
+                }
+            }
+            let mut remaining_src_subtypes: Vec<P<Type>> = sorted_src_types.clone();
+
+            // For all remaining source subtypes, attempt to find a dest subtype
+            // whose primary type matches.
+            for src_subtype in sorted_src_types.clone() {
+                let dest_type_index = remaining_dest_subtypes.iter().position(|&dest_subtype| {
+                    if analyzer::types::is_type_same(dest_subtype, src_subtype, &no_options, 0) {
+                        return true;
+                    }
+
+                    if analyzer::types::is_class(src_subtype)
+                        && analyzer::types::is_class(dest_subtype)
+                        && analyzer::types::TypeBase::is_instance(src_subtype)
+                            == analyzer::types::TypeBase::is_instance(dest_subtype)
+                    {
+                        let src_class = ClassType::cast(src_subtype).unwrap();
+                        let dest_class = ClassType::cast(dest_subtype).unwrap();
+                        if ClassType::is_same_generic_class(src_class, dest_class, 0) {
+                            return true;
+                        }
+
+                        // Are they equivalent TypedDicts?
+                        if ClassType::is_typed_dict_class(src_class) && ClassType::is_typed_dict_class(dest_class) {
+                            if self.assign_type(
+                                src_subtype,
+                                dest_subtype,
+                                /* diag */ None,
+                                /* constraints */ None,
+                                flags,
+                                recursion_count,
+                            ) {
+                                return true;
+                            }
+                        }
+                    }
+
+                    if analyzer::types::is_function_or_overloaded(src_subtype)
+                        && analyzer::types::is_function_or_overloaded(dest_subtype)
+                    {
+                        return true;
+                    }
+
+                    false
+                });
+
+                if let Some(dest_type_index) = dest_type_index {
+                    if self.assign_type(
+                        remaining_dest_subtypes[dest_type_index],
+                        src_subtype,
+                        /* diag */ None,
+                        constraints,
+                        flags,
+                        recursion_count,
+                    ) {
+                        // Note that we have matched at least one subtype indicating
+                        // there is at least some overlap.
+                        matched_some_subtypes = true;
+                    } else {
+                        can_use_fast_path = false;
+                    }
+
+                    remaining_dest_subtypes.remove(dest_type_index);
+                    remaining_src_subtypes = remaining_src_subtypes
+                        .iter()
+                        .copied()
+                        .filter(|&t| t != src_subtype)
+                        .collect();
+                }
+            }
+
+            // If there is are remaining dest subtypes and they're all type variables,
+            // attempt to assign the remaining source subtypes to them.
+            if can_use_fast_path && (!remaining_dest_subtypes.is_empty() || !remaining_src_subtypes.is_empty()) {
+                if flags.any(AssignTypeFlags::Invariant) {
+                    // If we have no src subtypes remaining but not all dest types have been subsumed
+                    // by other dest types, then the types are not compatible if we're enforcing invariance.
+                    if remaining_src_subtypes.is_empty() {
+                        return remaining_dest_subtypes.iter().all(|&dest_subtype| {
+                            self.is_type_subsumed_by_other_type(
+                                dest_subtype,
+                                dest_type,
+                                /* allow_any_to_subsume */ true,
+                                recursion_count,
+                            )
+                        });
+                    }
+                }
+
+                let is_contra = flags.any(AssignTypeFlags::Contravariant);
+                let effective_dest_subtypes = if is_contra {
+                    &remaining_src_subtypes
+                } else {
+                    &remaining_dest_subtypes
+                };
+
+                if effective_dest_subtypes.is_empty()
+                    || effective_dest_subtypes.iter().any(|&t| !analyzer::types::is_type_var(t))
+                {
+                    can_use_fast_path = false;
+
+                    // We can avoid checking the source subtypes that have already been checked.
+                    sorted_src_types = remaining_src_subtypes.clone();
+                } else if remaining_dest_subtypes.len() == remaining_src_subtypes.len() {
+                    // If the number of remaining source subtypes is the same as the number
+                    // of dest TypeVars, try to assign each source subtype to its own dest TypeVar.
+                    let mut reordered_dest_subtypes = remaining_dest_subtypes.clone();
+
+                    for src_index in 0..remaining_src_subtypes.len() {
+                        let mut found_match_for_src = false;
+
+                        for dest_index in 0..reordered_dest_subtypes.len() {
+                            if self.assign_type(
+                                reordered_dest_subtypes[dest_index],
+                                remaining_src_subtypes[src_index],
+                                diag.map(|diag| diag.create_addendum()),
+                                constraints,
+                                flags,
+                                recursion_count,
+                            ) {
+                                found_match_for_src = true;
+                                // Move the matched dest TypeVar to the end of the list so the other
+                                // dest TypeVars have a better chance of being assigned to.
+                                let moved = reordered_dest_subtypes.remove(dest_index);
+                                reordered_dest_subtypes.push(moved);
+                                break;
+                            }
+                        }
+
+                        if !found_match_for_src {
+                            can_use_fast_path = false;
+                            break;
+                        }
+                    }
+
+                    // We can avoid checking the source subtypes that have already been checked.
+                    sorted_src_types = remaining_src_subtypes.clone();
+                } else if remaining_src_subtypes.is_empty() {
+                    if flags.any(AssignTypeFlags::PopulateExpectedType) {
+                        // If we're populating an expected type, try not to leave
+                        // any TypeVars unsolved. Assign the full type to the remaining
+                        // dest TypeVars.
+                        for &dest_subtype in &remaining_dest_subtypes {
+                            self.assign_type(dest_subtype, src_type.0, None, constraints, flags, recursion_count);
+                        }
+                    }
+
+                    // If we've assigned all of the source subtypes but one or more dest
+                    // TypeVars have gone unmatched, treat this as success.
+                } else {
+                    // Try to assign a union of the remaining source types to
+                    // the first destination TypeVar. If this is a contravariant
+                    // context, use the full dest type rather than the remaining
+                    // dest subtypes to keep the lower bound as wide as possible.
+                    if !self.assign_type(
+                        if is_contra { dest_type } else { remaining_dest_subtypes[0] },
+                        if is_contra {
+                            remaining_src_subtypes[0]
+                        } else {
+                            analyzer::types::combine_types(&remaining_src_subtypes, None)
+                        },
+                        diag.map(|diag| diag.create_addendum()),
+                        constraints,
+                        flags,
+                        recursion_count,
+                    ) {
+                        can_use_fast_path = false;
+                    }
+                }
+            }
+
+            if can_use_fast_path {
+                return true;
+            }
+
+            // If we're looking for type overlaps and at least one type was matched,
+            // consider it as assignable.
+            if flags.any(AssignTypeFlags::PartialOverloadOverlap) && matched_some_subtypes {
+                return true;
+            }
+        }
+
+        let mut is_incompatible = false;
+
+        // The TS passes `/* sortSubtypes */ true` as `forEach`'s `thisArg`, which has no effect.
+        for subtype in sorted_src_types.clone() {
+            if is_incompatible {
+                continue;
+            }
+
+            if !self.assign_type(dest_type, subtype, /* diag */ None, constraints, flags, recursion_count) {
+                // Determine if the current subtype is subsumed by another subtype
+                // in the same union. If so, we can ignore this.
+                let is_subtype_subsumed = self.is_type_subsumed_by_other_type(
+                    subtype,
+                    src_type.0,
+                    /* allow_any_to_subsume */ false,
+                    recursion_count,
+                );
+
+                // Try again with a concrete version of the subtype.
+                if !is_subtype_subsumed
+                    && !self.assign_type(
+                        dest_type,
+                        subtype,
+                        diag.map(|diag| diag.create_addendum()),
+                        constraints,
+                        flags,
+                        recursion_count,
+                    )
+                {
+                    is_incompatible = true;
+                }
+            } else {
+                matched_some_subtypes = true;
+            }
+        }
+
+        if is_incompatible {
+            // If we're looking for type overlaps and at least one type was matched,
+            // consider it as assignable.
+            if flags.any(AssignTypeFlags::PartialOverloadOverlap) && matched_some_subtypes {
+                return true;
+            }
+
+            if let Some(diag) = diag {
+                let types = self.print_src_dest_types(src_type.0, dest_type, None);
+                diag.add_message(
+                    crate::localization::localize::LocAddendum::type_assignment_mismatch()
+                        .format(&[("sourceType", &types.source_type), ("destType", &types.dest_type)]),
+                );
+            }
+            return false;
+        }
+
+        true
     }
 
     // analyzer/typeEvaluator.ts:27461
     pub fn is_special_form_class(&self, class_type: ClassType, flags: AssignTypeFlags) -> bool {
-        todo!()
+        if flags.any(AssignTypeFlags::AllowIsinstanceSpecialForms) {
+            return false;
+        }
+
+        ClassType::is_special_form_class(class_type)
     }
 
     // analyzer/typeEvaluator.ts:27471
@@ -18263,7 +20535,17 @@ impl TypeEvaluator {
         src_type: P<Type>,
         constraints: P<ConstraintTracker>,
     ) {
-        todo!()
+        let type_vars = analyzer::type_utils::get_type_var_args_recursive(dest_type, 0);
+        for type_var in type_vars {
+            if !TypeVarType::is_bound(type_var)
+                && constraints.get_main_constraint_set().get_type_var(type_var).is_none()
+            {
+                // Don't set ParamSpecs or TypeVarTuples.
+                if !analyzer::types::is_param_spec(src_type) && !analyzer::types::is_type_var_tuple(src_type) {
+                    constraints.set_bounds(type_var, Some(src_type), None, None);
+                }
+            }
+        }
     }
 
     // analyzer/typeEvaluator.ts:27488
@@ -18275,7 +20557,37 @@ impl TypeEvaluator {
         allow_any_to_subsume: bool,
         recursion_count: u32,
     ) -> bool {
-        todo!()
+        let concrete_type = self.make_top_level_type_vars_concrete(type_, false, None);
+        let other_subtypes: Vec<P<Type>> = if analyzer::types::is_union(other_type) {
+            UnionType::cast(other_type).unwrap().d().priv_.borrow().subtypes.clone()
+        } else {
+            vec![other_type]
+        };
+
+        let no_options = analyzer::types::TypeSameOptions {
+            ignore_pseudo_generic: None,
+            ignore_type_flags: None,
+            ignore_conditions: None,
+            ignore_typed_dict_narrow_entries: None,
+            honor_type_form: None,
+            honor_is_type_arg_explicit: None,
+            treat_any_same_as_unknown: None,
+        };
+        for other_subtype in other_subtypes {
+            if analyzer::types::is_type_same(other_subtype, type_, &no_options, 0) {
+                continue;
+            }
+
+            if analyzer::types::is_any_or_unknown(other_subtype) {
+                if allow_any_to_subsume {
+                    return true;
+                }
+            } else if self.is_proper_subtype(other_subtype, concrete_type, recursion_count) {
+                return true;
+            }
+        }
+
+        false
     }
 
     // analyzer/typeEvaluator.ts:27513
@@ -18285,7 +20597,46 @@ impl TypeEvaluator {
         src_type: P<Type>,
         recursion_count: u32,
     ) -> bool {
-        todo!()
+        // If the destType has a condition, don't consider the srcType a proper subtype.
+        if dest_type.props.borrow().as_ref().is_some_and(|props| props.condition.is_some()) {
+            return false;
+        }
+
+        // Shortcut the check if either type is Any or Unknown.
+        if analyzer::types::is_any_or_unknown(dest_type) || analyzer::types::is_any_or_unknown(src_type) {
+            return true;
+        }
+
+        // Shortcut the check if either type is a class whose hierarchy contains an unknown type.
+        if analyzer::types::is_class(dest_type) {
+            let mro = ClassType::cast(dest_type).unwrap().d().shared.get().mro.borrow().clone();
+            if mro.iter().any(|&mro_class| analyzer::types::is_any_or_unknown(mro_class)) {
+                return true;
+            }
+        }
+
+        if analyzer::types::is_class(src_type) {
+            let mro = ClassType::cast(src_type).unwrap().d().shared.get().mro.borrow().clone();
+            if mro.iter().any(|&mro_class| analyzer::types::is_any_or_unknown(mro_class)) {
+                return true;
+            }
+        }
+
+        self.assign_type(
+            dest_type,
+            src_type,
+            /* diag */ None,
+            /* constraints */ None,
+            AssignTypeFlags::Default,
+            recursion_count,
+        ) && !self.assign_type(
+            src_type,
+            dest_type,
+            /* diag */ None,
+            /* constraints */ None,
+            AssignTypeFlags::Default,
+            recursion_count,
+        )
     }
 
     // analyzer/typeEvaluator.ts:27558
@@ -18296,7 +20647,181 @@ impl TypeEvaluator {
         right_type: P<Type>,
         assume_is_operator: bool,
     ) -> bool {
-        todo!()
+        if analyzer::types::is_any_or_unknown(left_type) || analyzer::types::is_any_or_unknown(right_type) {
+            return true;
+        }
+
+        if analyzer::types::is_never(left_type) || analyzer::types::is_never(right_type) {
+            return false;
+        }
+
+        if analyzer::types::is_module(left_type) || analyzer::types::is_module(right_type) {
+            return analyzer::types::is_type_same(
+                left_type,
+                right_type,
+                &analyzer::types::TypeSameOptions {
+                    ignore_pseudo_generic: None,
+                    ignore_type_flags: None,
+                    ignore_conditions: Some(true),
+                    ignore_typed_dict_narrow_entries: None,
+                    honor_type_form: None,
+                    honor_is_type_arg_explicit: None,
+                    treat_any_same_as_unknown: None,
+                },
+                0,
+            );
+        }
+
+        let is_left_callable = analyzer::types::is_function_or_overloaded(left_type);
+        let is_right_callable = analyzer::types::is_function_or_overloaded(right_type);
+
+        // If either type is a function, assume that it may be comparable. The other
+        // operand might be a callable object, an 'object' instance, etc. We could
+        // make this more precise for specific cases (e.g. if the other operand is
+        // None or a literal or an instance of a nominal class that doesn't override
+        // __call__ and is marked final, etc.), but coming up with a comprehensive
+        // list is probably not feasible.
+        if is_left_callable || is_right_callable {
+            return true;
+        }
+
+        if analyzer::types::is_instantiable_class(left_type)
+            || (analyzer::types::is_class_instance(left_type)
+                && ClassType::is_built_in(ClassType::cast(left_type).unwrap(), Some(&["type".to_owned()])))
+        {
+            let left_class = ClassType::cast(left_type).unwrap();
+            if analyzer::types::is_instantiable_class(right_type)
+                || (analyzer::types::is_class_instance(right_type)
+                    && ClassType::is_built_in(ClassType::cast(right_type).unwrap(), Some(&["type".to_owned()])))
+            {
+                let generic_left_type = ClassType::specialize(left_class, /* type_args */ None, None, false, None, None);
+                let generic_right_type = ClassType::specialize(
+                    ClassType::cast(right_type).unwrap(),
+                    /* type_args */ None,
+                    None,
+                    false,
+                    None,
+                    None,
+                );
+
+                if self.assign_type(generic_left_type.0, generic_right_type.0, None, None, AssignTypeFlags::Default, 0)
+                    || self.assign_type(generic_right_type.0, generic_left_type.0, None, None, AssignTypeFlags::Default, 0)
+                {
+                    return true;
+                }
+            }
+
+            // Does the class have an operator overload for eq?
+            let metaclass = left_class.d().shared.get().effective_metaclass.get();
+            if let Some(metaclass) = metaclass {
+                if analyzer::types::is_class(metaclass) {
+                    if analyzer::type_utils::look_up_class_member(
+                        ClassType::cast(metaclass).unwrap(),
+                        "__eq__",
+                        MemberAccessFlags::SkipObjectBaseClass,
+                        None,
+                    )
+                    .is_some()
+                    {
+                        return true;
+                    }
+                }
+            }
+
+            return false;
+        }
+
+        if analyzer::types::is_class_instance(left_type) {
+            let left_class = ClassType::cast(left_type).unwrap();
+            if analyzer::types::is_class(right_type) {
+                let right_class = ClassType::cast(right_type).unwrap();
+                let generic_left_type = ClassType::specialize(left_class, /* type_args */ None, None, false, None, None);
+                let generic_right_type = ClassType::specialize(right_class, /* type_args */ None, None, false, None, None);
+
+                if self.assign_type(generic_left_type.0, generic_right_type.0, None, None, AssignTypeFlags::Default, 0)
+                    || self.assign_type(generic_right_type.0, generic_left_type.0, None, None, AssignTypeFlags::Default, 0)
+                {
+                    return true;
+                }
+
+                // Check for the "is None" or "is not None" case.
+                if assume_is_operator && analyzer::type_utils::is_none_instance(right_type) {
+                    if analyzer::type_utils::is_none_instance(left_type) {
+                        return true;
+                    }
+
+                    // The LHS could be a protocol or 'object', in which case None is
+                    // potentially comparable to it. In other cases, None is not comparable
+                    // because the types are disjoint.
+                    return self.assign_type(left_type, right_type, None, None, AssignTypeFlags::Default, 0);
+                }
+
+                // Assume that if the types are disjoint and built-in classes that they
+                // will never be comparable.
+                if ClassType::is_built_in(left_class, None)
+                    && ClassType::is_built_in(right_class, None)
+                    && analyzer::types::TypeBase::is_instance(right_type)
+                {
+                    // We need to be careful with bool and int literals because
+                    // they are comparable under certain circumstances.
+                    let mut bool_type: Option<ClassType> = None;
+                    let mut int_type: Option<ClassType> = None;
+                    if ClassType::is_built_in(left_class, Some(&["bool".to_owned()]))
+                        && ClassType::is_built_in(right_class, Some(&["int".to_owned()]))
+                    {
+                        bool_type = Some(left_class);
+                        int_type = Some(right_class);
+                    } else if ClassType::is_built_in(right_class, Some(&["bool".to_owned()]))
+                        && ClassType::is_built_in(left_class, Some(&["int".to_owned()]))
+                    {
+                        bool_type = Some(right_class);
+                        int_type = Some(left_class);
+                    }
+
+                    if let (Some(bool_type), Some(int_type)) = (bool_type, int_type) {
+                        // `intVal !== 0 && intVal !== 1` compares with `===`: a bigint
+                        // (or any non-number) literal is never `0` or `1`.
+                        let int_val = int_type.d().priv_.borrow().literal_value.clone();
+                        let int_val = match int_val {
+                            None => return true,
+                            Some(LiteralValue::Number(int_val)) if int_val == 0.0 || int_val == 1.0 => int_val,
+                            Some(_) => return false,
+                        };
+
+                        let bool_val = bool_type.d().priv_.borrow().literal_value.clone();
+                        return match bool_val {
+                            None => true,
+                            Some(LiteralValue::Boolean(bool_val)) => bool_val == (int_val == 1.0),
+                            Some(_) => false,
+                        };
+                    }
+
+                    return false;
+                }
+            }
+
+            // Does the class have an operator overload for eq?
+            let eq_method = analyzer::type_utils::look_up_class_member(
+                ClassType::clone_as_instantiable(left_class, true),
+                "__eq__",
+                MemberAccessFlags::SkipObjectBaseClass,
+                None,
+            );
+
+            if let Some(eq_method) = eq_method {
+                // If this is a synthesized method for a dataclass, we can assume
+                // that other dataclass types will not be comparable.
+                if ClassType::is_data_class(left_class) && eq_method.symbol.get_synthesized_type().is_some() {
+                    return false;
+                }
+
+                return true;
+            }
+
+            return false;
+        }
+
+        true
     }
 
     // analyzer/typeEvaluator.ts:27688
@@ -18309,7 +20834,244 @@ impl TypeEvaluator {
         flags: AssignTypeFlags,
         recursion_count: u32,
     ) -> bool {
-        todo!()
+        // If we need to enforce invariance, the source needs to be compatible
+        // with all subtypes in the dest, unless those subtypes are subclasses
+        // of other subtypes.
+        if flags.any(AssignTypeFlags::Invariant) {
+            let mut is_incompatible = false;
+
+            analyzer::type_utils::do_for_each_subtype(
+                dest_type.0,
+                &mut |subtype, index, _all_subtypes| {
+                    if !is_incompatible
+                        && !self.assign_type(
+                            subtype,
+                            src_type,
+                            diag.map(|diag| diag.create_addendum()),
+                            constraints,
+                            flags,
+                            recursion_count,
+                        )
+                    {
+                        // Determine whether this subtype is subsumed by some other
+                        // subtype in the union. If so, we can ignore the incompatibility.
+                        let mut skip_subtype = false;
+                        if !analyzer::types::is_any_or_unknown(subtype) {
+                            let adj_subtype = analyzer::type_utils::make_type_vars_bound(subtype, /* scope_ids */ None);
+
+                            analyzer::type_utils::do_for_each_subtype(
+                                dest_type.0,
+                                &mut |other_subtype, other_index, _all_subtypes| {
+                                    if index != other_index && !skip_subtype {
+                                        let adj_other_subtype = analyzer::type_utils::make_type_vars_bound(
+                                            other_subtype,
+                                            /* scope_ids */ None,
+                                        );
+
+                                        if self.assign_type(
+                                            adj_other_subtype,
+                                            adj_subtype,
+                                            /* diag */ None,
+                                            /* constraints */ None,
+                                            AssignTypeFlags::Default,
+                                            recursion_count,
+                                        ) {
+                                            skip_subtype = true;
+                                        }
+                                    }
+                                },
+                                false,
+                            );
+                        }
+                        if !skip_subtype {
+                            is_incompatible = true;
+                        }
+                    }
+                },
+                false,
+            );
+
+            if is_incompatible {
+                if let Some(diag) = diag {
+                    let types = self.print_src_dest_types(src_type, dest_type.0, None);
+                    diag.add_message(
+                        crate::localization::localize::LocAddendum::type_assignment_mismatch()
+                            .format(&[("sourceType", &types.source_type), ("destType", &types.dest_type)]),
+                    );
+                }
+                return false;
+            }
+
+            return true;
+        }
+
+        // For union destinations, we just need to match one of the types.
+        let diag_addendum = if diag.is_some() { Some(DiagnosticAddendum::new()) } else { None };
+
+        let mut found_match = false;
+
+        // Does the union contain any type variables that need to be solved?
+        // If so, we need to use a slower path.
+        if !analyzer::type_utils::requires_specialization(dest_type.0, None, 0) {
+            let dest_subtypes = dest_type.d().priv_.borrow().subtypes.clone();
+            for subtype in dest_subtypes {
+                if self.assign_type(
+                    subtype,
+                    src_type,
+                    diag_addendum.map(|diag_addendum| diag_addendum.create_addendum()),
+                    constraints,
+                    flags,
+                    recursion_count,
+                ) {
+                    found_match = true;
+                    break;
+                }
+            }
+        } else {
+            // Run through all subtypes in the union. Don't stop at the first
+            // match we find because we may need to match TypeVars in other
+            // subtypes. We special-case "None" so we can handle Optional[T]
+            // without matching the None to the type var.
+            if analyzer::type_utils::is_none_instance(src_type) && analyzer::type_utils::is_optional_type(dest_type.0) {
+                found_match = true;
+            } else {
+                let mut best_constraints: Option<P<ConstraintTracker>> = None;
+                let mut best_constraints_score: Option<f64> = None;
+                let mut naked_type_var_matches: u32 = 0;
+
+                // If the srcType is a literal, try to use the fast-path lookup
+                // in case the destType is a union with hundreds of literals.
+                if analyzer::types::is_class_instance(src_type)
+                    && analyzer::type_utils::is_literal_type(ClassType::cast(src_type).unwrap())
+                    && UnionType::contains_type(
+                        dest_type,
+                        src_type,
+                        /* options */
+                        &analyzer::types::TypeSameOptions {
+                            ignore_pseudo_generic: None,
+                            ignore_type_flags: None,
+                            ignore_conditions: None,
+                            ignore_typed_dict_narrow_entries: None,
+                            honor_type_form: None,
+                            honor_is_type_arg_explicit: None,
+                            treat_any_same_as_unknown: None,
+                        },
+                        /* exclusion_set */ None,
+                        recursion_count,
+                    )
+                {
+                    return true;
+                }
+
+                analyzer::type_utils::do_for_each_subtype(
+                    dest_type.0,
+                    &mut |subtype, _index, _all_subtypes| {
+                        // Make a temporary clone of the constraints. We don't want to modify
+                        // the original constraints until we find the "optimal" typeVar mapping.
+                        let constraints_clone = constraints.map(|constraints| ConstraintTracker::clone(&constraints));
+                        if self.assign_type(
+                            subtype,
+                            src_type,
+                            diag_addendum.map(|diag_addendum| diag_addendum.create_addendum()),
+                            constraints_clone,
+                            flags,
+                            recursion_count,
+                        ) {
+                            found_match = true;
+                            if let Some(constraints_clone) = constraints_clone {
+                                // Ask the constraints to compute a "score" for the current
+                                // contents of the table.
+                                let mut constraints_score = constraints_clone.get_score();
+
+                                if analyzer::types::is_type_var(subtype) {
+                                    if !constraints.is_some_and(|constraints| {
+                                        constraints
+                                            .get_main_constraint_set()
+                                            .get_type_var(TypeVarType::cast(subtype).unwrap())
+                                            .is_some()
+                                    }) {
+                                        naked_type_var_matches += 1;
+
+                                        // Handicap the solution slightly so another type var with
+                                        // existing constraints will be preferred.
+                                        constraints_score += 0.001;
+                                    }
+                                }
+
+                                // If the type matches exactly, prefer it over other types.
+                                if analyzer::types::is_type_same(
+                                    subtype,
+                                    self.strip_literal_value(src_type),
+                                    &analyzer::types::TypeSameOptions {
+                                        ignore_pseudo_generic: None,
+                                        ignore_type_flags: None,
+                                        ignore_conditions: None,
+                                        ignore_typed_dict_narrow_entries: None,
+                                        honor_type_form: None,
+                                        honor_is_type_arg_explicit: None,
+                                        treat_any_same_as_unknown: None,
+                                    },
+                                    0,
+                                ) {
+                                    constraints_score = f64::INFINITY;
+                                }
+
+                                if best_constraints_score.is_none_or(|best_score| best_score <= constraints_score) {
+                                    // We found a typeVar mapping with a higher score than before.
+                                    best_constraints_score = Some(constraints_score);
+                                    best_constraints = Some(constraints_clone);
+                                }
+                            }
+                        }
+                    },
+                    /* sort_subtypes */ true,
+                );
+
+                // If we saw more than one "naked" type vars that have no
+                // previous constraints recorded, it's dangerous for us to
+                // assign a value to any of these type vars at this time.
+                // Typically, they will receive some constraints via some
+                // later argument assignment.
+                if naked_type_var_matches > 1 && flags.any(AssignTypeFlags::ArgAssignmentFirstPass) {
+                    best_constraints = None;
+                }
+
+                // If we found a winning type var mapping, copy it back to constraints.
+                if let (Some(constraints), Some(best_constraints)) = (constraints, best_constraints) {
+                    constraints.copy_from_clone(best_constraints);
+                }
+            }
+        }
+
+        // If the source is a constrained TypeVar, see if we can assign all of the
+        // constraints to the union.
+        if !found_match {
+            if analyzer::types::is_type_var(src_type) && TypeVarType::has_constraints(TypeVarType::cast(src_type).unwrap())
+            {
+                found_match = self.assign_type(
+                    dest_type.0,
+                    self.make_top_level_type_vars_concrete(src_type, false, None),
+                    diag_addendum.map(|diag_addendum| diag_addendum.create_addendum()),
+                    constraints,
+                    flags,
+                    recursion_count,
+                );
+            }
+        }
+
+        if !found_match {
+            if let (Some(diag), Some(diag_addendum)) = (diag, diag_addendum) {
+                let types = self.print_src_dest_types(src_type, dest_type.0, None);
+                diag.add_message(
+                    crate::localization::localize::LocAddendum::type_assignment_mismatch()
+                        .format(&[("sourceType", &types.source_type), ("destType", &types.dest_type)]),
+                );
+                diag.add_addendum(diag_addendum);
+            }
+            return false;
+        }
+
+        true
     }
 
     // analyzer/typeEvaluator.ts:27878
@@ -18319,7 +21081,90 @@ impl TypeEvaluator {
         src_type: P<Type>,
         recursion_count: u32,
     ) -> bool {
-        todo!()
+        // The srcType is assignable only if all of its subtypes are assignable.
+        analyzer::types::find_subtype(src_type, &mut |src_subtype| {
+            if analyzer::types::is_type_same(
+                dest_type.0,
+                src_subtype,
+                &analyzer::types::TypeSameOptions {
+                    ignore_pseudo_generic: Some(true),
+                    ignore_type_flags: None,
+                    ignore_conditions: None,
+                    ignore_typed_dict_narrow_entries: None,
+                    honor_type_form: None,
+                    honor_is_type_arg_explicit: None,
+                    treat_any_same_as_unknown: None,
+                },
+                recursion_count,
+            ) {
+                return false;
+            }
+
+            if analyzer::type_utils::is_incomplete_unknown(src_subtype) {
+                return false;
+            }
+
+            let dest_type_var_name = TypeVarType::get_name_with_scope(dest_type);
+
+            // Determine which conditions on this type apply to this type variable.
+            // There might be more than one of them.
+            let applicable_conditions: Vec<TypeCondition> = analyzer::type_utils::get_type_condition(src_subtype)
+                .unwrap_or_default()
+                .into_iter()
+                .filter(|constraint| {
+                    constraint.type_var.d().priv_.borrow().name_with_scope.as_deref() == Some(dest_type_var_name.as_str())
+                })
+                .collect();
+
+            // If there are no applicable conditions, it's not assignable.
+            if applicable_conditions.is_empty() {
+                return true;
+            }
+
+            !applicable_conditions.iter().any(|condition| {
+                let condition_name_with_scope = condition.type_var.d().priv_.borrow().name_with_scope.clone();
+                if condition_name_with_scope.as_deref() == Some(TypeVarType::get_name_with_scope(dest_type).as_str()) {
+                    if let Some(bound_type) = dest_type.d().shared.get().bound_type.get() {
+                        common::debug::assert(
+                            condition.constraint_index == 0,
+                            Some("Expected constraint for bound TypeVar to have index of 0"),
+                        );
+
+                        return self.assign_type(
+                            bound_type,
+                            src_subtype,
+                            /* diag */ None,
+                            /* constraints */ None,
+                            AssignTypeFlags::Default,
+                            recursion_count,
+                        );
+                    }
+
+                    if TypeVarType::has_constraints(dest_type) {
+                        let dest_constraints = dest_type.d().shared.get().constraints.borrow().clone();
+                        common::debug::assert(
+                            condition.constraint_index < dest_constraints.len() as i32,
+                            Some("Constraint for constrained TypeVar is out of bounds"),
+                        );
+
+                        return self.assign_type(
+                            dest_constraints[condition.constraint_index as usize],
+                            src_subtype,
+                            /* diag */ None,
+                            /* constraints */ None,
+                            AssignTypeFlags::Default,
+                            recursion_count,
+                        );
+                    }
+
+                    // This is a non-bound and non-constrained type variable with a matching condition.
+                    return true;
+                }
+
+                false
+            })
+        })
+        .is_none()
     }
 
     // analyzer/typeEvaluator.ts:27949
@@ -18329,7 +21174,65 @@ impl TypeEvaluator {
         obj_type: ClassType,
         recursion_count: u32,
     ) -> Option<P<Type>> {
-        todo!()
+        if !analyzer::types::is_class_instance(obj_type.0) || !ClassType::is_protocol_class(obj_type) {
+            return None;
+        }
+
+        // Make sure that the protocol class doesn't define any fields that
+        // a normal function wouldn't be compatible with.
+        let mro = obj_type.d().shared.get().mro.borrow().clone();
+        for mro_class in mro {
+            if analyzer::types::is_class(mro_class) && ClassType::is_protocol_class(ClassType::cast(mro_class).unwrap()) {
+                // Nothing below writes the symbol table, so a snapshot iterates it as the TS does.
+                let fields: Vec<(String, P<Symbol>)> = ClassType::get_symbol_table(ClassType::cast(mro_class).unwrap())
+                    .borrow()
+                    .iter()
+                    .map(|(name, symbol)| (name.clone(), *symbol))
+                    .collect();
+                for (field_name, field_symbol) in fields {
+                    // We're expecting a __call__ method. We will also ignore a
+                    // __slots__ definition, which is (by convention) ignored for
+                    // protocol matching.
+                    if field_name == "__call__" || field_name == "__slots__" {
+                        continue;
+                    }
+
+                    if field_symbol.is_ignored_for_protocol_match() {
+                        continue;
+                    }
+
+                    let mut field_is_part_of_function = false;
+
+                    let function_class = self.prefetched.borrow().as_ref().and_then(|prefetched| prefetched.function_class);
+                    if let Some(function_class) = function_class {
+                        if analyzer::types::is_class(function_class) {
+                            if ClassType::get_symbol_table(ClassType::cast(function_class).unwrap()).has(&field_name) {
+                                field_is_part_of_function = true;
+                            }
+                        }
+                    }
+
+                    if !field_is_part_of_function {
+                        return None;
+                    }
+                }
+            }
+        }
+
+        let call_type = self.get_bound_magic_method(
+            obj_type,
+            "__call__",
+            /* self_type */ None,
+            /* error_node */ None,
+            /* diag */ None,
+            recursion_count,
+        );
+
+        let Some(call_type) = call_type else {
+            return None;
+        };
+
+        Some(analyzer::type_utils::make_function_type_vars_bound(call_type))
     }
 
     // analyzer/typeEvaluator.ts:28007
@@ -18343,7 +21246,74 @@ impl TypeEvaluator {
         flags: AssignTypeFlags,
         recursion_count: u32,
     ) -> bool {
-        todo!()
+        if analyzer::types::is_type_var_tuple(dest_type) && !analyzer::types::is_unpacked(src_type) {
+            return false;
+        }
+
+        let mut specialized_src_type = src_type;
+        let mut specialized_dest_type = dest_type;
+        let mut do_specialization_step = false;
+
+        if !flags.any(AssignTypeFlags::OverloadOverlap) {
+            let is_first_pass = flags.any(AssignTypeFlags::ArgAssignmentFirstPass);
+
+            if !flags.any(AssignTypeFlags::Contravariant) {
+                if !is_first_pass {
+                    specialized_dest_type = self.solve_and_apply_constraints(
+                        dest_type,
+                        constraints,
+                        /* apply_options */ None,
+                        Some(&SolveConstraintsOptions { use_lower_bound_only: Some(true) }),
+                    );
+                }
+                do_specialization_step = analyzer::type_utils::requires_specialization(specialized_dest_type, None, 0);
+            } else {
+                if !is_first_pass {
+                    specialized_src_type = self.solve_and_apply_constraints(
+                        src_type,
+                        constraints,
+                        /* apply_options */ None,
+                        Some(&SolveConstraintsOptions { use_lower_bound_only: Some(true) }),
+                    );
+                }
+                do_specialization_step = analyzer::type_utils::requires_specialization(specialized_src_type, None, 0);
+            }
+        }
+
+        // Is an additional specialization step required?
+        if do_specialization_step {
+            if self.assign_type(
+                specialized_src_type,
+                specialized_dest_type,
+                /* diag */ None,
+                Some(constraints),
+                AssignTypeFlags(flags.0 ^ AssignTypeFlags::Contravariant.0) | AssignTypeFlags::RetainLiteralsForTypeVar,
+                recursion_count,
+            ) {
+                specialized_dest_type = self.solve_and_apply_constraints(dest_type, constraints, None, None);
+            }
+        }
+
+        if !self.assign_type(
+            specialized_src_type,
+            specialized_dest_type,
+            diag.map(|diag| diag.create_addendum()),
+            Some(constraints),
+            flags,
+            recursion_count,
+        ) {
+            if let (Some(diag), Some(param_index)) = (diag, param_index) {
+                diag.add_message(crate::localization::localize::LocAddendum::param_assignment().format(&[
+                    ("index", &jsrt::number::number_to_string((param_index + 1) as f64)),
+                    ("sourceType", &self.print_type(dest_type, None)),
+                    ("destType", &self.print_type(src_type, None)),
+                ]));
+            }
+
+            return false;
+        }
+
+        true
     }
 
     // analyzer/typeEvaluator.ts:28091
@@ -18352,7 +21322,147 @@ impl TypeEvaluator {
         src_details: &mut ParamListDetails,
         dest_details: &ParamListDetails,
     ) {
-        todo!()
+        // `Array.prototype.slice(start, end)`: a negative index counts from the end,
+        // and both indexes clamp to the array.
+        let js_slice = |params: &[P<analyzer::parameter_utils::VirtualParamDetails>], start: i32, end: i32| {
+            let len = params.len() as i32;
+            let start = if start < 0 { (len + start).max(0) } else { start.min(len) };
+            let end = if end < 0 { (len + end).max(0) } else { end.min(len) };
+            if start < end {
+                params[start as usize..end as usize].to_vec()
+            } else {
+                Vec::new()
+            }
+        };
+
+        // If there is no *args parameter in the dest, we have nothing to do.
+        let Some(dest_args_index) = dest_details.args_index else {
+            return;
+        };
+
+        // If the *args parameter isn't an unpacked TypeVarTuple or tuple,
+        // we have nothing to do.
+        if !analyzer::types::is_unpacked(dest_details.params[dest_args_index as usize].type_) {
+            return;
+        }
+
+        // If the source doesn't have enough positional parameters, we have nothing to do.
+        if (src_details.params.len() as i32) < dest_args_index {
+            return;
+        }
+
+        let mut src_last_to_pack_index = src_details
+            .params
+            .iter()
+            .enumerate()
+            .position(|(i, p)| {
+                common::debug::assert(dest_details.args_index.is_some(), None);
+                i as i32 >= dest_args_index && p.kind == analyzer::parameter_utils::ParamKind::Keyword
+            })
+            .map_or(-1, |i| i as i32);
+        if src_last_to_pack_index < 0 {
+            src_last_to_pack_index = src_details.params.len() as i32;
+        }
+
+        // If both the source and dest have an *args parameter but the dest's is
+        // in a later position, then we can't assign the source's *args to the dest.
+        // Don't make any adjustment in this case.
+        if let Some(src_args_index) = src_details.args_index {
+            if dest_args_index > src_args_index {
+                return;
+            }
+        }
+
+        let dest_first_non_positional = dest_details
+            .first_keyword_only_index
+            .unwrap_or(dest_details.params.len() as i32);
+        let suffix_length = dest_first_non_positional - dest_args_index - 1;
+        let src_positionals_to_pack =
+            js_slice(&src_details.params, dest_args_index, src_last_to_pack_index - suffix_length);
+        let mut src_tuple_types: Vec<TupleTypeArg> = Vec::new();
+        for entry in &src_positionals_to_pack {
+            if entry.param.category == ParamCategory::ArgsList {
+                if analyzer::types::is_unpacked_type_var_tuple(entry.type_) {
+                    src_tuple_types.push(TupleTypeArg { type_: entry.type_, is_unbounded: false, is_optional: None });
+                } else if analyzer::types::is_unpacked_class(entry.type_)
+                    && ClassType::cast(entry.type_).unwrap().d().priv_.borrow().tuple_type_args.is_some()
+                {
+                    let tuple_type_args =
+                        ClassType::cast(entry.type_).unwrap().d().priv_.borrow().tuple_type_args.clone().unwrap();
+                    common::collection_utils::append_array(&mut src_tuple_types, &tuple_type_args);
+                } else {
+                    src_tuple_types.push(TupleTypeArg { type_: entry.type_, is_unbounded: true, is_optional: None });
+                }
+            } else {
+                src_tuple_types.push(TupleTypeArg {
+                    type_: entry.type_,
+                    is_unbounded: false,
+                    is_optional: Some(entry.default_type.is_some()),
+                });
+            }
+        }
+
+        if src_tuple_types.len() != 1 || !analyzer::types::is_type_var_tuple(src_tuple_types[0].type_) {
+            let src_positionals_type =
+                analyzer::tuples::make_tuple_object(self, &src_tuple_types, /* is_unpacked */ true);
+
+            // Snip out the portion of the source positionals that map to the variadic
+            // dest parameter and replace it with a single parameter that is typed as a
+            // tuple containing the individual types of the replaced parameters.
+            let mut new_params = js_slice(&src_details.params, 0, dest_args_index);
+            new_params.push(P::new_eval(analyzer::parameter_utils::VirtualParamDetails {
+                param: FunctionParam::create(
+                    ParamCategory::ArgsList,
+                    src_positionals_type,
+                    analyzer::types::FunctionParamFlags::NameSynthesized
+                        | analyzer::types::FunctionParamFlags::TypeDeclared,
+                    Some("_arg_combined"),
+                    None,
+                    None,
+                ),
+                type_: src_positionals_type,
+                declared_type: src_positionals_type,
+                default_type: None,
+                index: -1,
+                kind: analyzer::parameter_utils::ParamKind::Positional,
+            }));
+            new_params.extend(js_slice(
+                &src_details.params,
+                dest_args_index + src_positionals_to_pack.len() as i32,
+                src_details.params.len() as i32,
+            ));
+            src_details.params = new_params;
+
+            let args_index = src_details
+                .params
+                .iter()
+                .position(|param| param.param.category == ParamCategory::ArgsList);
+            src_details.args_index = args_index.map(|i| i as i32);
+
+            let kwargs_index = src_details
+                .params
+                .iter()
+                .position(|param| param.param.category == ParamCategory::KwargsDict);
+            src_details.kwargs_index = kwargs_index.map(|i| i as i32);
+
+            let first_keyword_only_index = src_details
+                .params
+                .iter()
+                .position(|param| param.kind == analyzer::parameter_utils::ParamKind::Keyword);
+            src_details.first_keyword_only_index = first_keyword_only_index.map(|i| i as i32);
+
+            src_details.position_only_param_count = 0.max(
+                src_details
+                    .params
+                    .iter()
+                    .position(|p| {
+                        p.kind != analyzer::parameter_utils::ParamKind::Positional
+                            || p.param.category != ParamCategory::Simple
+                            || p.default_type.is_some()
+                    })
+                    .map_or(-1, |i| i as i32),
+            ) as u32;
+        }
     }
 
     // analyzer/typeEvaluator.ts:28191
@@ -18366,7 +21476,28 @@ impl TypeEvaluator {
         flags: AssignTypeFlags,
         recursion_count: u32,
     ) -> bool {
-        todo!()
+        let dest_param = dest_details.params[param_index as usize];
+        if src_details.kwargs_index.is_none() {
+            if let Some(diag) = diag {
+                diag.add_message(
+                    crate::localization::localize::LocAddendum::named_param_missing_in_source()
+                        .format(&[("name", dest_param.param.name.as_deref().unwrap_or(""))]),
+                );
+            }
+            false
+        } else if !self.assign_param(
+            dest_param.type_,
+            src_details.params[src_details.kwargs_index.unwrap() as usize].type_,
+            Some(param_index),
+            diag.map(|diag| diag.create_addendum()),
+            constraints,
+            flags,
+            recursion_count,
+        ) {
+            flags.any(AssignTypeFlags::PartialOverloadOverlap)
+        } else {
+            true
+        }
     }
 
     // analyzer/typeEvaluator.ts:28225
