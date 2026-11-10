@@ -10,10 +10,49 @@
 )]
 
 use crate::analyzer::analyzer_node_info::AnalyzerNodeInfoAccessor;
+use crate::analyzer::constraint_solver::add_constraints_for_expected_type;
+use crate::analyzer::constraint_tracker::ConstraintTracker;
 use crate::analyzer::declaration::Declaration;
+use crate::analyzer::declaration::DeclarationType;
+use crate::analyzer::parse_tree_utils::{
+    get_class_full_name, get_execution_scope_node, get_type_source_id,
+    get_type_var_scopes_for_node, is_matching_expression, is_node_contained_within,
+};
+use crate::analyzer::scope::ScopeType;
+use crate::analyzer::scope_utils::get_scope_for_node;
+use crate::analyzer::symbol::{Symbol, SymbolFlags};
 use crate::analyzer::type_evaluator::TypeEvaluator;
+use crate::analyzer::type_evaluator_types::{
+    AssignTypeFlags, EvalFlags, ExpandCallback, ExpandCallbackNarrowTypeForInstance,
+    MapSubtypesOptions,
+};
+use crate::analyzer::type_utils::{
+    ApplyTypeVarOptions, ApplyTypeVarOptionsReplaceUnsolved, MemberAccessFlags,
+    add_condition_to_type, compute_mro_linearization, convert_to_instance, convert_to_instantiable,
+    derives_from_any_or_unknown, do_for_each_subtype, get_specialized_tuple_type,
+    get_type_condition, get_type_var_scope_ids, get_unknown_type_for_callable,
+    is_instantiable_metaclass, is_literal_type, is_literal_type_or_union, is_metaclass_instance,
+    is_none_instance, is_none_type_class, is_tuple_class, is_tuple_gradual_form,
+    is_unbounded_tuple_class, look_up_class_member, make_type_vars_free, map_subtypes,
+    specialize_with_unknown_type_args, transform_possible_recursive_type_alias,
+};
 use crate::analyzer::types::{ClassType, Type};
+use crate::analyzer::types::{
+    ClassTypeFlags, FunctionParam, FunctionParamFlags, FunctionType, FunctionTypeFlags,
+    LiteralValue, MAX_TYPE_RECURSION_COUNT, OverloadedType, TypeBase, TypeCondition,
+    TypeSameOptions, TypeVarType, UnknownType, combine_types, is_any_or_unknown, is_class,
+    is_class_instance, is_function, is_function_or_overloaded, is_instantiable_class, is_module,
+    is_never, is_param_spec, is_type_same, is_type_var, is_union,
+};
+use crate::common::debug::assert;
+use crate::parser::parse_nodes::{
+    ArgCategory, BinaryOperationNode, CallNode, ConstantNode, IndexNode, MemberAccessNode,
+    NumberNode, ParamCategory, ParameterNode, ParseNodeType, UnaryOperationNode,
+    is_expression_node,
+};
 use crate::parser::parse_nodes::{AssignmentExpressionNode, ExpressionNode, NameNode, ParseNode};
+use crate::parser::tokenizer_types::{KeywordType, OperatorType};
+use jsrt::NumberValue;
 use jsrt::P;
 use std::rc::Rc;
 
@@ -37,7 +76,943 @@ pub fn get_type_narrowing_callback(
     node_info: &AnalyzerNodeInfoAccessor,
     recursion_count: u32,
 ) -> Option<TypeNarrowingCallback> {
-    todo!()
+    if recursion_count > MAX_TYPE_RECURSION_COUNT {
+        return None;
+    }
+
+    let recursion_count = recursion_count + 1;
+
+    // The returned callbacks outlive this call: they hold the evaluator's handle and a copy of
+    // the node info accessor.
+    let ev: P<TypeEvaluator> = *evaluator.evaluator_interface.get().unwrap();
+    let node_info_copy: AnalyzerNodeInfoAccessor = *node_info;
+    let compare_name = |ref_: NameNode, expr: NameNode| is_name_same_scope(evaluator, ref_, expr);
+    let class_of = |type_: P<Type>| ClassType::cast(type_).unwrap();
+    let names = |names: &[&str]| {
+        names
+            .iter()
+            .map(|name| name.to_string())
+            .collect::<Vec<String>>()
+    };
+    let literal_value_of =
+        |type_: P<Type>| class_of(type_).d().priv_.borrow().literal_value.clone();
+
+    if let Some(assignment_expression) = AssignmentExpressionNode::cast(test_expression) {
+        return get_type_narrowing_callback_for_assignment_expression(
+            evaluator,
+            reference,
+            assignment_expression,
+            is_positive_test,
+            node_info,
+            recursion_count,
+        );
+    }
+
+    if let Some(binary_operation) = BinaryOperationNode::cast(test_expression) {
+        let operator = binary_operation.d().operator.get();
+        let left_expr = binary_operation.d().left_expr.get();
+        let right_expr = binary_operation.d().right_expr.get();
+        let is_or_is_not_operator = operator == OperatorType::Is || operator == OperatorType::IsNot;
+        let equals_or_not_equals_operator =
+            operator == OperatorType::Equals || operator == OperatorType::NotEquals;
+        let comparison_operator = equals_or_not_equals_operator
+            || operator == OperatorType::LessThan
+            || operator == OperatorType::LessThanOrEqual
+            || operator == OperatorType::GreaterThan
+            || operator == OperatorType::GreaterThanOrEqual;
+
+        if is_or_is_not_operator || equals_or_not_equals_operator {
+            // Invert the "isPositiveTest" value if this is an "is not" operation.
+            let adj_is_positive_test =
+                if operator == OperatorType::Is || operator == OperatorType::Equals {
+                    is_positive_test
+                } else {
+                    !is_positive_test
+                };
+
+            // Look for "X is None", "X is not None", "X == None", and "X != None".
+            // These are commonly-used patterns used in control flow.
+            if ConstantNode::cast(right_expr)
+                .is_some_and(|constant| constant.d().const_type.get() == KeywordType::None)
+            {
+                // Allow the LHS to be a simple expression or an assignment expression.
+                // For assignment expressions, narrow both the target and the RHS
+                // (consistent with truthiness narrowing).
+                if is_matching_expression_or_walrus_rhs(evaluator, reference, left_expr) {
+                    return Some(Rc::new(move |type_: P<Type>| {
+                        Some(TypeNarrowingResult {
+                            type_: narrow_type_for_is_none(ev.get(), type_, adj_is_positive_test),
+                            is_incomplete: false,
+                        })
+                    }));
+                }
+
+                let left_expression = left_expr;
+                if let Some(left_index) = IndexNode::cast(left_expression) {
+                    let items = left_index.d().items.borrow().clone();
+                    if is_matching_expression(
+                        reference,
+                        left_index.d().left_expr.get(),
+                        Some(&compare_name),
+                    ) && items.len() == 1
+                        && !left_index.d().trailing_comma.get()
+                        && items[0].d().arg_category.get() == ArgCategory::Simple
+                        && items[0].d().name.get().is_none()
+                        && let Some(number_node) = NumberNode::cast(items[0].d().value_expr.get())
+                        && number_node.d().is_integer.get()
+                        && !number_node.d().is_imaginary.get()
+                    {
+                        if let NumberValue::Number(index_value) = &number_node.d().value {
+                            let index_value = *index_value;
+                            return Some(Rc::new(move |type_: P<Type>| {
+                                Some(TypeNarrowingResult {
+                                    type_: narrow_tuple_type_for_is_none(
+                                        ev.get(),
+                                        type_,
+                                        adj_is_positive_test,
+                                        index_value,
+                                    ),
+                                    is_incomplete: false,
+                                })
+                            }));
+                        }
+                    }
+                }
+            }
+
+            // Look for "X is ...", "X is not ...", "X == ...", and "X != ...".
+            if right_expr.node_type == ParseNodeType::Ellipsis {
+                if is_matching_expression_or_walrus_rhs(evaluator, reference, left_expr) {
+                    return Some(Rc::new(move |type_: P<Type>| {
+                        Some(TypeNarrowingResult {
+                            type_: narrow_type_for_is_ellipsis(
+                                ev.get(),
+                                test_expression,
+                                type_,
+                                adj_is_positive_test,
+                            ),
+                            is_incomplete: false,
+                        })
+                    }));
+                }
+            }
+
+            // Look for "type(X) is Y", "type(X) is not Y", "type(X) == Y" or "type(X) != Y".
+            if let Some(left_call) = CallNode::cast(left_expr) {
+                let args = left_call.d().args.borrow().clone();
+                if args.len() == 1 && args[0].d().arg_category.get() == ArgCategory::Simple {
+                    let arg0_expr = args[0].d().value_expr.get();
+                    if is_matching_expression_or_walrus_rhs(evaluator, reference, arg0_expr) {
+                        let call_type = evaluator
+                            .get_type_of_expression(
+                                left_call.d().left_expr.get(),
+                                EvalFlags::CallBaseDefaults,
+                                None,
+                            )
+                            .type_
+                            .get();
+
+                        if is_instantiable_class(call_type)
+                            && ClassType::is_built_in(class_of(call_type), Some(&names(&["type"])))
+                        {
+                            let rhs_result =
+                                evaluator.get_type_of_expression(right_expr, EvalFlags::None, None);
+                            let mut class_types: Vec<ClassType> = Vec::new();
+                            let mut is_class_type = true;
+
+                            evaluator.map_subtypes_expand_type_vars(
+                                rhs_result.type_.get(),
+                                None,
+                                &mut |expanded_subtype, _, _| {
+                                    if is_instantiable_class(expanded_subtype) {
+                                        class_types.push(class_of(expanded_subtype));
+                                    } else {
+                                        is_class_type = false;
+                                    }
+                                    None
+                                },
+                                0,
+                            );
+
+                            if is_class_type && !class_types.is_empty() {
+                                return Some(Rc::new(move |type_: P<Type>| {
+                                    Some(TypeNarrowingResult {
+                                        type_: narrow_type_for_type_is(
+                                            ev.get(),
+                                            type_,
+                                            &class_types,
+                                            adj_is_positive_test,
+                                        ),
+                                        is_incomplete: rhs_result
+                                            .is_incomplete
+                                            .get()
+                                            .unwrap_or(false),
+                                    })
+                                }));
+                            }
+                        }
+                    }
+                }
+            }
+
+            if is_or_is_not_operator {
+                if is_matching_expression_or_walrus_rhs(evaluator, reference, left_expr) {
+                    let right_type_result =
+                        evaluator.get_type_of_expression(right_expr, EvalFlags::None, None);
+                    let right_type = right_type_result.type_.get();
+
+                    // Look for "X is Y" or "X is not Y" where Y is a literal.
+                    if is_class_instance(right_type) && literal_value_of(right_type).is_some() {
+                        let right_class = class_of(right_type);
+                        return Some(Rc::new(move |type_: P<Type>| {
+                            Some(TypeNarrowingResult {
+                                type_: narrow_type_for_literal_comparison(
+                                    ev.get(),
+                                    type_,
+                                    right_class,
+                                    adj_is_positive_test,
+                                    true,
+                                ),
+                                is_incomplete: right_type_result
+                                    .is_incomplete
+                                    .get()
+                                    .unwrap_or(false),
+                            })
+                        }));
+                    }
+
+                    // Look for X is <class> or X is not <class>.
+                    if is_instantiable_class(right_type) {
+                        let right_class = class_of(right_type);
+                        return Some(Rc::new(move |type_: P<Type>| {
+                            Some(TypeNarrowingResult {
+                                type_: narrow_type_for_class_comparison(
+                                    ev.get(),
+                                    type_,
+                                    right_class,
+                                    adj_is_positive_test,
+                                ),
+                                is_incomplete: right_type_result
+                                    .is_incomplete
+                                    .get()
+                                    .unwrap_or(false),
+                            })
+                        }));
+                    }
+                }
+
+                // Look for X[<literal>] is <literal> or X[<literal>] is not <literal>.
+                if let Some(left_index) = IndexNode::cast(left_expr) {
+                    let items = left_index.d().items.borrow().clone();
+                    if items.len() == 1
+                        && !left_index.d().trailing_comma.get()
+                        && items[0].d().arg_category.get() == ArgCategory::Simple
+                        && is_matching_expression(
+                            reference,
+                            left_index.d().left_expr.get(),
+                            Some(&compare_name),
+                        )
+                    {
+                        let index_type_result = evaluator.get_type_of_expression(
+                            items[0].d().value_expr.get(),
+                            EvalFlags::None,
+                            None,
+                        );
+                        let index_type = index_type_result.type_.get();
+
+                        if is_class_instance(index_type) && is_literal_type(class_of(index_type)) {
+                            let index_class = class_of(index_type);
+                            if ClassType::is_built_in(index_class, Some(&names(&["str"]))) {
+                                let right_type = evaluator
+                                    .get_type_of_expression(right_expr, EvalFlags::None, None)
+                                    .type_
+                                    .get();
+                                if is_class_instance(right_type)
+                                    && literal_value_of(right_type).is_some()
+                                {
+                                    return Some(Rc::new(move |type_: P<Type>| {
+                                        Some(TypeNarrowingResult {
+                                            type_:
+                                                narrow_type_for_discriminated_dict_entry_comparison(
+                                                    ev.get(),
+                                                    type_,
+                                                    index_class,
+                                                    right_type,
+                                                    adj_is_positive_test,
+                                                ),
+                                            is_incomplete: index_type_result
+                                                .is_incomplete
+                                                .get()
+                                                .unwrap_or(false),
+                                        })
+                                    }));
+                                }
+                            } else if ClassType::is_built_in(index_class, Some(&names(&["int"]))) {
+                                let right_type_result = evaluator.get_type_of_expression(
+                                    right_expr,
+                                    EvalFlags::None,
+                                    None,
+                                );
+                                let right_type = right_type_result.type_.get();
+
+                                if is_class_instance(right_type)
+                                    && literal_value_of(right_type).is_some()
+                                {
+                                    let mut can_narrow = false;
+                                    // Narrowing can be applied only for bool or enum literals.
+                                    if ClassType::is_built_in(
+                                        class_of(right_type),
+                                        Some(&names(&["bool"])),
+                                    ) {
+                                        can_narrow = true;
+                                    } else if matches!(
+                                        literal_value_of(right_type),
+                                        Some(LiteralValue::EnumLiteral(_))
+                                    ) {
+                                        can_narrow = true;
+                                    }
+
+                                    if can_narrow {
+                                        return Some(Rc::new(move |type_: P<Type>| {
+                                            Some(TypeNarrowingResult {
+                                                type_:
+                                                    narrow_type_for_discriminated_tuple_comparison(
+                                                        ev.get(),
+                                                        type_,
+                                                        index_class,
+                                                        right_type,
+                                                        adj_is_positive_test,
+                                                    ),
+                                                is_incomplete: right_type_result
+                                                    .is_incomplete
+                                                    .get()
+                                                    .unwrap_or(false),
+                                            })
+                                        }));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            if equals_or_not_equals_operator {
+                // Look for X == <literal> or X != <literal>
+                let adj_is_positive_test = if operator == OperatorType::Equals {
+                    is_positive_test
+                } else {
+                    !is_positive_test
+                };
+
+                if is_matching_expression_or_walrus_rhs(evaluator, reference, left_expr) {
+                    let right_type_result =
+                        evaluator.get_type_of_expression(right_expr, EvalFlags::None, None);
+                    let right_type = right_type_result.type_.get();
+
+                    if is_class_instance(right_type) && literal_value_of(right_type).is_some() {
+                        let right_class = class_of(right_type);
+                        return Some(Rc::new(move |type_: P<Type>| {
+                            Some(TypeNarrowingResult {
+                                type_: narrow_type_for_literal_comparison(
+                                    ev.get(),
+                                    type_,
+                                    right_class,
+                                    adj_is_positive_test,
+                                    false,
+                                ),
+                                is_incomplete: right_type_result
+                                    .is_incomplete
+                                    .get()
+                                    .unwrap_or(false),
+                            })
+                        }));
+                    }
+                }
+
+                // Look for X[<literal>] == <literal> or X[<literal>] != <literal>
+                if let Some(left_index) = IndexNode::cast(left_expr) {
+                    let items = left_index.d().items.borrow().clone();
+                    if items.len() == 1
+                        && !left_index.d().trailing_comma.get()
+                        && items[0].d().arg_category.get() == ArgCategory::Simple
+                        && is_matching_expression(
+                            reference,
+                            left_index.d().left_expr.get(),
+                            Some(&compare_name),
+                        )
+                    {
+                        let index_type_result = evaluator.get_type_of_expression(
+                            items[0].d().value_expr.get(),
+                            EvalFlags::None,
+                            None,
+                        );
+                        let index_type = index_type_result.type_.get();
+
+                        if is_class_instance(index_type) && is_literal_type(class_of(index_type)) {
+                            let index_class = class_of(index_type);
+                            if ClassType::is_built_in(index_class, Some(&names(&["str", "int"]))) {
+                                let right_type_result = evaluator.get_type_of_expression(
+                                    right_expr,
+                                    EvalFlags::None,
+                                    None,
+                                );
+                                let right_type = right_type_result.type_.get();
+
+                                if is_literal_type_or_union(right_type, false) {
+                                    return Some(Rc::new(move |type_: P<Type>| {
+                                        let narrowed_type = if ClassType::is_built_in(
+                                            index_class,
+                                            Some(&["str".to_string()]),
+                                        ) {
+                                            narrow_type_for_discriminated_dict_entry_comparison(
+                                                ev.get(),
+                                                type_,
+                                                index_class,
+                                                right_type,
+                                                adj_is_positive_test,
+                                            )
+                                        } else {
+                                            narrow_type_for_discriminated_tuple_comparison(
+                                                ev.get(),
+                                                type_,
+                                                index_class,
+                                                right_type,
+                                                adj_is_positive_test,
+                                            )
+                                        };
+
+                                        Some(TypeNarrowingResult {
+                                            type_: narrowed_type,
+                                            is_incomplete: index_type_result
+                                                .is_incomplete
+                                                .get()
+                                                .unwrap_or(false)
+                                                || right_type_result
+                                                    .is_incomplete
+                                                    .get()
+                                                    .unwrap_or(false),
+                                        })
+                                    }));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Look for X.Y == <literal> or X.Y != <literal>
+            if equals_or_not_equals_operator
+                && let Some(left_member_access) = MemberAccessNode::cast(left_expr)
+                && is_matching_expression(
+                    reference,
+                    left_member_access.d().left_expr.get(),
+                    Some(&compare_name),
+                )
+            {
+                let right_type_result =
+                    evaluator.get_type_of_expression(right_expr, EvalFlags::None, None);
+                let right_type = right_type_result.type_.get();
+                let member_name = left_member_access.d().member.get();
+
+                if is_class_instance(right_type) {
+                    if literal_value_of(right_type).is_some() || is_none_instance(right_type) {
+                        let right_class = class_of(right_type);
+                        return Some(Rc::new(move |type_: P<Type>| {
+                            Some(TypeNarrowingResult {
+                                type_: narrow_type_for_discriminated_literal_field_comparison(
+                                    ev.get(),
+                                    type_,
+                                    &member_name.d().value,
+                                    right_class,
+                                    adj_is_positive_test,
+                                ),
+                                is_incomplete: right_type_result
+                                    .is_incomplete
+                                    .get()
+                                    .unwrap_or(false),
+                            })
+                        }));
+                    }
+                }
+            }
+
+            // Look for X.Y is <literal> or X.Y is not <literal> where <literal> is
+            // an enum or bool literal
+            if let Some(left_member_access) = MemberAccessNode::cast(left_expr)
+                && is_matching_expression(
+                    reference,
+                    left_member_access.d().left_expr.get(),
+                    Some(&compare_name),
+                )
+            {
+                let right_type_result =
+                    evaluator.get_type_of_expression(right_expr, EvalFlags::None, None);
+                let right_type = right_type_result.type_.get();
+                let member_name = left_member_access.d().member.get();
+
+                if is_class_instance(right_type)
+                    && (ClassType::is_enum_class(class_of(right_type))
+                        || ClassType::is_built_in(class_of(right_type), Some(&names(&["bool"]))))
+                    && literal_value_of(right_type).is_some()
+                {
+                    let right_class = class_of(right_type);
+                    return Some(Rc::new(move |type_: P<Type>| {
+                        Some(TypeNarrowingResult {
+                            type_: narrow_type_for_discriminated_literal_field_comparison(
+                                ev.get(),
+                                type_,
+                                &member_name.d().value,
+                                right_class,
+                                adj_is_positive_test,
+                            ),
+                            is_incomplete: right_type_result.is_incomplete.get().unwrap_or(false),
+                        })
+                    }));
+                }
+            }
+
+            // Look for X.Y is None or X.Y is not None
+            // These are commonly-used patterns used in control flow.
+            if let Some(left_member_access) = MemberAccessNode::cast(left_expr)
+                && is_matching_expression(
+                    reference,
+                    left_member_access.d().left_expr.get(),
+                    Some(&compare_name),
+                )
+                && ConstantNode::cast(right_expr)
+                    .is_some_and(|constant| constant.d().const_type.get() == KeywordType::None)
+            {
+                let member_name = left_member_access.d().member.get();
+                return Some(Rc::new(move |type_: P<Type>| {
+                    Some(TypeNarrowingResult {
+                        type_: narrow_type_for_discriminated_field_none_comparison(
+                            ev.get(),
+                            type_,
+                            &member_name.d().value,
+                            adj_is_positive_test,
+                        ),
+                        is_incomplete: false,
+                    })
+                }));
+            }
+        }
+
+        // Look for len(x) == <literal>, len(x) != <literal>, len(x) < <literal>, etc.
+        if comparison_operator
+            && let Some(left_call) = CallNode::cast(left_expr)
+            && left_call.d().args.borrow().len() == 1
+        {
+            let arg0_expr = left_call.d().args.borrow()[0].d().value_expr.get();
+
+            if is_matching_expression(reference, arg0_expr, Some(&compare_name)) {
+                let call_type_result = evaluator.get_type_of_expression(
+                    left_call.d().left_expr.get(),
+                    EvalFlags::CallBaseDefaults,
+                    None,
+                );
+                let call_type = call_type_result.type_.get();
+
+                if FunctionType::cast(call_type).is_some_and(|call_function| {
+                    call_function.d().shared.get().full_name == "builtins.len"
+                }) {
+                    let right_type_result =
+                        evaluator.get_type_of_expression(right_expr, EvalFlags::None, None);
+                    let right_type = right_type_result.type_.get();
+
+                    if is_class_instance(right_type)
+                        && let Some(LiteralValue::Number(literal_number)) =
+                            literal_value_of(right_type)
+                        && literal_number >= 0.0
+                    {
+                        let mut tuple_length = literal_number;
+
+                        // We'll treat <, <= and == as positive tests with >=, > and != as
+                        // their negative counterparts.
+                        let is_less_or_equal = operator == OperatorType::Equals
+                            || operator == OperatorType::LessThan
+                            || operator == OperatorType::LessThanOrEqual;
+
+                        let adj_is_positive_test = if is_less_or_equal {
+                            is_positive_test
+                        } else {
+                            !is_positive_test
+                        };
+
+                        // For <= (or its negative counterpart >), adjust the tuple length by 1.
+                        if operator == OperatorType::LessThanOrEqual
+                            || operator == OperatorType::GreaterThan
+                        {
+                            tuple_length += 1.0;
+                        }
+
+                        let is_equality_check =
+                            operator == OperatorType::Equals || operator == OperatorType::NotEquals;
+
+                        return Some(Rc::new(move |type_: P<Type>| {
+                            Some(TypeNarrowingResult {
+                                type_: narrow_type_for_tuple_length(
+                                    ev.get(),
+                                    type_,
+                                    tuple_length,
+                                    adj_is_positive_test,
+                                    !is_equality_check,
+                                ),
+                                is_incomplete: call_type_result
+                                    .is_incomplete
+                                    .get()
+                                    .unwrap_or(false)
+                                    || right_type_result.is_incomplete.get().unwrap_or(false),
+                            })
+                        }));
+                    }
+                }
+            }
+        }
+
+        if operator == OperatorType::In || operator == OperatorType::NotIn {
+            // Look for "x in y" or "x not in y" where y is one of several built-in types.
+            if is_matching_expression_or_walrus_rhs(evaluator, reference, left_expr) {
+                let right_type_result =
+                    evaluator.get_type_of_expression(right_expr, EvalFlags::None, None);
+                let right_type = right_type_result.type_.get();
+                let adj_is_positive_test = if operator == OperatorType::In {
+                    is_positive_test
+                } else {
+                    !is_positive_test
+                };
+
+                return Some(Rc::new(move |type_: P<Type>| {
+                    Some(TypeNarrowingResult {
+                        type_: narrow_type_for_container_type(
+                            ev.get(),
+                            type_,
+                            right_type,
+                            adj_is_positive_test,
+                        ),
+                        is_incomplete: right_type_result.is_incomplete.get().unwrap_or(false),
+                    })
+                }));
+            }
+
+            if is_matching_expression(reference, right_expr, Some(&compare_name)) {
+                // Look for <string literal> in y where y is a union that contains
+                // one or more TypedDicts.
+                let left_type_result =
+                    evaluator.get_type_of_expression(left_expr, EvalFlags::None, None);
+                let left_type = left_type_result.type_.get();
+
+                if is_class_instance(left_type)
+                    && ClassType::is_built_in(class_of(left_type), Some(&names(&["str"])))
+                    && is_literal_type(class_of(left_type))
+                {
+                    let adj_is_positive_test = if operator == OperatorType::In {
+                        is_positive_test
+                    } else {
+                        !is_positive_test
+                    };
+                    let left_class = class_of(left_type);
+                    return Some(Rc::new(move |type_: P<Type>| {
+                        Some(TypeNarrowingResult {
+                            type_: narrow_type_for_typed_dict_key(
+                                ev.get(),
+                                type_,
+                                ClassType::clone_as_instantiable(left_class, true),
+                                adj_is_positive_test,
+                            ),
+                            is_incomplete: left_type_result.is_incomplete.get().unwrap_or(false),
+                        })
+                    }));
+                }
+            }
+        }
+    }
+
+    if let Some(call_node) = CallNode::cast(test_expression) {
+        let args = call_node.d().args.borrow().clone();
+
+        // Look for "isinstance(X, Y)" or "issubclass(X, Y)".
+        if args.len() == 2 {
+            // Make sure the first parameter is a supported expression type
+            // and the second parameter is a valid class type or a tuple
+            // of valid class types.
+            let arg0_expr = args[0].d().value_expr.get();
+            let arg1_expr = args[1].d().value_expr.get();
+
+            if is_matching_expression_or_walrus_rhs(evaluator, reference, arg0_expr) {
+                let call_type_result = evaluator.get_type_of_expression(
+                    call_node.d().left_expr.get(),
+                    EvalFlags::CallBaseDefaults,
+                    None,
+                );
+                let call_type = call_type_result.type_.get();
+
+                if let Some(call_function) = FunctionType::cast(call_type)
+                    && FunctionType::is_built_in(
+                        call_function,
+                        Some(&names(&["isinstance", "issubclass"])),
+                    )
+                {
+                    let is_instance_check =
+                        FunctionType::is_built_in(call_function, Some(&names(&["isinstance"])));
+                    let arg1_type_result = evaluator.get_type_of_expression(
+                        arg1_expr,
+                        EvalFlags::IsInstanceArgDefaults,
+                        None,
+                    );
+                    let arg1_type = arg1_type_result.type_.get();
+
+                    let class_type_list = get_is_instance_class_types(evaluator, arg1_type);
+                    let is_incomplete = call_type_result.is_incomplete.get().unwrap_or(false)
+                        || arg1_type_result.is_incomplete.get().unwrap_or(false);
+
+                    if let Some(class_type_list) = class_type_list {
+                        return Some(Rc::new(move |type_: P<Type>| {
+                            Some(TypeNarrowingResult {
+                                type_: narrow_type_for_instance_or_subclass(
+                                    ev.get(),
+                                    type_,
+                                    &class_type_list,
+                                    is_instance_check,
+                                    false,
+                                    is_positive_test,
+                                    test_expression,
+                                    &node_info_copy,
+                                ),
+                                is_incomplete,
+                            })
+                        }));
+                    } else if is_incomplete {
+                        // If the type is incomplete, it may include unknowns, which will result
+                        // in classTypeList being undefined.
+                        return Some(Rc::new(move |type_: P<Type>| {
+                            Some(TypeNarrowingResult {
+                                type_,
+                                is_incomplete: true,
+                            })
+                        }));
+                    }
+                }
+            }
+        }
+
+        // Look for "bool(X)"
+        if args.len() == 1 && args[0].d().name.get().is_none() {
+            if is_matching_expression_or_walrus_rhs(
+                evaluator,
+                reference,
+                args[0].d().value_expr.get(),
+            ) {
+                let call_type_result = evaluator.get_type_of_expression(
+                    call_node.d().left_expr.get(),
+                    EvalFlags::CallBaseDefaults,
+                    None,
+                );
+                let call_type = call_type_result.type_.get();
+
+                if is_instantiable_class(call_type)
+                    && ClassType::is_built_in(class_of(call_type), Some(&names(&["bool"])))
+                {
+                    return Some(Rc::new(move |type_: P<Type>| {
+                        Some(TypeNarrowingResult {
+                            type_: narrow_type_for_truthiness(ev.get(), type_, is_positive_test),
+                            is_incomplete: call_type_result.is_incomplete.get().unwrap_or(false),
+                        })
+                    }));
+                }
+            }
+        }
+
+        // Look for a TypeGuard function.
+        if !args.is_empty() {
+            let arg0_expr = args[0].d().value_expr.get();
+            if is_matching_expression_or_walrus_rhs(evaluator, reference, arg0_expr) {
+                // Does this look like it's a custom type guard function?
+                let mut is_possibly_type_guard = false;
+
+                let is_function_return_type_guard = |type_: FunctionType| -> bool {
+                    let Some(return_type) = type_.d().shared.get().declared_return_type.get()
+                    else {
+                        return false;
+                    };
+                    if is_class_instance(return_type) {
+                        return ClassType::is_built_in(
+                            class_of(return_type),
+                            Some(&names(&["TypeGuard", "TypeIs"])),
+                        );
+                    }
+                    if is_union(return_type) {
+                        let mut is_all_guards = true;
+                        do_for_each_subtype(
+                            return_type,
+                            &mut |subtype, _, _| {
+                                if !is_class_instance(subtype)
+                                    || !ClassType::is_built_in(
+                                        class_of(subtype),
+                                        Some(&names(&["TypeGuard", "TypeIs"])),
+                                    )
+                                {
+                                    is_all_guards = false;
+                                }
+                            },
+                            false,
+                        );
+                        return is_all_guards;
+                    }
+                    false
+                };
+
+                let call_type_result = evaluator.get_type_of_expression(
+                    call_node.d().left_expr.get(),
+                    EvalFlags::CallBaseDefaults,
+                    None,
+                );
+                let call_type = call_type_result.type_.get();
+
+                if FunctionType::cast(call_type).is_some_and(is_function_return_type_guard) {
+                    is_possibly_type_guard = true;
+                } else if let Some(overloaded_call_type) = OverloadedType::cast(call_type)
+                    && OverloadedType::get_overloads(overloaded_call_type)
+                        .into_iter()
+                        .any(is_function_return_type_guard)
+                {
+                    is_possibly_type_guard = true;
+                } else if is_class_instance(call_type) {
+                    is_possibly_type_guard = true;
+                }
+
+                if is_possibly_type_guard {
+                    // Evaluate the type guard call expression.
+                    let function_return_type_result =
+                        evaluator.get_type_of_expression(test_expression, EvalFlags::None, None);
+                    let function_return_type = function_return_type_result.type_.get();
+
+                    let mut type_guard_type: Option<P<Type>> = None;
+                    let mut is_strict_type_guard = false;
+
+                    let type_args_of =
+                        |type_: P<Type>| class_of(type_).d().priv_.borrow().type_args.clone();
+
+                    if is_class_instance(function_return_type)
+                        && ClassType::is_built_in(
+                            class_of(function_return_type),
+                            Some(&names(&["TypeGuard", "TypeIs"])),
+                        )
+                        && type_args_of(function_return_type)
+                            .is_some_and(|type_args| !type_args.is_empty())
+                    {
+                        is_strict_type_guard = ClassType::is_built_in(
+                            class_of(function_return_type),
+                            Some(&names(&["TypeIs"])),
+                        );
+                        type_guard_type = Some(type_args_of(function_return_type).unwrap()[0]);
+                    } else if is_union(function_return_type) {
+                        let mut type_guard_subtypes: Vec<ClassType> = Vec::new();
+                        let mut is_all_guards = true;
+
+                        do_for_each_subtype(
+                            function_return_type,
+                            &mut |subtype, _, _| {
+                                if is_class_instance(subtype)
+                                    && ClassType::is_built_in(
+                                        class_of(subtype),
+                                        Some(&names(&["TypeGuard", "TypeIs"])),
+                                    )
+                                    && type_args_of(subtype)
+                                        .is_some_and(|type_args| !type_args.is_empty())
+                                {
+                                    type_guard_subtypes.push(class_of(subtype));
+                                } else {
+                                    is_all_guards = false;
+                                }
+                            },
+                            false,
+                        );
+
+                        if is_all_guards && !type_guard_subtypes.is_empty() {
+                            // A union of type guards cannot be strict in the negative case because at runtime
+                            // only one arm of the overload/union is selected. Treating it as strict would
+                            // unsoundly eliminate types in the negative branch.
+                            is_strict_type_guard = false;
+                            type_guard_type = Some(combine_types(
+                                &type_guard_subtypes
+                                    .iter()
+                                    .map(|subtype| type_args_of(subtype.0).unwrap()[0])
+                                    .collect::<Vec<P<Type>>>(),
+                                None,
+                            ));
+                        }
+                    }
+
+                    if let Some(type_guard_type) = type_guard_type {
+                        let is_incomplete = call_type_result.is_incomplete.get().unwrap_or(false)
+                            || function_return_type_result
+                                .is_incomplete
+                                .get()
+                                .unwrap_or(false);
+
+                        return Some(Rc::new(move |type_: P<Type>| {
+                            Some(TypeNarrowingResult {
+                                type_: narrow_type_for_user_defined_type_guard(
+                                    ev.get(),
+                                    type_,
+                                    type_guard_type,
+                                    is_positive_test,
+                                    is_strict_type_guard,
+                                    test_expression,
+                                    &node_info_copy,
+                                ),
+                                is_incomplete,
+                            })
+                        }));
+                    }
+                }
+            }
+        }
+    }
+
+    if is_matching_expression(reference, test_expression, Some(&compare_name)) {
+        return Some(Rc::new(move |type_: P<Type>| {
+            Some(TypeNarrowingResult {
+                type_: narrow_type_for_truthiness(ev.get(), type_, is_positive_test),
+                is_incomplete: false,
+            })
+        }));
+    }
+
+    // Is this a reference to an aliased conditional expression (a local variable
+    // that was assigned a value that can inform type narrowing of the reference expression)?
+    let narrowing_callback = get_type_narrowing_callback_for_aliased_condition(
+        evaluator,
+        reference,
+        test_expression,
+        is_positive_test,
+        node_info,
+        recursion_count,
+    );
+    if narrowing_callback.is_some() {
+        return narrowing_callback;
+    }
+
+    // We normally won't find a "not" operator here because they are stripped out
+    // by the binder when it creates condition flow nodes, but we can find this
+    // in the case of local variables type narrowing.
+    if reference.node_type == ParseNodeType::Name {
+        if let Some(unary_operation) = UnaryOperationNode::cast(test_expression)
+            && unary_operation.d().operator.get() == OperatorType::Not
+        {
+            return get_type_narrowing_callback(
+                evaluator,
+                reference,
+                unary_operation.d().expr.get(),
+                !is_positive_test,
+                node_info,
+                recursion_count,
+            );
+        }
+    }
+
+    None
 }
 
 // analyzer/typeGuards.ts:867
@@ -49,7 +1024,77 @@ pub(crate) fn get_type_narrowing_callback_for_aliased_condition(
     node_info: &AnalyzerNodeInfoAccessor,
     recursion_count: u32,
 ) -> Option<TypeNarrowingCallback> {
-    todo!()
+    let (Some(test_name), Some(reference_name)) =
+        (NameNode::cast(test_expression), NameNode::cast(reference))
+    else {
+        return None;
+    };
+    if test_expression == reference {
+        return None;
+    }
+
+    // Make sure the reference expression is a constant parameter or variable.
+    // If the reference expression is modified within the scope multiple times,
+    // we need to validate that it is not modified between the test expression
+    // evaluation and the conditional check.
+    let test_expr_decl = get_decls_for_local_var(evaluator, test_name, test_expression, true);
+    let Some(test_expr_decl) = test_expr_decl.filter(|test_expr_decl| {
+        test_expr_decl.len() == 1 && test_expr_decl[0].type_ == DeclarationType::Variable
+    }) else {
+        return None;
+    };
+
+    let reference_decls =
+        get_decls_for_local_var(evaluator, reference_name, test_expression, false)?;
+
+    let mut modifying_decls: Vec<P<Declaration>> = Vec::new();
+    if reference_decls.len() > 1 {
+        // If there is more than one assignment to the reference variable within
+        // the local scope, make sure that none of these assignments are done
+        // after the test expression but before the condition check.
+        //
+        // This is OK:
+        //  val = None
+        //  is_none = val is None
+        //  if is_none: ...
+        //
+        // This is not OK:
+        //  val = None
+        //  is_none = val is None
+        //  val = 1
+        //  if is_none: ...
+        modifying_decls = reference_decls
+            .iter()
+            .filter(|decl| {
+                evaluator.is_node_reachable(test_expression, Some(decl.node.get()))
+                    && evaluator
+                        .is_node_reachable(decl.node.get(), Some(test_expr_decl[0].node.get()))
+            })
+            .copied()
+            .collect();
+    }
+
+    if !modifying_decls.is_empty() {
+        return None;
+    }
+
+    let init_node = test_expr_decl[0]
+        .variable()
+        .and_then(|variable| variable.inferred_type_source.get());
+
+    let init_node = init_node?;
+    if is_node_contained_within(test_expression, init_node) || !is_expression_node(&init_node) {
+        return None;
+    }
+
+    get_type_narrowing_callback(
+        evaluator,
+        reference,
+        init_node,
+        is_positive_test,
+        node_info,
+        recursion_count,
+    )
 }
 
 // analyzer/typeGuards.ts:937
@@ -59,7 +1104,62 @@ pub(crate) fn get_decls_for_local_var(
     reachable_from: P<ParseNode>,
     require_unique: bool,
 ) -> Option<Vec<P<Declaration>>> {
-    todo!()
+    let node_info = evaluator.get_analyzer_node_info_reader();
+    let scope = get_scope_for_node(name.0, &*node_info);
+    let scope = scope
+        .filter(|scope| scope.type_ == ScopeType::Function || scope.type_ == ScopeType::Module)?;
+
+    let symbol = scope.look_up_symbol(&name.d().value)?;
+
+    let decls = symbol.get_declarations();
+    if require_unique && decls.len() > 1 {
+        return None;
+    }
+
+    if decls.is_empty()
+        || decls.iter().any(|decl| {
+            decl.type_ != DeclarationType::Variable && decl.type_ != DeclarationType::Param
+        })
+    {
+        return None;
+    }
+
+    // If there are any assignments within different scopes (e.g. via a "global" or
+    // "nonlocal" reference), don't consider it a local variable.
+    let mut prev_decl_scope: Option<P<ParseNode>> = None;
+    if decls.iter().any(|decl| {
+        let node_to_consider = if decl.type_ == DeclarationType::Param {
+            ParameterNode::cast(decl.node.get())
+                .unwrap()
+                .d()
+                .name
+                .get()
+                .unwrap()
+                .0
+        } else {
+            decl.node.get()
+        };
+        let decl_scope_node = get_execution_scope_node(node_to_consider, &*node_info);
+        if prev_decl_scope.is_some_and(|prev_decl_scope| decl_scope_node != prev_decl_scope) {
+            return true;
+        }
+        prev_decl_scope = Some(decl_scope_node);
+        false
+    }) {
+        return None;
+    }
+
+    let reachable_decls: Vec<P<Declaration>> = decls
+        .iter()
+        .filter(|decl| evaluator.is_node_reachable(reachable_from, Some(decl.node.get())))
+        .copied()
+        .collect();
+
+    if !reachable_decls.is_empty() {
+        Some(reachable_decls)
+    } else {
+        None
+    }
 }
 
 // analyzer/typeGuards.ts:988
@@ -71,7 +1171,24 @@ pub(crate) fn get_type_narrowing_callback_for_assignment_expression(
     node_info: &AnalyzerNodeInfoAccessor,
     recursion_count: u32,
 ) -> Option<TypeNarrowingCallback> {
-    todo!()
+    get_type_narrowing_callback(
+        evaluator,
+        reference,
+        test_expression.d().right_expr.get(),
+        is_positive_test,
+        node_info,
+        recursion_count,
+    )
+    .or_else(|| {
+        get_type_narrowing_callback(
+            evaluator,
+            reference,
+            test_expression.d().name.get().0,
+            is_positive_test,
+            node_info,
+            recursion_count,
+        )
+    })
 }
 
 // analyzer/typeGuards.ts:1009
@@ -84,7 +1201,54 @@ pub(crate) fn narrow_type_for_user_defined_type_guard(
     error_node: ExpressionNode,
     node_info: &AnalyzerNodeInfoAccessor,
 ) -> P<Type> {
-    todo!()
+    // For non-strict type guards, always narrow to the typeGuardType
+    // in the positive case and don't narrow in the negative case.
+    if !is_strict_type_guard {
+        let mut result = type_;
+
+        if is_positive_test {
+            result = type_guard_type;
+
+            // If the type guard is a non-constrained TypeVar, add a
+            // condition to the resulting type.
+            if let Some(type_var) = TypeVarType::cast(type_)
+                && !is_param_spec(type_)
+                && !TypeVarType::has_constraints(type_var)
+            {
+                result = add_condition_to_type(
+                    result,
+                    Some(&[TypeCondition {
+                        type_var,
+                        constraint_index: 0,
+                    }]),
+                    None,
+                );
+            }
+            return result;
+        }
+
+        return result;
+    }
+
+    let mut filter_types: Vec<P<Type>> = Vec::new();
+    do_for_each_subtype(
+        type_guard_type,
+        &mut |type_guard_subtype, _, _| {
+            filter_types.push(convert_to_instantiable(type_guard_subtype, true));
+        },
+        false,
+    );
+
+    narrow_type_for_instance_or_subclass(
+        evaluator,
+        type_,
+        &filter_types,
+        true,
+        true,
+        is_positive_test,
+        error_node,
+        node_info,
+    )
 }
 
 // analyzer/typeGuards.ts:1055
@@ -93,7 +1257,20 @@ pub(crate) fn narrow_type_for_truthiness(
     type_: P<Type>,
     is_positive_test: bool,
 ) -> P<Type> {
-    todo!()
+    map_subtypes(
+        type_,
+        &mut |subtype| {
+            if is_positive_test {
+                if evaluator.can_be_truthy(subtype, 0) {
+                    return Some(evaluator.remove_falsiness_from_type(subtype));
+                }
+            } else if evaluator.can_be_falsy(subtype, 0) {
+                return Some(evaluator.remove_truthiness_from_type(subtype));
+            }
+            None
+        },
+        None,
+    )
 }
 
 // analyzer/typeGuards.ts:1072
@@ -103,12 +1280,84 @@ pub(crate) fn narrow_tuple_type_for_is_none(
     is_positive_test: bool,
     index_value: f64,
 ) -> P<Type> {
-    todo!()
+    evaluator.map_subtypes_expand_type_vars(
+        type_,
+        None,
+        &mut |subtype, _, _| {
+            let Some(tuple_type) = get_specialized_tuple_type(subtype) else {
+                return Some(subtype);
+            };
+            let tuple_type_args = tuple_type.d().priv_.borrow().tuple_type_args.clone();
+            if is_unbounded_tuple_class(tuple_type).unwrap_or(false) || tuple_type_args.is_none() {
+                return Some(subtype);
+            }
+            let tuple_type_args = tuple_type_args.unwrap();
+
+            let tuple_length = tuple_type_args.len() as f64;
+            if index_value < 0.0 || index_value >= tuple_length {
+                return Some(subtype);
+            }
+
+            let type_of_entry = evaluator.make_top_level_type_vars_concrete(
+                tuple_type_args[index_value as usize].type_,
+                false,
+                None,
+            );
+
+            if is_positive_test {
+                if !evaluator.assign_type(
+                    type_of_entry,
+                    evaluator.get_none_type(),
+                    None,
+                    None,
+                    AssignTypeFlags::Default,
+                    0,
+                ) {
+                    return None;
+                }
+            } else if is_none_instance(type_of_entry) {
+                return None;
+            }
+
+            Some(subtype)
+        },
+        0,
+    )
 }
 
 // analyzer/typeGuards.ts:1104
 pub(crate) fn get_innermost_new_type_base_instance(subtype: P<Type>) -> Option<P<Type>> {
-    todo!()
+    if !is_class_instance(subtype)
+        || !ClassType::is_new_type_class(ClassType::cast(subtype).unwrap())
+    {
+        return None;
+    }
+
+    let mut current_type: P<Type> = subtype;
+    while is_class_instance(current_type)
+        && ClassType::is_new_type_class(ClassType::cast(current_type).unwrap())
+    {
+        let base_classes = ClassType::cast(current_type)
+            .unwrap()
+            .d()
+            .shared
+            .get()
+            .base_classes
+            .borrow()
+            .clone();
+        if base_classes.is_empty() {
+            return None;
+        }
+
+        let base_class = base_classes[0];
+        if !is_class(base_class) {
+            return None;
+        }
+
+        current_type = ClassType::clone_as_instance(ClassType::cast(base_class).unwrap(), true).0;
+    }
+
+    Some(current_type)
 }
 
 // analyzer/typeGuards.ts:1127
@@ -117,7 +1366,159 @@ pub(crate) fn narrow_type_for_is_none(
     type_: P<Type>,
     is_positive_test: bool,
 ) -> P<Type> {
-    todo!()
+    let condition_of = |type_: P<Type>| {
+        type_
+            .props
+            .borrow()
+            .as_ref()
+            .and_then(|props| props.condition.clone())
+    };
+    let expanded_type = map_subtypes(
+        type_,
+        &mut |subtype| transform_possible_recursive_type_alias(Some(subtype), 0),
+        None,
+    );
+
+    let mut result_includes_none_subtype = false;
+
+    let result = evaluator.map_subtypes_expand_type_vars(
+        expanded_type,
+        None,
+        &mut |subtype, unexpanded_subtype, _| {
+            if is_any_or_unknown(subtype) {
+                // Narrow to None in positive tests, matching the behavior of other
+                // narrowing functions (narrowTypeForInstanceOrSubclass, narrowTypeForLiteralComparison).
+                if is_positive_test {
+                    result_includes_none_subtype = true;
+                    return Some(add_condition_to_type(
+                        evaluator.get_none_type(),
+                        condition_of(subtype).as_deref(),
+                        None,
+                    ));
+                }
+                // For negative tests, keep the original type.
+                return Some(subtype);
+            }
+
+            let mut use_expanded_subtype = false;
+            if let Some(unexpanded_type_var) = TypeVarType::cast(unexpanded_subtype)
+                && !TypeVarType::is_self(unexpanded_type_var)
+            {
+                let shared = unexpanded_type_var.d().shared.get();
+
+                // If the TypeVar has value constraints and one or more of them
+                // are possibly compatible with None, use the expanded subtypes.
+                let constraints = shared.constraints.borrow().clone();
+                if constraints.iter().any(|constraint| {
+                    evaluator.assign_type(
+                        *constraint,
+                        evaluator.get_none_type(),
+                        None,
+                        None,
+                        AssignTypeFlags::Default,
+                        0,
+                    )
+                }) {
+                    use_expanded_subtype = true;
+                }
+
+                // If the TypeVar han an explicit bound that is possibly compatible
+                // with None (e.g. "T: int | None"), use the expanded subtypes.
+                if let Some(bound_type) = shared.bound_type.get()
+                    && evaluator.assign_type(
+                        bound_type,
+                        evaluator.get_none_type(),
+                        None,
+                        None,
+                        AssignTypeFlags::Default,
+                        0,
+                    )
+                {
+                    use_expanded_subtype = true;
+                }
+            }
+
+            let adjusted_subtype = if use_expanded_subtype {
+                subtype
+            } else {
+                unexpanded_subtype
+            };
+
+            // A NewType whose innermost base is exactly None (e.g. NewType("Apple", NoneType))
+            // can be identity-compared with None: keep the NewType identity on the positive
+            // branch and eliminate it on the negative branch. A NewType whose base is merely
+            // None-compatible (e.g. NewType("Obj", object)) is intentionally not handled here;
+            // it falls through to the generic checks below so that "is not None" does not
+            // incorrectly collapse to Never.
+            let new_type_base_instance = get_innermost_new_type_base_instance(adjusted_subtype);
+            if new_type_base_instance.is_some_and(is_none_instance) {
+                result_includes_none_subtype = true;
+                return if is_positive_test {
+                    Some(adjusted_subtype)
+                } else {
+                    None
+                };
+            }
+
+            // Is it an exact match for None?
+            if is_none_instance(subtype) {
+                result_includes_none_subtype = true;
+                return if is_positive_test {
+                    Some(adjusted_subtype)
+                } else {
+                    None
+                };
+            }
+
+            // Is it potentially None?
+            if evaluator.assign_type(
+                subtype,
+                evaluator.get_none_type(),
+                None,
+                None,
+                AssignTypeFlags::Default,
+                0,
+            ) {
+                result_includes_none_subtype = true;
+                return if is_positive_test {
+                    Some(add_condition_to_type(
+                        evaluator.get_none_type(),
+                        condition_of(subtype).as_deref(),
+                        None,
+                    ))
+                } else {
+                    Some(adjusted_subtype)
+                };
+            }
+
+            if is_positive_test {
+                None
+            } else {
+                Some(adjusted_subtype)
+            }
+        },
+        0,
+    );
+
+    // If this is a positive test and the result is a union that includes None,
+    // we can eliminate all the non-None subtypes include Any or Unknown. If some
+    // of the subtypes are None types with conditions, retain those.
+    if is_positive_test && result_includes_none_subtype {
+        return map_subtypes(
+            result,
+            &mut |subtype| {
+                let base_instance = get_innermost_new_type_base_instance(subtype);
+                if is_none_instance(subtype) || base_instance.is_some_and(is_none_instance) {
+                    Some(subtype)
+                } else {
+                    None
+                }
+            },
+            None,
+        );
+    }
+
+    result
 }
 
 // analyzer/typeGuards.ts:1217
@@ -127,7 +1528,127 @@ pub(crate) fn narrow_type_for_is_ellipsis(
     type_: P<Type>,
     is_positive_test: bool,
 ) -> P<Type> {
-    todo!()
+    let condition_of = |type_: P<Type>| {
+        type_
+            .props
+            .borrow()
+            .as_ref()
+            .and_then(|props| props.condition.clone())
+    };
+    let expanded_type = map_subtypes(
+        type_,
+        &mut |subtype| transform_possible_recursive_type_alias(Some(subtype), 0),
+        None,
+    );
+
+    let mut result_includes_ellipsis_subtype = false;
+
+    // `getBuiltInObject` always returns a type, so the TypeScript's `?? getBuiltInObject(node,
+    // 'ellipsis') ?? AnyType.create()` fallbacks never run.
+    let ellipsis_type = evaluator.get_built_in_object(node, "EllipsisType", None);
+
+    let is_ellipsis_instance = |subtype: P<Type>| {
+        is_class_instance(subtype)
+            && ClassType::is_built_in(
+                ClassType::cast(subtype).unwrap(),
+                Some(&["EllipsisType".to_string(), "ellipsis".to_string()]),
+            )
+    };
+
+    let result = evaluator.map_subtypes_expand_type_vars(
+        expanded_type,
+        None,
+        &mut |subtype, unexpanded_subtype, _| {
+            if is_any_or_unknown(subtype) {
+                // We need to assume that "Any" is always both ellipsis and not ellipsis,
+                // so it matches regardless of whether the test is positive or negative.
+                return Some(subtype);
+            }
+
+            // If this is a TypeVar that isn't constrained, use the unexpanded
+            // TypeVar. For all other cases (including constrained TypeVars),
+            // use the expanded subtype.
+            let adjusted_subtype = if TypeVarType::cast(unexpanded_subtype)
+                .is_some_and(|type_var| !TypeVarType::has_constraints(type_var))
+            {
+                unexpanded_subtype
+            } else {
+                subtype
+            };
+
+            // Only a NewType whose innermost base is exactly the ellipsis type is treated
+            // as the singleton (see narrowTypeForIsNone for the rationale); a merely
+            // ellipsis-compatible base falls through so "is not ..." does not collapse to Never.
+            let new_type_base_instance = get_innermost_new_type_base_instance(adjusted_subtype);
+            if new_type_base_instance.is_some_and(is_ellipsis_instance) {
+                result_includes_ellipsis_subtype = true;
+                return if is_positive_test {
+                    Some(adjusted_subtype)
+                } else {
+                    None
+                };
+            }
+
+            // Is it an exact match for ellipsis?
+            if is_ellipsis_instance(subtype) {
+                result_includes_ellipsis_subtype = true;
+                return if is_positive_test {
+                    Some(adjusted_subtype)
+                } else {
+                    None
+                };
+            }
+
+            // Is it potentially ellipsis?
+            if evaluator.assign_type(
+                subtype,
+                ellipsis_type,
+                None,
+                None,
+                AssignTypeFlags::Default,
+                0,
+            ) {
+                result_includes_ellipsis_subtype = true;
+                return if is_positive_test {
+                    Some(add_condition_to_type(
+                        ellipsis_type,
+                        condition_of(subtype).as_deref(),
+                        None,
+                    ))
+                } else {
+                    Some(adjusted_subtype)
+                };
+            }
+
+            if is_positive_test {
+                None
+            } else {
+                Some(adjusted_subtype)
+            }
+        },
+        0,
+    );
+
+    // If this is a positive test and the result is a union that includes ellipsis,
+    // we can eliminate all the non-ellipsis subtypes include Any or Unknown. If some
+    // of the subtypes are ellipsis types with conditions, retain those.
+    if is_positive_test && result_includes_ellipsis_subtype {
+        return map_subtypes(
+            result,
+            &mut |subtype| {
+                let base_instance = get_innermost_new_type_base_instance(subtype);
+                if is_ellipsis_instance(subtype) || base_instance.is_some_and(is_ellipsis_instance)
+                {
+                    Some(subtype)
+                } else {
+                    None
+                }
+            },
+            None,
+        );
+    }
+
+    result
 }
 
 // analyzer/typeGuards.ts:1295
@@ -135,7 +1656,136 @@ pub fn get_is_instance_class_types(
     evaluator: &TypeEvaluator,
     arg_type: P<Type>,
 ) -> Option<Vec<P<Type>>> {
-    todo!()
+    let mut found_non_class_type = false;
+    let mut class_type_list: Vec<P<Type>> = Vec::new();
+
+    // Create a helper function that returns a list of class types or
+    // undefined if any of the types are not valid.
+    fn add_class_types_to_list(
+        evaluator: &TypeEvaluator,
+        types: &[P<Type>],
+        class_type_list: &mut Vec<P<Type>>,
+        found_non_class_type: &mut bool,
+    ) {
+        for subtype in types {
+            let mut subtype = *subtype;
+            if is_class(subtype) {
+                subtype = specialize_with_unknown_type_args(
+                    ClassType::cast(subtype).unwrap(),
+                    evaluator.get_tuple_class_type(),
+                )
+                .0;
+
+                if is_instantiable_class(subtype)
+                    && ClassType::is_built_in(
+                        ClassType::cast(subtype).unwrap(),
+                        Some(&["Callable".to_string()]),
+                    )
+                {
+                    subtype = convert_to_instantiable(get_unknown_type_for_callable().0, true);
+                }
+            }
+
+            if is_instantiable_class(subtype) {
+                // If this is a reference to a class that has type promotions (e.g.
+                // float or complex), remove the promotions for purposes of the
+                // isinstance check).
+                let subtype_class = ClassType::cast(subtype).unwrap();
+                let (include_subclasses, include_promotions) = {
+                    let priv_ = subtype_class.d().priv_.borrow();
+                    (priv_.include_subclasses, priv_.include_promotions)
+                };
+                if !include_subclasses.unwrap_or(false) && include_promotions.unwrap_or(false) {
+                    subtype = ClassType::clone_remove_type_promotions(subtype_class).0;
+                }
+                class_type_list.push(subtype);
+            } else if is_type_var(subtype) && TypeBase::is_instantiable(subtype) {
+                class_type_list.push(subtype);
+            } else if is_none_type_class(subtype) {
+                assert(is_instantiable_class(subtype), None);
+                class_type_list.push(subtype);
+            } else if FunctionType::cast(subtype).is_some_and(|function_type| {
+                let parameters = function_type.d().shared.get().parameters.get();
+                let parameters = parameters.borrow();
+                parameters.len() == 2
+                    && parameters[0].category == ParamCategory::ArgsList
+                    && parameters[1].category == ParamCategory::KwargsDict
+            }) {
+                class_type_list.push(subtype);
+            } else {
+                *found_non_class_type = true;
+            }
+        }
+    }
+
+    fn add_class_types_recursive(
+        evaluator: &TypeEvaluator,
+        type_: P<Type>,
+        recursion_count: u32,
+        class_type_list: &mut Vec<P<Type>>,
+        found_non_class_type: &mut bool,
+    ) {
+        if recursion_count > MAX_TYPE_RECURSION_COUNT {
+            return;
+        }
+
+        if is_class(type_)
+            && TypeBase::is_instance(type_)
+            && is_tuple_class(ClassType::cast(type_).unwrap())
+        {
+            let tuple_type_args = ClassType::cast(type_)
+                .unwrap()
+                .d()
+                .priv_
+                .borrow()
+                .tuple_type_args
+                .clone();
+            if let Some(tuple_type_args) = tuple_type_args {
+                for tuple_entry in tuple_type_args {
+                    add_class_types_recursive(
+                        evaluator,
+                        tuple_entry.type_,
+                        recursion_count + 1,
+                        class_type_list,
+                        found_non_class_type,
+                    );
+                }
+            }
+        } else {
+            do_for_each_subtype(
+                type_,
+                &mut |subtype, _, _| {
+                    add_class_types_to_list(
+                        evaluator,
+                        &[subtype],
+                        class_type_list,
+                        found_non_class_type,
+                    );
+                },
+                false,
+            );
+        }
+    }
+
+    do_for_each_subtype(
+        arg_type,
+        &mut |subtype, _, _| {
+            add_class_types_recursive(
+                evaluator,
+                subtype,
+                0,
+                &mut class_type_list,
+                &mut found_non_class_type,
+            );
+        },
+        false,
+    );
+
+    if found_non_class_type {
+        None
+    } else {
+        Some(class_type_list)
+    }
 }
 
 // analyzer/typeGuards.ts:1365
@@ -149,7 +1799,35 @@ pub fn narrow_type_for_instance_or_subclass(
     error_node: ExpressionNode,
     node_info: &AnalyzerNodeInfoAccessor,
 ) -> P<Type> {
-    todo!()
+    // First try with intersection types disallowed.
+    let narrowed_type = narrow_type_for_instance_or_subclass_internal(
+        evaluator,
+        type_,
+        filter_types,
+        is_instance_check,
+        is_type_is_check,
+        is_positive_test,
+        false,
+        error_node,
+        node_info,
+    );
+
+    if !is_never(narrowed_type) {
+        return narrowed_type;
+    }
+
+    // Try again with intersection types allowed.
+    narrow_type_for_instance_or_subclass_internal(
+        evaluator,
+        type_,
+        filter_types,
+        is_instance_check,
+        is_type_is_check,
+        is_positive_test,
+        true,
+        error_node,
+        node_info,
+    )
 }
 
 // analyzer/typeGuards.ts:1406
@@ -164,7 +1842,71 @@ pub(crate) fn narrow_type_for_instance_or_subclass_internal(
     error_node: ExpressionNode,
     node_info: &AnalyzerNodeInfoAccessor,
 ) -> P<Type> {
-    todo!()
+    map_subtypes(
+        type_,
+        &mut |subtype| {
+            let mut adj_subtype = subtype;
+            let mut result_requires_adj = false;
+            let mut adj_filter_types: Vec<P<Type>> = filter_types.to_vec();
+
+            if !is_instance_check {
+                let is_type_instance = is_class_instance(subtype)
+                    && ClassType::is_built_in(
+                        ClassType::cast(subtype).unwrap(),
+                        Some(&["type".to_string()]),
+                    );
+
+                // Handle metaclass instances specially.
+                if is_metaclass_instance(subtype) && !is_type_instance {
+                    adj_filter_types = filter_types
+                        .iter()
+                        .map(|filter_type| convert_to_instantiable(*filter_type, true))
+                        .collect();
+                } else {
+                    adj_subtype = convert_to_instance(subtype, true);
+
+                    if !is_any_or_unknown(subtype) || is_positive_test {
+                        result_requires_adj = true;
+                    }
+                }
+            }
+
+            let narrowed_result = narrow_type_for_instance(
+                evaluator,
+                adj_subtype,
+                &adj_filter_types,
+                is_type_is_check,
+                is_positive_test,
+                allow_intersections,
+                error_node,
+                node_info,
+            );
+
+            if !result_requires_adj {
+                return Some(narrowed_result);
+            }
+
+            if is_any_or_unknown(narrowed_result) {
+                let type_class = evaluator.get_type_class_type();
+                if let Some(type_class) = type_class {
+                    return Some(
+                        ClassType::specialize(
+                            ClassType::clone_as_instance(type_class, true),
+                            Some(&[narrowed_result]),
+                            None,
+                            false,
+                            None,
+                            None,
+                        )
+                        .0,
+                    );
+                }
+            }
+
+            Some(convert_to_instantiable(narrowed_result, true))
+        },
+        None,
+    )
 }
 
 // analyzer/typeGuards.ts:1469
@@ -178,7 +1920,792 @@ pub(crate) fn narrow_type_for_instance(
     error_node: ExpressionNode,
     node_info: &AnalyzerNodeInfoAccessor,
 ) -> P<Type> {
-    todo!()
+    let class_of = |type_: P<Type>| ClassType::cast(type_).unwrap();
+    let names = |names: &[&str]| {
+        names
+            .iter()
+            .map(|name| name.to_string())
+            .collect::<Vec<String>>()
+    };
+    let condition_of = |type_: P<Type>| {
+        type_
+            .props
+            .borrow()
+            .as_ref()
+            .and_then(|props| props.condition.clone())
+    };
+    let assign = |dest_type: P<Type>, src_type: P<Type>, flags: AssignTypeFlags| {
+        evaluator.assign_type(dest_type, src_type, None, None, flags, 0)
+    };
+    let concrete = |type_: P<Type>| evaluator.make_top_level_type_vars_concrete(type_, false, None);
+
+    let expanded_types = map_subtypes(
+        type_,
+        &mut |subtype| transform_possible_recursive_type_alias(Some(subtype), 0),
+        None,
+    );
+
+    let expanded_types = evaluator.expand_promotion_types(error_node, expanded_types, false);
+
+    let convert_var_type_to_free = |var_type: P<Type>| -> P<Type> {
+        // If this is a TypeIs check, type variables should remain bound.
+        if is_type_is_check {
+            return var_type;
+        }
+
+        // If this is an isinstance or issubclass check, the type variables
+        // should be converted to "free" type variables.
+        make_type_vars_free(
+            var_type,
+            &get_type_var_scopes_for_node(error_node, node_info.reader()),
+        )
+    };
+
+    // Filters the varType by the parameters of the isinstance
+    // and returns the list of types the varType could be after
+    // applying the filter.
+    let filter_class_type = |var_type: P<Type>,
+                             concrete_var_type: ClassType,
+                             conditions: Option<Vec<TypeCondition>>,
+                             negative_fallback_type: P<Type>|
+     -> Vec<P<Type>> {
+        let mut filtered_types: Vec<P<Type>> = Vec::new();
+
+        let mut found_superclass = false;
+        let mut is_class_relationship_indeterminate = false;
+
+        for filter_type in filter_types {
+            let filter_type = *filter_type;
+            let concrete_filter_type = concrete(filter_type);
+
+            if is_instantiable_class(concrete_filter_type) {
+                let concrete_filter_class = class_of(concrete_filter_type);
+                let filter_metaclass = concrete_filter_class
+                    .d()
+                    .shared
+                    .get()
+                    .effective_metaclass
+                    .get();
+                if is_instantiable_metaclass(concrete_var_type.0)
+                    && TypeBase::get_instantiable_depth(concrete_filter_type) > 0
+                    && let Some(filter_metaclass) = filter_metaclass
+                    && is_instantiable_class(filter_metaclass)
+                {
+                    let filter_metaclass_class = class_of(filter_metaclass);
+                    let metaclass_type = convert_to_instance(concrete_var_type.0, true);
+                    let mut is_metaclass_overlap = assign(
+                        convert_var_type_to_free(metaclass_type),
+                        ClassType::clone_as_instance(filter_metaclass_class, true).0,
+                        AssignTypeFlags::Default,
+                    );
+
+                    // Handle the special case where the metaclass for the filter is type.
+                    // This will normally be treated as type[Any], which is compatible with
+                    // any metaclass, but we specifically want to treat type as the class
+                    // type[object] in this case.
+                    if ClassType::is_built_in(filter_metaclass_class, Some(&names(&["type"])))
+                        && !filter_metaclass_class
+                            .d()
+                            .priv_
+                            .borrow()
+                            .is_type_arg_explicit
+                            .unwrap_or(false)
+                    {
+                        if !is_class(metaclass_type)
+                            || !ClassType::is_built_in(
+                                class_of(metaclass_type),
+                                Some(&names(&["type"])),
+                            )
+                        {
+                            is_metaclass_overlap = false;
+                        }
+                    }
+
+                    if is_metaclass_overlap {
+                        if is_positive_test {
+                            filtered_types.push(filter_type);
+                            found_superclass = true;
+                        } else if !is_type_same(
+                            metaclass_type,
+                            filter_metaclass,
+                            &TypeSameOptions::default(),
+                            0,
+                        ) || filter_metaclass_class
+                            .d()
+                            .priv_
+                            .borrow()
+                            .include_subclasses
+                            .unwrap_or(false)
+                        {
+                            filtered_types.push(metaclass_type);
+                            is_class_relationship_indeterminate = true;
+                        }
+                        continue;
+                    }
+                }
+
+                let mut runtime_var_type: P<Type> = concrete_var_type.0;
+
+                // Type variables are erased for runtime types, so switch from
+                // bound to free type variables. We'll retain the bound type
+                // variables for TypeIs checks.
+                if !is_type_is_check {
+                    runtime_var_type = make_type_vars_free(
+                        runtime_var_type,
+                        &get_type_var_scopes_for_node(error_node, node_info.reader()),
+                    );
+                }
+
+                // If the value is a TypedDict, convert it into its runtime form,
+                // which is a dict[str, Any].
+                if is_instantiable_class(runtime_var_type)
+                    && ClassType::is_typed_dict_class(class_of(runtime_var_type))
+                {
+                    let dict_class = evaluator.get_dict_class_type();
+                    let str_type = evaluator.get_str_class_type();
+
+                    if let (Some(dict_class), Some(str_type)) = (dict_class, str_type) {
+                        runtime_var_type = ClassType::specialize(
+                            dict_class,
+                            Some(&[
+                                ClassType::clone_as_instance(str_type, true).0,
+                                UnknownType::create(false).0,
+                            ]),
+                            None,
+                            false,
+                            None,
+                            None,
+                        )
+                        .0;
+                    }
+                }
+
+                let filter_is_superclass = assign(
+                    filter_type,
+                    runtime_var_type,
+                    AssignTypeFlags::AllowIsinstanceSpecialForms
+                        | AssignTypeFlags::AllowProtocolClassSource,
+                );
+
+                let mut filter_is_subclass = assign(
+                    runtime_var_type,
+                    filter_type,
+                    AssignTypeFlags::AllowIsinstanceSpecialForms
+                        | AssignTypeFlags::AllowProtocolClassSource,
+                );
+
+                if filter_is_superclass {
+                    found_superclass = true;
+                }
+
+                // Special-case the TypeForm special form. This represents a variety
+                // of runtime classes that will not appear to overlap with TypeForm.
+                if ClassType::is_built_in(class_of(runtime_var_type), Some(&names(&["TypeForm"]))) {
+                    is_class_relationship_indeterminate = true;
+                    filter_is_subclass = true;
+                }
+
+                // Normally, a type should never be both a subclass and a superclass.
+                // This can happen if either of the class types derives from a
+                // class whose type is unknown (e.g. an import failed). We'll
+                // note this case specially so we don't do any narrowing, which
+                // will generate false positives.
+                if filter_is_superclass {
+                    if !is_type_is_check
+                        && concrete_filter_class
+                            .d()
+                            .priv_
+                            .borrow()
+                            .include_subclasses
+                            .unwrap_or(false)
+                    {
+                        // If the filter type includes subclasses, we can't eliminate
+                        // this type in the negative direction. We'll relax this for
+                        // TypeIs checks.
+                        is_class_relationship_indeterminate = true;
+                    }
+
+                    if filter_is_subclass
+                        && !ClassType::is_same_generic_class(
+                            class_of(runtime_var_type),
+                            concrete_filter_class,
+                            0,
+                        )
+                    {
+                        // If the runtime variable type is a type[T], handle a filter
+                        // of 'type' as a special case.
+                        if !ClassType::is_built_in(concrete_filter_class, Some(&names(&["type"])))
+                            || TypeBase::get_instantiable_depth(runtime_var_type) == 0
+                        {
+                            is_class_relationship_indeterminate = true;
+                        }
+                    }
+                }
+
+                // If both the variable type and the filter type ar generics, we can't
+                // determine the relationship between the two.
+                if is_type_var(var_type) && is_type_var(filter_type) {
+                    is_class_relationship_indeterminate = true;
+                }
+
+                if is_positive_test {
+                    if filter_is_superclass {
+                        // If the variable type is a subclass of the isinstance filter,
+                        // we haven't learned anything new about the variable type.
+
+                        // If the varType is a Self or type[Self], retain the unnarrowedType.
+                        if TypeVarType::cast(var_type).is_some_and(TypeVarType::is_self) {
+                            filtered_types.push(add_condition_to_type(
+                                var_type,
+                                conditions.as_deref(),
+                                None,
+                            ));
+                        } else {
+                            filtered_types.push(add_condition_to_type(
+                                concrete_var_type.0,
+                                conditions.as_deref(),
+                                None,
+                            ));
+                        }
+                    } else if filter_is_subclass {
+                        // If the variable type is a superclass of the isinstance
+                        // filter, we can narrow the type to the subclass.
+                        let mut specialized_filter_type = filter_type;
+
+                        // Try to retain the type arguments for the filter type. This is
+                        // important because a specialized version of the filter cannot
+                        // be passed to isinstance or issubclass.
+                        if let Some(filter_class) = ClassType::cast(filter_type) {
+                            if ClassType::is_special_built_in(filter_class, None)
+                                || !filter_class
+                                    .d()
+                                    .shared
+                                    .get()
+                                    .type_params
+                                    .borrow()
+                                    .is_empty()
+                            {
+                                if !filter_class
+                                    .d()
+                                    .priv_
+                                    .borrow()
+                                    .is_type_arg_explicit
+                                    .unwrap_or(false)
+                                    && !ClassType::is_same_generic_class(
+                                        concrete_var_type,
+                                        filter_class,
+                                        0,
+                                    )
+                                {
+                                    let constraints = ConstraintTracker::new();
+                                    let unspecialized_filter_type = ClassType::specialize(
+                                        filter_class,
+                                        None,
+                                        None,
+                                        false,
+                                        None,
+                                        None,
+                                    );
+
+                                    if add_constraints_for_expected_type(
+                                        evaluator,
+                                        ClassType::clone_as_instance(
+                                            unspecialized_filter_type,
+                                            true,
+                                        ),
+                                        ClassType::clone_as_instance(concrete_var_type, true).0,
+                                        constraints,
+                                        None,
+                                        Some(error_node.start.get()),
+                                    ) {
+                                        specialized_filter_type = evaluator
+                                            .solve_and_apply_constraints(
+                                                unspecialized_filter_type.0,
+                                                constraints,
+                                                Some(&ApplyTypeVarOptions {
+                                                    replace_unsolved: Some(
+                                                        ApplyTypeVarOptionsReplaceUnsolved {
+                                                            scope_ids: get_type_var_scope_ids(
+                                                                filter_type,
+                                                            ),
+                                                            tuple_class_type: evaluator
+                                                                .get_tuple_class_type(),
+                                                            unsolved_exempt_type_vars: None,
+                                                            use_unknown: Some(true),
+                                                            eliminate_unsolved_in_unions: None,
+                                                        },
+                                                    ),
+                                                    ..Default::default()
+                                                }),
+                                                None,
+                                            );
+                                    }
+                                }
+                            }
+                        }
+
+                        filtered_types.push(add_condition_to_type(
+                            specialized_filter_type,
+                            conditions.as_deref(),
+                            None,
+                        ));
+                    } else if ClassType::is_same_generic_class(
+                        ClassType::clone_as_instance(concrete_var_type, true),
+                        ClassType::clone_as_instance(concrete_filter_class, true),
+                        0,
+                    ) {
+                        if !is_type_is_check {
+                            // Don't attempt to narrow in this case.
+                            if concrete_var_type.d().priv_.borrow().literal_value.is_none()
+                                && concrete_filter_class
+                                    .d()
+                                    .priv_
+                                    .borrow()
+                                    .literal_value
+                                    .is_none()
+                            {
+                                let intersection = intersect_same_class_type(
+                                    evaluator,
+                                    concrete_var_type,
+                                    concrete_filter_class,
+                                );
+                                filtered_types.push(
+                                    intersection
+                                        .map(|intersection| intersection.0)
+                                        .unwrap_or(var_type),
+                                );
+                            }
+                        }
+                    } else if allow_intersections
+                        && !ClassType::is_final(concrete_var_type)
+                        && !ClassType::is_final(concrete_filter_class)
+                    {
+                        // The two types appear to have no relation. It's possible that the
+                        // two types are protocols or the program is expecting one type to
+                        // be a mix-in class used with the other. In this case, we'll
+                        // synthesize a new class type that represents an intersection of
+                        // the two types.
+                        let mut new_class_type: P<Type> = evaluator
+                            .create_subclass(error_node, concrete_var_type, concrete_filter_class)
+                            .0;
+                        if let Some(var_type_var) = TypeVarType::cast(var_type)
+                            && !is_param_spec(var_type)
+                            && !TypeVarType::has_constraints(var_type_var)
+                        {
+                            new_class_type = add_condition_to_type(
+                                new_class_type,
+                                Some(&[TypeCondition {
+                                    type_var: var_type_var,
+                                    constraint_index: 0,
+                                }]),
+                                None,
+                            );
+                        }
+
+                        filtered_types.push(add_condition_to_type(
+                            new_class_type,
+                            condition_of(concrete_var_type.0).as_deref(),
+                            None,
+                        ));
+                    }
+                } else if is_any_or_unknown(var_type) {
+                    filtered_types.push(add_condition_to_type(
+                        var_type,
+                        conditions.as_deref(),
+                        None,
+                    ));
+                } else if derives_from_any_or_unknown(var_type)
+                    && !is_type_same(
+                        concrete_var_type.0,
+                        concrete_filter_type,
+                        &TypeSameOptions::default(),
+                        0,
+                    )
+                {
+                    filtered_types.push(add_condition_to_type(
+                        var_type,
+                        conditions.as_deref(),
+                        None,
+                    ));
+                }
+            } else if is_type_var(filter_type) && TypeBase::is_instantiable(filter_type) {
+                // Handle the case where the filter type is Type[T] and the unexpanded
+                // subtype is some instance type, possibly T.
+                if TypeBase::is_instance(var_type) {
+                    if is_type_var(var_type)
+                        && is_type_same(
+                            convert_to_instance(filter_type, true),
+                            var_type,
+                            &TypeSameOptions::default(),
+                            0,
+                        )
+                    {
+                        // If the unexpanded subtype is T, we can definitively filter
+                        // in both the positive and negative cases.
+                        if is_positive_test {
+                            filtered_types.push(var_type);
+                        } else {
+                            found_superclass = true;
+                        }
+                    } else if is_positive_test {
+                        filtered_types.push(convert_to_instance(filter_type, true));
+                    } else {
+                        // If the unexpanded subtype is some other instance, we can't
+                        // filter anything because it might be an instance.
+                        filtered_types.push(var_type);
+                        is_class_relationship_indeterminate = true;
+                    }
+                }
+            } else if is_function(filter_type) {
+                // Handle an isinstance check against Callable.
+                let mut is_callable = false;
+
+                if is_class(concrete_var_type.0) {
+                    if TypeBase::is_instantiable(var_type) {
+                        is_callable = true;
+                    } else {
+                        is_callable = look_up_class_member(
+                            concrete_var_type,
+                            "__call__",
+                            MemberAccessFlags::SkipInstanceMembers,
+                            None,
+                        )
+                        .is_some();
+                    }
+                }
+
+                if is_callable {
+                    if is_positive_test {
+                        filtered_types.push(convert_to_instantiable(var_type, true));
+                    } else {
+                        found_superclass = true;
+                    }
+                } else if assign(
+                    convert_var_type_to_free(concrete_var_type.0),
+                    filter_type,
+                    AssignTypeFlags::AllowIsinstanceSpecialForms,
+                ) {
+                    if is_positive_test {
+                        filtered_types.push(add_condition_to_type(
+                            filter_type,
+                            condition_of(concrete_var_type.0).as_deref(),
+                            None,
+                        ));
+                    }
+                } else if allow_intersections && is_positive_test {
+                    // The type appears to not be callable. It's possible that the
+                    // two type is a subclass that is callable. We'll synthesize a
+                    // new intersection type.
+                    let concrete_var_shared = concrete_var_type.d().shared.get();
+                    let class_name = format!("<callable subtype of {}>", concrete_var_shared.name);
+                    let file_info = node_info.get_file_info(error_node);
+                    let new_class_type = ClassType::create_instantiable(
+                        &class_name,
+                        &get_class_full_name(error_node, &file_info.module_name, &class_name),
+                        &file_info.module_name,
+                        &file_info.file_uri,
+                        ClassTypeFlags::None,
+                        get_type_source_id(error_node),
+                        None,
+                        concrete_var_shared.effective_metaclass.get(),
+                        concrete_var_shared.doc_string.as_deref(),
+                    );
+                    *new_class_type.d().shared.get().base_classes.borrow_mut() =
+                        vec![concrete_var_type.0];
+                    compute_mro_linearization(new_class_type);
+
+                    let new_class_type = class_of(add_condition_to_type(
+                        new_class_type.0,
+                        condition_of(concrete_var_type.0).as_deref(),
+                        None,
+                    ));
+
+                    // Add a __call__ method to the new class.
+                    let call_method = FunctionType::create_synthesized_instance(
+                        "__call__",
+                        FunctionTypeFlags::None,
+                    );
+                    let self_param = FunctionParam::create(
+                        ParamCategory::Simple,
+                        ClassType::clone_as_instance(new_class_type, true).0,
+                        FunctionParamFlags::TypeDeclared,
+                        Some("self"),
+                        None,
+                        None,
+                    );
+                    FunctionType::add_param(call_method, &self_param);
+                    FunctionType::add_default_params(call_method, false);
+                    call_method
+                        .d()
+                        .shared
+                        .get()
+                        .declared_return_type
+                        .set(Some(UnknownType::create(false).0));
+                    ClassType::get_symbol_table(new_class_type).set(
+                        "__call__",
+                        Symbol::create_with_type(SymbolFlags::ClassMember, call_method.0, None),
+                    );
+
+                    filtered_types.push(ClassType::clone_as_instance(new_class_type, true).0);
+                }
+            }
+        }
+
+        // In the negative case, if one or more of the filters
+        // always match the type (i.e. they are an exact match or
+        // a superclass of the type), then there's nothing left after
+        // the filter is applied. If we didn't find any superclass
+        // match, then the original variable type survives the filter.
+        if !is_positive_test {
+            if !found_superclass || is_class_relationship_indeterminate {
+                filtered_types.push(convert_to_instantiable(negative_fallback_type, true));
+            }
+        }
+
+        filtered_types
+            .into_iter()
+            .map(|filtered_type| convert_to_instance(filtered_type, true))
+            .collect()
+    };
+
+    let is_filter_type_callback_protocol = |filter_type: P<Type>| {
+        is_instantiable_class(filter_type)
+            && evaluator
+                .get_callback_protocol_type(
+                    ClassType::clone_as_instance(class_of(filter_type), true),
+                    0,
+                )
+                .is_some()
+    };
+
+    let filter_function_type = |var_type: P<Type>, unexpanded_type: P<Type>| -> Vec<P<Type>> {
+        let mut filtered_types: Vec<P<Type>> = Vec::new();
+
+        if is_positive_test {
+            for filter_type in filter_types {
+                let filter_type = *filter_type;
+                let concrete_filter_type = concrete(filter_type);
+
+                if !is_type_is_check && is_filter_type_callback_protocol(concrete_filter_type) {
+                    filtered_types.push(convert_to_instance(var_type, true));
+                } else if assign(
+                    convert_var_type_to_free(var_type),
+                    convert_to_instance(concrete_filter_type, true),
+                    AssignTypeFlags::Default,
+                ) {
+                    // If the filter type is a Callable, use the original type. If the
+                    // filter type is a callback protocol, use the filter type.
+                    if is_function(filter_type) {
+                        filtered_types.push(convert_to_instance(unexpanded_type, true));
+                    } else {
+                        filtered_types.push(convert_to_instance(filter_type, true));
+                    }
+                } else {
+                    let filter_type_instance =
+                        convert_to_instance(convert_var_type_to_free(concrete_filter_type), true);
+                    if assign(filter_type_instance, var_type, AssignTypeFlags::Default) {
+                        filtered_types.push(convert_to_instance(var_type, true));
+                    } else {
+                        // If this is a class instance that's not callable and it's not @final,
+                        // a subclass could be compatible with the filter type.
+                        if is_class_instance(filter_type_instance)
+                            && !ClassType::is_final(class_of(filter_type_instance))
+                        {
+                            let gradual_func = FunctionType::create_synthesized_instance(
+                                "",
+                                FunctionTypeFlags::GradualCallableForm,
+                            );
+                            FunctionType::add_default_params(gradual_func, false);
+
+                            // If the class is callable (i.e. can be assigned to the generic gradual
+                            // function signature), then the assignment check above didn't fail because
+                            // of a signature mismatch. It failed because the class is not callable.
+                            // We assume therefore that a subclass might be.
+                            if !assign(
+                                gradual_func.0,
+                                filter_type_instance,
+                                AssignTypeFlags::Default,
+                            ) {
+                                // The resulting type should be an intersection of the filter type and
+                                // the subtype, but we don't have a way to encode that yet. For now,
+                                // we'll use the filter type.
+                                filtered_types.push(convert_to_instance(filter_type, true));
+                            }
+                        }
+                    }
+                }
+            }
+        } else {
+            // If one or more filters does not always filter the type,
+            // we can't eliminate the type in the negative case.
+            if filter_types.iter().all(|filter_type| {
+                let concrete_filter_type = concrete(*filter_type);
+
+                // If the filter type is a callback protocol, the runtime
+                // isinstance check will filter all objects that have a __call__
+                // method regardless of their signature types.
+                if !is_type_is_check && is_filter_type_callback_protocol(concrete_filter_type) {
+                    return false;
+                }
+
+                if FunctionType::cast(concrete_filter_type)
+                    .is_some_and(FunctionType::is_gradual_callable_form)
+                {
+                    return false;
+                }
+
+                let is_subtype = assign(
+                    convert_to_instance(convert_var_type_to_free(concrete_filter_type), true),
+                    var_type,
+                    AssignTypeFlags::Default,
+                );
+                let is_supertype = assign(
+                    convert_var_type_to_free(var_type),
+                    convert_to_instance(concrete_filter_type, true),
+                    AssignTypeFlags::Default,
+                );
+
+                !is_subtype || is_supertype
+            }) {
+                filtered_types.push(convert_to_instance(var_type, true));
+            }
+        }
+
+        filtered_types
+    };
+
+    let class_list_contains_none_type = || {
+        filter_types.iter().any(|t| {
+            if is_none_type_class(*t) {
+                return true;
+            }
+            is_instantiable_class(*t)
+                && ClassType::is_built_in(class_of(*t), Some(&names(&["NoneType"])))
+        })
+    };
+
+    let mut any_or_unknown_substitutions: Vec<P<Type>> = Vec::new();
+    let mut any_or_unknown: Vec<P<Type>> = Vec::new();
+
+    let options = MapSubtypesOptions {
+        condition_filter: None,
+        sort_subtypes: None,
+        expand_callback: Some(ExpandCallback::NarrowTypeForInstance(
+            ExpandCallbackNarrowTypeForInstance {
+                evaluator: *evaluator.evaluator_interface.get().unwrap(),
+                error_node,
+            },
+        )),
+    };
+
+    let filtered_type = evaluator.map_subtypes_expand_type_vars(
+        expanded_types,
+        Some(&options),
+        &mut |subtype, unexpanded_subtype, _| {
+            // If we fail to filter anything in the negative case, we need to decide
+            // whether to retain the original TypeVar or replace it with its specialized
+            // type(s). We'll assume that if someone is using isinstance or issubclass
+            // on a constrained TypeVar that they want to filter based on its constrained
+            // parts.
+            let negative_fallback = if get_type_condition(subtype).is_some() {
+                subtype
+            } else {
+                unexpanded_subtype
+            };
+
+            if is_positive_test && is_any_or_unknown(subtype) {
+                // If this is a positive test and the effective type is Any or
+                // Unknown, we can assume that the type matches one of the
+                // specified types.
+                any_or_unknown_substitutions.push(combine_types(
+                    &filter_types
+                        .iter()
+                        .map(|class_type| convert_to_instance(*class_type, true))
+                        .collect::<Vec<P<Type>>>(),
+                    None,
+                ));
+
+                any_or_unknown.push(subtype);
+                return None;
+            }
+
+            if is_none_instance(subtype) {
+                return if class_list_contains_none_type() == is_positive_test {
+                    Some(subtype)
+                } else {
+                    None
+                };
+            }
+
+            if is_module(subtype)
+                || (is_class_instance(subtype)
+                    && ClassType::is_built_in(class_of(subtype), Some(&names(&["ModuleType"]))))
+            {
+                // Handle type narrowing for runtime-checkable protocols
+                // when applied to modules.
+                if is_positive_test {
+                    let filtered_types: Vec<P<Type>> = filter_types
+                        .iter()
+                        .copied()
+                        .filter(|class_type| {
+                            let concrete_class_type = concrete(*class_type);
+                            is_instantiable_class(concrete_class_type)
+                                && ClassType::is_protocol_class(class_of(concrete_class_type))
+                        })
+                        .collect();
+
+                    if !filtered_types.is_empty() {
+                        return Some(convert_to_instance(
+                            combine_types(&filtered_types, None),
+                            true,
+                        ));
+                    }
+                }
+            }
+
+            if is_class(subtype) {
+                return Some(combine_types(
+                    &filter_class_type(
+                        unexpanded_subtype,
+                        ClassType::clone_as_instantiable(class_of(subtype), true),
+                        get_type_condition(subtype),
+                        negative_fallback,
+                    ),
+                    None,
+                ));
+            }
+
+            if is_function_or_overloaded(subtype) {
+                return Some(combine_types(
+                    &filter_function_type(subtype, unexpanded_subtype),
+                    None,
+                ));
+            }
+
+            if is_positive_test {
+                None
+            } else {
+                Some(negative_fallback)
+            }
+        },
+        0,
+    );
+
+    // If the result is Any/Unknown and contains no other subtypes and
+    // we have substitutions for Any/Unknown, use those instead. We don't
+    // want to apply this if the filtering produced something other than
+    // Any/Unknown. For example, if the statement is "isinstance(x, list)"
+    // and the type of x is "List[str] | int | Any", the result should be
+    // "List[str]", not "List[str] | List[Unknown]".
+    if is_never(filtered_type) && !any_or_unknown_substitutions.is_empty() {
+        return combine_types(&any_or_unknown_substitutions, None);
+    }
+
+    if is_never(filtered_type) && !any_or_unknown.is_empty() {
+        return combine_types(&any_or_unknown, None);
+    }
+
+    filtered_type
 }
 
 // analyzer/typeGuards.ts:2038
@@ -187,12 +2714,56 @@ pub(crate) fn intersect_same_class_type(
     type1: ClassType,
     type2: ClassType,
 ) -> Option<ClassType> {
-    todo!()
+    assert(
+        is_instantiable_class(type1.0) && is_instantiable_class(type2.0),
+        None,
+    );
+    assert(ClassType::is_same_generic_class(type1, type2, 0), None);
+    assert(type1.d().priv_.borrow().literal_value.is_none(), None);
+    assert(type2.d().priv_.borrow().literal_value.is_none(), None);
+
+    // Handle tuples specially.
+    if ClassType::is_built_in(type1, Some(&["tuple".to_string()])) {
+        return intersect_tuple_types(type1, type1).map(|type_| ClassType::cast(type_).unwrap());
+    }
+
+    // Indicate that there is no intersection.
+    None
 }
 
 // analyzer/typeGuards.ts:2053
 pub(crate) fn intersect_tuple_types(type1: ClassType, type2: ClassType) -> Option<P<Type>> {
-    todo!()
+    let condition_of = |type_: P<Type>| {
+        type_
+            .props
+            .borrow()
+            .as_ref()
+            .and_then(|props| props.condition.clone())
+    };
+
+    if type2.d().priv_.borrow().tuple_type_args.is_none()
+        || is_tuple_gradual_form(type2.0).unwrap_or(false)
+    {
+        return Some(add_condition_to_type(
+            type1.0,
+            condition_of(type2.0).as_deref(),
+            None,
+        ));
+    }
+
+    if type1.d().priv_.borrow().tuple_type_args.is_none()
+        || is_tuple_gradual_form(type1.0).unwrap_or(false)
+    {
+        return Some(add_condition_to_type(
+            type2.0,
+            condition_of(type1.0).as_deref(),
+            None,
+        ));
+    }
+
+    // For now, don't attempt to narrow in this case.
+    // TODO - add more sophisticated logic here.
+    None
 }
 
 // analyzer/typeGuards.ts:2068

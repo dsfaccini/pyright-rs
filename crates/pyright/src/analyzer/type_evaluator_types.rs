@@ -498,7 +498,8 @@ pub struct ExpandCallbackNarrowTypeForInstance {
 impl ExpandCallbackNarrowTypeForInstance {
     // analyzer/typeGuards.ts:1955
     pub fn call(&self, type_: P<Type>) -> P<Type> {
-        todo!()
+        self.evaluator
+            .expand_promotion_types(self.error_node, type_, false)
     }
 }
 
