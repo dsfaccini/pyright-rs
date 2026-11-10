@@ -42,6 +42,13 @@ use crate::parser::parser::ParserOutput;
 use jsrt::P;
 use std::rc::Rc;
 
+// Shared paths for the bodies below: reach anything not imported here by path
+// (`analyzer::type_utils::is_none_instance(..)`), so ranges ported in parallel merge.
+use crate::common::diagnostic_rules::DiagnosticRule;
+use crate::localization::localize::{LocAddendum, LocMessage};
+use crate::parser::parse_nodes::{ParseNodeDetails as D, ParseNodeType};
+use crate::{analyzer, common, parser};
+
 // analyzer/checker.ts:204
 #[derive(Clone)]
 pub struct TypeVarUsageInfo {
@@ -80,7 +87,25 @@ impl ParseTreeWalker for Checker {
 
     // analyzer/checker.ts:294
     fn walk(&mut self, node: P<ParseNode>) {
-        todo!()
+        // `super.walk(node)`: the default `ParseTreeWalker::walk`.
+        if !self._node_info.is_code_unreachable(node) {
+            let children_to_walk = self.visit_node(node);
+            if !children_to_walk.is_empty() {
+                self.walk_multiple(&children_to_walk);
+            }
+        } else {
+            let evaluator = self._evaluator;
+            evaluator.suppress_diagnostics(
+                node,
+                &mut || {
+                    let children_to_walk = self.visit_node(node);
+                    if !children_to_walk.is_empty() {
+                        self.walk_multiple(&children_to_walk);
+                    }
+                },
+                None,
+            );
+        }
     }
 }
 
@@ -357,14 +382,76 @@ impl Checker {
         _evaluator: P<TypeEvaluator>,
         parse_results: &ParserOutput,
         _dependent_files: Option<Vec<ParserOutput>>,
-        node_info_reader: &dyn AnalyzerNodeInfoReader,
+        node_info_reader: P<dyn AnalyzerNodeInfoReader>,
     ) -> Self {
-        todo!()
+        // Forward the reader to the base walker so the structural walk expands both tier-1
+        // (parser-derived) and tier-2 (evaluator-discovered, e.g. `cast("Foo", v)`) string
+        // annotations.
+        let _node_info = Rc::new(analyzer::analyzer_node_info::create_analyzer_node_info_accessor(
+            node_info_reader.get(),
+            None,
+        ));
+        let _module_node = parse_results.parse_tree;
+        let _file_info = _node_info.get_file_info(_module_node.0);
+        Checker {
+            _default: true,
+            _annotation_node_info: Some(node_info_reader),
+            _module_node,
+            _file_info,
+            _node_info,
+            _is_unbound_check_suppressed: false,
+            _scoped_nodes: Vec::new(),
+            _type_param_lists: Vec::new(),
+            _multipart_imports: Vec::new(),
+            _import_resolver,
+            _evaluator,
+            _dependent_files,
+        }
     }
 
     // analyzer/checker.ts:254
     pub fn check(&mut self) {
-        todo!()
+        self._scoped_nodes.push(self._module_node.0);
+
+        // Report code complexity issues for the module.
+        let code_complexity = self._node_info.get_code_flow_complexity(self._module_node.0);
+
+        if IS_PRINT_CODE_COMPLEXITY_ENABLED {
+            println!(
+                "Code complexity of module {} is {}",
+                self._file_info.file_uri.to_user_visible_string(),
+                jsrt::number::number_to_string(code_complexity)
+            );
+        }
+
+        if code_complexity > analyzer::type_evaluator::MAX_CODE_COMPLEXITY {
+            self._evaluator.add_diagnostic_for_text_range(
+                self._file_info,
+                DiagnosticRule::reportGeneralTypeIssues,
+                &LocMessage::code_too_complex_to_analyze(),
+                &common::text_range::TextRange { start: 0, length: 0 },
+            );
+        }
+
+        let statements = self._module_node.d().statements.borrow().clone();
+        self._walk_statements_and_report_unreachable(&statements);
+
+        // Mark symbols accessed by __all__ as accessed.
+        let dunder_all_info = self._node_info.get_dunder_all_info(self._module_node.0);
+        if let Some(dunder_all_info) = dunder_all_info {
+            self._evaluator
+                .mark_names_accessed(self._module_node.0, &dunder_all_info.names);
+
+            self._report_unused_dunder_all_symbols(&dunder_all_info.string_nodes);
+        }
+
+        // Perform a one-time validation of symbols in all scopes
+        // defined in this module for things like unaccessed variables.
+        self._validate_symbol_tables();
+
+        self._report_unused_multipart_imports();
+
+        self._report_duplicate_imports();
     }
 
     // analyzer/checker.ts:1746
@@ -422,7 +509,11 @@ impl Checker {
 
     // analyzer/checker.ts:2063
     pub(crate) fn _suppress_unbound_check(&mut self, callback: &mut dyn FnMut(&mut Checker)) {
-        todo!()
+        let was_suppressed = self._is_unbound_check_suppressed;
+        self._is_unbound_check_suppressed = true;
+
+        callback(self);
+        self._is_unbound_check_suppressed = was_suppressed;
     }
 
     // analyzer/checker.ts:2074

@@ -192,6 +192,8 @@ interface = "analyzer/codeFlowEngine.ts:CodeFlowAnalyzer"
 # Per-site Rust type, overriding the mapping: "<file>:<site>" = "Rust type", used verbatim in every
 # position. Qualify names outside the module (`jsrt::P`) and the generator imports them.
 [sites]
+# The checker hands the reader to its walker base, which stores it (checker.ts:244).
+"analyzer/checker.ts:Checker.constructor.nodeInfoReader" = "jsrt::P<dyn crate::analyzer::analyzer_node_info::AnalyzerNodeInfoReader>"
 # Deferred binding callbacks run later with the binder that queued them.
 "analyzer/binder.ts:DeferredBindingTask.callback" = "Box<dyn FnOnce(&mut crate::analyzer::binder::Binder)>"
 "analyzer/binder.ts:Binder._deferBinding.callback" = "Box<dyn FnOnce(&mut crate::analyzer::binder::Binder)>"
