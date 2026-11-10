@@ -52,3 +52,9 @@ Found by grepping the import closure of `pyright.ts` for `parseInt`, `parseFloat
 Not on the `--outputjson` path: `cacheManager.ts`, `timing.ts`, `crypto.ts`, and `pyright.ts`'s `parseInt` of CLI worker arguments and `Math.round` of the completeness score.
 
 An integer below 1e21 prints the same through Rust's `Display` as through `number_to_string`.
+
+## Sorting
+
+`sort::sort_by` ports V8 14.6's `third_party/v8/builtins/array-sort.tq` (Node v26.13.0's `deps/v8`). `tests/sort.rs` checks 1,872 seeded cases (8 input shapes, 9 comparators including random results, rock-paper-scissors, "two literals return 1" and NaN, sizes 0 to 3,001) for the same call count, call sequence hash and permutation as node.
+
+Sort calls on the check path: comparator sorts in `analyzer/types.ts` (`combineTypes` and `sortTypes`; the union comparator returns 1 for two literals), `analyzer/typeUtils.ts`, `analyzer/program.ts`, `analyzer/parseTreeUtils.ts`, `analyzer/pythonPathUtils.ts`, `analyzer/importStatementUtils.ts`, `common/uri/uriUtils.ts`, `common/extraPathGlob.ts`, `common/collectionUtils.ts` (`cloneAndSort`, `stableSort`), `common/fullAccessHost.ts`, and `pyright.ts` (diagnostics by `compareDiagnostics`). One default sort: `analyzer/typeshedInfoProvider.ts`, on strings. `localeCompare` occurs only in `typeStubGeneration.ts` and `tracePrinter.ts`, which a check does not run.
