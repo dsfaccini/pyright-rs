@@ -150,7 +150,7 @@ A class or interface is held one of four ways ("mode"). `[modes]` overrides the 
 | `rc` | `Rc<T>`, shared and immutable | `&T` | classes stored in a second place and never written |
 | `opaque` | placeholder struct, ported by hand | `&T` | none; `Uri` |
 
-Value types, value enums and inline-object structs derive `Clone`: the TypeScript copies them with spreads and reads them out of containers. Handle, owned and family structs derive nothing.
+Value types, value enums and inline-object structs derive `Clone`: the TypeScript copies them with spreads and reads them out of containers. One whose fields are all optional also derives `Default`, so an options literal `{ ignoreTypeFlags: true }` is `TypeSameOptions { ignore_type_flags: Some(true), ..Default::default() }`. Handle, owned and family structs derive nothing.
 
 The default follows porting.md "memory": an object is a `P` only when pyright compares it with `===`, or writes to it after storing it elsewhere. The write analysis decides both:
 

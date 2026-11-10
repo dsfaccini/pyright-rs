@@ -61,7 +61,7 @@ use std::cell::{Cell, OnceCell, RefCell};
 use std::rc::Rc;
 
 // analyzer/typeEvaluator.ts:391
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct GetTypeArgsOptions {
     pub is_annotated_class: Option<bool>,
     pub has_custom_class_get_item: Option<bool>,
@@ -134,7 +134,7 @@ pub struct MatchedOverloadInfo {
 }
 
 // analyzer/typeEvaluator.ts:460
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct ValidateArgTypeOptions {
     pub skip_unknown_arg_check: Option<bool>,
     pub is_arg_first_pass: Option<bool>,
@@ -143,7 +143,7 @@ pub struct ValidateArgTypeOptions {
 }
 
 // analyzer/typeEvaluator.ts:467
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct EffectiveReturnTypeOptions {
     pub call_site_info: Option<CallSiteEvaluationInfo>,
 }
@@ -281,7 +281,7 @@ pub struct CodeFlowAnalyzerCacheEntry {
 }
 
 // analyzer/typeEvaluator.ts:647
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct FunctionRecursionInfo {
     pub caller_node: Option<ExpressionNode>,
 }

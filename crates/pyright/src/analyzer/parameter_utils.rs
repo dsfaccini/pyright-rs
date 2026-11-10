@@ -54,7 +54,7 @@ pub struct ParamListDetails {
 }
 
 // analyzer/parameterUtils.ts:78
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct ParamListDetailsOptions {
     pub disallow_extra_kwargs_for_td: Option<bool>,
 }

@@ -33,7 +33,7 @@ thread_local! {
 }
 
 // analyzer/operations.ts:99
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct BinaryOperationOptions {
     pub is_literal_math_allowed: Option<bool>,
     pub is_tuple_add_allowed: Option<bool>,

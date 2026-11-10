@@ -273,7 +273,7 @@ pub struct ValidateArgTypeParams {
 }
 
 // analyzer/typeEvaluatorTypes.ts:390
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct ExpectedTypeOptions {
     pub allow_final: Option<bool>,
     pub allow_required: Option<bool>,
@@ -329,7 +329,7 @@ pub struct ArgResult {
 }
 
 // analyzer/typeEvaluatorTypes.ts:437
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct CallResult {
     pub return_type: Option<P<Type>>,
     pub is_type_incomplete: Option<bool>,
@@ -358,7 +358,7 @@ pub struct ClassMemberLookup {
 }
 
 // analyzer/typeEvaluatorTypes.ts:505
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct SolveConstraintsOptions {
     pub use_lower_bound_only: Option<bool>,
 }
@@ -374,7 +374,7 @@ pub enum Reachability {
 }
 
 // analyzer/typeEvaluatorTypes.ts:528
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct PrintTypeOptions {
     pub expand_type_alias: Option<bool>,
     pub enforce_python_syntax: Option<bool>,
@@ -387,7 +387,7 @@ pub struct PrintTypeOptions {
 }
 
 // analyzer/typeEvaluatorTypes.ts:539
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct DeclaredSymbolTypeInfo {
     pub type_: Option<P<Type>>,
     pub is_type_alias: Option<bool>,
@@ -395,14 +395,14 @@ pub struct DeclaredSymbolTypeInfo {
 }
 
 // analyzer/typeEvaluatorTypes.ts:545
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct ResolveAliasOptions {
     pub allow_externally_hidden_access: Option<bool>,
     pub skip_file_needed_check: Option<bool>,
 }
 
 // analyzer/typeEvaluatorTypes.ts:550
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct ValidateTypeArgsOptions {
     pub allow_empty_tuple: Option<bool>,
     pub allow_type_var_tuple: Option<bool>,
@@ -412,7 +412,7 @@ pub struct ValidateTypeArgsOptions {
 }
 
 // analyzer/typeEvaluatorTypes.ts:558
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct MapSubtypesOptions {
     pub condition_filter: Option<Vec<TypeCondition>>,
     pub sort_subtypes: Option<bool>,
@@ -462,7 +462,7 @@ flag_ops!(AssignTypeFlags);
 // analyzer/typeEvaluatorTypes.ts:654: `TypeEvaluator` is the struct `TypeEvaluator` that `createTypeEvaluator` builds in analyzer/typeEvaluator.ts.
 
 // Inline object type at PartialPrefetchedTypes.
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct PartialPrefetchedTypes {
     pub none_type_class: Option<P<Type>>,
     pub object_class: Option<P<Type>>,

@@ -129,7 +129,7 @@ pub const MAX_TYPE_RECURSION_COUNT: u32 = 20;
 pub type InheritanceChain = Vec<P<Type>>;
 
 // analyzer/types.ts:124
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct TypeSameOptions {
     pub ignore_pseudo_generic: Option<bool>,
     pub ignore_type_flags: Option<bool>,
@@ -160,7 +160,7 @@ pub struct TypeAliasInfo {
 }
 
 // analyzer/types.ts:160
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct CachedTypeInfo {
     pub instantiable_type: Option<P<Type>>,
     pub instance_type: Option<P<Type>>,
@@ -170,7 +170,7 @@ pub struct CachedTypeInfo {
 }
 
 // analyzer/types.ts:174
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct TypeBaseProps {
     pub instantiable_depth: Option<u32>,
     pub special_form: Option<ClassType>,
@@ -621,7 +621,7 @@ pub struct PropertyMethodInfo {
 }
 
 // analyzer/types.ts:780
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct ClassDetailsPriv {
     pub type_args: Option<Vec<P<Type>>>,
     pub is_empty_container: Option<bool>,
@@ -1193,7 +1193,7 @@ pub struct SignatureWithOffsets {
 }
 
 // analyzer/types.ts:1782
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct FunctionDetailsPriv {
     pub constructor_type_var_scope_id: Option<String>,
     pub specialized_types: Option<P<SpecializedFunctionTypes>>,
@@ -1771,7 +1771,7 @@ impl TypeCondition {
 }
 
 // analyzer/types.ts:2668
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct LiteralTypes {
     pub literal_str_map: Option<JsMap<String, UnionableType>>,
     pub literal_int_map: Option<JsMap<NumberValue, UnionableType>>,
@@ -1923,7 +1923,7 @@ pub enum TypeVarScopeType {
 }
 
 // analyzer/types.ts:2876
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct TypeVarDetailsPriv {
     pub scope_id: Option<String>,
     pub scope_name: Option<String>,
@@ -2333,7 +2333,7 @@ pub fn find_subtype(type_: P<Type>, filter: &mut dyn FnMut(P<Type>) -> bool) -> 
 }
 
 // analyzer/types.ts:3836
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct CombineTypesOptions {
     pub skip_elide_redundant_literals: Option<bool>,
     pub max_subtype_count: Option<u32>,

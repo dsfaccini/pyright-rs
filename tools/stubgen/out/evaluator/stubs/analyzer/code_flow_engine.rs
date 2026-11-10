@@ -45,7 +45,7 @@ impl FlowNodeTypeResult {
 }
 
 // analyzer/codeFlowEngine.ts:104
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct FlowNodeTypeOptions {
     pub target_symbol_id: Option<u32>,
     pub type_at_start: Option<P<TypeResult>>,

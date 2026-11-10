@@ -47,7 +47,7 @@ pub struct TypeResult {
 }
 
 // analyzer/typeCacheUtils.ts:39
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct ContextualTypeCacheEntry {
     pub expected_type: Option<P<Type>>,
 }
@@ -61,7 +61,7 @@ pub struct SpeculativeTypeEntry {
 }
 
 // analyzer/typeCacheUtils.ts:49
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct SpeculativeModeOptions {
     pub dependent_type: Option<P<Type>>,
     pub allow_diagnostics: Option<bool>,
