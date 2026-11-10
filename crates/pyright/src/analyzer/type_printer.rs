@@ -10,7 +10,6 @@
 )]
 
 use crate::{analyzer, common, parser};
-
 use crate::analyzer::type_evaluator::TypeEvaluator;
 use crate::analyzer::types::{ClassType, FunctionType, Type, TypeVarType, UnionType};
 use crate::common::config_options::ConfigOptions;
@@ -104,7 +103,9 @@ pub(crate) const MAX_LITERAL_STRING_LENGTH: i32 = 50;
 pub fn is_literal_value_truncated(type_: ClassType) -> bool {
     use jsrt::JsStr;
 
-    if let Some(analyzer::types::LiteralValue::String(literal_value)) = &type_.d().priv_.borrow().literal_value {
+    if let Some(analyzer::types::LiteralValue::String(literal_value)) =
+        &type_.d().priv_.borrow().literal_value
+    {
         if literal_value.js_len() > MAX_LITERAL_STRING_LENGTH {
             return true;
         }
@@ -140,13 +141,19 @@ pub fn print_literal_value(type_: ClassType, quotation: &str) -> String {
 
             // Limit the length of the string literal.
             if literal_value.js_len() > MAX_LITERAL_STRING_LENGTH {
-                effective_literal_value = format!("{}…", literal_value.js_substring(0, MAX_LITERAL_STRING_LENGTH));
+                effective_literal_value = format!(
+                    "{}…",
+                    literal_value.js_substring(0, MAX_LITERAL_STRING_LENGTH)
+                );
             }
 
             if type_.d().shared.get().name == "bytes" {
                 analyzer::type_printer_utils::print_bytes_literal(&effective_literal_value)
             } else {
-                analyzer::type_printer_utils::print_string_literal(&effective_literal_value, quotation)
+                analyzer::type_printer_utils::print_string_literal(
+                    &effective_literal_value,
+                    quotation,
+                )
             }
         }
         LiteralValue::Boolean(literal_value) => {
@@ -181,8 +188,8 @@ pub(crate) fn print_type_internal(
     recursion_count: u32,
 ) -> String {
     use analyzer::types::{
-        AnyType, ClassType, FunctionType, MAX_TYPE_RECURSION_COUNT, ModuleType, NeverType, OverloadedType, TypeBase,
-        TypeCategory, TypeVarType,
+        AnyType, ClassType, FunctionType, MAX_TYPE_RECURSION_COUNT, ModuleType, NeverType,
+        OverloadedType, TypeBase, TypeCategory, TypeVarType,
     };
 
     if recursion_count > MAX_TYPE_RECURSION_COUNT {
@@ -195,12 +202,16 @@ pub(crate) fn print_type_internal(
 
     let original_print_type_flags = print_type_flags;
     let parenthesize_union = print_type_flags.any(PrintTypeFlags::ParenthesizeUnion);
-    let print_type_flags =
-        print_type_flags & !(PrintTypeFlags::ParenthesizeUnion | PrintTypeFlags::ParenthesizeCallable);
+    let print_type_flags = print_type_flags
+        & !(PrintTypeFlags::ParenthesizeUnion | PrintTypeFlags::ParenthesizeCallable);
 
     // If this is a type alias, see if we should use its name rather than
     // the type it represents.
-    let alias_info = type_.props.borrow().as_ref().and_then(|props| props.type_alias_info.clone());
+    let alias_info = type_
+        .props
+        .borrow()
+        .as_ref()
+        .and_then(|props| props.type_alias_info.clone());
     if let Some(alias_info) = &alias_info {
         let mut expand_type_alias = true;
         if !print_type_flags.any(PrintTypeFlags::ExpandTypeAlias) {
@@ -212,7 +223,8 @@ pub(crate) fn print_type_internal(
         if !expand_type_alias {
             recursion_types.push(type_);
             let alias_text = (|| -> Option<String> {
-                let mut alias_name = if print_type_flags.any(PrintTypeFlags::UseFullyQualifiedNames) {
+                let mut alias_name = if print_type_flags.any(PrintTypeFlags::UseFullyQualifiedNames)
+                {
                     alias_info.shared.full_name.clone()
                 } else {
                     alias_info.shared.name.clone()
@@ -225,13 +237,16 @@ pub(crate) fn print_type_internal(
 
                 let type_params = alias_info.shared.type_params.borrow().clone();
 
-                if let Some(type_params) = type_params.filter(|type_params| !type_params.is_empty()) {
+                if let Some(type_params) = type_params.filter(|type_params| !type_params.is_empty())
+                {
                     let mut argument_strings: Option<Vec<String>> = None;
 
                     // If there is a type arguments array, it's a specialized type alias.
                     if let Some(type_args) = &alias_info.type_args {
                         if !print_type_flags.any(PrintTypeFlags::OmitTypeArgsIfUnknown)
-                            || type_args.iter().any(|&type_arg| !analyzer::types::is_unknown(type_arg))
+                            || type_args
+                                .iter()
+                                .any(|&type_arg| !analyzer::types::is_unknown(type_arg))
                         {
                             let mut strings: Vec<String> = Vec::new();
                             for (index, &type_arg) in type_args.iter().enumerate() {
@@ -243,17 +258,25 @@ pub(crate) fn print_type_internal(
                                 };
 
                                 // If this type argument maps to a TypeVarTuple, unpack it.
-                                let tuple_type_args = if analyzer::types::is_type_var_tuple(type_param.0)
-                                    && analyzer::types::is_class_instance(type_arg)
-                                    && analyzer::type_utils::is_tuple_class(ClassType(type_arg))
-                                {
-                                    ClassType(type_arg).d().priv_.borrow().tuple_type_args.clone()
-                                } else {
-                                    None
-                                };
+                                let tuple_type_args =
+                                    if analyzer::types::is_type_var_tuple(type_param.0)
+                                        && analyzer::types::is_class_instance(type_arg)
+                                        && analyzer::type_utils::is_tuple_class(ClassType(type_arg))
+                                    {
+                                        ClassType(type_arg)
+                                            .d()
+                                            .priv_
+                                            .borrow()
+                                            .tuple_type_args
+                                            .clone()
+                                    } else {
+                                        None
+                                    };
                                 match tuple_type_args {
                                     Some(tuple_type_args)
-                                        if tuple_type_args.iter().all(|type_arg| !type_arg.is_unbounded) =>
+                                        if tuple_type_args
+                                            .iter()
+                                            .all(|type_arg| !type_arg.is_unbounded) =>
                                     {
                                         for tuple_type_arg in &tuple_type_args {
                                             strings.push(print_type_internal(
@@ -281,7 +304,9 @@ pub(crate) fn print_type_internal(
                             argument_strings = Some(strings);
                         }
                     } else if !print_type_flags.any(PrintTypeFlags::OmitTypeArgsIfUnknown)
-                        || type_params.iter().any(|type_param| !analyzer::types::is_unknown(type_param.0))
+                        || type_params
+                            .iter()
+                            .any(|type_param| !analyzer::types::is_unknown(type_param.0))
                     {
                         let mut strings: Vec<String> = Vec::new();
                         for type_param in &type_params {
@@ -322,11 +347,17 @@ pub(crate) fn print_type_internal(
         }
     }
 
-    let alias_full_name = alias_info.as_ref().map(|alias_info| alias_info.shared.full_name.clone());
+    let alias_full_name = alias_info
+        .as_ref()
+        .map(|alias_info| alias_info.shared.full_name.clone());
     if recursion_types.iter().any(|&t| {
         t == type_ || {
-            let t_full_name =
-                t.props.borrow().as_ref().and_then(|props| props.type_alias_info.as_ref().map(|info| info.shared.full_name.clone()));
+            let t_full_name = t.props.borrow().as_ref().and_then(|props| {
+                props
+                    .type_alias_info
+                    .as_ref()
+                    .map(|info| info.shared.full_name.clone())
+            });
             t_full_name.is_some() && t_full_name == alias_full_name
         }
     }) || recursion_types.len() as u32 > MAX_TYPE_RECURSION_COUNT
@@ -373,14 +404,26 @@ pub(crate) fn print_type_internal(
 
     recursion_types.push(type_);
     let text = (|| -> String {
-        let include_conditional_indicator =
-            !print_type_flags.any(PrintTypeFlags::OmitConditionalConstraint | PrintTypeFlags::PythonSyntax);
+        let include_conditional_indicator = !print_type_flags
+            .any(PrintTypeFlags::OmitConditionalConstraint | PrintTypeFlags::PythonSyntax);
         let get_conditional_indicator = |subtype: P<Type>| -> &'static str {
-            let has_condition = subtype.props.borrow().as_ref().is_some_and(|props| props.condition.is_some());
-            if has_condition && include_conditional_indicator { "*" } else { "" }
+            let has_condition = subtype
+                .props
+                .borrow()
+                .as_ref()
+                .is_some_and(|props| props.condition.is_some());
+            if has_condition && include_conditional_indicator {
+                "*"
+            } else {
+                ""
+            }
         };
         let print_wrapped_type = |type_: P<Type>, type_to_wrap: &str| -> String {
-            format!("{}{}", _print_nested_instantiable(type_, type_to_wrap), get_conditional_indicator(type_))
+            format!(
+                "{}{}",
+                _print_nested_instantiable(type_, type_to_wrap),
+                get_conditional_indicator(type_)
+            )
         };
 
         match type_.category {
@@ -392,7 +435,9 @@ pub(crate) fn print_type_internal(
             }
 
             TypeCategory::Unknown => {
-                if print_type_flags.any(PrintTypeFlags::PythonSyntax | PrintTypeFlags::PrintUnknownWithAny) {
+                if print_type_flags
+                    .any(PrintTypeFlags::PythonSyntax | PrintTypeFlags::PrintUnknownWithAny)
+                {
                     return "Any".to_string();
                 }
                 "Unknown".to_string()
@@ -402,7 +447,10 @@ pub(crate) fn print_type_internal(
                 if print_type_flags.any(PrintTypeFlags::PythonSyntax) {
                     return "Any".to_string();
                 }
-                format!("Module(\"{}\")", ModuleType(type_).d().priv_.borrow().module_name)
+                format!(
+                    "Module(\"{}\")",
+                    ModuleType(type_).d().priv_.borrow().module_name
+                )
             }
 
             TypeCategory::Class => {
@@ -410,9 +458,13 @@ pub(crate) fn print_type_internal(
                 let literal_value = class_type.d().priv_.borrow().literal_value.clone();
                 if TypeBase::is_instance(type_) {
                     if let Some(literal_value) = &literal_value {
-                        if is_literal_value_truncated(class_type) && print_type_flags.any(PrintTypeFlags::PythonSyntax) {
+                        if is_literal_value_truncated(class_type)
+                            && print_type_flags.any(PrintTypeFlags::PythonSyntax)
+                        {
                             return print_literal_value_truncated(class_type);
-                        } else if let analyzer::types::LiteralValue::SentinelLiteral(sentinel) = literal_value {
+                        } else if let analyzer::types::LiteralValue::SentinelLiteral(sentinel) =
+                            literal_value
+                        {
                             return sentinel.class_name.clone();
                         } else {
                             return format!("Literal[{}]", print_literal_value(class_type, "'"));
@@ -435,18 +487,27 @@ pub(crate) fn print_type_internal(
                     let type_to_wrap: String;
 
                     if let Some(literal_value) = &literal_value {
-                        if is_literal_value_truncated(class_type) && print_type_flags.any(PrintTypeFlags::PythonSyntax) {
+                        if is_literal_value_truncated(class_type)
+                            && print_type_flags.any(PrintTypeFlags::PythonSyntax)
+                        {
                             type_to_wrap = print_literal_value_truncated(class_type);
-                        } else if let analyzer::types::LiteralValue::SentinelLiteral(sentinel) = literal_value {
+                        } else if let analyzer::types::LiteralValue::SentinelLiteral(sentinel) =
+                            literal_value
+                        {
                             return sentinel.class_name.clone();
                         } else {
-                            type_to_wrap = format!("Literal[{}]", print_literal_value(class_type, "'"));
+                            type_to_wrap =
+                                format!("Literal[{}]", print_literal_value(class_type, "'"));
                         }
 
                         return print_wrapped_type(type_, &type_to_wrap);
                     }
 
-                    let special_form = type_.props.borrow().as_ref().and_then(|props| props.special_form);
+                    let special_form = type_
+                        .props
+                        .borrow()
+                        .as_ref()
+                        .and_then(|props| props.special_form);
                     if let Some(special_form) = special_form {
                         let special_form_text = print_type_internal(
                             special_form.0,
@@ -623,7 +684,9 @@ pub(crate) fn print_type_internal(
                         }
                     }
 
-                    return if print_type_flags.any(PrintTypeFlags::PrintUnknownWithAny | PrintTypeFlags::PythonSyntax) {
+                    return if print_type_flags
+                        .any(PrintTypeFlags::PrintUnknownWithAny | PrintTypeFlags::PythonSyntax)
+                    {
                         "Any".to_string()
                     } else {
                         "Unknown".to_string()
@@ -652,7 +715,10 @@ pub(crate) fn print_type_internal(
 
                 let (is_unpacked, is_in_union) = {
                     let priv_ = type_var.d().priv_.borrow();
-                    (priv_.is_unpacked.unwrap_or(false), priv_.is_in_union.unwrap_or(false))
+                    (
+                        priv_.is_unpacked.unwrap_or(false),
+                        priv_.is_in_union.unwrap_or(false),
+                    )
                 };
 
                 if is_unpacked {
@@ -667,7 +733,9 @@ pub(crate) fn print_type_internal(
                     type_var_name = _print_nested_instantiable(type_, &type_var_name);
                 }
 
-                if !analyzer::types::is_type_var_tuple(type_) && print_type_flags.any(PrintTypeFlags::PrintTypeVarVariance) {
+                if !analyzer::types::is_type_var_tuple(type_)
+                    && print_type_flags.any(PrintTypeFlags::PrintTypeVarVariance)
+                {
                     let variance_text = get_type_var_variance_text(type_var);
                     if !variance_text.is_empty() {
                         type_var_name = format!("{type_var_name} ({variance_text})");
@@ -710,7 +778,9 @@ pub(crate) fn print_union_type(
     recursion_types: &mut Vec<P<Type>>,
     recursion_count: u32,
 ) -> String {
-    use analyzer::types::{TypeSameOptions, is_class_instance, is_instantiable_class, is_type_same};
+    use analyzer::types::{
+        TypeSameOptions, is_class_instance, is_instantiable_class, is_type_same,
+    };
     use jsrt::JsSet;
 
     // Allocate a set that refers to subtypes in the union by
@@ -738,10 +808,16 @@ pub(crate) fn print_union_type(
                 let source_subtypes = type_alias_source.d().priv_.borrow().subtypes.clone();
                 for &source_subtype in &source_subtypes {
                     let mut found_match = false;
-                    let source_subtype_instance = analyzer::type_utils::convert_to_instance(source_subtype, true);
+                    let source_subtype_instance =
+                        analyzer::type_utils::convert_to_instance(source_subtype, true);
 
                     for (union_subtype_index, &union_subtype) in subtypes.iter().enumerate() {
-                        if is_type_same(source_subtype_instance, union_subtype, &TypeSameOptions::default(), 0) {
+                        if is_type_same(
+                            source_subtype_instance,
+                            union_subtype,
+                            &TypeSameOptions::default(),
+                            0,
+                        ) {
                             if !subtype_handled_set.contains(&union_subtype_index) {
                                 all_subtypes_previously_handled = false;
                             }
@@ -774,7 +850,9 @@ pub(crate) fn print_union_type(
         }
     }
 
-    let none_index = subtypes.iter().position(|&subtype| analyzer::type_utils::is_none_instance(subtype));
+    let none_index = subtypes
+        .iter()
+        .position(|&subtype| analyzer::type_utils::is_none_instance(subtype));
     if let Some(none_index) = none_index {
         if !subtype_handled_set.contains(&none_index) {
             let type_without_none = analyzer::type_utils::remove_none_from_union(type_.0);
@@ -810,16 +888,34 @@ pub(crate) fn print_union_type(
         &mut |subtype, index, _| {
             if !subtype_handled_set.contains(&(index as usize)) {
                 let has_literal = analyzer::types::is_class(subtype)
-                    && ClassType(subtype).d().priv_.borrow().literal_value.is_some();
-                if is_class_instance(subtype) && has_literal && !analyzer::type_utils::is_sentinel_literal(subtype) {
-                    if is_literal_value_truncated(ClassType(subtype)) && print_type_flags.any(PrintTypeFlags::PythonSyntax) {
+                    && ClassType(subtype)
+                        .d()
+                        .priv_
+                        .borrow()
+                        .literal_value
+                        .is_some();
+                if is_class_instance(subtype)
+                    && has_literal
+                    && !analyzer::type_utils::is_sentinel_literal(subtype)
+                {
+                    if is_literal_value_truncated(ClassType(subtype))
+                        && print_type_flags.any(PrintTypeFlags::PythonSyntax)
+                    {
                         subtype_strings.insert(print_literal_value_truncated(ClassType(subtype)));
                     } else {
                         literal_object_strings.insert(print_literal_value(ClassType(subtype), "'"));
                     }
-                } else if is_instantiable_class(subtype) && has_literal && !analyzer::type_utils::is_sentinel_literal(subtype) {
-                    if is_literal_value_truncated(ClassType(subtype)) && print_type_flags.any(PrintTypeFlags::PythonSyntax) {
-                        subtype_strings.insert(format!("type[{}]", print_literal_value_truncated(ClassType(subtype))));
+                } else if is_instantiable_class(subtype)
+                    && has_literal
+                    && !analyzer::type_utils::is_sentinel_literal(subtype)
+                {
+                    if is_literal_value_truncated(ClassType(subtype))
+                        && print_type_flags.any(PrintTypeFlags::PythonSyntax)
+                    {
+                        subtype_strings.insert(format!(
+                            "type[{}]",
+                            print_literal_value_truncated(ClassType(subtype))
+                        ));
                     } else {
                         literal_class_strings.insert(print_literal_value(ClassType(subtype), "'"));
                     }
@@ -904,13 +1000,23 @@ pub(crate) fn print_function_type(
             type_
         };
 
-        let params = type_without_param_spec.d().shared.get().parameters.get().borrow().clone();
+        let params = type_without_param_spec
+            .d()
+            .shared
+            .get()
+            .parameters
+            .get()
+            .borrow()
+            .clone();
 
         // Callable works only in cases where all parameters are positional-only.
         let mut is_positional_params_only = false;
         if params.is_empty() {
             is_positional_params_only = true;
-        } else if params.iter().all(|param| param.category == ParamCategory::Simple) {
+        } else if params
+            .iter()
+            .all(|param| param.category == ParamCategory::Simple)
+        {
             let last_param = &params[params.len() - 1];
             if last_param.name.as_deref().is_none_or(str::is_empty) {
                 is_positional_params_only = true;
@@ -933,7 +1039,8 @@ pub(crate) fn print_function_type(
 
             for (index, param) in params.iter().enumerate() {
                 if param.name.as_deref().is_some_and(|name| !name.is_empty()) {
-                    let param_type = FunctionType::get_param_type(type_without_param_spec, index as i32);
+                    let param_type =
+                        FunctionType::get_param_type(type_without_param_spec, index as i32);
                     if (recursion_types.len() as u32) < MAX_TYPE_RECURSION_COUNT {
                         param_types.push(print_type_internal(
                             param_type,
@@ -963,7 +1070,11 @@ pub(crate) fn print_function_type(
                 return format!("Callable[{param_spec_name}, {return_type_string}]");
             }
 
-            format!("Callable[[{}], {}]", param_types.join(", "), return_type_string)
+            format!(
+                "Callable[[{}], {}]",
+                param_types.join(", "),
+                return_type_string
+            )
         } else {
             // We can't represent this type using a Callable so default to
             // a "catch all" Callable.
@@ -1015,7 +1126,10 @@ pub(crate) fn print_param_spec_value_for_python_syntax(
     }
 
     let params = type_.d().shared.get().parameters.get().borrow().clone();
-    if !params.iter().all(|param| param.category == ParamCategory::Simple) {
+    if !params
+        .iter()
+        .all(|param| param.category == ParamCategory::Simple)
+    {
         return None;
     }
 
@@ -1055,7 +1169,14 @@ pub(crate) fn print_object_type_for_class_internal(
     use analyzer::types::{TupleTypeArg, is_class_instance, is_type_var_tuple, is_unknown};
 
     let shared = type_.d().shared.get();
-    let mut obj_name = match type_.d().priv_.borrow().alias_name.clone().filter(|name| !name.is_empty()) {
+    let mut obj_name = match type_
+        .d()
+        .priv_
+        .borrow()
+        .alias_name
+        .clone()
+        .filter(|name| !name.is_empty())
+    {
         Some(alias_name) => alias_name,
         None => {
             if print_type_flags.any(PrintTypeFlags::UseFullyQualifiedNames) {
@@ -1083,7 +1204,8 @@ pub(crate) fn print_object_type_for_class_internal(
     if !ClassType::is_pseudo_generic_class(type_) {
         let type_params = ClassType::get_type_params(type_);
         let last_type_param = type_params.last().copied();
-        let is_variadic = last_type_param.is_some_and(|last_type_param| is_type_var_tuple(last_type_param.0));
+        let is_variadic =
+            last_type_param.is_some_and(|last_type_param| is_type_var_tuple(last_type_param.0));
 
         // If there is a type arguments array, it's a specialized class.
         let type_args: Option<Vec<TupleTypeArg>> = {
@@ -1092,7 +1214,11 @@ pub(crate) fn print_object_type_for_class_internal(
                 priv_.type_args.as_ref().map(|type_args| {
                     type_args
                         .iter()
-                        .map(|&t| TupleTypeArg { type_: t, is_unbounded: false, is_optional: None })
+                        .map(|&t| TupleTypeArg {
+                            type_: t,
+                            is_unbounded: false,
+                            is_optional: None,
+                        })
                         .collect()
                 })
             })
@@ -1105,11 +1231,19 @@ pub(crate) fn print_object_type_for_class_internal(
 
                 for (index, type_arg) in type_args.iter().enumerate() {
                     let type_param = type_params.get(index).copied();
-                    let expanded_tuple_type_args = if type_param.is_some_and(|type_param| is_type_var_tuple(type_param.0))
+                    let expanded_tuple_type_args = if type_param
+                        .is_some_and(|type_param| is_type_var_tuple(type_param.0))
                         && is_class_instance(type_arg.type_)
-                        && ClassType::is_built_in(ClassType(type_arg.type_), Some(&["tuple".to_string()]))
-                    {
-                        ClassType(type_arg.type_).d().priv_.borrow().tuple_type_args.clone()
+                        && ClassType::is_built_in(
+                            ClassType(type_arg.type_),
+                            Some(&["tuple".to_string()]),
+                        ) {
+                        ClassType(type_arg.type_)
+                            .d()
+                            .priv_
+                            .borrow()
+                            .tuple_type_args
+                            .clone()
                     } else {
                         None
                     };
@@ -1139,8 +1273,10 @@ pub(crate) fn print_object_type_for_class_internal(
                                 );
 
                                 if type_arg.is_unbounded {
-                                    type_arg_strings
-                                        .push(print_unpack(&format!("tuple[{type_arg_text}, ...]"), print_type_flags));
+                                    type_arg_strings.push(print_unpack(
+                                        &format!("tuple[{type_arg_text}, ...]"),
+                                        print_type_flags,
+                                    ));
                                 } else {
                                     type_arg_strings.push(type_arg_text);
                                 }
@@ -1165,8 +1301,10 @@ pub(crate) fn print_object_type_for_class_internal(
                                 type_arg_strings.push(type_arg_type_text);
                                 type_arg_strings.push("...".to_string());
                             } else {
-                                type_arg_strings
-                                    .push(print_unpack(&format!("tuple[{type_arg_type_text}, ...]"), print_type_flags));
+                                type_arg_strings.push(print_unpack(
+                                    &format!("tuple[{type_arg_type_text}, ...]"),
+                                    print_type_flags,
+                                ));
                             }
                         } else {
                             type_arg_strings.push(type_arg_type_text);
@@ -1204,7 +1342,9 @@ pub(crate) fn print_object_type_for_class_internal(
 
             if !type_params.is_empty()
                 && (!print_type_flags.any(PrintTypeFlags::OmitTypeArgsIfUnknown)
-                    || type_params.iter().any(|type_param| !is_unknown(type_param.0)))
+                    || type_params
+                        .iter()
+                        .any(|type_param| !is_unknown(type_param.0)))
             {
                 let mut type_param_strings: Vec<String> = Vec::new();
                 for type_param in &type_params {
@@ -1223,7 +1363,12 @@ pub(crate) fn print_object_type_for_class_internal(
     }
 
     // Wrap in a "Partial" for TypedDict that has been synthesized as partial.
-    if type_.d().priv_.borrow().is_typed_dict_partial.unwrap_or(false)
+    if type_
+        .d()
+        .priv_
+        .borrow()
+        .is_typed_dict_partial
+        .unwrap_or(false)
         && !print_type_flags.any(PrintTypeFlags::PythonSyntax)
     {
         obj_name = format!("Partial[{obj_name}]");
@@ -1241,7 +1386,9 @@ pub(crate) fn print_function_parts_internal(
     recursion_types: &mut Vec<P<Type>>,
     recursion_count: u32,
 ) -> (Vec<String>, String) {
-    use analyzer::types::{FunctionParam, MAX_TYPE_RECURSION_COUNT, TypeCategory, is_class_instance, is_unpacked};
+    use analyzer::types::{
+        FunctionParam, MAX_TYPE_RECURSION_COUNT, TypeCategory, is_class_instance, is_unpacked,
+    };
     use jsrt::JsStr;
     use parser::parse_nodes::ParamCategory;
 
@@ -1250,7 +1397,11 @@ pub(crate) fn print_function_parts_internal(
 
     // Remove the (*args: P.args, **kwargs: P.kwargs) from the end of the parameter list.
     let param_spec = FunctionType::get_param_spec_from_args_kwargs(type_);
-    let type_ = if param_spec.is_some() { FunctionType::clone_remove_param_spec_args_kwargs(type_, false) } else { type_ };
+    let type_ = if param_spec.is_some() {
+        FunctionType::clone_remove_param_spec_args_kwargs(type_, false)
+    } else {
+        type_
+    };
 
     let params = type_.d().shared.get().parameters.get().borrow().clone();
     for (index, param) in params.iter().enumerate() {
@@ -1266,9 +1417,16 @@ pub(crate) fn print_function_parts_internal(
         {
             let specialized_param_type = FunctionType::get_param_type(type_, index);
             let tuple_type_args = if is_class_instance(specialized_param_type)
-                && ClassType::is_built_in(ClassType(specialized_param_type), Some(&["tuple".to_string()]))
-            {
-                ClassType(specialized_param_type).d().priv_.borrow().tuple_type_args.clone()
+                && ClassType::is_built_in(
+                    ClassType(specialized_param_type),
+                    Some(&["tuple".to_string()]),
+                ) {
+                ClassType(specialized_param_type)
+                    .d()
+                    .priv_
+                    .borrow()
+                    .tuple_type_args
+                    .clone()
             } else {
                 None
             };
@@ -1293,7 +1451,13 @@ pub(crate) fn print_function_parts_internal(
             && print_type_flags.any(PrintTypeFlags::ExpandTypedDictArgs)
             && param_type.category == TypeCategory::Class
         {
-            let typed_dict_entries = ClassType(param_type).d().shared.get().typed_dict_entries.get().unwrap();
+            let typed_dict_entries = ClassType(param_type)
+                .d()
+                .shared
+                .get()
+                .typed_dict_entries
+                .get()
+                .unwrap();
             let known_items = typed_dict_entries.known_items.borrow().clone();
             for (k, v) in known_items.iter() {
                 let value_type_string = print_type_internal(
@@ -1307,7 +1471,11 @@ pub(crate) fn print_function_parts_internal(
                 param_type_strings.push(format!("{k}: {value_type_string}"));
             }
 
-            let extra_items_type = typed_dict_entries.extra_items.borrow().as_ref().map(|entry| entry.value_type);
+            let extra_items_type = typed_dict_entries
+                .extra_items
+                .borrow()
+                .as_ref()
+                .map(|entry| entry.value_type);
             if let Some(extra_items_type) = extra_items_type {
                 if !analyzer::types::is_never(extra_items_type) {
                     let value_type_string = print_type_internal(
@@ -1352,18 +1520,19 @@ pub(crate) fn print_function_parts_internal(
             // Avoid printing type types if parameter have unknown type.
             if FunctionParam::is_type_declared(param) || FunctionParam::is_type_inferred(param) {
                 let param_type = FunctionType::get_param_type(type_, index);
-                let mut param_type_string = if (recursion_types.len() as u32) < MAX_TYPE_RECURSION_COUNT {
-                    print_type_internal(
-                        param_type,
-                        print_type_flags,
-                        return_type_callback,
-                        unique_name_map,
-                        recursion_types,
-                        recursion_count,
-                    )
-                } else {
-                    String::new()
-                };
+                let mut param_type_string =
+                    if (recursion_types.len() as u32) < MAX_TYPE_RECURSION_COUNT {
+                        print_type_internal(
+                            param_type,
+                            print_type_flags,
+                            return_type_callback,
+                            unique_name_map,
+                            recursion_types,
+                            recursion_count,
+                        )
+                    } else {
+                        String::new()
+                    };
 
                 if emitted_param_name {
                     param_string += ": ";
@@ -1374,7 +1543,8 @@ pub(crate) fn print_function_parts_internal(
                 if param.category == ParamCategory::KwargsDict && is_unpacked(param_type) {
                     if print_type_flags.any(PrintTypeFlags::PythonSyntax) {
                         // Use "Unpack" because ** isn't legal syntax prior to Python 3.12.
-                        param_type_string = format!("Unpack[{}]", param_type_string.js_substring(1, None));
+                        param_type_string =
+                            format!("Unpack[{}]", param_type_string.js_substring(1, None));
                     } else {
                         // If this is an unpacked TypeDict for a **kwargs parameter, add another star.
                         param_type_string = "*".to_string() + &param_type_string;
@@ -1384,7 +1554,8 @@ pub(crate) fn print_function_parts_internal(
                 param_string += &param_type_string;
 
                 if analyzer::types::is_param_spec(param_type)
-                    && (param.category == ParamCategory::ArgsList || param.category == ParamCategory::KwargsDict)
+                    && (param.category == ParamCategory::ArgsList
+                        || param.category == ParamCategory::KwargsDict)
                 {
                     is_param_spec_args_kwargs_param = true;
                 }
@@ -1396,7 +1567,9 @@ pub(crate) fn print_function_parts_internal(
                 if !FunctionParam::is_name_synthesized(param) {
                     param_string += ": ";
                 }
-                if print_type_flags.any(PrintTypeFlags::PrintUnknownWithAny | PrintTypeFlags::PythonSyntax) {
+                if print_type_flags
+                    .any(PrintTypeFlags::PrintUnknownWithAny | PrintTypeFlags::PythonSyntax)
+                {
                     param_string += "Any";
                 } else {
                     param_string += "Unknown";
@@ -1463,7 +1636,9 @@ pub(crate) fn print_function_parts_internal(
     let return_type_string = if (recursion_types.len() as u32) < MAX_TYPE_RECURSION_COUNT {
         print_type_internal(
             return_type,
-            print_type_flags | PrintTypeFlags::ParenthesizeUnion | PrintTypeFlags::ParenthesizeCallable,
+            print_type_flags
+                | PrintTypeFlags::ParenthesizeUnion
+                | PrintTypeFlags::ParenthesizeCallable,
             return_type_callback,
             unique_name_map,
             recursion_types,
@@ -1487,7 +1662,13 @@ pub(crate) fn print_unpack(text_to_wrap: &str, flags: PrintTypeFlags) -> String 
 
 // analyzer/typePrinter.ts:1392
 pub(crate) fn _print_nested_instantiable(type_: P<Type>, text_to_wrap: &str) -> String {
-    let nested_types = type_.props.borrow().as_ref().and_then(|props| props.instantiable_depth).unwrap_or(0) + 1;
+    let nested_types = type_
+        .props
+        .borrow()
+        .as_ref()
+        .and_then(|props| props.instantiable_depth)
+        .unwrap_or(0)
+        + 1;
 
     let mut text_to_wrap = text_to_wrap.to_string();
     for _ in 0..nested_types {
@@ -1562,7 +1743,11 @@ impl UniqueNameMap {
         }
         let recursion_count = recursion_count + 1;
 
-        let alias_info = type_.props.borrow().as_ref().and_then(|props| props.type_alias_info.clone());
+        let alias_info = type_
+            .props
+            .borrow()
+            .as_ref()
+            .and_then(|props| props.type_alias_info.clone());
         if let Some(alias_info) = alias_info {
             let mut expand_type_alias = true;
             if !self._print_type_flags.any(PrintTypeFlags::ExpandTypeAlias) {
@@ -1572,7 +1757,10 @@ impl UniqueNameMap {
             }
 
             if !expand_type_alias {
-                let type_alias_name = if self._print_type_flags.any(PrintTypeFlags::UseFullyQualifiedNames) {
+                let type_alias_name = if self
+                    ._print_type_flags
+                    .any(PrintTypeFlags::UseFullyQualifiedNames)
+                {
                     alias_info.shared.full_name.clone()
                 } else {
                     alias_info.shared.name.clone()
@@ -1599,7 +1787,14 @@ impl UniqueNameMap {
         match type_.category {
             TypeCategory::Function => {
                 let function_type = FunctionType(type_);
-                let param_count = function_type.d().shared.get().parameters.get().borrow().len();
+                let param_count = function_type
+                    .d()
+                    .shared
+                    .get()
+                    .parameters
+                    .get()
+                    .borrow()
+                    .len();
                 for index in 0..param_count {
                     let param_type = FunctionType::get_param_type(function_type, index as i32);
                     self.build(param_type, recursion_types, recursion_count);
@@ -1630,7 +1825,10 @@ impl UniqueNameMap {
                     let class_name = match alias_name.filter(|name| !name.is_empty()) {
                         Some(alias_name) => alias_name,
                         None => {
-                            if self._print_type_flags.any(PrintTypeFlags::UseFullyQualifiedNames) {
+                            if self
+                                ._print_type_flags
+                                .any(PrintTypeFlags::UseFullyQualifiedNames)
+                            {
                                 class_type.d().shared.get().full_name.clone()
                             } else {
                                 class_type.d().shared.get().name.clone()
@@ -1663,7 +1861,12 @@ impl UniqueNameMap {
                     false,
                 );
 
-                let type_alias_sources = UnionType(type_).d().priv_.borrow().type_alias_sources.clone();
+                let type_alias_sources = UnionType(type_)
+                    .d()
+                    .priv_
+                    .borrow()
+                    .type_alias_sources
+                    .clone();
                 if let Some(type_alias_sources) = type_alias_sources {
                     for type_alias_source in type_alias_sources.iter() {
                         self.build(type_alias_source.0, recursion_types, recursion_count);
@@ -1694,7 +1897,10 @@ impl UniqueNameMap {
                 self._map.insert(name.to_string(), vec![type_]);
             }
             Some(existing_entry) => {
-                if !existing_entry.iter().any(|&t| self._is_same_type_name(t, type_, use_type_alias_name)) {
+                if !existing_entry
+                    .iter()
+                    .any(|&t| self._is_same_type_name(t, type_, use_type_alias_name))
+                {
                     self._map.get_mut(name).unwrap().push(type_);
                 }
             }
@@ -1712,10 +1918,12 @@ impl UniqueNameMap {
 
         if use_type_alias_name {
             let full_name_of = |t: P<Type>| {
-                t.props
-                    .borrow()
-                    .as_ref()
-                    .and_then(|props| props.type_alias_info.as_ref().map(|info| info.shared.full_name.clone()))
+                t.props.borrow().as_ref().and_then(|props| {
+                    props
+                        .type_alias_info
+                        .as_ref()
+                        .map(|info| info.shared.full_name.clone())
+                })
             };
             return full_name_of(type1) == full_name_of(type2);
         }

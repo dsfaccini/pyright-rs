@@ -10,7 +10,6 @@
 )]
 
 use crate::{analyzer, common, parser};
-
 use crate::analyzer::analyzer_file_info::{AnalyzerFileInfo, ImportLookup};
 use crate::analyzer::analyzer_node_info::{AnalyzerNodeInfoAccessor, AnalyzerNodeInfoReader};
 use crate::analyzer::code_flow_engine::{
