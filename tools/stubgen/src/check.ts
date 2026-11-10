@@ -156,7 +156,7 @@ export function placeStubs(runDir: string, crateSrc: string, targetSrc: string, 
         // A crate file with no ported function at a marker (a skeleton, a placeholder, an
         // unchanged stub) is replaced.
         if (install && (m.kept.length > 0 || m.lost.length > 0)) {
-            const dropped = [...m.lost.map((l) => `ported function at ${l} has no stub marker`), ...codeOutside(crateText, m.keptRanges, m.text)];
+            const dropped = [...m.lost.map((l) => `ported function at ${l} has no stub marker`), ...codeOutside(crateText, [...m.keptRanges, ...m.regeneratedRanges], m.text)];
             if (dropped.length) {
                 res.lost.push(...dropped.map((d) => `${rel}: ${d}`));
                 continue;

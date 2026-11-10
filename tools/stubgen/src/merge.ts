@@ -140,6 +140,38 @@ function fnItems(text: string): FnItem[] {
     return out;
 }
 
+// Generated `struct` and `enum` items under a marker, with their line ranges, inclusive. Nobody ports
+// them: the generator owns their fields.
+const TYPE_HEAD = /^\s*(pub(\([^)]*\))?\s+)?(struct|enum)\s/;
+
+function typeItems(text: string): { marker: string; start: number; end: number }[] {
+    const lines = text.split('\n');
+    const out: { marker: string; start: number; end: number }[] = [];
+    for (let i = 0; i < lines.length; i++) {
+        const m = lines[i].match(MARKER);
+        if (!m) {
+            continue;
+        }
+        let j = i + 1;
+        while (j < lines.length && /^\s*(\/\/|#\[|$)/.test(lines[j])) {
+            j++;
+        }
+        if (j >= lines.length || !TYPE_HEAD.test(lines[j])) {
+            continue;
+        }
+        let end = j;
+        if (!/;\s*$/.test(lines[j])) {
+            while (end < lines.length && lines[end] !== lines[j].match(/^\s*/)?.[0] + '}') {
+                end++;
+            }
+        }
+        if (end < lines.length) {
+            out.push({ marker: `${m[1]}:${m[2]}`, start: i, end });
+        }
+    }
+    return out;
+}
+
 // `use a::b::{C, D};` -> ["a::b::C", "a::b::D"]; `super::` resolved against `modPath`.
 function importPaths(text: string, modPath: string): string[] {
     const parent = modPath.split('::').slice(0, -1).join('::');
@@ -168,14 +200,24 @@ export interface MergeResult {
     kept: string[];
     // Lines of the kept functions in the crate file, inclusive.
     keptRanges: [number, number][];
+    // Lines of the crate file's unported `todo!()` items and generated structs and enums whose marker
+    // the stub has, inclusive: the stub regenerates them, so a changed signature or field type there
+    // is not dropped code.
+    regeneratedRanges: [number, number][];
     lost: string[];
 }
 
 // `modPath` is the crate path of the module (`crate::analyzer::declaration_utils`).
 export function mergePorted(stub: string, crate: string, modPath: string): MergeResult {
-    const ported = fnItems(crate).filter((f) => f.ported);
+    const crateItems = fnItems(crate);
+    const ported = crateItems.filter((f) => f.ported);
     const crateLines = crate.split('\n');
     const stubItems = new Map(fnItems(stub).map((f) => [f.marker, f]));
+    const stubTypes = new Set(typeItems(stub).map((t) => t.marker));
+    const regeneratedRanges: [number, number][] = [
+        ...crateItems.filter((f) => !f.ported && stubItems.has(f.marker)),
+        ...typeItems(crate).filter((t) => stubTypes.has(t.marker)),
+    ].map((f) => [f.start, f.end]);
     const lines = stub.split('\n');
     const kept: string[] = [];
     const keptRanges: [number, number][] = [];
@@ -217,5 +259,5 @@ export function mergePorted(stub: string, crate: string, modPath: string): Merge
     if (!crate.includes('#![allow(')) {
         text = text.replace(/^#!\[allow\([^\]]*\)\]\n/m, '');
     }
-    return { text, kept, keptRanges, lost };
+    return { text, kept, keptRanges, regeneratedRanges, lost };
 }

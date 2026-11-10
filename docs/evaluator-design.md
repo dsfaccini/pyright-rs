@@ -167,11 +167,12 @@ Decisions on the types `docs/research/memory-advice.md` names (2026-11-10):
 - `DiagnosticAddendum` (common/diagnostic.ts) is written after it is stored: `createAddendum` pushes the new child into its parent and returns it, and callers write the child. It stays a handle, as ported.
 - `SpeculativeContext` and `SpeculativeEntry` are values: each lives only in the speculative stack, which `disableSpeculativeMode` moves out and `enableSpeculativeMode` moves back. `SpeculativeEntry.cache` is a `SpeculativeCache` (below).
 - `TypeResult` stays a handle: `getTypeOfExpression` writes `typeResult.type` after `writeTypeCache` stored it.
+- `MatchArgsToParamsResult` is a handle, with `argument_match_score` a `Cell` and `arg_params` a `RefCell` (2026-11-10). `validateArgTypes` writes `argumentMatchScore` (typeEvaluator.ts:13575) into the result that `validateOverloadedArgTypes` still holds in `filteredMatchResults`, and `evaluateUsingBestMatchingOverload` reads it back from there (10900). The other write, `argParams` (10053), goes to a spread copy before it is stored. Rule: a value whose fields pyright writes after another holder keeps it (an array, a struct field, a variable that outlives the call) is a handle; `&mut` only when the parameter chain from its creator is the only path to it.
 - Other types the rule turned from handles into values: `FlowNodeTypeResult`, `ExpectedTypeCacheEntry`, `CallResult`, `InferenceContext`, `ExpectedTypeOptions`, `PrefetchedTypes`, `ClassMember`, `ParamListDetails`, `ParamAssignmentInfo`, `LiteralTypes`, `SignatureWithOffsets`, `ProtocolCompatibilityCheckState`, `TypeVarUsageInfo`. `ConstraintSolution` is an `Rc`. `SpeculativeTypeTracker`, `UniqueNameMap`, `ParamAssignmentTracker`, the `TypeVarTransformer` classes and `NumberReference` are owned; a struct that holds one and is shared wraps it in a `RefCell`. The evaluator and its code flow engine share one tracker (typeEvaluator.ts:30591), so both hold it as `P<RefCell<SpeculativeTypeTracker>>` (`[sites]`).
 
 `typemap.toml` makes an interface a value only where the TypeScript shows that copying it is safe:
 
-- records copied with a spread before each write, never compared with `===` (`TypedDictEntry`, `ValidateArgTypeParams`, `MatchArgsToParamsResult`);
+- records copied with a spread before each write, never compared with `===` (`TypedDictEntry`, `ValidateArgTypeParams`);
 - the per-instance `priv`, `props` and `cached` records of a type, which `TypeBase.cloneType` copies with a spread;
 - stack entries that live only in their stack (`SymbolResolutionStackEntry`, `SuppressedNodeStackEntry`).
 
@@ -290,7 +291,7 @@ A run with `install = true` (`runs.toml`) is installed into `crates/pyright/src`
 
 - a crate file with no ported function at a marker (a skeleton, a placeholder, an unchanged stub) is replaced;
 - a crate file with ported functions is merged: each ported function replaces the stub function at its marker, and its imports are added (`tools/stubgen/src/merge.ts`). `declaration_utils.rs` keeps `has_type_for_declaration` and `are_declarations_same` this way;
-- the install refuses, and changes nothing, when the merge would drop code: a ported function at no stub marker, or a crate line the new stub lacks.
+- the install refuses, and changes nothing, when the merge would drop code: a ported function at no stub marker, or a crate line the new stub lacks. Lines of an unported `todo!()` item, and of a generated struct or enum, whose marker the new stub has are regenerated, not dropped: a signature or field type changed through the table installs.
 
 A run without `install` is a record: a ported crate file supersedes its stub.
 - Where a ported file chose a shape the rules would not give, `typemap.toml` records it: `TextRangeCollection<T>` keeps its generic, `ConsoleInterface` is a trait.

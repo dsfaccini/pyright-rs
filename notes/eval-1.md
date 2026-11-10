@@ -5,6 +5,8 @@
 - `TypeResult::new(type_)` and `impl Clone for TypeResult`, added through `tools/stubgen/typemap.toml` `[items]` (approved by the main session). TypeScript builds a `TypeResult` as an object literal or a spread; Rust writes `P::new_eval(TypeResult { field: .., ..TypeResult::new(t) })` and `P::new_eval((*r).clone())`.
 - `TypeResultWithNode::new(type_, node)` and `TypeResultWithNode::from_type_result(&TypeResult, node)`, the same way (requested by the main session for eval-2): `{ type, node }` and `{ ...typeResult, node }`.
 - Generator rule (`tools/stubgen/src/emit.ts` `valueDerive`): a value or inline-object struct whose fields are all optional derives `Default` as well as `Clone` (32 structs: `TypeSameOptions`, `ApplyTypeVarOptions`, `PartialPrefetchedTypes`, the `*Priv` records, ...).
+- `MatchArgsToParamsResult` becomes a handle (main session's rule): `P<MatchArgsToParamsResult>`, `argument_match_score: Cell<f64>`, `arg_params: RefCell<Vec<..>>`; `MatchedOverloadInfo.match_results` and the parameters of `validate_overloads_with_expanded_types`, `match_args_to_params`, `validate_arg_types_with_context`, `validate_arg_types_with_expected_type`, `validate_arg_types` follow (share C's functions). Reason in `docs/evaluator-design.md` section 3.
+- `tools/stubgen` install (`merge.ts`, `check.ts`): an unported `todo!()` item or a generated struct or enum at a marker the new stub has is regenerated, so a signature or field change no longer reads as dropped code.
 
 ## Shared-file edits
 
