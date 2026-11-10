@@ -18,8 +18,8 @@ Fill the `todo!()` bodies under your markers and leave every other marker alone.
 
 | share | TypeScript lines | marker ranges |
 |---|---|---|
-| A | 8,851 | `types.ts:1-4105`, `typeUtils.ts:1-4746` |
-| B | 7,677 | `typeEvaluator.ts:1-7677` |
+| A | 4,105 | `types.ts:1-4105` |
+| B | 12,423 | `typeEvaluator.ts:1-7677`, then `typeUtils.ts:1-4746` (moved from A on 2026-11-10: B finished first) |
 | C | 7,564 | `typeEvaluator.ts:7678-15241` |
 | D | 7,799 | `typeEvaluator.ts:15242-23040` |
 | E | 7,554 | `typeEvaluator.ts:23041-30594` |
