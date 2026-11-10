@@ -233,7 +233,7 @@ How each class and interface of the stubbed files is held (docs/porting.md "memo
 - `analyzer/operations.ts:BinaryOperationOptions`: value; never written after construction; never stored in a second place
 - `analyzer/typePrinter.ts:UniqueNameMap`: owned; written: _map at analyzer/typePrinter.ts:1547; never stored in a second place
 - `analyzer/parameterUtils.ts:VirtualParamDetails`: handle; compared or hashed by identity at analyzer/parameterUtils.ts:465; never written after construction; stored at analyzer/parameterUtils.ts:435
-- `analyzer/parameterUtils.ts:ParamListDetails`: value; written: params at analyzer/typeEvaluator.ts:28147; never stored in a second place
+- `analyzer/parameterUtils.ts:ParamListDetails`: value; [modes]
 - `analyzer/parameterUtils.ts:ParamListDetailsOptions`: value; never written after construction; never stored in a second place
 - `analyzer/parameterUtils.ts:ParamAssignmentInfo`: value; written: argsReceived at analyzer/parameterUtils.ts:472; never stored in a second place
 - `analyzer/parameterUtils.ts:ParamAssignmentTracker`: owned; written: params at analyzer/parameterUtils.ts:443; never stored in a second place
