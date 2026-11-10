@@ -4,6 +4,9 @@
 //! maps; nothing iterates them. Readers and writers are `&'static dyn` trait
 //! objects: every store, session and context lives in the arena.
 
+// `P` hashes by address, so its interior mutability never changes a key.
+#![allow(clippy::mutable_key_type)]
+
 use std::cell::{Cell, RefCell};
 
 use jsrt::{FxHashMap, FxHashSet, JsSet, P};
