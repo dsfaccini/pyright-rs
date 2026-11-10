@@ -477,6 +477,10 @@ export class Gen {
         if (override === undefined) {
             return undefined;
         }
+        // `()` drops a return value no caller reads.
+        if (override === '()') {
+            return { k: 'unit' };
+        }
         const text = shortenPaths(override);
         // Handles and options of handles are Copy, so a written field holding one is a Cell.
         const copy = /^(Option<)?P</.test(text);

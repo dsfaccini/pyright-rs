@@ -103,12 +103,15 @@ impl ParamAssignmentTracker {
     }
 
     // analyzer/parameterUtils.ts:451
-    pub fn lookup_name(&mut self, name: &str) -> Option<ParamAssignmentInfo> {
+    pub fn lookup_name(&mut self, name: &str) -> Option<&mut ParamAssignmentInfo> {
         todo!()
     }
 
     // analyzer/parameterUtils.ts:464
-    pub fn lookup_details(&mut self, param_info: P<VirtualParamDetails>) -> ParamAssignmentInfo {
+    pub fn lookup_details(
+        &mut self,
+        param_info: P<VirtualParamDetails>,
+    ) -> &mut ParamAssignmentInfo {
         todo!()
     }
 

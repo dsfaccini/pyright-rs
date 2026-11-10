@@ -1,4 +1,5 @@
-// Carries ported functions from a crate file into its regenerated stub, by marker.
+// Carries ported functions and module-variable initializers from a crate file into its regenerated
+// stub, by marker.
 //
 // A crate file that someone has started porting holds functions with real bodies, each under the
 // `// <file>.ts:<line>` marker its stub had. Merging replaces the stub's `todo!()` function at that
@@ -7,6 +8,8 @@
 
 const MARKER = /^\s*\/\/ ([A-Za-z0-9_/.]+\.ts):(\d+)\s*$/;
 const FN_HEAD = /^\s*(pub(\([^)]*\))?\s+)?(const\s+)?(unsafe\s+)?fn\s/;
+// A module variable's `static` inside `thread_local!`; its marker sits above it.
+const STATIC_HEAD = /^\s*(pub(\([^)]*\))?\s+)?static\s/;
 
 interface FnItem {
     marker: string;
@@ -17,7 +20,8 @@ interface FnItem {
 }
 
 // Index just past the brace that closes the one at `open`, skipping strings, chars and comments.
-function closeBrace(text: string, open: number): number {
+// With `stmt`, index just past the first `;` outside brackets from `open` on.
+function closeBrace(text: string, open: number, stmt = false): number {
     let depth = 0;
     let i = open;
     while (i < text.length) {
@@ -55,7 +59,15 @@ function closeBrace(text: string, open: number): number {
                 continue;
             }
         }
-        if (c === '{') {
+        if (stmt) {
+            if (c === '{' || c === '(' || c === '[') {
+                depth++;
+            } else if (c === '}' || c === ')' || c === ']') {
+                depth--;
+            } else if (c === ';' && depth === 0) {
+                return i + 1;
+            }
+        } else if (c === '{') {
             depth++;
         } else if (c === '}') {
             depth--;
@@ -98,6 +110,16 @@ function fnItems(text: string): FnItem[] {
         let j = i + 1;
         while (j < lines.length && /^\s*(\/\/|#\[|$)/.test(lines[j])) {
             j++;
+        }
+        if (j < lines.length && STATIC_HEAD.test(lines[j])) {
+            // `static NAME: T = init;`: ported once the initializer is no longer `todo!()`.
+            const eq = text.indexOf('=', lineStarts[j]);
+            const close = eq < 0 ? -1 : closeBrace(text, eq + 1, true);
+            if (close >= 0) {
+                const init = text.slice(eq + 1, close - 1).trim();
+                out.push({ marker: `${m[1]}:${m[2]}`, start: i, end: lineAt(close - 1), ported: init !== 'todo!()' });
+            }
+            continue;
         }
         if (j >= lines.length || !FN_HEAD.test(lines[j])) {
             continue;
@@ -190,5 +212,10 @@ export function mergePorted(stub: string, crate: string, modPath: string): Merge
         }
         lines.splice(Math.max(at, 0), 0, ...add);
     }
-    return { text: lines.join('\n'), kept, keptRanges, lost };
+    // A ported file that dropped the stub's blanket `#![allow(..)]` keeps it dropped, so clippy sees the port.
+    let text = lines.join('\n');
+    if (!crate.includes('#![allow(')) {
+        text = text.replace(/^#!\[allow\([^\]]*\)\]\n/m, '');
+    }
+    return { text, kept, keptRanges, lost };
 }

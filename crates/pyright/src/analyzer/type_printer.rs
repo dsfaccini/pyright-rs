@@ -45,7 +45,17 @@ pub fn print_type(
     print_type_flags: PrintTypeFlags,
     return_type_callback: &FunctionReturnTypeCallback,
 ) -> String {
-    todo!()
+    let mut unique_name_map = UniqueNameMap::new(print_type_flags, return_type_callback.clone());
+    unique_name_map.build(type_, &mut Vec::new(), 0);
+
+    print_type_internal(
+        type_,
+        print_type_flags,
+        return_type_callback,
+        &mut unique_name_map,
+        &mut Vec::new(),
+        0,
+    )
 }
 
 // analyzer/typePrinter.ts:117
@@ -54,7 +64,17 @@ pub fn print_function_parts(
     print_type_flags: PrintTypeFlags,
     return_type_callback: &FunctionReturnTypeCallback,
 ) -> (Vec<String>, String) {
-    todo!()
+    let mut unique_name_map = UniqueNameMap::new(print_type_flags, return_type_callback.clone());
+    unique_name_map.build(type_.0, &mut Vec::new(), 0);
+
+    print_function_parts_internal(
+        type_,
+        print_type_flags,
+        return_type_callback,
+        &mut unique_name_map,
+        &mut Vec::new(),
+        0,
+    )
 }
 
 // analyzer/typePrinter.ts:128
@@ -63,7 +83,17 @@ pub fn print_object_type_for_class(
     print_type_flags: PrintTypeFlags,
     return_type_callback: &FunctionReturnTypeCallback,
 ) -> String {
-    todo!()
+    let mut unique_name_map = UniqueNameMap::new(print_type_flags, return_type_callback.clone());
+    unique_name_map.build(type_.0, &mut Vec::new(), 0);
+
+    print_object_type_for_class_internal(
+        type_,
+        print_type_flags,
+        return_type_callback,
+        &mut unique_name_map,
+        &mut Vec::new(),
+        0,
+    )
 }
 
 // analyzer/typePrinter.ts:139
@@ -71,18 +101,81 @@ pub(crate) const MAX_LITERAL_STRING_LENGTH: i32 = 50;
 
 // analyzer/typePrinter.ts:141
 pub fn is_literal_value_truncated(type_: ClassType) -> bool {
-    todo!()
+    use jsrt::JsStr;
+
+    if let Some(analyzer::types::LiteralValue::String(literal_value)) =
+        &type_.d().priv_.borrow().literal_value
+    {
+        if literal_value.js_len() > MAX_LITERAL_STRING_LENGTH {
+            return true;
+        }
+    }
+
+    false
 }
 
 // analyzer/typePrinter.ts:151
 pub fn print_literal_value_truncated(type_: ClassType) -> String {
-    todo!()
+    if type_.d().shared.get().name == "bytes" {
+        return "bytes".to_string();
+    }
+
+    assert!(type_.d().shared.get().name == "str");
+    "LiteralString".to_string()
 }
 
 // analyzer/typePrinter.ts:160
 /// TS defaults: quotation = "'".
 pub fn print_literal_value(type_: ClassType, quotation: &str) -> String {
-    todo!()
+    use analyzer::types::LiteralValue;
+    use jsrt::JsStr;
+
+    let literal_value = type_.d().priv_.borrow().literal_value.clone();
+    let Some(literal_value) = literal_value else {
+        return String::new();
+    };
+
+    let literal_str = match &literal_value {
+        LiteralValue::String(literal_value) => {
+            let mut effective_literal_value = literal_value.clone();
+
+            // Limit the length of the string literal.
+            if literal_value.js_len() > MAX_LITERAL_STRING_LENGTH {
+                effective_literal_value = format!(
+                    "{}…",
+                    literal_value.js_substring(0, MAX_LITERAL_STRING_LENGTH)
+                );
+            }
+
+            if type_.d().shared.get().name == "bytes" {
+                analyzer::type_printer_utils::print_bytes_literal(&effective_literal_value)
+            } else {
+                analyzer::type_printer_utils::print_string_literal(
+                    &effective_literal_value,
+                    quotation,
+                )
+            }
+        }
+        LiteralValue::Boolean(literal_value) => {
+            if *literal_value {
+                "True".to_string()
+            } else {
+                "False".to_string()
+            }
+        }
+        LiteralValue::EnumLiteral(literal_value) => {
+            format!("{}.{}", literal_value.class_name, literal_value.item_name)
+        }
+        LiteralValue::Bigint(literal_value) => {
+            // `toString` of a bigint has no `n` suffix to strip.
+            literal_value.to_js_string()
+        }
+        LiteralValue::Number(literal_value) => jsrt::number::number_to_string(*literal_value),
+        // `toString` of a class instance without its own `toString`.
+        LiteralValue::SentinelLiteral(_) => "[object Object]".to_string(),
+    };
+
+    literal_str
 }
 
 // analyzer/typePrinter.ts:196
@@ -90,11 +183,589 @@ pub(crate) fn print_type_internal(
     type_: P<Type>,
     print_type_flags: PrintTypeFlags,
     return_type_callback: &FunctionReturnTypeCallback,
-    unique_name_map: &UniqueNameMap,
+    unique_name_map: &mut UniqueNameMap,
     recursion_types: &mut Vec<P<Type>>,
     recursion_count: u32,
 ) -> String {
-    todo!()
+    use analyzer::types::{
+        AnyType, ClassType, FunctionType, MAX_TYPE_RECURSION_COUNT, ModuleType, NeverType,
+        OverloadedType, TypeBase, TypeCategory, TypeVarType,
+    };
+
+    if recursion_count > MAX_TYPE_RECURSION_COUNT {
+        if print_type_flags.any(PrintTypeFlags::PythonSyntax) {
+            return "Any".to_string();
+        }
+        return "<Recursive>".to_string();
+    }
+    let recursion_count = recursion_count + 1;
+
+    let original_print_type_flags = print_type_flags;
+    let parenthesize_union = print_type_flags.any(PrintTypeFlags::ParenthesizeUnion);
+    let print_type_flags = print_type_flags
+        & !(PrintTypeFlags::ParenthesizeUnion | PrintTypeFlags::ParenthesizeCallable);
+
+    // If this is a type alias, see if we should use its name rather than
+    // the type it represents.
+    let alias_info = type_
+        .props
+        .borrow()
+        .as_ref()
+        .and_then(|props| props.type_alias_info.clone());
+    if let Some(alias_info) = &alias_info {
+        let mut expand_type_alias = true;
+        if !print_type_flags.any(PrintTypeFlags::ExpandTypeAlias) {
+            expand_type_alias = false;
+        } else if recursion_types.iter().any(|&t| t == type_) {
+            expand_type_alias = false;
+        }
+
+        if !expand_type_alias {
+            recursion_types.push(type_);
+            let alias_text = (|| -> Option<String> {
+                let mut alias_name = if print_type_flags.any(PrintTypeFlags::UseFullyQualifiedNames)
+                {
+                    alias_info.shared.full_name.clone()
+                } else {
+                    alias_info.shared.name.clone()
+                };
+
+                // Use the fully-qualified name if the name isn't unique.
+                if !unique_name_map.is_unique(&alias_name) {
+                    alias_name = alias_info.shared.full_name.clone();
+                }
+
+                let type_params = alias_info.shared.type_params.borrow().clone();
+
+                if let Some(type_params) = type_params.filter(|type_params| !type_params.is_empty())
+                {
+                    let mut argument_strings: Option<Vec<String>> = None;
+
+                    // If there is a type arguments array, it's a specialized type alias.
+                    if let Some(type_args) = &alias_info.type_args {
+                        if !print_type_flags.any(PrintTypeFlags::OmitTypeArgsIfUnknown)
+                            || type_args
+                                .iter()
+                                .any(|&type_arg| !analyzer::types::is_unknown(type_arg))
+                        {
+                            let mut strings: Vec<String> = Vec::new();
+                            for (index, &type_arg) in type_args.iter().enumerate() {
+                                // Which type parameter does this map to?
+                                let type_param = if index < type_params.len() {
+                                    type_params[index]
+                                } else {
+                                    type_params[type_params.len() - 1]
+                                };
+
+                                // If this type argument maps to a TypeVarTuple, unpack it.
+                                let tuple_type_args =
+                                    if analyzer::types::is_type_var_tuple(type_param.0)
+                                        && analyzer::types::is_class_instance(type_arg)
+                                        && analyzer::type_utils::is_tuple_class(ClassType(type_arg))
+                                    {
+                                        ClassType(type_arg)
+                                            .d()
+                                            .priv_
+                                            .borrow()
+                                            .tuple_type_args
+                                            .clone()
+                                    } else {
+                                        None
+                                    };
+                                match tuple_type_args {
+                                    Some(tuple_type_args)
+                                        if tuple_type_args
+                                            .iter()
+                                            .all(|type_arg| !type_arg.is_unbounded) =>
+                                    {
+                                        for tuple_type_arg in &tuple_type_args {
+                                            strings.push(print_type_internal(
+                                                tuple_type_arg.type_,
+                                                print_type_flags,
+                                                return_type_callback,
+                                                unique_name_map,
+                                                recursion_types,
+                                                recursion_count,
+                                            ));
+                                        }
+                                    }
+                                    _ => {
+                                        strings.push(print_type_internal(
+                                            type_arg,
+                                            print_type_flags,
+                                            return_type_callback,
+                                            unique_name_map,
+                                            recursion_types,
+                                            recursion_count,
+                                        ));
+                                    }
+                                }
+                            }
+                            argument_strings = Some(strings);
+                        }
+                    } else if !print_type_flags.any(PrintTypeFlags::OmitTypeArgsIfUnknown)
+                        || type_params
+                            .iter()
+                            .any(|type_param| !analyzer::types::is_unknown(type_param.0))
+                    {
+                        let mut strings: Vec<String> = Vec::new();
+                        for type_param in &type_params {
+                            strings.push(print_type_internal(
+                                type_param.0,
+                                print_type_flags,
+                                return_type_callback,
+                                unique_name_map,
+                                recursion_types,
+                                recursion_count,
+                            ));
+                        }
+                        argument_strings = Some(strings);
+                    }
+
+                    if let Some(argument_strings) = argument_strings {
+                        if argument_strings.is_empty() {
+                            alias_name += "[()]";
+                        } else {
+                            alias_name += &format!("[{}]", argument_strings.join(", "));
+                        }
+                    }
+                }
+
+                // If it's a TypeVar, don't use the alias name. Instead, use the full
+                // name, which may have a scope associated with it.
+                if type_.category != TypeCategory::TypeVar {
+                    return Some(alias_name);
+                }
+
+                None
+            })();
+            recursion_types.pop();
+
+            if let Some(alias_text) = alias_text {
+                return alias_text;
+            }
+        }
+    }
+
+    let alias_full_name = alias_info
+        .as_ref()
+        .map(|alias_info| alias_info.shared.full_name.clone());
+    if recursion_types.iter().any(|&t| {
+        t == type_ || {
+            let t_full_name = t.props.borrow().as_ref().and_then(|props| {
+                props
+                    .type_alias_info
+                    .as_ref()
+                    .map(|info| info.shared.full_name.clone())
+            });
+            t_full_name.is_some() && t_full_name == alias_full_name
+        }
+    }) || recursion_types.len() as u32 > MAX_TYPE_RECURSION_COUNT
+    {
+        // If this is a recursive TypeVar, we've already expanded it once, so
+        // just print its name at this point.
+        if analyzer::types::is_type_var(type_) {
+            let shared = TypeVarType(type_).d().shared.get();
+            if shared.is_synthesized.get() {
+                if let Some(recursive_alias) = shared.recursive_alias.get() {
+                    return recursive_alias.name.clone();
+                }
+            }
+        }
+
+        if let Some(alias_info) = &alias_info {
+            if alias_info.shared.type_params.borrow().is_none() {
+                let mut name = if print_type_flags.any(PrintTypeFlags::UseFullyQualifiedNames) {
+                    alias_info.shared.full_name.clone()
+                } else {
+                    alias_info.shared.name.clone()
+                };
+                if !unique_name_map.is_unique(&name) {
+                    name = alias_info.shared.full_name.clone();
+                }
+                return name;
+            }
+
+            recursion_types.push(type_);
+            let text = print_type_internal(
+                type_,
+                print_type_flags & !PrintTypeFlags::ExpandTypeAlias,
+                return_type_callback,
+                unique_name_map,
+                recursion_types,
+                recursion_count,
+            );
+            recursion_types.pop();
+            return text;
+        }
+
+        return "...".to_string();
+    }
+
+    recursion_types.push(type_);
+    let text = (|| -> String {
+        let include_conditional_indicator = !print_type_flags
+            .any(PrintTypeFlags::OmitConditionalConstraint | PrintTypeFlags::PythonSyntax);
+        let get_conditional_indicator = |subtype: P<Type>| -> &'static str {
+            let has_condition = subtype
+                .props
+                .borrow()
+                .as_ref()
+                .is_some_and(|props| props.condition.is_some());
+            if has_condition && include_conditional_indicator {
+                "*"
+            } else {
+                ""
+            }
+        };
+        let print_wrapped_type = |type_: P<Type>, type_to_wrap: &str| -> String {
+            format!(
+                "{}{}",
+                _print_nested_instantiable(type_, type_to_wrap),
+                get_conditional_indicator(type_)
+            )
+        };
+
+        match type_.category {
+            TypeCategory::Unbound => {
+                if print_type_flags.any(PrintTypeFlags::PythonSyntax) {
+                    return "Any".to_string();
+                }
+                "Unbound".to_string()
+            }
+
+            TypeCategory::Unknown => {
+                if print_type_flags
+                    .any(PrintTypeFlags::PythonSyntax | PrintTypeFlags::PrintUnknownWithAny)
+                {
+                    return "Any".to_string();
+                }
+                "Unknown".to_string()
+            }
+
+            TypeCategory::Module => {
+                if print_type_flags.any(PrintTypeFlags::PythonSyntax) {
+                    return "Any".to_string();
+                }
+                format!(
+                    "Module(\"{}\")",
+                    ModuleType(type_).d().priv_.borrow().module_name
+                )
+            }
+
+            TypeCategory::Class => {
+                let class_type = ClassType(type_);
+                let literal_value = class_type.d().priv_.borrow().literal_value.clone();
+                if TypeBase::is_instance(type_) {
+                    if let Some(literal_value) = &literal_value {
+                        if is_literal_value_truncated(class_type)
+                            && print_type_flags.any(PrintTypeFlags::PythonSyntax)
+                        {
+                            return print_literal_value_truncated(class_type);
+                        } else if let analyzer::types::LiteralValue::SentinelLiteral(sentinel) =
+                            literal_value
+                        {
+                            return sentinel.class_name.clone();
+                        } else {
+                            return format!("Literal[{}]", print_literal_value(class_type, "'"));
+                        }
+                    }
+
+                    format!(
+                        "{}{}",
+                        print_object_type_for_class_internal(
+                            class_type,
+                            print_type_flags,
+                            return_type_callback,
+                            unique_name_map,
+                            recursion_types,
+                            recursion_count,
+                        ),
+                        get_conditional_indicator(type_)
+                    )
+                } else {
+                    let type_to_wrap: String;
+
+                    if let Some(literal_value) = &literal_value {
+                        if is_literal_value_truncated(class_type)
+                            && print_type_flags.any(PrintTypeFlags::PythonSyntax)
+                        {
+                            type_to_wrap = print_literal_value_truncated(class_type);
+                        } else if let analyzer::types::LiteralValue::SentinelLiteral(sentinel) =
+                            literal_value
+                        {
+                            return sentinel.class_name.clone();
+                        } else {
+                            type_to_wrap =
+                                format!("Literal[{}]", print_literal_value(class_type, "'"));
+                        }
+
+                        return print_wrapped_type(type_, &type_to_wrap);
+                    }
+
+                    let special_form = type_
+                        .props
+                        .borrow()
+                        .as_ref()
+                        .and_then(|props| props.special_form);
+                    if let Some(special_form) = special_form {
+                        let special_form_text = print_type_internal(
+                            special_form.0,
+                            print_type_flags,
+                            return_type_callback,
+                            unique_name_map,
+                            recursion_types,
+                            recursion_count,
+                        );
+
+                        return special_form_text;
+                    }
+
+                    type_to_wrap = print_object_type_for_class_internal(
+                        class_type,
+                        print_type_flags,
+                        return_type_callback,
+                        unique_name_map,
+                        recursion_types,
+                        recursion_count,
+                    );
+
+                    print_wrapped_type(type_, &type_to_wrap)
+                }
+            }
+
+            TypeCategory::Function => {
+                if TypeBase::is_instantiable(type_) {
+                    let type_string = print_function_type(
+                        FunctionType::clone_as_instance(FunctionType(type_)),
+                        print_type_flags,
+                        return_type_callback,
+                        unique_name_map,
+                        recursion_types,
+                        recursion_count,
+                    );
+                    return format!("type[{type_string}]");
+                }
+
+                print_function_type(
+                    FunctionType(type_),
+                    original_print_type_flags,
+                    return_type_callback,
+                    unique_name_map,
+                    recursion_types,
+                    recursion_count,
+                )
+            }
+
+            TypeCategory::Overloaded => {
+                let mut overloads: Vec<String> = Vec::new();
+                for overload in OverloadedType::get_overloads(OverloadedType(type_)) {
+                    overloads.push(print_type_internal(
+                        overload.0,
+                        print_type_flags,
+                        return_type_callback,
+                        unique_name_map,
+                        recursion_types,
+                        recursion_count,
+                    ));
+                }
+
+                if print_type_flags.any(PrintTypeFlags::PythonSyntax) {
+                    return "Callable[..., Any]".to_string();
+                }
+
+                if overloads.len() == 1 {
+                    return overloads[0].clone();
+                }
+
+                format!("Overload[{}]", overloads.join(", "))
+            }
+
+            TypeCategory::Union => {
+                // If this is a value expression that evaluates to a union type but is
+                // not a type alias, simply print the special form ("UnionType").
+                let (special_form, has_type_alias_info) = match type_.props.borrow().as_ref() {
+                    Some(props) => (props.special_form, props.type_alias_info.is_some()),
+                    None => (None, false),
+                };
+                if TypeBase::is_instantiable(type_) {
+                    if let Some(special_form) = special_form.filter(|_| !has_type_alias_info) {
+                        let special_form_text = print_type_internal(
+                            special_form.0,
+                            print_type_flags,
+                            return_type_callback,
+                            unique_name_map,
+                            recursion_types,
+                            recursion_count,
+                        );
+
+                        return special_form_text;
+                    }
+                }
+
+                // If we're using "|" notation, enclose callable subtypes in parens.
+                let updated_print_type_flags = if print_type_flags.any(PrintTypeFlags::PEP604) {
+                    print_type_flags | PrintTypeFlags::ParenthesizeCallable
+                } else {
+                    print_type_flags
+                };
+
+                print_union_type(
+                    UnionType(type_),
+                    updated_print_type_flags,
+                    parenthesize_union,
+                    return_type_callback,
+                    unique_name_map,
+                    recursion_types,
+                    recursion_count,
+                )
+            }
+
+            TypeCategory::TypeVar => {
+                let type_var = TypeVarType(type_);
+                let shared = type_var.d().shared.get();
+
+                // If it's synthesized, don't expose the internal name we generated.
+                // This will confuse users. The exception is if it's a bound synthesized
+                // type, in which case we'll print the bound type. This is used for
+                // "self" and "cls" parameters.
+                if shared.is_synthesized.get() {
+                    // If it's a synthesized type var used to implement recursive type
+                    // aliases, return the type alias name.
+                    if let Some(recursive_alias) = shared.recursive_alias.get() {
+                        if print_type_flags.any(PrintTypeFlags::ExpandTypeAlias) {
+                            if let Some(bound_type) = shared.bound_type.get() {
+                                return print_type_internal(
+                                    if TypeBase::is_instance(type_) {
+                                        analyzer::type_utils::convert_to_instance(bound_type, true)
+                                    } else {
+                                        bound_type
+                                    },
+                                    print_type_flags,
+                                    return_type_callback,
+                                    unique_name_map,
+                                    recursion_types,
+                                    recursion_count,
+                                );
+                            }
+                        }
+                        return recursive_alias.name.clone();
+                    }
+
+                    // If it's a synthesized type var used to implement `self` or `cls` types,
+                    // print the type with a special character that indicates that the type
+                    // is internally represented as a TypeVar.
+                    if TypeVarType::is_self(type_var) {
+                        if let Some(bound_type) = shared.bound_type.get() {
+                            let mut bound_type_string = print_type_internal(
+                                bound_type,
+                                print_type_flags & !PrintTypeFlags::ExpandTypeAlias,
+                                return_type_callback,
+                                unique_name_map,
+                                recursion_types,
+                                recursion_count,
+                            );
+
+                            if !analyzer::types::is_any_or_unknown(bound_type) {
+                                if !print_type_flags.any(PrintTypeFlags::PythonSyntax)
+                                    && !print_type_flags.any(PrintTypeFlags::OmitTypeVarScope)
+                                {
+                                    bound_type_string = format!("Self@{bound_type_string}");
+                                } else {
+                                    bound_type_string = "Self".to_string();
+                                }
+                            }
+
+                            if TypeBase::is_instantiable(type_) {
+                                return _print_nested_instantiable(type_, &bound_type_string);
+                            }
+
+                            return bound_type_string;
+                        }
+                    }
+
+                    return if print_type_flags
+                        .any(PrintTypeFlags::PrintUnknownWithAny | PrintTypeFlags::PythonSyntax)
+                    {
+                        "Any".to_string()
+                    } else {
+                        "Unknown".to_string()
+                    };
+                }
+
+                if analyzer::types::is_param_spec(type_) {
+                    let param_spec_text = get_readable_type_var_name(
+                        type_var,
+                        !print_type_flags.any(PrintTypeFlags::PythonSyntax)
+                            && !print_type_flags.any(PrintTypeFlags::OmitTypeVarScope),
+                    );
+
+                    let param_spec_access = type_var.d().priv_.borrow().param_spec_access;
+                    if let Some(param_spec_access) = param_spec_access {
+                        return format!("{}.{}", param_spec_text, param_spec_access.as_str());
+                    }
+                    return param_spec_text;
+                }
+
+                let mut type_var_name = get_readable_type_var_name(
+                    type_var,
+                    !print_type_flags.any(PrintTypeFlags::PythonSyntax)
+                        && !print_type_flags.any(PrintTypeFlags::OmitTypeVarScope),
+                );
+
+                let (is_unpacked, is_in_union) = {
+                    let priv_ = type_var.d().priv_.borrow();
+                    (
+                        priv_.is_unpacked.unwrap_or(false),
+                        priv_.is_in_union.unwrap_or(false),
+                    )
+                };
+
+                if is_unpacked {
+                    type_var_name = print_unpack(&type_var_name, print_type_flags);
+                }
+
+                if analyzer::types::is_type_var_tuple(type_) && is_in_union {
+                    type_var_name = format!("Union[{type_var_name}]");
+                }
+
+                if TypeBase::is_instantiable(type_) {
+                    type_var_name = _print_nested_instantiable(type_, &type_var_name);
+                }
+
+                if !analyzer::types::is_type_var_tuple(type_)
+                    && print_type_flags.any(PrintTypeFlags::PrintTypeVarVariance)
+                {
+                    let variance_text = get_type_var_variance_text(type_var);
+                    if !variance_text.is_empty() {
+                        type_var_name = format!("{type_var_name} ({variance_text})");
+                    }
+                }
+
+                type_var_name
+            }
+
+            TypeCategory::Never => {
+                if NeverType(type_).d().priv_.is_no_return {
+                    "NoReturn".to_string()
+                } else {
+                    "Never".to_string()
+                }
+            }
+
+            TypeCategory::Any => {
+                let any_type = AnyType(type_);
+                if any_type.d().priv_.is_ellipsis {
+                    "...".to_string()
+                } else {
+                    "Any".to_string()
+                }
+            }
+        }
+    })();
+    recursion_types.pop();
+
+    text
 }
 
 // analyzer/typePrinter.ts:670
@@ -103,11 +774,194 @@ pub(crate) fn print_union_type(
     print_type_flags: PrintTypeFlags,
     parenthesize_union: bool,
     return_type_callback: &FunctionReturnTypeCallback,
-    unique_name_map: &UniqueNameMap,
+    unique_name_map: &mut UniqueNameMap,
     recursion_types: &mut Vec<P<Type>>,
     recursion_count: u32,
 ) -> String {
-    todo!()
+    use analyzer::types::{
+        TypeSameOptions, is_class_instance, is_instantiable_class, is_type_same,
+    };
+    use jsrt::JsSet;
+
+    // Allocate a set that refers to subtypes in the union by
+    // their indices. If the index is within the set, it is already
+    // accounted for in the output.
+    let mut subtype_handled_set: JsSet<usize> = JsSet::default();
+
+    // Allocate another set that represents the textual representations
+    // of the subtypes in the union.
+    let mut subtype_strings: JsSet<String> = JsSet::default();
+
+    let (subtypes, type_alias_sources) = {
+        let priv_ = type_.d().priv_.borrow();
+        (priv_.subtypes.clone(), priv_.type_alias_sources.clone())
+    };
+
+    // Start by matching possible type aliases to the subtypes.
+    if !print_type_flags.any(PrintTypeFlags::ExpandTypeAlias) {
+        if let Some(type_alias_sources) = type_alias_sources {
+            for type_alias_source in type_alias_sources.iter() {
+                let mut matched_all_subtypes = true;
+                let mut all_subtypes_previously_handled = true;
+                let mut indices_covered_by_type_alias: JsSet<usize> = JsSet::default();
+
+                let source_subtypes = type_alias_source.d().priv_.borrow().subtypes.clone();
+                for &source_subtype in &source_subtypes {
+                    let mut found_match = false;
+                    let source_subtype_instance =
+                        analyzer::type_utils::convert_to_instance(source_subtype, true);
+
+                    for (union_subtype_index, &union_subtype) in subtypes.iter().enumerate() {
+                        if is_type_same(
+                            source_subtype_instance,
+                            union_subtype,
+                            &TypeSameOptions::default(),
+                            0,
+                        ) {
+                            if !subtype_handled_set.contains(&union_subtype_index) {
+                                all_subtypes_previously_handled = false;
+                            }
+                            indices_covered_by_type_alias.insert(union_subtype_index);
+                            found_match = true;
+                            break;
+                        }
+                    }
+
+                    if !found_match {
+                        matched_all_subtypes = false;
+                        break;
+                    }
+                }
+
+                if matched_all_subtypes && !all_subtypes_previously_handled {
+                    subtype_strings.insert(print_type_internal(
+                        type_alias_source.0,
+                        print_type_flags,
+                        return_type_callback,
+                        unique_name_map,
+                        recursion_types,
+                        recursion_count,
+                    ));
+                    for index in indices_covered_by_type_alias.iter() {
+                        subtype_handled_set.insert(*index);
+                    }
+                }
+            }
+        }
+    }
+
+    let none_index = subtypes
+        .iter()
+        .position(|&subtype| analyzer::type_utils::is_none_instance(subtype));
+    if let Some(none_index) = none_index {
+        if !subtype_handled_set.contains(&none_index) {
+            let type_without_none = analyzer::type_utils::remove_none_from_union(type_.0);
+            if analyzer::types::is_never(type_without_none) {
+                return "None".to_string();
+            }
+
+            let optional_type = print_type_internal(
+                type_without_none,
+                print_type_flags,
+                return_type_callback,
+                unique_name_map,
+                recursion_types,
+                recursion_count,
+            );
+
+            if print_type_flags.any(PrintTypeFlags::PEP604) {
+                let union_string = optional_type + " | None";
+                if parenthesize_union {
+                    return format!("({union_string})");
+                }
+                return union_string;
+            }
+
+            return "Optional[".to_string() + &optional_type + "]";
+        }
+    }
+
+    let mut literal_object_strings: JsSet<String> = JsSet::default();
+    let mut literal_class_strings: JsSet<String> = JsSet::default();
+    analyzer::type_utils::do_for_each_subtype(
+        type_.0,
+        &mut |subtype, index, _| {
+            if !subtype_handled_set.contains(&(index as usize)) {
+                let has_literal = analyzer::types::is_class(subtype)
+                    && ClassType(subtype)
+                        .d()
+                        .priv_
+                        .borrow()
+                        .literal_value
+                        .is_some();
+                if is_class_instance(subtype)
+                    && has_literal
+                    && !analyzer::type_utils::is_sentinel_literal(subtype)
+                {
+                    if is_literal_value_truncated(ClassType(subtype))
+                        && print_type_flags.any(PrintTypeFlags::PythonSyntax)
+                    {
+                        subtype_strings.insert(print_literal_value_truncated(ClassType(subtype)));
+                    } else {
+                        literal_object_strings.insert(print_literal_value(ClassType(subtype), "'"));
+                    }
+                } else if is_instantiable_class(subtype)
+                    && has_literal
+                    && !analyzer::type_utils::is_sentinel_literal(subtype)
+                {
+                    if is_literal_value_truncated(ClassType(subtype))
+                        && print_type_flags.any(PrintTypeFlags::PythonSyntax)
+                    {
+                        subtype_strings.insert(format!(
+                            "type[{}]",
+                            print_literal_value_truncated(ClassType(subtype))
+                        ));
+                    } else {
+                        literal_class_strings.insert(print_literal_value(ClassType(subtype), "'"));
+                    }
+                } else {
+                    subtype_strings.insert(print_type_internal(
+                        subtype,
+                        print_type_flags,
+                        return_type_callback,
+                        unique_name_map,
+                        recursion_types,
+                        recursion_count,
+                    ));
+                }
+            }
+        },
+        false,
+    );
+
+    let mut deduped_subtype_strings: Vec<String> = Vec::new();
+    for s in subtype_strings.iter() {
+        deduped_subtype_strings.push(s.clone());
+    }
+
+    if !literal_object_strings.is_empty() {
+        let literal_strings: Vec<String> = literal_object_strings.iter().cloned().collect();
+        deduped_subtype_strings.push(format!("Literal[{}]", literal_strings.join(", ")));
+    }
+
+    if !literal_class_strings.is_empty() {
+        let literal_strings: Vec<String> = literal_class_strings.iter().cloned().collect();
+        deduped_subtype_strings.push(format!("type[Literal[{}]]", literal_strings.join(", ")));
+    }
+
+    if deduped_subtype_strings.len() == 1 {
+        return deduped_subtype_strings[0].clone();
+    }
+
+    if print_type_flags.any(PrintTypeFlags::PEP604) {
+        let union_string = deduped_subtype_strings.join(" | ");
+        if parenthesize_union {
+            return format!("({union_string})");
+        }
+        return union_string;
+    }
+
+    format!("Union[{}]", deduped_subtype_strings.join(", "))
 }
 
 // analyzer/typePrinter.ts:827
@@ -115,11 +969,144 @@ pub(crate) fn print_function_type(
     type_: FunctionType,
     print_type_flags: PrintTypeFlags,
     return_type_callback: &FunctionReturnTypeCallback,
-    unique_name_map: &UniqueNameMap,
+    unique_name_map: &mut UniqueNameMap,
     recursion_types: &mut Vec<P<Type>>,
     recursion_count: u32,
 ) -> String {
-    todo!()
+    use analyzer::types::MAX_TYPE_RECURSION_COUNT;
+    use parser::parse_nodes::ParamCategory;
+
+    if print_type_flags.any(PrintTypeFlags::PythonSyntax) {
+        let param_spec_value_string = if FunctionType::is_param_spec_value(type_) {
+            print_param_spec_value_for_python_syntax(
+                type_,
+                print_type_flags,
+                return_type_callback,
+                unique_name_map,
+                recursion_types,
+                recursion_count,
+            )
+        } else {
+            None
+        };
+        if let Some(param_spec_value_string) = param_spec_value_string {
+            return param_spec_value_string;
+        }
+
+        let param_spec = FunctionType::get_param_spec_from_args_kwargs(type_);
+        let type_without_param_spec = if param_spec.is_some() {
+            FunctionType::clone_remove_param_spec_args_kwargs(type_, false)
+        } else {
+            type_
+        };
+
+        let params = type_without_param_spec
+            .d()
+            .shared
+            .get()
+            .parameters
+            .get()
+            .borrow()
+            .clone();
+
+        // Callable works only in cases where all parameters are positional-only.
+        let mut is_positional_params_only = false;
+        if params.is_empty() {
+            is_positional_params_only = true;
+        } else if params
+            .iter()
+            .all(|param| param.category == ParamCategory::Simple)
+        {
+            let last_param = &params[params.len() - 1];
+            if last_param.name.as_deref().is_none_or(str::is_empty) {
+                is_positional_params_only = true;
+            }
+        }
+
+        let return_type = return_type_callback.call(type_without_param_spec);
+        // `if (returnType)`: a type is always truthy.
+        let return_type_string = print_type_internal(
+            return_type,
+            print_type_flags,
+            return_type_callback,
+            unique_name_map,
+            recursion_types,
+            recursion_count,
+        );
+
+        if is_positional_params_only {
+            let mut param_types: Vec<String> = Vec::new();
+
+            for (index, param) in params.iter().enumerate() {
+                if param.name.as_deref().is_some_and(|name| !name.is_empty()) {
+                    let param_type =
+                        FunctionType::get_param_type(type_without_param_spec, index as i32);
+                    if (recursion_types.len() as u32) < MAX_TYPE_RECURSION_COUNT {
+                        param_types.push(print_type_internal(
+                            param_type,
+                            print_type_flags,
+                            return_type_callback,
+                            unique_name_map,
+                            recursion_types,
+                            recursion_count,
+                        ));
+                    } else {
+                        param_types.push("Any".to_string());
+                    }
+                }
+            }
+
+            if let Some(param_spec) = param_spec {
+                let param_spec_name = param_spec.d().shared.get().name.borrow().clone();
+                if !param_types.is_empty() {
+                    return format!(
+                        "Callable[Concatenate[{}, {}], {}]",
+                        param_types.join(", "),
+                        param_spec_name,
+                        return_type_string
+                    );
+                }
+
+                return format!("Callable[{param_spec_name}, {return_type_string}]");
+            }
+
+            format!(
+                "Callable[[{}], {}]",
+                param_types.join(", "),
+                return_type_string
+            )
+        } else {
+            // We can't represent this type using a Callable so default to
+            // a "catch all" Callable.
+            format!("Callable[..., {return_type_string}]")
+        }
+    } else {
+        let parts = print_function_parts_internal(
+            type_,
+            print_type_flags,
+            return_type_callback,
+            unique_name_map,
+            recursion_types,
+            recursion_count,
+        );
+        let param_signature = format!("({})", parts.0.join(", "));
+
+        if FunctionType::is_param_spec_value(type_) {
+            if parts.0.len() == 1 && parts.0[0] == "..." {
+                return parts.0[0].clone();
+            }
+
+            return param_signature;
+        }
+
+        let full_signature = format!("{} -> {}", param_signature, parts.1);
+        let parenthesize_callable = print_type_flags.any(PrintTypeFlags::ParenthesizeCallable);
+        if parenthesize_callable {
+            return format!("({full_signature})");
+        }
+
+        full_signature
+    }
 }
 
 // analyzer/typePrinter.ts:948
@@ -127,11 +1114,47 @@ pub(crate) fn print_param_spec_value_for_python_syntax(
     type_: FunctionType,
     print_type_flags: PrintTypeFlags,
     return_type_callback: &FunctionReturnTypeCallback,
-    unique_name_map: &UniqueNameMap,
+    unique_name_map: &mut UniqueNameMap,
     recursion_types: &mut Vec<P<Type>>,
     recursion_count: u32,
 ) -> Option<String> {
-    todo!()
+    use analyzer::types::MAX_TYPE_RECURSION_COUNT;
+    use parser::parse_nodes::ParamCategory;
+
+    if FunctionType::get_param_spec_from_args_kwargs(type_).is_some() {
+        return None;
+    }
+
+    let params = type_.d().shared.get().parameters.get().borrow().clone();
+    if !params
+        .iter()
+        .all(|param| param.category == ParamCategory::Simple)
+    {
+        return None;
+    }
+
+    let mut param_types: Vec<String> = Vec::new();
+    for (index, param) in params.iter().enumerate() {
+        if param.name.as_deref().is_none_or(str::is_empty) {
+            continue;
+        }
+
+        let param_type = FunctionType::get_param_type(type_, index as i32);
+        if (recursion_types.len() as u32) < MAX_TYPE_RECURSION_COUNT {
+            param_types.push(print_type_internal(
+                param_type,
+                print_type_flags,
+                return_type_callback,
+                unique_name_map,
+                recursion_types,
+                recursion_count,
+            ));
+        } else {
+            param_types.push("Any".to_string());
+        }
+    }
+
+    Some(format!("[{}]", param_types.join(", ")))
 }
 
 // analyzer/typePrinter.ts:989
@@ -139,11 +1162,219 @@ pub(crate) fn print_object_type_for_class_internal(
     type_: ClassType,
     print_type_flags: PrintTypeFlags,
     return_type_callback: &FunctionReturnTypeCallback,
-    unique_name_map: &UniqueNameMap,
+    unique_name_map: &mut UniqueNameMap,
     recursion_types: &mut Vec<P<Type>>,
     recursion_count: u32,
 ) -> String {
-    todo!()
+    use analyzer::types::{TupleTypeArg, is_class_instance, is_type_var_tuple, is_unknown};
+
+    let shared = type_.d().shared.get();
+    let mut obj_name = match type_
+        .d()
+        .priv_
+        .borrow()
+        .alias_name
+        .clone()
+        .filter(|name| !name.is_empty())
+    {
+        Some(alias_name) => alias_name,
+        None => {
+            if print_type_flags.any(PrintTypeFlags::UseFullyQualifiedNames) {
+                shared.full_name.clone()
+            } else {
+                shared.name.clone()
+            }
+        }
+    };
+
+    // Special-case NoneType to convert it to None.
+    if ClassType::is_built_in(type_, Some(&["NoneType".to_string()])) {
+        obj_name = "None".to_string();
+    }
+
+    // Use the fully-qualified name if the name isn't unique.
+    if !unique_name_map.is_unique(&obj_name) {
+        obj_name = shared.full_name.clone();
+    }
+
+    let is_unpacked = type_.d().priv_.borrow().is_unpacked.unwrap_or(false);
+
+    // If this is a pseudo-generic class, don't display the type arguments
+    // or type parameters because it will confuse users.
+    if !ClassType::is_pseudo_generic_class(type_) {
+        let type_params = ClassType::get_type_params(type_);
+        let last_type_param = type_params.last().copied();
+        let is_variadic =
+            last_type_param.is_some_and(|last_type_param| is_type_var_tuple(last_type_param.0));
+
+        // If there is a type arguments array, it's a specialized class.
+        let type_args: Option<Vec<TupleTypeArg>> = {
+            let priv_ = type_.d().priv_.borrow();
+            priv_.tuple_type_args.clone().or_else(|| {
+                priv_.type_args.as_ref().map(|type_args| {
+                    type_args
+                        .iter()
+                        .map(|&t| TupleTypeArg {
+                            type_: t,
+                            is_unbounded: false,
+                            is_optional: None,
+                        })
+                        .collect()
+                })
+            })
+        };
+        if let Some(type_args) = type_args {
+            // Handle Tuple[()] as a special case.
+            if !type_args.is_empty() {
+                let mut type_arg_strings: Vec<String> = Vec::new();
+                let mut is_all_unknown = true;
+
+                for (index, type_arg) in type_args.iter().enumerate() {
+                    let type_param = type_params.get(index).copied();
+                    let expanded_tuple_type_args = if type_param
+                        .is_some_and(|type_param| is_type_var_tuple(type_param.0))
+                        && is_class_instance(type_arg.type_)
+                        && ClassType::is_built_in(
+                            ClassType(type_arg.type_),
+                            Some(&["tuple".to_string()]),
+                        ) {
+                        ClassType(type_arg.type_)
+                            .d()
+                            .priv_
+                            .borrow()
+                            .tuple_type_args
+                            .clone()
+                    } else {
+                        None
+                    };
+                    if let Some(expanded_tuple_type_args) = expanded_tuple_type_args {
+                        // Expand the tuple type that maps to the TypeVarTuple.
+                        if expanded_tuple_type_args.is_empty() {
+                            if !is_unknown(type_arg.type_) {
+                                is_all_unknown = false;
+                            }
+
+                            if index == 0 {
+                                type_arg_strings.push(print_unpack("tuple[()]", print_type_flags));
+                            }
+                        } else {
+                            for type_arg in &expanded_tuple_type_args {
+                                if !is_unknown(type_arg.type_) {
+                                    is_all_unknown = false;
+                                }
+
+                                let type_arg_text = print_type_internal(
+                                    type_arg.type_,
+                                    print_type_flags,
+                                    return_type_callback,
+                                    unique_name_map,
+                                    recursion_types,
+                                    recursion_count,
+                                );
+
+                                if type_arg.is_unbounded {
+                                    type_arg_strings.push(print_unpack(
+                                        &format!("tuple[{type_arg_text}, ...]"),
+                                        print_type_flags,
+                                    ));
+                                } else {
+                                    type_arg_strings.push(type_arg_text);
+                                }
+                            }
+                        }
+                    } else {
+                        if !is_unknown(type_arg.type_) {
+                            is_all_unknown = false;
+                        }
+
+                        let type_arg_type_text = print_type_internal(
+                            type_arg.type_,
+                            print_type_flags,
+                            return_type_callback,
+                            unique_name_map,
+                            recursion_types,
+                            recursion_count,
+                        );
+
+                        if type_arg.is_unbounded {
+                            if type_args.len() == 1 {
+                                type_arg_strings.push(type_arg_type_text);
+                                type_arg_strings.push("...".to_string());
+                            } else {
+                                type_arg_strings.push(print_unpack(
+                                    &format!("tuple[{type_arg_type_text}, ...]"),
+                                    print_type_flags,
+                                ));
+                            }
+                        } else {
+                            type_arg_strings.push(type_arg_type_text);
+                        }
+                    }
+                }
+
+                if is_unpacked {
+                    obj_name = print_unpack(&obj_name, print_type_flags);
+                }
+
+                if !print_type_flags.any(PrintTypeFlags::OmitTypeArgsIfUnknown) || !is_all_unknown {
+                    // In PythonSyntax mode, omit type args for classes that are
+                    // generic only in stubs but not subscriptable at runtime
+                    // (e.g. operator.attrgetter, operator.itemgetter).
+                    if !(print_type_flags.any(PrintTypeFlags::PythonSyntax)
+                        && analyzer::type_utils::is_stub_only_subscriptable(type_))
+                    {
+                        obj_name += &("[".to_string() + &type_arg_strings.join(", ") + "]");
+                    }
+                }
+            } else {
+                if is_unpacked {
+                    obj_name = print_unpack(&obj_name, print_type_flags);
+                }
+
+                if ClassType::is_tuple_class(type_) || is_variadic {
+                    obj_name += "[()]";
+                }
+            }
+        } else {
+            if is_unpacked {
+                obj_name = print_unpack(&obj_name, print_type_flags);
+            }
+
+            if !type_params.is_empty()
+                && (!print_type_flags.any(PrintTypeFlags::OmitTypeArgsIfUnknown)
+                    || type_params
+                        .iter()
+                        .any(|type_param| !is_unknown(type_param.0)))
+            {
+                let mut type_param_strings: Vec<String> = Vec::new();
+                for type_param in &type_params {
+                    type_param_strings.push(print_type_internal(
+                        type_param.0,
+                        print_type_flags,
+                        return_type_callback,
+                        unique_name_map,
+                        recursion_types,
+                        recursion_count,
+                    ));
+                }
+                obj_name += &("[".to_string() + &type_param_strings.join(", ") + "]");
+            }
+        }
+    }
+
+    // Wrap in a "Partial" for TypedDict that has been synthesized as partial.
+    if type_
+        .d()
+        .priv_
+        .borrow()
+        .is_typed_dict_partial
+        .unwrap_or(false)
+        && !print_type_flags.any(PrintTypeFlags::PythonSyntax)
+    {
+        obj_name = format!("Partial[{obj_name}]");
+    }
+
+    obj_name
 }
 
 // analyzer/typePrinter.ts:1162
@@ -151,31 +1382,330 @@ pub(crate) fn print_function_parts_internal(
     type_: FunctionType,
     print_type_flags: PrintTypeFlags,
     return_type_callback: &FunctionReturnTypeCallback,
-    unique_name_map: &UniqueNameMap,
+    unique_name_map: &mut UniqueNameMap,
     recursion_types: &mut Vec<P<Type>>,
     recursion_count: u32,
 ) -> (Vec<String>, String) {
-    todo!()
+    use analyzer::types::{
+        FunctionParam, MAX_TYPE_RECURSION_COUNT, TypeCategory, is_class_instance, is_unpacked,
+    };
+    use jsrt::JsStr;
+    use parser::parse_nodes::ParamCategory;
+
+    let mut param_type_strings: Vec<String> = Vec::new();
+    let mut saw_defined_name = false;
+
+    // Remove the (*args: P.args, **kwargs: P.kwargs) from the end of the parameter list.
+    let param_spec = FunctionType::get_param_spec_from_args_kwargs(type_);
+    let type_ = if param_spec.is_some() {
+        FunctionType::clone_remove_param_spec_args_kwargs(type_, false)
+    } else {
+        type_
+    };
+
+    let params = type_.d().shared.get().parameters.get().borrow().clone();
+    for (index, param) in params.iter().enumerate() {
+        let has_name = param.name.as_deref().is_some_and(|name| !name.is_empty());
+        let index = index as i32;
+        let param_type = FunctionType::get_param_type(type_, index);
+        let default_type = FunctionType::get_param_default_type(type_, index);
+
+        // Handle specialized TypeVarTuples specially.
+        if index == params.len() as i32 - 1
+            && param.category == ParamCategory::ArgsList
+            && analyzer::types::is_type_var_tuple(param_type)
+        {
+            let specialized_param_type = FunctionType::get_param_type(type_, index);
+            let tuple_type_args = if is_class_instance(specialized_param_type)
+                && ClassType::is_built_in(
+                    ClassType(specialized_param_type),
+                    Some(&["tuple".to_string()]),
+                ) {
+                ClassType(specialized_param_type)
+                    .d()
+                    .priv_
+                    .borrow()
+                    .tuple_type_args
+                    .clone()
+            } else {
+                None
+            };
+            if let Some(tuple_type_args) = tuple_type_args {
+                for param_type in &tuple_type_args {
+                    let param_string = print_type_internal(
+                        param_type.type_,
+                        print_type_flags,
+                        return_type_callback,
+                        unique_name_map,
+                        recursion_types,
+                        recursion_count,
+                    );
+                    param_type_strings.push(param_string);
+                }
+                continue;
+            }
+        }
+
+        // Handle expanding TypedDict kwargs specially.
+        if analyzer::parameter_utils::is_typed_kwargs(param, param_type)
+            && print_type_flags.any(PrintTypeFlags::ExpandTypedDictArgs)
+            && param_type.category == TypeCategory::Class
+        {
+            let typed_dict_entries = ClassType(param_type)
+                .d()
+                .shared
+                .get()
+                .typed_dict_entries
+                .get()
+                .unwrap();
+            let known_items = typed_dict_entries.known_items.borrow().clone();
+            for (k, v) in known_items.iter() {
+                let value_type_string = print_type_internal(
+                    v.value_type,
+                    print_type_flags,
+                    return_type_callback,
+                    unique_name_map,
+                    recursion_types,
+                    recursion_count,
+                );
+                param_type_strings.push(format!("{k}: {value_type_string}"));
+            }
+
+            let extra_items_type = typed_dict_entries
+                .extra_items
+                .borrow()
+                .as_ref()
+                .map(|entry| entry.value_type);
+            if let Some(extra_items_type) = extra_items_type {
+                if !analyzer::types::is_never(extra_items_type) {
+                    let value_type_string = print_type_internal(
+                        extra_items_type,
+                        print_type_flags,
+                        return_type_callback,
+                        unique_name_map,
+                        recursion_types,
+                        recursion_count,
+                    );
+                    param_type_strings.push(format!("**kwargs: {value_type_string}"));
+                }
+            }
+
+            continue;
+        }
+
+        let mut param_string = String::new();
+        if param.category == ParamCategory::ArgsList {
+            if !has_name || !FunctionParam::is_name_synthesized(param) {
+                param_string += "*";
+            }
+        } else if param.category == ParamCategory::KwargsDict {
+            param_string += "**";
+        }
+
+        let mut emitted_param_name = false;
+        if has_name && !FunctionParam::is_name_synthesized(param) {
+            param_string += param.name.as_deref().unwrap_or("");
+            saw_defined_name = true;
+            emitted_param_name = true;
+        } else if print_type_flags.any(PrintTypeFlags::PythonSyntax) {
+            param_string += &format!("__p{index}");
+            saw_defined_name = true;
+            emitted_param_name = true;
+        }
+
+        let mut default_value_assignment = "=";
+        let mut is_param_spec_args_kwargs_param = false;
+
+        if has_name {
+            // Avoid printing type types if parameter have unknown type.
+            if FunctionParam::is_type_declared(param) || FunctionParam::is_type_inferred(param) {
+                let param_type = FunctionType::get_param_type(type_, index);
+                let mut param_type_string =
+                    if (recursion_types.len() as u32) < MAX_TYPE_RECURSION_COUNT {
+                        print_type_internal(
+                            param_type,
+                            print_type_flags,
+                            return_type_callback,
+                            unique_name_map,
+                            recursion_types,
+                            recursion_count,
+                        )
+                    } else {
+                        String::new()
+                    };
+
+                if emitted_param_name {
+                    param_string += ": ";
+                } else if param.category == ParamCategory::ArgsList && !is_unpacked(param_type) {
+                    param_string += "*";
+                }
+
+                if param.category == ParamCategory::KwargsDict && is_unpacked(param_type) {
+                    if print_type_flags.any(PrintTypeFlags::PythonSyntax) {
+                        // Use "Unpack" because ** isn't legal syntax prior to Python 3.12.
+                        param_type_string =
+                            format!("Unpack[{}]", param_type_string.js_substring(1, None));
+                    } else {
+                        // If this is an unpacked TypeDict for a **kwargs parameter, add another star.
+                        param_type_string = "*".to_string() + &param_type_string;
+                    }
+                }
+
+                param_string += &param_type_string;
+
+                if analyzer::types::is_param_spec(param_type)
+                    && (param.category == ParamCategory::ArgsList
+                        || param.category == ParamCategory::KwargsDict)
+                {
+                    is_param_spec_args_kwargs_param = true;
+                }
+
+                // PEP8 indicates that the "=" for the default value should have surrounding
+                // spaces when used with a type annotation.
+                default_value_assignment = " = ";
+            } else if !print_type_flags.any(PrintTypeFlags::OmitTypeArgsIfUnknown) {
+                if !FunctionParam::is_name_synthesized(param) {
+                    param_string += ": ";
+                }
+                if print_type_flags
+                    .any(PrintTypeFlags::PrintUnknownWithAny | PrintTypeFlags::PythonSyntax)
+                {
+                    param_string += "Any";
+                } else {
+                    param_string += "Unknown";
+                }
+                default_value_assignment = " = ";
+            }
+        } else if param.category == ParamCategory::Simple {
+            if saw_defined_name {
+                param_string += "/";
+            } else {
+                continue;
+            }
+        }
+
+        if default_type.is_some() {
+            if let Some(default_expr) = param.default_expr {
+                param_string += default_value_assignment;
+                param_string += &analyzer::parse_tree_utils::print_expression(
+                    default_expr,
+                    analyzer::parse_tree_utils::PrintExpressionFlags::None,
+                );
+            } else {
+                // If the function doesn't originate from a function declaration (e.g. it is
+                // synthesized), we can't get to the default declaration, but we can still indicate
+                // that there is a default value provided.
+                param_string += default_value_assignment;
+                param_string += "...";
+            }
+        }
+
+        // If this is a (...) signature, replace the *args, **kwargs with "...".
+        if FunctionType::is_gradual_callable_form(type_) && !is_param_spec_args_kwargs_param {
+            if param.category == ParamCategory::ArgsList {
+                param_string = "...".to_string();
+            } else if param.category == ParamCategory::KwargsDict {
+                continue;
+            }
+        }
+
+        param_type_strings.push(param_string);
+    }
+
+    if let Some(param_spec) = param_spec {
+        if print_type_flags.any(PrintTypeFlags::PythonSyntax) {
+            // `${paramSpec}` stringifies the type object.
+            param_type_strings.push("*args: [object Object].args".to_string());
+            param_type_strings.push("**kwargs: [object Object].kwargs".to_string());
+        } else {
+            param_type_strings.push(format!(
+                "**{}",
+                print_type_internal(
+                    param_spec.0,
+                    print_type_flags,
+                    return_type_callback,
+                    unique_name_map,
+                    recursion_types,
+                    recursion_count,
+                )
+            ));
+        }
+    }
+
+    let return_type = return_type_callback.call(type_);
+    let return_type_string = if (recursion_types.len() as u32) < MAX_TYPE_RECURSION_COUNT {
+        print_type_internal(
+            return_type,
+            print_type_flags
+                | PrintTypeFlags::ParenthesizeUnion
+                | PrintTypeFlags::ParenthesizeCallable,
+            return_type_callback,
+            unique_name_map,
+            recursion_types,
+            recursion_count,
+        )
+    } else {
+        String::new()
+    };
+
+    (param_type_strings, return_type_string)
 }
 
 // analyzer/typePrinter.ts:1386
 pub(crate) fn print_unpack(text_to_wrap: &str, flags: PrintTypeFlags) -> String {
-    todo!()
+    if flags.any(PrintTypeFlags::UseTypingUnpack) {
+        format!("Unpack[{text_to_wrap}]")
+    } else {
+        format!("*{text_to_wrap}")
+    }
 }
 
 // analyzer/typePrinter.ts:1392
 pub(crate) fn _print_nested_instantiable(type_: P<Type>, text_to_wrap: &str) -> String {
-    todo!()
+    let nested_types = type_
+        .props
+        .borrow()
+        .as_ref()
+        .and_then(|props| props.instantiable_depth)
+        .unwrap_or(0)
+        + 1;
+
+    let mut text_to_wrap = text_to_wrap.to_string();
+    for _ in 0..nested_types {
+        text_to_wrap = format!("type[{text_to_wrap}]");
+    }
+
+    text_to_wrap
 }
 
 // analyzer/typePrinter.ts:1402
 pub(crate) fn get_readable_type_var_name(type_: TypeVarType, include_scope: bool) -> String {
-    todo!()
+    TypeVarType::get_readable_name(type_, include_scope)
 }
 
 // analyzer/typePrinter.ts:1406
 pub(crate) fn get_type_var_variance_text(type_: TypeVarType) -> String {
-    todo!()
+    use analyzer::types::Variance;
+
+    let computed_variance = type_
+        .d()
+        .priv_
+        .borrow()
+        .computed_variance
+        .unwrap_or_else(|| type_.d().shared.get().declared_variance.get());
+    if computed_variance == Variance::Invariant {
+        return "invariant".to_string();
+    }
+
+    if computed_variance == Variance::Covariant {
+        return "covariant".to_string();
+    }
+
+    if computed_variance == Variance::Contravariant {
+        return "contravariant".to_string();
+    }
+
+    String::new()
 }
 
 // analyzer/typePrinter.ts:1426
@@ -191,7 +1721,11 @@ impl UniqueNameMap {
         _print_type_flags: PrintTypeFlags,
         _return_type_callback: FunctionReturnTypeCallback,
     ) -> Self {
-        todo!()
+        UniqueNameMap {
+            _map: JsMap::default(),
+            _print_type_flags,
+            _return_type_callback,
+        }
     }
 
     // analyzer/typePrinter.ts:1431
@@ -202,18 +1736,175 @@ impl UniqueNameMap {
         recursion_types: &mut Vec<P<Type>>,
         recursion_count: u32,
     ) {
-        todo!()
+        use analyzer::types::{MAX_TYPE_RECURSION_COUNT, OverloadedType, TypeCategory};
+
+        if recursion_count > MAX_TYPE_RECURSION_COUNT {
+            return;
+        }
+        let recursion_count = recursion_count + 1;
+
+        let alias_info = type_
+            .props
+            .borrow()
+            .as_ref()
+            .and_then(|props| props.type_alias_info.clone());
+        if let Some(alias_info) = alias_info {
+            let mut expand_type_alias = true;
+            if !self._print_type_flags.any(PrintTypeFlags::ExpandTypeAlias) {
+                expand_type_alias = false;
+            } else if recursion_types.iter().any(|&t| t == type_) {
+                expand_type_alias = false;
+            }
+
+            if !expand_type_alias {
+                let type_alias_name = if self
+                    ._print_type_flags
+                    .any(PrintTypeFlags::UseFullyQualifiedNames)
+                {
+                    alias_info.shared.full_name.clone()
+                } else {
+                    alias_info.shared.name.clone()
+                };
+                self._add_if_unique(&type_alias_name, type_, /* useTypeAliasName */ true);
+
+                // Recursively add the type arguments if present.
+                if let Some(type_args) = &alias_info.type_args {
+                    recursion_types.push(type_);
+
+                    for &type_arg in type_args {
+                        self.build(type_arg, recursion_types, recursion_count);
+                    }
+
+                    recursion_types.pop();
+                }
+
+                return;
+            }
+        }
+
+        recursion_types.push(type_);
+
+        match type_.category {
+            TypeCategory::Function => {
+                let function_type = FunctionType(type_);
+                let param_count = function_type
+                    .d()
+                    .shared
+                    .get()
+                    .parameters
+                    .get()
+                    .borrow()
+                    .len();
+                for index in 0..param_count {
+                    let param_type = FunctionType::get_param_type(function_type, index as i32);
+                    self.build(param_type, recursion_types, recursion_count);
+                }
+
+                let return_type = self._return_type_callback.call(function_type);
+                self.build(return_type, recursion_types, recursion_count);
+            }
+
+            TypeCategory::Overloaded => {
+                for overload in OverloadedType::get_overloads(OverloadedType(type_)) {
+                    self.build(overload.0, recursion_types, recursion_count);
+                }
+            }
+
+            TypeCategory::Class => {
+                let class_type = ClassType(type_);
+                let (has_literal_value, alias_name, tuple_type_args, type_args) = {
+                    let priv_ = class_type.d().priv_.borrow();
+                    (
+                        priv_.literal_value.is_some(),
+                        priv_.alias_name.clone(),
+                        priv_.tuple_type_args.clone(),
+                        priv_.type_args.clone(),
+                    )
+                };
+                if !has_literal_value {
+                    let class_name = match alias_name.filter(|name| !name.is_empty()) {
+                        Some(alias_name) => alias_name,
+                        None => {
+                            if self
+                                ._print_type_flags
+                                .any(PrintTypeFlags::UseFullyQualifiedNames)
+                            {
+                                class_type.d().shared.get().full_name.clone()
+                            } else {
+                                class_type.d().shared.get().name.clone()
+                            }
+                        }
+                    };
+
+                    self._add_if_unique(&class_name, type_, false);
+
+                    if !ClassType::is_pseudo_generic_class(class_type) {
+                        if let Some(tuple_type_args) = tuple_type_args {
+                            for type_arg in &tuple_type_args {
+                                self.build(type_arg.type_, recursion_types, recursion_count);
+                            }
+                        } else if let Some(type_args) = type_args {
+                            for &type_arg in &type_args {
+                                self.build(type_arg, recursion_types, recursion_count);
+                            }
+                        }
+                    }
+                }
+            }
+
+            TypeCategory::Union => {
+                analyzer::type_utils::do_for_each_subtype(
+                    type_,
+                    &mut |subtype, _, _| {
+                        self.build(subtype, recursion_types, recursion_count);
+                    },
+                    false,
+                );
+
+                let type_alias_sources = UnionType(type_)
+                    .d()
+                    .priv_
+                    .borrow()
+                    .type_alias_sources
+                    .clone();
+                if let Some(type_alias_sources) = type_alias_sources {
+                    for type_alias_source in type_alias_sources.iter() {
+                        self.build(type_alias_source.0, recursion_types, recursion_count);
+                    }
+                }
+            }
+
+            _ => {}
+        }
+
+        recursion_types.pop();
     }
 
     // analyzer/typePrinter.ts:1539
     pub fn is_unique(&mut self, name: &str) -> bool {
-        todo!()
+        match self._map.get(name) {
+            None => true,
+            Some(entry) => entry.len() == 1,
+        }
     }
 
     // analyzer/typePrinter.ts:1544
     /// TS defaults: useTypeAliasName = false.
     pub(crate) fn _add_if_unique(&mut self, name: &str, type_: P<Type>, use_type_alias_name: bool) {
-        todo!()
+        let existing_entry = self._map.get(name).cloned();
+        match existing_entry {
+            None => {
+                self._map.insert(name.to_string(), vec![type_]);
+            }
+            Some(existing_entry) => {
+                if !existing_entry
+                    .iter()
+                    .any(|&t| self._is_same_type_name(t, type_, use_type_alias_name))
+                {
+                    self._map.get_mut(name).unwrap().push(type_);
+                }
+            }
+        }
     }
 
     // analyzer/typePrinter.ts:1555
@@ -223,13 +1914,64 @@ impl UniqueNameMap {
         type2: P<Type>,
         use_type_alias_name: bool,
     ) -> bool {
-        todo!()
+        use analyzer::types::{TypeBase, is_class};
+
+        if use_type_alias_name {
+            let full_name_of = |t: P<Type>| {
+                t.props.borrow().as_ref().and_then(|props| {
+                    props
+                        .type_alias_info
+                        .as_ref()
+                        .map(|info| info.shared.full_name.clone())
+                })
+            };
+            return full_name_of(type1) == full_name_of(type2);
+        }
+
+        if is_class(type1) && is_class(type2) {
+            let mut type1 = ClassType(type1);
+            while TypeBase::is_instantiable(type1.0) {
+                type1 = ClassType::clone_as_instance(type1, true);
+            }
+
+            let mut type2 = ClassType(type2);
+            while TypeBase::is_instantiable(type2.0) {
+                type2 = ClassType::clone_as_instance(type2, true);
+            }
+
+            return ClassType::is_same_generic_class(type1, type2, 0);
+        }
+
+        false
     }
 }
 
 // analyzer/typePrinter.ts:1576
 pub fn get_print_type_flags(config_options: P<ConfigOptions>) -> PrintTypeFlags {
-    todo!()
+    let mut flags = PrintTypeFlags::None;
+
+    let rule_set = &config_options.diagnostic_rule_set;
+    if rule_set.print_unknown_as_any {
+        flags |= PrintTypeFlags::PrintUnknownWithAny;
+    }
+
+    if rule_set.omit_conditional_constraint {
+        flags |= PrintTypeFlags::OmitConditionalConstraint;
+    }
+
+    if rule_set.omit_type_args_if_unknown {
+        flags |= PrintTypeFlags::OmitTypeArgsIfUnknown;
+    }
+
+    if rule_set.omit_unannotated_param_type {
+        flags |= PrintTypeFlags::OmitUnannotatedParamType;
+    }
+
+    if rule_set.pep604_printing {
+        flags |= PrintTypeFlags::PEP604;
+    }
+
+    flags
 }
 
 // analyzer/typePrinter.ts:104

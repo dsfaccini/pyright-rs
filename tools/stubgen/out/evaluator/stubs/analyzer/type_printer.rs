@@ -90,7 +90,7 @@ pub(crate) fn print_type_internal(
     type_: P<Type>,
     print_type_flags: PrintTypeFlags,
     return_type_callback: &FunctionReturnTypeCallback,
-    unique_name_map: &UniqueNameMap,
+    unique_name_map: &mut UniqueNameMap,
     recursion_types: &mut Vec<P<Type>>,
     recursion_count: u32,
 ) -> String {
@@ -103,7 +103,7 @@ pub(crate) fn print_union_type(
     print_type_flags: PrintTypeFlags,
     parenthesize_union: bool,
     return_type_callback: &FunctionReturnTypeCallback,
-    unique_name_map: &UniqueNameMap,
+    unique_name_map: &mut UniqueNameMap,
     recursion_types: &mut Vec<P<Type>>,
     recursion_count: u32,
 ) -> String {
@@ -115,7 +115,7 @@ pub(crate) fn print_function_type(
     type_: FunctionType,
     print_type_flags: PrintTypeFlags,
     return_type_callback: &FunctionReturnTypeCallback,
-    unique_name_map: &UniqueNameMap,
+    unique_name_map: &mut UniqueNameMap,
     recursion_types: &mut Vec<P<Type>>,
     recursion_count: u32,
 ) -> String {
@@ -127,7 +127,7 @@ pub(crate) fn print_param_spec_value_for_python_syntax(
     type_: FunctionType,
     print_type_flags: PrintTypeFlags,
     return_type_callback: &FunctionReturnTypeCallback,
-    unique_name_map: &UniqueNameMap,
+    unique_name_map: &mut UniqueNameMap,
     recursion_types: &mut Vec<P<Type>>,
     recursion_count: u32,
 ) -> Option<String> {
@@ -139,7 +139,7 @@ pub(crate) fn print_object_type_for_class_internal(
     type_: ClassType,
     print_type_flags: PrintTypeFlags,
     return_type_callback: &FunctionReturnTypeCallback,
-    unique_name_map: &UniqueNameMap,
+    unique_name_map: &mut UniqueNameMap,
     recursion_types: &mut Vec<P<Type>>,
     recursion_count: u32,
 ) -> String {
@@ -151,7 +151,7 @@ pub(crate) fn print_function_parts_internal(
     type_: FunctionType,
     print_type_flags: PrintTypeFlags,
     return_type_callback: &FunctionReturnTypeCallback,
-    unique_name_map: &UniqueNameMap,
+    unique_name_map: &mut UniqueNameMap,
     recursion_types: &mut Vec<P<Type>>,
     recursion_count: u32,
 ) -> (Vec<String>, String) {
