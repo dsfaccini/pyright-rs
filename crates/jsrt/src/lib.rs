@@ -4,6 +4,7 @@
 
 pub mod arena;
 pub mod array;
+pub mod cell;
 pub mod collections;
 pub mod flags;
 pub mod command_line_args;
@@ -17,6 +18,7 @@ pub mod string;
 pub mod vscode_uri;
 
 pub use arena::P;
+pub use cell::OptionRefCell;
 pub use collections::{FxHashMap, FxHashSet, JsMap, JsSet, LazyJsMap};
 pub use number::{JsBigInt, NumberValue};
 pub use string::{JsStr, JsString, NormalizationForm};

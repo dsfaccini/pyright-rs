@@ -4,7 +4,7 @@ PLAN.md step 6, "exact-size variants": cut the `size_of` of the evaluator heap's
 
 ## Signature changes
 
-- `Type.props` and `Type.cached` are `RefCell<Option<Box<..>>>`. Insert with `get_or_insert_with(Default::default)`.
+- `Type.props` and `Type.cached` are `jsrt::OptionRefCell<..>`: `borrow()` and `borrow_mut()` as on `RefCell<Option<..>>`, storage allocated on the first `borrow_mut()`. Construct with `OptionRefCell::new()`.
 - `LiteralTypes` maps, `UnionDetailsPriv.type_alias_sources` and `FunctionDetailsPriv.call_site_return_type_cache` are `Option<Box<..>>`.
 - `ClassDetailsPriv` keeps its hot fields; `alias_name`, `typed_dict_narrowed_entries`, `is_typed_dict_partial`, `is_asymmetric_descriptor`, `is_asymmetric_attribute_accessor`, `fget_info`, `fset_info`, `fdel_info`, `deprecated_instance_message` and `partial_call_type` live in `ClassDetailsPrivCold`: read `priv_.cold().alias_name`, write `priv_.cold_mut().alias_name = ..`.
 - `TypeVarDetailsPriv.scope_id`, `scope_name` and `name_with_scope` are `Option<Rc<str>>`. Compare with `.as_deref()`; set with `.into()`.
@@ -16,7 +16,7 @@ PLAN.md step 6, "exact-size variants": cut the `size_of` of the evaluator heap's
 
 ## Shared-file edits
 
-- `crates/jsrt/src/collections.rs`: `LazyJsMap`.
+- `crates/jsrt/src/collections.rs`: `LazyJsMap`. `crates/jsrt/src/cell.rs`: `OptionRefCell`.
 - `crates/pyright/src/common/diagnostic.rs`: `DiagnosticAddendum` layout.
 - `tools/stubgen`: `[cold]` for value and handle structs in `table.ts` and `emit.ts`; `[sites]` and `[cold]` entries in `typemap.toml`; `docs/evaluator-design.md` "cold fields".
 - `docs/porting.md`: "memory" and "strings" rules for small evaluator objects.
@@ -25,7 +25,7 @@ PLAN.md step 6, "exact-size variants": cut the `size_of` of the evaluator heap's
 
 ## Needs from others
 
-- collector: `jsrt::LazyJsMap` needs a `Trace` impl, like `JsMap`. `DiagnosticAddendum`'s children sit behind `RefCell<Option<Box<AddendumContent>>>`.
+- collector: `jsrt::LazyJsMap` and `jsrt::OptionRefCell` need `Trace` impls, like `JsMap` and `RefCell`. `DiagnosticAddendum`'s children sit behind `RefCell<Option<Box<AddendumContent>>>`.
 
 ## Doubts
 

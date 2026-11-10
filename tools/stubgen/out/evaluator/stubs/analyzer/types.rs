@@ -18,7 +18,7 @@ use crate::parser::parse_nodes::{
     ArgumentNode, ClassNode, ExpressionNode, NameNode, ParamCategory, TypeAnnotationNode,
 };
 use crate::{analyzer, common, parser};
-use jsrt::{JsBigInt, JsMap, JsSet, NumberValue, P, flag_ops};
+use jsrt::{JsBigInt, JsMap, JsSet, NumberValue, OptionRefCell, P, flag_ops};
 use std::cell::{Cell, RefCell, RefMut};
 use std::ops::Deref;
 use std::rc::Rc;
@@ -184,8 +184,8 @@ pub struct TypeBaseProps {
 pub struct Type {
     pub category: TypeCategory,
     pub flags: Cell<TypeFlags>,
-    pub props: RefCell<Option<Box<TypeBaseProps>>>,
-    pub cached: RefCell<Option<Box<CachedTypeInfo>>>,
+    pub props: OptionRefCell<TypeBaseProps>,
+    pub cached: OptionRefCell<CachedTypeInfo>,
     // Private: reach details through typed handles and `d()`; create through the create functions.
     d: TypeDetails,
 }
