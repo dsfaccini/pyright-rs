@@ -1,15 +1,14 @@
 //! Port of `packages/pyright-internal/src/analyzer/analyzerFileInfo.ts`.
 //!
-//! The binder branch adds the fields typed with binder types:
-//! `AnalyzerFileInfo.builtins_scope: Option<P<Scope>>` and
-//! `ImportLookupResult.symbol_table: SymbolTable`.
 
 use std::cell::RefCell;
 use std::rc::Rc;
 
 use jsrt::{FxHashSet, JsMap, JsSet, P};
 
+use crate::analyzer::scope::Scope;
 use crate::analyzer::source_file::IPythonMode;
+use crate::analyzer::symbol::SymbolTable;
 use crate::common::config_options::{DefineConstantValue, DiagnosticRuleSet, ExecutionEnvironment};
 use crate::common::diagnostic_sink::TextRangeDiagnosticSink;
 use crate::common::python_version::{PYTHON_VERSION3_14, PythonVersion};
@@ -40,6 +39,7 @@ pub struct LookupImportOptions {
 
 // analyzer/analyzerFileInfo.ts:37
 pub struct ImportLookupResult {
+    pub symbol_table: SymbolTable,
     pub dunder_all_names: Option<Vec<String>>,
     pub uses_unsupported_dunder_all_form: bool,
     /// A getter in TypeScript: computed when read.
@@ -54,6 +54,7 @@ pub type ImportLookup = Rc<dyn Fn(ImportLookupKey, Option<LookupImportOptions>) 
 pub struct AnalyzerFileInfo {
     pub import_lookup: ImportLookup,
     pub future_imports: JsSet<String>,
+    pub builtins_scope: Option<P<Scope>>,
     pub diagnostic_sink: TextRangeDiagnosticSink,
     pub execution_environment: P<ExecutionEnvironment>,
     pub diagnostic_rule_set: DiagnosticRuleSet,

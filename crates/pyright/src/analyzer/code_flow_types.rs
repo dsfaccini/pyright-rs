@@ -475,7 +475,7 @@ pub fn is_code_flow_supported_for_reference(reference: ExpressionNode) -> bool {
 /// JS `value.toString()` of a number literal's value.
 fn number_value_to_string(value: &NumberValue) -> String {
     match value {
-        NumberValue::Number(n) => jsrt::infra_shims::number_to_string(*n),
+        NumberValue::Number(n) => jsrt::number::number_to_string(*n),
         NumberValue::BigInt(b) => b.0.clone(),
     }
 }

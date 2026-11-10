@@ -210,10 +210,10 @@ impl AnalyzerNodeInfoReader for AnalyzerNodeInfoBindingSessionImpl {
     // analyzer/analyzerNodeInfo.ts:181
     fn get(&self, node: P<ParseNode>) -> Option<P<AnalyzerNodeInfo>> {
         if node.a == self.root.a {
-            return self._store.get(node);
+            return (*self._store).get(node);
         }
 
-        self._context.get(node)
+        (*self._context).get(node)
     }
 
     // analyzer/analyzerNodeInfo.ts:189
@@ -350,7 +350,7 @@ impl AnalyzerNodeInfoContextImpl {
             layer.stores.get(&node.a).copied()
         };
 
-        store.and_then(|store| store.get(node))
+        store.and_then(|store| (*store).get(node))
     }
 
     // analyzer/analyzerNodeInfo.ts:390
@@ -386,7 +386,7 @@ impl AnalyzerNodeInfoReader for AnalyzerNodeInfoContextImpl {
             return None;
         }
 
-        self._store_for(node.a).and_then(|store| store.get(node))
+        self._store_for(node.a).and_then(|store| (*store).get(node))
     }
 
     // analyzer/analyzerNodeInfo.ts:265

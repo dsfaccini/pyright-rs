@@ -139,6 +139,9 @@ pub struct Scope {
     // cannot be represented as a statically-known class symbol or exposes
     // its namespace to runtime mutation.
     pub has_potentially_dynamic_symbol_table: Cell<bool>,
+
+    /// This scope's own handle, for methods that return `this`.
+    _self: Cell<Option<P<Scope>>>,
 }
 
 impl Scope {
@@ -149,7 +152,7 @@ impl Scope {
         proxy: Option<P<Scope>>,
         chained_module_level_scope_lookup: Option<ScopeChainedModuleLevelLookup>,
     ) -> P<Scope> {
-        P::new(Scope {
+        let scope = P::new(Scope {
             type_,
             parent,
             proxy,
@@ -159,12 +162,20 @@ impl Scope {
             slots_names: RefCell::new(None),
             has_non_empty_slots: Cell::new(false),
             has_potentially_dynamic_symbol_table: Cell::new(false),
-        })
+            _self: Cell::new(None),
+        });
+        scope._self.set(Some(scope));
+        scope
+    }
+
+    /// `this` as a handle.
+    pub fn handle(&self) -> P<Scope> {
+        self._self.get().unwrap()
     }
 
     // analyzer/scope.ts:144
-    pub fn get_global_scope(self: P<Self>) -> GlobalScopeResult {
-        let mut cur_scope = Some(self);
+    pub fn get_global_scope(&self) -> GlobalScopeResult {
+        let mut cur_scope = Some(self.handle());
         let mut is_beyond_execution_scope = false;
 
         while let Some(scope) = cur_scope {
@@ -200,12 +211,12 @@ impl Scope {
 
     // analyzer/scope.ts:175
     pub fn look_up_symbol_recursive(
-        self: P<Self>,
+        &self,
         name: &str,
         options: Option<LookupSymbolOptions>,
     ) -> Option<SymbolWithScope> {
         let options = options.unwrap_or_default();
-        let mut effective_scope = self;
+        let mut effective_scope = self.handle();
         let mut symbol = self.symbol_table.get(name);
 
         if symbol.is_none() && options.use_proxy_scope == Some(true) {
@@ -251,7 +262,7 @@ impl Scope {
         let not_local_binding = self.not_local_bindings.borrow().get(name).copied();
         if not_local_binding == Some(NameBindingType::Global) {
             let global_scope_result = self.get_global_scope();
-            if global_scope_result.scope != self {
+            if global_scope_result.scope != self.handle() {
                 parent_scope = Some(global_scope_result.scope);
                 if global_scope_result.is_beyond_execution_scope {
                     is_next_scope_beyond_execution_scope = true;
