@@ -48,7 +48,7 @@ use pyright::common::case_sensitivity_detector::CaseSensitiveDetector;
 use pyright::common::config_options::{ConfigOptions, DiagnosticLevel, DiagnosticRuleSet, ExecutionEnvironment};
 use pyright::common::diagnostic_rules::DiagnosticRule;
 use pyright::common::python_version::PythonVersion;
-use pyright::common::timing::timing_stats;
+use pyright::common::timing::{TimingStat, timing_stats};
 use pyright::common::diagnostic::Diagnostic;
 use pyright::common::diagnostic_sink::{DiagnosticSink, TextRangeDiagnosticSink};
 use pyright::common::uri::Uri;
@@ -318,7 +318,7 @@ impl Harness {
         // timer, as in pyright. Reading and replay stay outside it.
         let source = self.source_path(mapped).expect("source path");
         let source_text = source.to_string_lossy().into_owned();
-        let text = bind_time.subtract_from_time(|| {
+        let text = outside_timer(bind_time, || {
             let bytes = fs::read(&source).unwrap_or_else(|e| panic!("cannot read {}: {e}", source.display()));
             let text: Vec<u16> = String::from_utf8_lossy(&bytes).encode_utf16().collect();
             JsString::from(text)
@@ -338,7 +338,7 @@ impl Harness {
 
         // The reference dump: import results to replay, the module name and
         // `isInPyTypedPackage`.
-        let (walk, import_info, module_name, is_in_py_typed_package) = bind_time.subtract_from_time(|| {
+        let (walk, import_info, module_name, is_in_py_typed_package) = outside_timer(bind_time, || {
             let reference_text = fs::read_to_string(self.reference.join("bind").join(format!("{mapped}.txt")))
                 .unwrap_or_default();
             let reference = parse_dump(&reference_text);
@@ -524,6 +524,13 @@ impl Harness {
             }
         }
     }
+}
+
+/// `TimingStat::subtract_from_time` for a callback that returns a value.
+fn outside_timer<R>(stat: &TimingStat, callback: impl FnOnce() -> R) -> R {
+    let mut result = None;
+    stat.subtract_from_time(|| result = Some(callback()));
+    result.unwrap()
 }
 
 fn collect(dir: &Path, files: &mut Vec<PathBuf>) -> std::io::Result<()> {

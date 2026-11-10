@@ -63,8 +63,6 @@ node_info_context.publish(session);
 - `crates/pyright/src/analyzer/cell_chain_index.rs` (new): only the `CellChainIndexProvider` trait the binder takes.
 - `crates/pyright/src/analyzer/declaration_utils.rs` (new): only `hasTypeForDeclaration` and `areDeclarationsSame`, which `symbol.ts` calls. The evaluator step ports the rest.
 - `crates/pyright/src/analyzer/types.rs` (new): placeholder `Type` (for `SynthesizedTypeInfo`) and `TypeVarScopeId`. The evaluator step replaces it.
-- `crates/pyright/src/common/timing.rs` (new): port of `timing.ts`; `timing_stats()` is the per-thread `timingStats`. Durations are fractional milliseconds, not `Date.now()` whole ones.
-- `crates/pyright/src/parser/parser.rs`: `parse_source_file` runs pyright's Tokenize and Parse timers (`parser.ts:275`, `:283`).
 
 ## Oracle harness
 

@@ -22,6 +22,7 @@ use super::tokenizer_types::{
     IndentToken, KeywordToken, KeywordType, NumberToken, OperatorToken, OperatorType, StringToken,
     StringTokenFlags, Token, TokenDetails, TokenType,
 };
+use crate::common::timing::timing_stats;
 use crate::common::char_codes::Char;
 use crate::common::collection_utils::append_array;
 use crate::common::diagnostic::{
@@ -37,7 +38,6 @@ use crate::common::python_version::{
 use crate::common::string_utils::{StringFingerprint, get_string_fingerprint};
 use crate::common::text_range::{HasTextRange, TextRange};
 use crate::common::text_range_collection::TextRangeCollection;
-use crate::common::timing::timing_stats;
 use crate::localization::localize::{LocAddendum, LocMessage};
 
 // parser/parser.ts:157

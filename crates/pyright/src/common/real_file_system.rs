@@ -49,19 +49,26 @@ impl ReadOnlyFileSystem for RealFileSystem {
     }
 
     // common/realFileSystem.ts:265
+    /// Node's `fs.readdirSync` lists entries sorted by name: libuv's scandir
+    /// sorts with `strcmp`, i.e. by the bytes of each name.
     fn readdir_entries_sync(&self, uri: Uri) -> FsResult<Vec<Dirent>> {
         let mut entries = Vec::new();
         for entry in std::fs::read_dir(uri.get_file_path())? {
             let entry = entry?;
             let file_type = entry.file_type()?;
-            entries.push(Dirent {
-                name: entry.file_name().to_string_lossy().into_owned(),
-                is_file: file_type.is_file(),
-                is_directory: file_type.is_dir(),
-                is_symbolic_link: file_type.is_symlink(),
-            });
+            let name = entry.file_name();
+            entries.push((
+                name.as_encoded_bytes().to_vec(),
+                Dirent {
+                    name: name.to_string_lossy().into_owned(),
+                    is_file: file_type.is_file(),
+                    is_directory: file_type.is_dir(),
+                    is_symbolic_link: file_type.is_symlink(),
+                },
+            ));
         }
-        Ok(entries)
+        entries.sort_by(|a, b| a.0.cmp(&b.0));
+        Ok(entries.into_iter().map(|(_, dirent)| dirent).collect())
     }
 
     // common/realFileSystem.ts:260
