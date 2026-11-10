@@ -182,7 +182,7 @@ pub trait TypeWalker {
                 let priv_ = type_.d().priv_.borrow();
                 match &priv_.tuple_type_args {
                     Some(tuple_type_args) => {
-                        Some(tuple_type_args.iter().map(|t| t.type_).collect::<Vec<_>>())
+                        Some(tuple_type_args.borrow().iter().map(|t| t.type_).collect::<Vec<_>>())
                     }
                     None => priv_.type_args.clone(),
                 }

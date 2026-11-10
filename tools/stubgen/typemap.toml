@@ -218,6 +218,10 @@ interface = "analyzer/codeFlowEngine.ts:CodeFlowAnalyzer"
 "analyzer/types.ts:FunctionDetailsShared.parameters" = "jsrt::P<std::cell::RefCell<Vec<crate::analyzer::types::FunctionParam>>>"
 "analyzer/types.ts:SpecializedFunctionTypes.parameterTypes" = "jsrt::P<std::cell::RefCell<Vec<jsrt::P<crate::analyzer::types::Type>>>>"
 "analyzer/types.ts:SpecializedFunctionTypes.parameterDefaultTypes" = "Option<jsrt::P<std::cell::RefCell<Vec<Option<jsrt::P<crate::analyzer::types::Type>>>>>>"
+# A tuple's type arguments, held by reference. `TypeBase.cloneType` spreads `priv`, so every clone
+# shares the array, and `getSequencePatternInfo` splices it in place (patternMatching.ts:1558-1684):
+# the splice reaches every clone that shares it. `ClassType.specialize` copies it (types.ts:963).
+"analyzer/types.ts:ClassDetailsPriv.tupleTypeArgs" = "jsrt::P<std::cell::RefCell<Vec<crate::analyzer::types::TupleTypeArg>>>"
 # A type alias caches its variance array before inferring it and fills it in place
 # (typeEvaluator.ts:8355-8484): a re-entrant read during the traversal sees the partial array.
 "analyzer/types.ts:TypeAliasSharedInfo.computedVariance" = "Option<jsrt::P<std::cell::RefCell<Vec<crate::analyzer::types::Variance>>>>"

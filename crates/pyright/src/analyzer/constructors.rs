@@ -1013,7 +1013,7 @@ pub(crate) fn apply_expected_type_for_tuple_constructor(
             .priv_
             .borrow()
             .tuple_type_args
-            .clone();
+            .map(|tuple_type_args| tuple_type_args.borrow().clone());
         if let Some(expected_tuple_type_args) = expected_tuple_type_args {
             specialized_type =
                 specialize_tuple_class(type_, &expected_tuple_type_args, true, false);

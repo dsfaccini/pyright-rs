@@ -1165,7 +1165,7 @@ impl ParseTreeVisitor<bool> for Checker {
                 let class_type = ClassType(type_);
                 if analyzer::type_utils::is_tuple_class(class_type) {
                     let tuple_type_args_len =
-                        class_type.d().priv_.borrow().tuple_type_args.as_ref().map(|args| args.len());
+                        class_type.d().priv_.borrow().tuple_type_args.map(|tuple_type_args| tuple_type_args.get().borrow()).as_deref().map(|args| args.len());
                     if let Some(tuple_type_args_len) = tuple_type_args_len {
                         if tuple_type_args_len > 0
                             && !analyzer::type_utils::is_unbounded_tuple_class(class_type).unwrap_or(false)
@@ -1276,7 +1276,7 @@ impl ParseTreeVisitor<bool> for Checker {
                     }
 
                     let tuple_length =
-                        tuple_type.d().priv_.borrow().tuple_type_args.as_ref().map_or(0, |args| args.len()) as f64;
+                        tuple_type.d().priv_.borrow().tuple_type_args.map(|tuple_type_args| tuple_type_args.get().borrow()).as_deref().map_or(0, |args| args.len()) as f64;
 
                     let items = node.d().items.borrow().clone();
                     if items.len() != 1
@@ -3756,7 +3756,7 @@ impl Checker {
                         return;
                     }
 
-                    let tuple_type_args = exception_class.d().priv_.borrow().tuple_type_args.clone();
+                    let tuple_type_args = exception_class.d().priv_.borrow().tuple_type_args.map(|tuple_type_args| tuple_type_args.borrow().clone());
                     if allow_tuple {
                         if let Some(tuple_type_args) = tuple_type_args {
                             for type_arg in tuple_type_args.iter() {
@@ -4848,7 +4848,7 @@ impl Checker {
                 let tuple_type_args = if analyzer::types::is_class_instance(arg1_subtype)
                     && ClassType::is_tuple_class(ClassType(arg1_subtype))
                 {
-                    ClassType(arg1_subtype).d().priv_.borrow().tuple_type_args.clone()
+                    ClassType(arg1_subtype).d().priv_.borrow().tuple_type_args.map(|tuple_type_args| tuple_type_args.borrow().clone())
                 } else {
                     None
                 };
@@ -4894,7 +4894,7 @@ impl Checker {
                     let tuple_type_args = if analyzer::types::is_class_instance(arg1_subtype)
                         && ClassType::is_tuple_class(ClassType(arg1_subtype))
                     {
-                        ClassType(arg1_subtype).d().priv_.borrow().tuple_type_args.clone()
+                        ClassType(arg1_subtype).d().priv_.borrow().tuple_type_args.map(|tuple_type_args| tuple_type_args.borrow().clone())
                     } else {
                         None
                     };

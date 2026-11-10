@@ -10,6 +10,7 @@ All through `tools/stubgen` (`typemap.toml`, generator), documented in `docs/eva
 - `ContextualTypeCacheEntry` is a trait with accessor `expected_type()` (`[traits]`). `[items]` implements it for `SpeculativeTypeEntry`, `P<T>` and `TypeFormTypeCacheEntry`. `contextual_type_cache_entry_matches` takes `&dyn ContextualTypeCacheEntry`; `add_contextual_type_cache_entry<T: Clone + ContextualTypeCacheEntry>`.
 - `typeCacheUtils.ts`'s own `TypeResult` interface merges into the evaluator's `TypeResult` (`[merge]`): `SpeculativeTypeEntry.type_result` and `add_speculative_type`'s parameter are `P<TypeResult>`. The evaluator writes `typeResult.type` after it hands the object to the tracker (typeEvaluator.ts:1349), and `getSpeculativeType` returns that same object.
 - `ensure_expected_type_candidates<T: Clone>`.
+- `ClassDetailsPriv.tuple_type_args` is `Option<P<RefCell<Vec<TupleTypeArg>>>>` (`[sites]`, share A's field, decided by the main session). Every `cloneType` copy shares the array, and `getSequencePatternInfo` splices it in place (patternMatching.ts:1558-1684); the splice now reaches every clone, as in pyright. `ClassType::specialize` and the pair transform at typeUtils.ts:3675 allocate a new handle.
 - Generator:
   - `[bounds]`: a function type parameter with bounds stays a Rust generic.
   - `[mutable]` also applies to factory locals, keyed like `[sites]`.
@@ -17,6 +18,7 @@ All through `tools/stubgen` (`typemap.toml`, generator), documented in `docs/eva
 
 ## Shared-file edits
 
+- `tuple_type_args` readers and writers, for the handle above: `checker.rs`, `constraint_solver.rs`, `constructors.rs`, `data_classes.rs`, `named_tuples.rs`, `operations.rs`, `parameter_utils.rs`, `tuples.rs`, `type_evaluator.rs`, `type_guards.rs` (share J's part too), `type_printer.rs`, `type_utils.rs`, `type_utils_tests.rs`, `type_walker.rs`, `types.rs`.
 - `crates/pyright/src/analyzer/mod.rs`: `#[cfg(test)] mod type_cache_utils_tests;`. A test module inside a generated file makes `--install` refuse, so ported tests live in sibling files.
 
 ## Needs from others
@@ -30,7 +32,6 @@ All through `tools/stubgen` (`typemap.toml`, generator), documented in `docs/eva
 - Narrowing callbacks (`TypeNarrowingCallback`) read `isIncomplete` from the captured `P<TypeResult>` when they run, as the TypeScript closures do, not when they are built.
 - `getFlowNodeReachability`'s nested `cacheReachabilityResult` keys the cache by the outer call's flow node, and the recursive lookup by the recursive call's: both as in the TypeScript.
 - `stubgen --install` rewrites every other share's finished file into stub form (split imports, stub header). After an install, restore the files you do not own before committing.
-- `getSequencePatternInfo` (patternMatching.ts:1558-1684) splices `specializedSequence.priv.tupleTypeArgs` in place. In TypeScript every `cloneType` copy shares that array, since a spread of `priv` keeps the reference; for a NamedTuple subject it can be the tuple base class in the MRO. The port writes each splice back to `specializedSequence` alone, so a clone that shared the array keeps the old args. A faithful fix makes `ClassDetailsPriv.tuple_type_args` a shared handle, as `FunctionDetailsShared.parameters` is. Count it as a port gap if the oracle shows a case.
 - `pattern_matching.rs` indexes arrays where JavaScript would read `undefined` out of range (`getTypeOfPatternSequenceEntry`, `getSequencePatternInfo`), so such a read panics in Rust.
 - JavaScript `===` on literal values is a nested `literal_values_strictly_equal` in `pattern_matching.rs`: values by value, enum and sentinel literals by identity.
 - `preventRecursion` and the loop-label antecedent evaluation in `codeFlowEngine.ts` catch, clean up and rethrow. Only cancellation and JS stack overflow throw there; the port has neither, so the catches are not ported (porting.md "exceptions").

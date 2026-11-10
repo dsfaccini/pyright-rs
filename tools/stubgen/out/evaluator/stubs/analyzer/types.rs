@@ -625,7 +625,7 @@ pub struct PropertyMethodInfo {
 pub struct ClassDetailsPriv {
     pub type_args: Option<Vec<P<Type>>>,
     pub is_empty_container: Option<bool>,
-    pub tuple_type_args: Option<Vec<TupleTypeArg>>,
+    pub tuple_type_args: Option<P<RefCell<Vec<TupleTypeArg>>>>,
     pub is_unpacked: Option<bool>,
     pub is_type_arg_explicit: Option<bool>,
     pub include_subclasses: Option<bool>,

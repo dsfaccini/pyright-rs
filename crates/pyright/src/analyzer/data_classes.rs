@@ -2123,7 +2123,7 @@ pub fn validate_data_class_transform_decorator(
                         .priv_
                         .borrow()
                         .tuple_type_args
-                        .clone()
+                        .map(|tuple_type_args| tuple_type_args.borrow().clone())
                 };
                 let Some(tuple_type_args) = tuple_type_args.filter(|tuple_type_args| {
                     !tuple_type_args.iter().any(|entry| {

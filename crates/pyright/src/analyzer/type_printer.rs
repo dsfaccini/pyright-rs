@@ -267,7 +267,7 @@ pub(crate) fn print_type_internal(
                                             .priv_
                                             .borrow()
                                             .tuple_type_args
-                                            .clone()
+                                            .map(|tuple_type_args| tuple_type_args.borrow().clone())
                                     } else {
                                         None
                                     };
@@ -1209,7 +1209,7 @@ pub(crate) fn print_object_type_for_class_internal(
         // If there is a type arguments array, it's a specialized class.
         let type_args: Option<Vec<TupleTypeArg>> = {
             let priv_ = type_.d().priv_.borrow();
-            priv_.tuple_type_args.clone().or_else(|| {
+            priv_.tuple_type_args.map(|tuple_type_args| tuple_type_args.borrow().clone()).or_else(|| {
                 priv_.type_args.as_ref().map(|type_args| {
                     type_args
                         .iter()
@@ -1242,7 +1242,7 @@ pub(crate) fn print_object_type_for_class_internal(
                             .priv_
                             .borrow()
                             .tuple_type_args
-                            .clone()
+                            .map(|tuple_type_args| tuple_type_args.borrow().clone())
                     } else {
                         None
                     };
@@ -1425,7 +1425,7 @@ pub(crate) fn print_function_parts_internal(
                     .priv_
                     .borrow()
                     .tuple_type_args
-                    .clone()
+                    .map(|tuple_type_args| tuple_type_args.borrow().clone())
             } else {
                 None
             };
@@ -1816,7 +1816,7 @@ impl UniqueNameMap {
                     (
                         priv_.literal_value.is_some(),
                         priv_.alias_name.clone(),
-                        priv_.tuple_type_args.clone(),
+                        priv_.tuple_type_args.map(|tuple_type_args| tuple_type_args.borrow().clone()),
                         priv_.type_args.clone(),
                     )
                 };

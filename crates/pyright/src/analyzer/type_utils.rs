@@ -470,7 +470,7 @@ pub fn clean_incomplete_unknown(type_: P<Type>, recursion_count: u32) -> P<Type>
                     let priv_ = class_type.d().priv_.borrow();
                     (
                         priv_.type_args.clone(),
-                        priv_.tuple_type_args.clone(),
+                        priv_.tuple_type_args.map(|tuple_type_args| tuple_type_args.borrow().clone()),
                         priv_.is_type_arg_explicit,
                         priv_.is_unpacked,
                     )
@@ -1458,7 +1458,7 @@ pub fn contains_literal_type(type_: P<Type>, include_type_args: bool) -> bool {
                     let type_args = {
                         let priv_ = class_type.d().priv_.borrow();
                         match &priv_.tuple_type_args {
-                            Some(tuple_type_args) => Some(tuple_type_args.iter().map(|t| t.type_).collect::<Vec<_>>()),
+                            Some(tuple_type_args) => Some(tuple_type_args.borrow().iter().map(|t| t.type_).collect::<Vec<_>>()),
                             None => priv_.type_args.clone(),
                         }
                     };
@@ -1653,7 +1653,7 @@ pub fn is_tuple_gradual_form(type_: P<Type>) -> Option<bool> {
         return Some(false);
     }
 
-    let tuple_type_args = ClassType(type_).d().priv_.borrow().tuple_type_args.clone();
+    let tuple_type_args = ClassType(type_).d().priv_.borrow().tuple_type_args.map(|tuple_type_args| tuple_type_args.borrow().clone());
     let tuple_type_args = tuple_type_args?;
     Some(
         tuple_type_args.len() == 1
@@ -1676,7 +1676,7 @@ pub fn is_tuple_class(type_: ClassType) -> bool {
 
 // analyzer/typeUtils.ts:1467
 pub fn is_unbounded_tuple_class(type_: ClassType) -> Option<bool> {
-    type_.d().priv_.borrow().tuple_type_args.as_ref().map(|tuple_type_args| {
+    type_.d().priv_.borrow().tuple_type_args.map(|tuple_type_args| tuple_type_args.get().borrow()).as_deref().map(|tuple_type_args| {
         tuple_type_args.iter().any(|t| {
             t.is_unbounded
                 || crate::analyzer::types::is_unpacked_type_var_tuple(t.type_)
@@ -1687,7 +1687,7 @@ pub fn is_unbounded_tuple_class(type_: ClassType) -> Option<bool> {
 
 // analyzer/typeUtils.ts:1475
 pub fn is_tuple_index_unambiguous(type_: ClassType, index: f64) -> bool {
-    let tuple_type_args = type_.d().priv_.borrow().tuple_type_args.clone();
+    let tuple_type_args = type_.d().priv_.borrow().tuple_type_args.map(|tuple_type_args| tuple_type_args.borrow().clone());
     let Some(tuple_type_args) = tuple_type_args else {
         return false;
     };
@@ -1984,7 +1984,7 @@ pub fn get_container_depth(type_: P<Type>, recursion_count: u32) -> u32 {
 
     let (tuple_type_args, type_args) = {
         let priv_ = ClassType(type_).d().priv_.borrow();
-        (priv_.tuple_type_args.clone(), priv_.type_args.clone())
+        (priv_.tuple_type_args.map(|tuple_type_args| tuple_type_args.borrow().clone()), priv_.type_args.clone())
     };
     if let Some(tuple_type_args) = tuple_type_args {
         for type_arg_info in tuple_type_args {
@@ -2524,7 +2524,7 @@ pub fn get_type_var_args_recursive(type_: P<Type>, recursion_count: u32) -> Vec<
         let type_args = {
             let priv_ = ClassType(type_).d().priv_.borrow();
             match &priv_.tuple_type_args {
-                Some(tuple_type_args) => Some(tuple_type_args.iter().map(|e| e.type_).collect::<Vec<_>>()),
+                Some(tuple_type_args) => Some(tuple_type_args.borrow().iter().map(|e| e.type_).collect::<Vec<_>>()),
                 None => priv_.type_args.clone(),
             }
         };
@@ -2625,7 +2625,7 @@ pub fn build_solution_from_specialized_class(class_type: ClassType) -> Rc<Constr
 
     let (tuple_type_args, is_type_arg_explicit) = {
         let priv_ = class_type.d().priv_.borrow();
-        (priv_.tuple_type_args.clone(), priv_.is_type_arg_explicit)
+        (priv_.tuple_type_args.map(|tuple_type_args| tuple_type_args.borrow().clone()), priv_.is_type_arg_explicit)
     };
     if let Some(tuple_type_args) = tuple_type_args {
         type_args = Some(vec![convert_to_instance(
@@ -3227,7 +3227,7 @@ pub fn contains_any_or_unknown(type_: P<Type>, recurse: bool) -> Option<P<Type>>
                     let type_args = {
                         let priv_ = type_.d().priv_.borrow();
                         match &priv_.tuple_type_args {
-                            Some(tuple_type_args) => Some(tuple_type_args.iter().map(|t| t.type_).collect::<Vec<_>>()),
+                            Some(tuple_type_args) => Some(tuple_type_args.borrow().iter().map(|t| t.type_).collect::<Vec<_>>()),
                             None => priv_.type_args.clone(),
                         }
                     };
@@ -3342,7 +3342,7 @@ pub fn is_partly_unknown(type_: P<Type>, recursion_count: u32) -> bool {
             let type_args = {
                 let priv_ = class_type.d().priv_.borrow();
                 match &priv_.tuple_type_args {
-                    Some(tuple_type_args) => Some(tuple_type_args.iter().map(|t| t.type_).collect::<Vec<_>>()),
+                    Some(tuple_type_args) => Some(tuple_type_args.borrow().iter().map(|t| t.type_).collect::<Vec<_>>()),
                     None => priv_.type_args.clone(),
                 }
             };
@@ -3454,7 +3454,7 @@ pub fn combine_same_sized_tuples(type_: P<Type>, tuple_type: Option<P<Type>>) ->
 
                 let tuple_type_args = match tuple_class {
                     Some(tuple_class) if crate::analyzer::types::is_class(tuple_class.0) => {
-                        tuple_class.d().priv_.borrow().tuple_type_args.clone()
+                        tuple_class.d().priv_.borrow().tuple_type_args.map(|tuple_type_args| tuple_type_args.borrow().clone())
                     }
                     _ => None,
                 };
@@ -3520,7 +3520,7 @@ pub fn combine_tuple_type_args(type_args: &[TupleTypeArg]) -> P<Type> {
                 let bound_type = TypeVarType(t.type_).d().shared.get().bound_type.get();
                 if let Some(bound_type) = bound_type {
                     if crate::analyzer::types::is_class_instance(bound_type) && is_tuple_class(ClassType(bound_type)) {
-                        let bound_tuple_type_args = ClassType(bound_type).d().priv_.borrow().tuple_type_args.clone();
+                        let bound_tuple_type_args = ClassType(bound_type).d().priv_.borrow().tuple_type_args.map(|tuple_type_args| tuple_type_args.borrow().clone());
                         if let Some(bound_tuple_type_args) = bound_tuple_type_args {
                             types_to_combine.push(combine_tuple_type_args(&bound_tuple_type_args));
                         }
@@ -3566,7 +3566,7 @@ pub(crate) fn _expand_unpacked_type_var_tuple_union(type_: P<Type>) -> P<Type> {
     if crate::analyzer::types::is_class_instance(type_) && is_tuple_class(ClassType(type_)) {
         let (tuple_type_args, is_unpacked) = {
             let priv_ = ClassType(type_).d().priv_.borrow();
-            (priv_.tuple_type_args.clone(), priv_.is_unpacked.unwrap_or(false))
+            (priv_.tuple_type_args.map(|tuple_type_args| tuple_type_args.borrow().clone()), priv_.is_unpacked.unwrap_or(false))
         };
         if let Some(tuple_type_args) = tuple_type_args {
             if is_unpacked {
@@ -3746,7 +3746,7 @@ pub(crate) fn _requires_specialization(
 
             let (is_type_arg_explicit, tuple_type_args, type_args) = {
                 let priv_ = class_type.d().priv_.borrow();
-                (priv_.is_type_arg_explicit.unwrap_or(false), priv_.tuple_type_args.clone(), priv_.type_args.clone())
+                (priv_.is_type_arg_explicit.unwrap_or(false), priv_.tuple_type_args.map(|tuple_type_args| tuple_type_args.borrow().clone()), priv_.type_args.clone())
             };
 
             if !is_type_arg_explicit && options.and_then(|options| options.ignore_implicit_type_args).unwrap_or(false) {
@@ -4511,11 +4511,11 @@ pub(crate) fn transform_type_pair_recursive(
             let target_class = ClassType(target_type);
             let (source_type_args, source_tuple_type_args) = {
                 let priv_ = source_class.d().priv_.borrow();
-                (priv_.type_args.clone(), priv_.tuple_type_args.clone())
+                (priv_.type_args.clone(), priv_.tuple_type_args.map(|tuple_type_args| tuple_type_args.borrow().clone()))
             };
             let (target_type_args, target_tuple_type_args) = {
                 let priv_ = target_class.d().priv_.borrow();
-                (priv_.type_args.clone(), priv_.tuple_type_args.clone())
+                (priv_.type_args.clone(), priv_.tuple_type_args.map(|tuple_type_args| tuple_type_args.borrow().clone()))
             };
             if source_class.d().shared.get().full_name != target_class.d().shared.get().full_name
                 || crate::analyzer::types::TypeBase::is_instance(source_type)
@@ -4562,7 +4562,7 @@ pub(crate) fn transform_type_pair_recursive(
 
             let (current_type_args, current_tuple_type_args) = {
                 let priv_ = source_class.d().priv_.borrow();
-                (priv_.type_args.clone(), priv_.tuple_type_args.clone())
+                (priv_.type_args.clone(), priv_.tuple_type_args.map(|tuple_type_args| tuple_type_args.borrow().clone()))
             };
             let type_args_changed = type_args.as_ref().is_some_and(|type_args| {
                 type_args
@@ -4584,7 +4584,8 @@ pub(crate) fn transform_type_pair_recursive(
             {
                 let mut priv_ = ClassType(transformed_type).d().priv_.borrow_mut();
                 priv_.type_args = type_args;
-                priv_.tuple_type_args = tuple_type_args;
+                priv_.tuple_type_args = tuple_type_args
+                    .map(|tuple_type_args| P::new_eval(RefCell::new(tuple_type_args)));
             }
             return transformed_type;
         }
@@ -4965,7 +4966,7 @@ pub trait TypeVarTransformer {
                 return class_type.0;
             }
 
-            let old_tuple_type_args = class_type.d().priv_.borrow().tuple_type_args.clone();
+            let old_tuple_type_args = class_type.d().priv_.borrow().tuple_type_args.map(|tuple_type_args| tuple_type_args.borrow().clone());
             if let Some(old_tuple_type_args) = old_tuple_type_args {
                 let mut collected: Vec<TupleTypeArg> = Vec::new();
 
@@ -4976,7 +4977,7 @@ pub trait TypeVarTransformer {
                         specialization_needed = true;
                     }
 
-                    let tuple_type_args_of = |t: P<Type>| ClassType(t).d().priv_.borrow().tuple_type_args.clone();
+                    let tuple_type_args_of = |t: P<Type>| ClassType(t).d().priv_.borrow().tuple_type_args.map(|tuple_type_args| tuple_type_args.borrow().clone());
                     if crate::analyzer::types::is_unpacked_type_var_tuple(old_type_arg_type.type_)
                         && crate::analyzer::types::is_class_instance(new_type_arg_type)
                         && is_tuple_class(ClassType(new_type_arg_type))
@@ -4993,7 +4994,7 @@ pub trait TypeVarTransformer {
                         let is_empty_tuple = old_type_arg_type.is_unbounded
                             && crate::analyzer::types::is_type_var(old_type_arg_type.type_)
                             && crate::analyzer::types::is_never(new_type_arg_type)
-                            && class_type.d().priv_.borrow().tuple_type_args.as_ref().unwrap().len() == 1;
+                            && class_type.d().priv_.borrow().tuple_type_args.map(|tuple_type_args| tuple_type_args.get().borrow()).as_deref().unwrap().len() == 1;
 
                         if !is_empty_tuple {
                             collected.push(TupleTypeArg {
@@ -5163,7 +5164,7 @@ pub trait TypeVarTransformer {
                         && is_tuple_class(ClassType(specialized_type))
                         && ClassType(specialized_type).d().priv_.borrow().is_unpacked.unwrap_or(false)
                     {
-                        variadic_types_to_unpack = ClassType(specialized_type).d().priv_.borrow().tuple_type_args.clone();
+                        variadic_types_to_unpack = ClassType(specialized_type).d().priv_.borrow().tuple_type_args.map(|tuple_type_args| tuple_type_args.borrow().clone());
                     }
                 }
 
@@ -5784,7 +5785,7 @@ impl TypeVarTransformer for ApplySolvedTypeVarsTransformer {
             if !crate::analyzer::types::is_type_var_tuple(type_var.0) && crate::analyzer::types::is_class_instance(replacement) {
                 let (tuple_type_args, is_unpacked) = {
                     let priv_ = ClassType(replacement).d().priv_.borrow();
-                    (priv_.tuple_type_args.clone(), priv_.is_unpacked.unwrap_or(false))
+                    (priv_.tuple_type_args.map(|tuple_type_args| tuple_type_args.borrow().clone()), priv_.is_unpacked.unwrap_or(false))
                 };
                 if let Some(tuple_type_args) = tuple_type_args {
                     if is_unpacked {
@@ -5904,7 +5905,7 @@ impl TypeVarTransformer for ApplySolvedTypeVarsTransformer {
             let default_type = type_var.d().shared.get().default_type.get();
 
             if type_var.d().shared.get().is_default_explicit.get() && crate::analyzer::types::is_class_instance(default_type) {
-                let tuple_type_args = ClassType(default_type).d().priv_.borrow().tuple_type_args.clone();
+                let tuple_type_args = ClassType(default_type).d().priv_.borrow().tuple_type_args.map(|tuple_type_args| tuple_type_args.borrow().clone());
                 if tuple_type_args.is_some() {
                     return tuple_type_args;
                 }
@@ -5917,7 +5918,7 @@ impl TypeVarTransformer for ApplySolvedTypeVarsTransformer {
         let value = solution_set.get_type(type_var);
         if let Some(value) = value {
             if crate::analyzer::types::is_class_instance(value) {
-                let tuple_type_args = ClassType(value).d().priv_.borrow().tuple_type_args.clone();
+                let tuple_type_args = ClassType(value).d().priv_.borrow().tuple_type_args.map(|tuple_type_args| tuple_type_args.borrow().clone());
                 if tuple_type_args.is_some() && crate::analyzer::types::is_unpacked_class(value) {
                     return tuple_type_args;
                 }

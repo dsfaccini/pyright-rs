@@ -195,7 +195,7 @@ pub fn get_param_list_details(
                     .priv_
                     .borrow()
                     .tuple_type_args
-                    .clone()
+                    .map(|tuple_type_args| tuple_type_args.borrow().clone())
             } else {
                 None
             };
@@ -512,7 +512,7 @@ pub fn is_param_spec_args(param_spec: TypeVarType, arg_type: P<Type>) -> bool {
                     .priv_
                     .borrow()
                     .tuple_type_args
-                    .clone();
+                    .map(|tuple_type_args| tuple_type_args.borrow().clone());
                 if let Some(tuple_type_args) = tuple_type_args {
                     if tuple_type_args.len() == 1
                         && tuple_type_args[0].is_unbounded

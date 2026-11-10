@@ -110,6 +110,7 @@ A collection is a value in Rust and a shared reference in TypeScript. Where two 
 
 - the binder's code-flow expression set, `P<RefCell<JsSet<String>>>`: the binder, its deferred tasks and the node-info store share it;
 - the evaluator's type caches and the code-flow node type cache (`CodeFlowTypeCache.cache`), `P<RefCell<JsMap<u32, ..>>>`: the speculative type tracker deletes from the map it was handed, and the return-inference caches are swapped per call. `SpeculativeEntry.cache` holds either kind as a `SpeculativeCache` enum, defined in `[items]`.
+- a tuple's type arguments, `ClassDetailsPriv.tuple_type_args`, `Option<P<RefCell<Vec<TupleTypeArg>>>>`: `TypeBase.cloneType` spreads `priv` (types.ts:272), so every clone shares the array, and `getSequencePatternInfo` splices it in place (patternMatching.ts:1558-1684), which reaches every clone. `ClassType.specialize` copies the array (types.ts:963) and `transformTypeVarsInClassType`'s pair transform stores a fresh one (typeUtils.ts:3675), so both allocate a new handle. A reader that keeps the args across other calls copies them out (`.borrow().clone()`); one that only looks borrows within the statement (`.get().borrow()`).
 
 A getter that returns live state its callers write to returns a reference into it, also through `[sites]`: `ClassType::get_symbol_table` returns `&'static RefCell<JsMap<..>>`, `TypeBase::add_props` returns `RefMut<'static, TypeBaseProps>`.
 
@@ -307,7 +308,7 @@ A run without `install` is a record: a ported crate file supersedes its stub.
 
 ## 6. Open
 
-- Collections shared by reference between holders that change them need a `[sites]` entry each; the write analysis does not see aliasing. Mapped so far: the binder's code-flow expression set, the evaluator's type caches and the code-flow node type cache.
+- Collections shared by reference between holders that change them need a `[sites]` entry each; the write analysis does not see aliasing. Mapped so far: the binder's code-flow expression set, the evaluator's type caches, the code-flow node type cache and a tuple's type arguments.
 - Interface inheritance between value structs is flattened, so a function that takes the base cannot take a derived struct. In the evaluator, `is_type_cache_entry_valid(Option<&TypeCacheEntry>)` is called with a `TypeFormTypeCacheEntry` (typeEvaluator.ts:821), and `read_contextual_type_cache_entry_for_node` returns one where it is typed `TypeCacheEntry` (788–799). Decide per site: a generic, a conversion, or a `[sites]` type. `ContextualTypeCacheEntry` is a trait (`[traits]`); `[items]` holds its impls for `SpeculativeTypeEntry` and `TypeFormTypeCacheEntry`, since the generator emits impls only for classes.
 - The handle rule is per type. A type made a handle because some object of it is stored and some object of it is written may have objects that are never both; a per-site proof can move it to a value later, through `[modes]`.
 - Captured `let`s that the TypeScript reassigns (`SynthesizeMethodsDeferred.is_named_tuple_subclass` and others) are copied into the callback struct. Where a write follows the closure, the port needs a shared cell.

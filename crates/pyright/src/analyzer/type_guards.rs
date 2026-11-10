@@ -1287,7 +1287,7 @@ pub(crate) fn narrow_tuple_type_for_is_none(
             let Some(tuple_type) = get_specialized_tuple_type(subtype) else {
                 return Some(subtype);
             };
-            let tuple_type_args = tuple_type.d().priv_.borrow().tuple_type_args.clone();
+            let tuple_type_args = tuple_type.d().priv_.borrow().tuple_type_args.map(|tuple_type_args| tuple_type_args.borrow().clone());
             if is_unbounded_tuple_class(tuple_type).unwrap_or(false) || tuple_type_args.is_none() {
                 return Some(subtype);
             }
@@ -1739,7 +1739,7 @@ pub fn get_is_instance_class_types(
                 .priv_
                 .borrow()
                 .tuple_type_args
-                .clone();
+                .map(|tuple_type_args| tuple_type_args.borrow().clone());
             if let Some(tuple_type_args) = tuple_type_args {
                 for tuple_entry in tuple_type_args {
                     add_class_types_recursive(
@@ -2791,7 +2791,7 @@ pub(crate) fn narrow_type_for_tuple_length(
                 return Some(subtype);
             }
             let concrete_subtype = ClassType(concrete_subtype);
-            let tuple_type_args = concrete_subtype.d().priv_.borrow().tuple_type_args.clone();
+            let tuple_type_args = concrete_subtype.d().priv_.borrow().tuple_type_args.map(|tuple_type_args| tuple_type_args.borrow().clone());
             let Some(tuple_type_args) = tuple_type_args else {
                 return Some(subtype);
             };
@@ -2926,7 +2926,7 @@ pub(crate) fn expand_unbounded_tuple_element(
 
     let mut tuple_type_args: Vec<TupleTypeArg> = Vec::new();
 
-    let src_type_args = tuple_type.d().priv_.borrow().tuple_type_args.clone().unwrap();
+    let src_type_args = tuple_type.d().priv_.borrow().tuple_type_args.map(|tuple_type_args| tuple_type_args.borrow().clone()).unwrap();
     for type_arg in src_type_args {
         if !type_arg.is_unbounded {
             tuple_type_args.push(type_arg);
@@ -2985,7 +2985,7 @@ pub(crate) fn narrow_type_for_container_type(
         .priv_
         .borrow()
         .tuple_type_args
-        .clone();
+        .map(|tuple_type_args| tuple_type_args.borrow().clone());
     let Some(tuple_type_args) = tuple_type_args else {
         return reference_type;
     };
@@ -3089,7 +3089,7 @@ pub fn get_element_type_for_container_narrowing(container_type: P<Type>) -> Opti
 
     let mut element_type = type_args[0];
     if is_tuple_class(container_type) {
-        let tuple_type_args = container_type.d().priv_.borrow().tuple_type_args.clone();
+        let tuple_type_args = container_type.d().priv_.borrow().tuple_type_args.map(|tuple_type_args| tuple_type_args.borrow().clone());
         if let Some(tuple_type_args) = tuple_type_args {
             let types: Vec<P<Type>> = tuple_type_args.iter().map(|t| t.type_).collect();
             element_type = combine_types(&types, None);
@@ -3457,7 +3457,7 @@ pub fn narrow_type_for_discriminated_tuple_comparison(
                 && let Some(LiteralValue::Number(index_value)) = index_literal_value
                 && is_class_instance(literal_type)
             {
-                let tuple_type_args = ClassType(subtype).d().priv_.borrow().tuple_type_args.clone();
+                let tuple_type_args = ClassType(subtype).d().priv_.borrow().tuple_type_args.map(|tuple_type_args| tuple_type_args.borrow().clone());
                 if let Some(tuple_type_args) = tuple_type_args
                     && index_value >= 0.0
                     && index_value < tuple_type_args.len() as f64
