@@ -7,13 +7,9 @@ use jsrt::JsMap;
 // analyzer/deprecatedSymbols.ts:12
 #[derive(Clone)]
 pub struct DeprecatedForm {
-    // The version of Python where this symbol becomes deprecated
     pub version: PythonVersion,
-    // The full name of the deprecated type
     pub full_name: String,
-    // The replacement form
     pub replacement_text: String,
-    // Indicates that the symbol is deprecated only if imported from `typing`
     pub typing_import_only: Option<bool>,
 }
 

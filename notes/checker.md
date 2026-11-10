@@ -8,7 +8,7 @@ checker.ts was ported in four ranges, 1-1864, 1865-3923, 3924-5728 and 5729-7900
 - `Checker::new` takes `node_info_reader: P<dyn AnalyzerNodeInfoReader>` (was `&dyn`): the walker base stores it (checker.ts:244). `typemap.toml` `[sites]` `Checker.constructor.nodeInfoReader`.
 - `FunctionReturnTypeCallback` (typePrinter.ts:104) is a trait, held as `P<dyn FunctionReturnTypeCallback>` in every parameter and in `UniqueNameMap._return_type_callback` (was a one-site stored-callback struct holding the evaluator). `TypeEvaluator` implements it at typeEvaluator.ts:30313; the oracle and the typePrinter tests have their own implementations. `typemap.toml` `[types]` and `[items]`; `tools/stubgen/src/emit.ts` emits nothing at a function type alias that `[types]` maps. Recorded in `docs/evaluator-design.md` (stored callbacks) and `docs/step5-shares.md`. Approved by the main session, 2026-11-10.
 - `SourceFile::check` takes pyright's parameters: `import_lookup`, `import_resolver`, `evaluator`, `dependent_files`, `node_info_reader`.
-- `stubgen --install` refuses on main: `type_evaluator.rs` holds a nested function marker (`typeEvaluator.ts:24272`, `apply_loader_actions_to_module_type`) that the stub lacks. The changes above went into `crates/` by hand, identical to the generated stubs (checked: every `checker.rs` signature matches `tools/stubgen/out`).
+- `stubgen --run evaluator --install` on main 2ab2e0f leaves every crate file unchanged.
 
 ## Shared-file edits
 
