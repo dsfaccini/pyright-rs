@@ -57,7 +57,7 @@ Tokens (`parser/tokenizer_types.rs`) follow the same pattern: `Token { type_, st
 
 ## Needs from others
 
-None.
+- infra: `DiagnosticAddendum` indents each level with two U+00A0 (`common/diagnostic.ts:337`, `'\u00A0\u00A0'`); `common/diagnostic.rs` uses two ASCII spaces. Every parser error with an addendum differs, for example `orPatternMissingName` in `samples/match1.py`. With that one change, the parser's diagnostics equal the `parse:` list of every reference diag dump (samples, typeshed, the five primers; pydantic-ai's reference has no diag stage).
 
 ## Doubts
 
