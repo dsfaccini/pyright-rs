@@ -28,6 +28,7 @@ Fill the `todo!()` bodies under your markers and leave every other marker alone.
 | H | 8,530 | `dataClasses.ts:1-1745`, `typedDicts.ts:1-1709`, `protocols.ts:1-899`, `enums.ts:1-759`, `decorators.ts:1-660`, `properties.ts:1-653`, `tuples.ts:1-648`, `namedTuples.ts:1-514`, `constructorTransform.ts:1-499`, `typeWalker.ts:1-204`, `typeComplexity.ts:1-102`, `sentinel.ts:1-86`, `symbolUtils.ts:1-52` |
 | I | 2,363 | `sourceMapper.ts:1-1155`, `sourceMapperUtils.ts:1-63`, `constructors.ts:1-1145`, and `program.ts:1439-1440` (moved from G on 2026-11-10) |
 | J | 957 | `typeGuards.ts:2068-3024` (moved from F on 2026-11-10) |
+| K | 3,686 | `checker.ts:4215-7900` (the checker round, split on 2026-11-10; `checker.ts:1-4214`, `deprecatedSymbols.ts` and the two hooks stay with the checker agent) |
 
 All paths are under `packages/pyright-internal/src/analyzer/`.
 
