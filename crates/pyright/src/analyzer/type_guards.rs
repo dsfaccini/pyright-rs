@@ -2774,31 +2774,329 @@ pub(crate) fn narrow_type_for_tuple_length(
     is_positive_test: bool,
     is_less_than_check: bool,
 ) -> P<Type> {
-    todo!()
+    use crate::analyzer::type_utils::{is_tuple_class, map_subtypes};
+    use crate::analyzer::types::{
+        TypeVarType, combine_types, is_class_instance, is_param_spec, is_unpacked_type_var_tuple,
+    };
+
+    map_subtypes(
+        reference_type,
+        &mut |subtype| {
+            let concrete_subtype =
+                evaluator.make_top_level_type_vars_concrete(subtype, false, None);
+
+            // If it's not a tuple, we can't narrow it.
+            if !is_class_instance(concrete_subtype) || !is_tuple_class(ClassType(concrete_subtype))
+            {
+                return Some(subtype);
+            }
+            let concrete_subtype = ClassType(concrete_subtype);
+            let tuple_type_args = concrete_subtype.d().priv_.borrow().tuple_type_args.clone();
+            let Some(tuple_type_args) = tuple_type_args else {
+                return Some(subtype);
+            };
+
+            // If the tuple contains a TypeVarTuple, we can't narrow it.
+            if tuple_type_args
+                .iter()
+                .any(|type_arg| is_unpacked_type_var_tuple(type_arg.type_))
+            {
+                return Some(subtype);
+            }
+
+            // If the tuple contains no unbounded elements, then we know its length exactly.
+            if !tuple_type_args.iter().any(|type_arg| type_arg.is_unbounded) {
+                let tuple_length_matches = if is_less_than_check {
+                    (tuple_type_args.len() as f64) < length_value
+                } else {
+                    tuple_type_args.len() as f64 == length_value
+                };
+
+                return if tuple_length_matches == is_positive_test {
+                    Some(subtype)
+                } else {
+                    None
+                };
+            }
+
+            // The tuple contains a "...". We'll expand this into as many elements as
+            // necessary to match the lengthValue.
+            let elements_to_add = length_value - tuple_type_args.len() as f64 + 1.0;
+
+            if !is_less_than_check {
+                // If the specified length is smaller than the minimum length of this tuple,
+                // we can rule it out for a positive test and rule it in for a negative test.
+                if elements_to_add < 0.0 {
+                    return if is_positive_test { None } else { Some(subtype) };
+                }
+
+                if !is_positive_test {
+                    // If this is an equality check for the minimum length (e.g.
+                    // "len(x) == 0"), we can expand the minimum length by one).
+                    let min_len = tuple_type_args.len() as f64 - 1.0;
+                    if length_value == min_len {
+                        return Some(
+                            expand_unbounded_tuple_element(
+                                concrete_subtype,
+                                1.0,
+                                /* keepUnbounded */ true,
+                            )
+                            .0,
+                        );
+                    }
+                    return Some(subtype);
+                }
+
+                return Some(
+                    expand_unbounded_tuple_element(
+                        concrete_subtype,
+                        elements_to_add,
+                        /* keepUnbounded */ false,
+                    )
+                    .0,
+                );
+            }
+
+            // If this is a tuple related to an "*args: P.args" parameter, don't expand it.
+            if is_param_spec(subtype)
+                && TypeVarType(subtype)
+                    .d()
+                    .priv_
+                    .borrow()
+                    .param_spec_access
+                    .is_some()
+            {
+                return Some(subtype);
+            }
+
+            // Place an upper limit on the number of union subtypes we
+            // will expand the tuple to.
+            let max_tuple_union_expansion = 32.0;
+            if elements_to_add > max_tuple_union_expansion {
+                return Some(subtype);
+            }
+
+            if is_positive_test {
+                if elements_to_add < 1.0 {
+                    return None;
+                }
+
+                let mut types_to_combine: Vec<P<Type>> = Vec::new();
+
+                let mut i = 0.0;
+                while i < elements_to_add {
+                    types_to_combine.push(
+                        expand_unbounded_tuple_element(
+                            concrete_subtype,
+                            i,
+                            /* keepUnbounded */ false,
+                        )
+                        .0,
+                    );
+                    i += 1.0;
+                }
+
+                return Some(combine_types(&types_to_combine, None));
+            }
+
+            Some(
+                expand_unbounded_tuple_element(
+                    concrete_subtype,
+                    elements_to_add,
+                    /* keepUnbounded */ true,
+                )
+                .0,
+            )
+        },
+        None,
+    )
 }
 
 // analyzer/typeGuards.ts:2158
+// Expands a tuple type that contains an unbounded element to include
+// multiple bounded elements of that same type in place of (or in addition
+// to) the unbounded element.
 pub(crate) fn expand_unbounded_tuple_element(
     tuple_type: ClassType,
     elements_to_add: f64,
     keep_unbounded: bool,
 ) -> ClassType {
-    todo!()
+    use crate::analyzer::type_utils::specialize_tuple_class;
+    use crate::analyzer::types::TupleTypeArg;
+
+    let mut tuple_type_args: Vec<TupleTypeArg> = Vec::new();
+
+    let src_type_args = tuple_type.d().priv_.borrow().tuple_type_args.clone().unwrap();
+    for type_arg in src_type_args {
+        if !type_arg.is_unbounded {
+            tuple_type_args.push(type_arg);
+        } else {
+            let mut i = 0.0;
+            while i < elements_to_add {
+                tuple_type_args.push(TupleTypeArg {
+                    is_unbounded: false,
+                    type_: type_arg.type_,
+                    is_optional: None,
+                });
+                i += 1.0;
+            }
+
+            if keep_unbounded {
+                tuple_type_args.push(type_arg);
+            }
+        }
+    }
+
+    specialize_tuple_class(tuple_type, &tuple_type_args, true, false)
 }
 
 // analyzer/typeGuards.ts:2179
+// Attempts to narrow a type (make it more constrained) based on an "in" binary operator.
 pub(crate) fn narrow_type_for_container_type(
     evaluator: &TypeEvaluator,
     reference_type: P<Type>,
     container_type: P<Type>,
     is_positive_test: bool,
 ) -> P<Type> {
-    todo!()
+    use crate::analyzer::type_utils::{is_literal_type, is_none_instance, map_subtypes};
+    use crate::analyzer::types::{TypeSameOptions, combine_types, is_class_instance, is_type_same};
+
+    if is_positive_test {
+        let Some(element_type) = get_element_type_for_container_narrowing(container_type) else {
+            return reference_type;
+        };
+
+        return narrow_type_for_container_element_type(
+            evaluator,
+            reference_type,
+            evaluator.make_top_level_type_vars_concrete(element_type, false, None),
+        );
+    }
+
+    // Narrowing in the negative case is possible only with tuples
+    // with a known length.
+    if !is_class_instance(container_type)
+        || !ClassType::is_built_in(ClassType(container_type), Some(&["tuple".to_string()]))
+    {
+        return reference_type;
+    }
+    let tuple_type_args = ClassType(container_type)
+        .d()
+        .priv_
+        .borrow()
+        .tuple_type_args
+        .clone();
+    let Some(tuple_type_args) = tuple_type_args else {
+        return reference_type;
+    };
+
+    // Determine which tuple types can be eliminated. Only "None" and
+    // literal types can be handled here.
+    let mut types_to_eliminate: Vec<P<Type>> = Vec::new();
+    for tuple_entry in &tuple_type_args {
+        if !tuple_entry.is_unbounded {
+            if is_none_instance(tuple_entry.type_) {
+                types_to_eliminate.push(tuple_entry.type_);
+            } else if is_class_instance(tuple_entry.type_)
+                && is_literal_type(ClassType(tuple_entry.type_))
+            {
+                types_to_eliminate.push(tuple_entry.type_);
+            }
+        }
+    }
+
+    if types_to_eliminate.is_empty() {
+        return reference_type;
+    }
+
+    map_subtypes(
+        reference_type,
+        &mut |reference_subtype| {
+            let reference_subtype =
+                evaluator.make_top_level_type_vars_concrete(reference_subtype, false, None);
+            if is_class_instance(reference_subtype)
+                && ClassType(reference_subtype)
+                    .d()
+                    .priv_
+                    .borrow()
+                    .literal_value
+                    .is_none()
+            {
+                // If we're able to enumerate all possible literal values
+                // (for bool or enum), we can eliminate all others in a negative test.
+                let all_literal_types =
+                    enumerate_literals_for_type(evaluator, ClassType(reference_subtype));
+                if let Some(all_literal_types) = all_literal_types
+                    && !all_literal_types.is_empty()
+                {
+                    let remaining: Vec<P<Type>> = all_literal_types
+                        .iter()
+                        .filter(|type_| {
+                            !types_to_eliminate.iter().any(|t| {
+                                is_type_same(*t, type_.0, &TypeSameOptions::default(), 0)
+                            })
+                        })
+                        .map(|type_| type_.0)
+                        .collect();
+                    return Some(combine_types(&remaining, None));
+                }
+            }
+
+            if types_to_eliminate
+                .iter()
+                .any(|t| is_type_same(*t, reference_subtype, &TypeSameOptions::default(), 0))
+            {
+                return None;
+            }
+
+            Some(reference_subtype)
+        },
+        None,
+    )
 }
 
 // analyzer/typeGuards.ts:2246
 pub fn get_element_type_for_container_narrowing(container_type: P<Type>) -> Option<P<Type>> {
-    todo!()
+    use crate::analyzer::type_utils::is_tuple_class;
+    use crate::analyzer::types::{combine_types, is_class_instance};
+
+    // We support contains narrowing only for certain built-in types that have been specialized.
+    let supported_containers: Vec<String> = [
+        "list",
+        "set",
+        "frozenset",
+        "deque",
+        "tuple",
+        "dict",
+        "defaultdict",
+        "OrderedDict",
+    ]
+    .iter()
+    .map(|name| name.to_string())
+    .collect();
+    if !is_class_instance(container_type)
+        || !ClassType::is_built_in(ClassType(container_type), Some(&supported_containers))
+    {
+        return None;
+    }
+    let container_type = ClassType(container_type);
+
+    let type_args = container_type.d().priv_.borrow().type_args.clone();
+    let type_args = type_args?;
+    if type_args.is_empty() {
+        return None;
+    }
+
+    let mut element_type = type_args[0];
+    if is_tuple_class(container_type) {
+        let tuple_type_args = container_type.d().priv_.borrow().tuple_type_args.clone();
+        if let Some(tuple_type_args) = tuple_type_args {
+            let types: Vec<P<Type>> = tuple_type_args.iter().map(|t| t.type_).collect();
+            element_type = combine_types(&types, None);
+        }
+    }
+
+    Some(element_type)
 }
 
 // analyzer/typeGuards.ts:2265
@@ -2807,20 +3105,238 @@ pub fn narrow_type_for_container_element_type(
     reference_type: P<Type>,
     element_type: P<Type>,
 ) -> P<Type> {
-    todo!()
+    use crate::analyzer::type_evaluator_types::AssignTypeFlags;
+    use crate::analyzer::type_utils::{
+        add_condition_to_type, is_literal_like_type, is_none_instance, map_subtypes,
+        strip_type_form,
+    };
+    use crate::analyzer::types::{is_any_or_unknown, is_class_instance, is_instantiable_class};
+
+    let condition_of = |type_: P<Type>| {
+        type_
+            .props
+            .borrow()
+            .as_ref()
+            .and_then(|props| props.condition.clone())
+    };
+
+    evaluator.map_subtypes_expand_type_vars(
+        reference_type,
+        /* options */ None,
+        &mut |reference_subtype, _, _| {
+            Some(map_subtypes(
+                element_type,
+                &mut |element_subtype| {
+                    if is_any_or_unknown(element_subtype) {
+                        return Some(reference_subtype);
+                    }
+
+                    // If the two types are disjoint (i.e. are not comparable), eliminate this subtype.
+                    if !evaluator.is_type_comparable(element_subtype, reference_subtype, false) {
+                        return None;
+                    }
+
+                    // If one of the two types is a literal, we can narrow to that type.
+                    if is_class_instance(element_subtype)
+                        && (is_literal_like_type(ClassType(element_subtype))
+                            || is_none_instance(element_subtype))
+                        && evaluator.assign_type(
+                            reference_subtype,
+                            element_subtype,
+                            None,
+                            None,
+                            AssignTypeFlags::Default,
+                            0,
+                        )
+                    {
+                        return Some(strip_type_form(add_condition_to_type(
+                            element_subtype,
+                            condition_of(reference_subtype).as_deref(),
+                            None,
+                        )));
+                    }
+
+                    if is_class_instance(reference_subtype)
+                        && (is_literal_like_type(ClassType(reference_subtype))
+                            || is_none_instance(reference_subtype))
+                        && evaluator.assign_type(
+                            element_subtype,
+                            reference_subtype,
+                            None,
+                            None,
+                            AssignTypeFlags::Default,
+                            0,
+                        )
+                    {
+                        return Some(strip_type_form(add_condition_to_type(
+                            reference_subtype,
+                            condition_of(element_subtype).as_deref(),
+                            None,
+                        )));
+                    }
+
+                    // If the element type is a known class object that is assignable to
+                    // the reference type, we can narrow to that class object.
+                    if is_instantiable_class(element_subtype)
+                        && !ClassType(element_subtype)
+                            .d()
+                            .priv_
+                            .borrow()
+                            .include_subclasses
+                            .unwrap_or(false)
+                        && evaluator.assign_type(
+                            reference_subtype,
+                            element_subtype,
+                            None,
+                            None,
+                            AssignTypeFlags::Default,
+                            0,
+                        )
+                    {
+                        return Some(strip_type_form(add_condition_to_type(
+                            element_subtype,
+                            condition_of(reference_subtype).as_deref(),
+                            None,
+                        )));
+                    }
+
+                    // It's not safe to narrow.
+                    Some(reference_subtype)
+                },
+                None,
+            ))
+        },
+        0,
+    )
 }
 
 // analyzer/typeGuards.ts:2312
+// Attempts to narrow a type based on whether it is a TypedDict with
+// a literal key value.
 pub(crate) fn narrow_type_for_typed_dict_key(
     evaluator: &TypeEvaluator,
     reference_type: P<Type>,
     literal_key: ClassType,
     is_positive_test: bool,
 ) -> P<Type> {
-    todo!()
+    use crate::analyzer::typed_dicts::get_typed_dict_members_for_class;
+    use crate::analyzer::types::{
+        LiteralValue, TypedDictEntry, is_class_instance, is_never, is_param_spec,
+    };
+    use jsrt::JsMap;
+
+    evaluator.map_subtypes_expand_type_vars(
+        reference_type,
+        /* options */ None,
+        &mut |subtype, unexpanded_subtype, _| {
+            if is_param_spec(unexpanded_subtype) {
+                return Some(unexpanded_subtype);
+            }
+
+            if is_class_instance(subtype) && ClassType::is_typed_dict_class(ClassType(subtype)) {
+                let subtype = ClassType(subtype);
+                let entries =
+                    get_typed_dict_members_for_class(evaluator, subtype, /* allowNarrowed */ true);
+                // `literalKey.priv.literalValue as string`: every caller passes a `str` literal.
+                let literal_value = literal_key.d().priv_.borrow().literal_value.clone();
+                let Some(LiteralValue::String(literal_key_value)) = literal_value else {
+                    unreachable!("narrowTypeForTypedDictKey takes a str literal");
+                };
+                let known_entry = entries.known_items.borrow().get(&literal_key_value).cloned();
+                let td_entry = match &known_entry {
+                    Some(known_entry) => Some(known_entry.clone()),
+                    None => entries.extra_items.borrow().clone(),
+                };
+
+                if is_positive_test {
+                    // The code that is commented out below implements the behavior that is technically
+                    // correct, but until we PEP 728 is ratified and we have a way to express "extra items"
+                    // and closed TypedDicts, we'll preserve the older (less correct) behavior to enable
+                    // narrowing of TypedDicts based on checks for specific keys.
+                    // TODO - remove this behavior once PEP 728 is accepted and the feature is no
+                    // longer experimental.
+                    let Some(td_entry) = td_entry else {
+                        return None;
+                    };
+
+                    // if (!tdEntry) {
+                    //     // If there is no TD entry for this key and no "extra items" defined,
+                    //     // we have to assume that the TypedDict may contain extra items, so
+                    //     // narrowing it isn't possible in this case.
+                    //     return subtype;
+                    // }
+
+                    if is_never(td_entry.value_type) {
+                        // If the entry is typed as Never or the "extra items" is typed as Never,
+                        // then this key cannot be present in the TypedDict, and we can eliminate it.
+                        // A closed TypedDict has an "extra items" of Never, so this is what allows
+                        // a key check to discriminate between closed TypedDicts.
+                        return None;
+                    }
+
+                    // If the entry is currently not required and not marked provided, we can mark
+                    // it as provided after this guard expression confirms it is.
+                    if td_entry.is_required || td_entry.is_provided {
+                        return Some(subtype.0);
+                    }
+
+                    let mut new_narrowed_entries_map: JsMap<String, TypedDictEntry> = subtype
+                        .d()
+                        .priv_
+                        .borrow()
+                        .typed_dict_narrowed_entries
+                        .clone()
+                        .unwrap_or_default();
+
+                    // Add the new entry.
+                    new_narrowed_entries_map.insert(
+                        literal_key_value,
+                        TypedDictEntry {
+                            value_type: td_entry.value_type,
+                            is_read_only: td_entry.is_read_only,
+                            is_required: false,
+                            is_provided: true,
+                        },
+                    );
+
+                    // Clone the TypedDict object with the new entries.
+                    Some(
+                        ClassType::clone_as_instance(
+                            ClassType::clone_for_narrowed_typed_dict_entries(
+                                ClassType::clone_as_instantiable(subtype, true),
+                                Some(new_narrowed_entries_map),
+                            ),
+                            true,
+                        )
+                        .0,
+                    )
+                } else {
+                    let Some(known_entry) = known_entry else {
+                        // The key is not one of the known items, so it can be supplied
+                        // only through an "extra items" entry, which says nothing about
+                        // whether this particular key is present. Its absence is therefore
+                        // consistent with the type, and the subtype cannot be eliminated.
+                        return Some(subtype.0);
+                    };
+
+                    if known_entry.is_required || known_entry.is_provided {
+                        None
+                    } else {
+                        Some(subtype.0)
+                    }
+                }
+            } else {
+                Some(subtype)
+            }
+        },
+        0,
+    )
 }
 
 // analyzer/typeGuards.ts:2405
+// Attempts to narrow a TypedDict type based on a comparison (equal or not
+// equal) between a discriminating entry type that has a declared literal
+// type to a literal value.
 pub fn narrow_type_for_discriminated_dict_entry_comparison(
     evaluator: &TypeEvaluator,
     reference_type: P<Type>,
@@ -2828,7 +3344,90 @@ pub fn narrow_type_for_discriminated_dict_entry_comparison(
     literal_type: P<Type>,
     is_positive_test: bool,
 ) -> P<Type> {
-    todo!()
+    use crate::analyzer::type_evaluator_types::AssignTypeFlags;
+    use crate::analyzer::type_utils::{do_for_each_subtype, is_literal_type_or_union, map_subtypes};
+    use crate::analyzer::typed_dicts::get_typed_dict_members_for_class;
+    use crate::analyzer::types::{LiteralValue, is_class_instance};
+
+    let mut can_narrow = true;
+
+    let narrowed_type = map_subtypes(
+        reference_type,
+        &mut |subtype| {
+            if is_class_instance(subtype) && ClassType::is_typed_dict_class(ClassType(subtype)) {
+                let symbol_map =
+                    get_typed_dict_members_for_class(evaluator, ClassType(subtype), false);
+                // `indexLiteralType.priv.literalValue as string`: every caller passes a `str` literal.
+                let literal_value = index_literal_type.d().priv_.borrow().literal_value.clone();
+                let Some(LiteralValue::String(index_literal_value)) = literal_value else {
+                    unreachable!("narrowTypeForDiscriminatedDictEntryComparison takes a str literal");
+                };
+                let td_entry = symbol_map
+                    .known_items
+                    .borrow()
+                    .get(&index_literal_value)
+                    .cloned();
+
+                if let Some(td_entry) = td_entry
+                    && is_literal_type_or_union(td_entry.value_type, false)
+                {
+                    if is_positive_test {
+                        let mut found_match = false;
+
+                        do_for_each_subtype(
+                            literal_type,
+                            &mut |literal_subtype, _, _| {
+                                if evaluator.assign_type(
+                                    td_entry.value_type,
+                                    literal_subtype,
+                                    None,
+                                    None,
+                                    AssignTypeFlags::Default,
+                                    0,
+                                ) {
+                                    found_match = true;
+                                }
+                            },
+                            false,
+                        );
+
+                        return if found_match { Some(subtype) } else { None };
+                    } else {
+                        let mut found_non_match = false;
+
+                        do_for_each_subtype(
+                            literal_type,
+                            &mut |literal_subtype, _, _| {
+                                if !evaluator.assign_type(
+                                    literal_subtype,
+                                    td_entry.value_type,
+                                    None,
+                                    None,
+                                    AssignTypeFlags::Default,
+                                    0,
+                                ) {
+                                    found_non_match = true;
+                                }
+                            },
+                            false,
+                        );
+
+                        return if found_non_match { Some(subtype) } else { None };
+                    }
+                }
+            }
+
+            can_narrow = false;
+            Some(subtype)
+        },
+        None,
+    );
+
+    if can_narrow {
+        narrowed_type
+    } else {
+        reference_type
+    }
 }
 
 // analyzer/typeGuards.ts:2451
@@ -2839,10 +3438,87 @@ pub fn narrow_type_for_discriminated_tuple_comparison(
     literal_type: P<Type>,
     is_positive_test: bool,
 ) -> P<Type> {
-    todo!()
+    use crate::analyzer::type_evaluator_types::AssignTypeFlags;
+    use crate::analyzer::type_utils::{
+        is_literal_type_or_union, is_unbounded_tuple_class, map_subtypes,
+    };
+    use crate::analyzer::types::{LiteralValue, is_class_instance};
+
+    let mut can_narrow = true;
+
+    let narrowed_type = map_subtypes(
+        reference_type,
+        &mut |subtype| {
+            // `typeof indexLiteralType.priv.literalValue === 'number'`.
+            let index_literal_value = index_literal_type.d().priv_.borrow().literal_value.clone();
+            if is_class_instance(subtype)
+                && ClassType::is_tuple_class(ClassType(subtype))
+                && !is_unbounded_tuple_class(ClassType(subtype)).unwrap_or(false)
+                && let Some(LiteralValue::Number(index_value)) = index_literal_value
+                && is_class_instance(literal_type)
+            {
+                let tuple_type_args = ClassType(subtype).d().priv_.borrow().tuple_type_args.clone();
+                if let Some(tuple_type_args) = tuple_type_args
+                    && index_value >= 0.0
+                    && index_value < tuple_type_args.len() as f64
+                {
+                    // `tupleTypeArgs[indexValue]?.type`: a fractional index reads `undefined`.
+                    let tuple_entry_type = if index_value.fract() == 0.0 {
+                        tuple_type_args.get(index_value as usize).map(|arg| arg.type_)
+                    } else {
+                        None
+                    };
+                    if let Some(tuple_entry_type) = tuple_entry_type
+                        && is_literal_type_or_union(tuple_entry_type, false)
+                    {
+                        if is_positive_test {
+                            return if evaluator.assign_type(
+                                tuple_entry_type,
+                                literal_type,
+                                None,
+                                None,
+                                AssignTypeFlags::Default,
+                                0,
+                            ) {
+                                Some(subtype)
+                            } else {
+                                None
+                            };
+                        } else {
+                            return if evaluator.assign_type(
+                                literal_type,
+                                tuple_entry_type,
+                                None,
+                                None,
+                                AssignTypeFlags::Default,
+                                0,
+                            ) {
+                                None
+                            } else {
+                                Some(subtype)
+                            };
+                        }
+                    }
+                }
+            }
+
+            can_narrow = false;
+            Some(subtype)
+        },
+        None,
+    );
+
+    if can_narrow {
+        narrowed_type
+    } else {
+        reference_type
+    }
 }
 
 // analyzer/typeGuards.ts:2491
+// Attempts to narrow a type based on a comparison (equal or not equal)
+// between a discriminating field that has a declared literal type to a
+// literal value.
 pub fn narrow_type_for_discriminated_literal_field_comparison(
     evaluator: &TypeEvaluator,
     reference_type: P<Type>,
@@ -2850,37 +3526,464 @@ pub fn narrow_type_for_discriminated_literal_field_comparison(
     literal_type: ClassType,
     is_positive_test: bool,
 ) -> P<Type> {
-    todo!()
+    use crate::analyzer::type_evaluator_types::AssignTypeFlags;
+    use crate::analyzer::type_utils::{
+        ClassMember, MemberAccessFlags, is_literal_type_or_union, is_property,
+        look_up_class_member, look_up_object_member, map_subtypes,
+    };
+    use crate::analyzer::types::{
+        FunctionType, is_class_instance, is_function, is_instantiable_class,
+    };
+
+    map_subtypes(
+        reference_type,
+        &mut |subtype| {
+            let mut member_info: Option<ClassMember> = None;
+
+            if is_class_instance(subtype) {
+                member_info = look_up_object_member(
+                    ClassType(subtype),
+                    member_name,
+                    MemberAccessFlags::Default,
+                    None,
+                );
+            } else if is_instantiable_class(subtype) {
+                member_info = look_up_class_member(
+                    ClassType(subtype),
+                    member_name,
+                    MemberAccessFlags::Default,
+                    None,
+                );
+            }
+
+            if let Some(member_info) = &member_info
+                && member_info.is_type_declared
+            {
+                let mut member_type = evaluator.get_type_of_member(member_info);
+
+                // Handle the case where the field is a property
+                // that has a declared literal return type for its getter.
+                if is_class_instance(subtype)
+                    && is_class_instance(member_type)
+                    && is_property(member_type)
+                {
+                    let getter_type = ClassType(member_type)
+                        .d()
+                        .priv_
+                        .borrow()
+                        .fget_info
+                        .as_ref()
+                        .map(|fget_info| fget_info.method_type);
+                    if let Some(getter_type) = getter_type
+                        && is_function(getter_type)
+                        && FunctionType(getter_type)
+                            .d()
+                            .shared
+                            .get()
+                            .declared_return_type
+                            .get()
+                            .is_some()
+                    {
+                        let getter_return_type =
+                            FunctionType::get_effective_return_type(FunctionType(getter_type), true);
+                        if let Some(getter_return_type) = getter_return_type {
+                            member_type = getter_return_type;
+                        }
+                    }
+                }
+
+                if is_literal_type_or_union(member_type, /* allowNone */ true) {
+                    if is_positive_test {
+                        return if evaluator.assign_type(
+                            member_type,
+                            literal_type.0,
+                            None,
+                            None,
+                            AssignTypeFlags::Default,
+                            0,
+                        ) {
+                            Some(subtype)
+                        } else {
+                            None
+                        };
+                    } else {
+                        return if evaluator.assign_type(
+                            literal_type.0,
+                            member_type,
+                            None,
+                            None,
+                            AssignTypeFlags::Default,
+                            0,
+                        ) {
+                            None
+                        } else {
+                            Some(subtype)
+                        };
+                    }
+                }
+            }
+
+            Some(subtype)
+        },
+        None,
+    )
 }
 
 // analyzer/typeGuards.ts:2540
+// Attempts to narrow a type based on a comparison (equal or not equal)
+// between a discriminating field that has a declared None type to a
+// None.
 pub(crate) fn narrow_type_for_discriminated_field_none_comparison(
     evaluator: &TypeEvaluator,
     reference_type: P<Type>,
     member_name: &str,
     is_positive_test: bool,
 ) -> P<Type> {
-    todo!()
+    use crate::analyzer::type_utils::{
+        ClassMember, MemberAccessFlags, do_for_each_subtype, is_maybe_descriptor_class,
+        is_maybe_descriptor_instance, is_none_instance, is_property, look_up_class_member,
+        look_up_object_member, map_subtypes, some_subtypes,
+    };
+    use crate::analyzer::types::{
+        is_any_or_unknown, is_class_instance, is_instantiable_class, is_never,
+    };
+
+    map_subtypes(
+        reference_type,
+        &mut |subtype| {
+            let mut member_info: Option<ClassMember> = None;
+            if is_class_instance(subtype) {
+                member_info = look_up_object_member(
+                    ClassType(subtype),
+                    member_name,
+                    MemberAccessFlags::Default,
+                    None,
+                );
+            } else if is_instantiable_class(subtype) {
+                member_info = look_up_class_member(
+                    ClassType(subtype),
+                    member_name,
+                    MemberAccessFlags::Default,
+                    None,
+                );
+            }
+
+            if let Some(member_info) = &member_info
+                && member_info.is_type_declared
+            {
+                // Check the declared type before narrowing, since the member type
+                // below will be concretized and lose descriptor identity.
+                let declared_type = evaluator
+                    .get_declared_type_of_symbol(member_info.symbol, None)
+                    .type_;
+                let Some(declared_type) = declared_type else {
+                    // isTypeDeclared is true but the type couldn't be resolved (e.g. an
+                    // unresolvable stub).  Conservatively skip narrowing rather than risk
+                    // incorrectly eliminating a descriptor-typed member.
+                    return Some(subtype);
+                };
+                // Check if any subtype of the declared type is a descriptor or property.
+                // isMaybeDescriptorInstance handles declared types in instance form (ClassInstance),
+                // while isMaybeDescriptorClass handles declared types in instantiable form
+                // (InstantiableClass), which occurs when the annotation refers to the class object itself.
+                // This check applies to both positive and negative test paths: descriptor __get__
+                // return values don't reflect stored values regardless of test polarity.
+                let is_descriptor_or_property = some_subtypes(declared_type, &mut |declared_subtype| {
+                    is_property(declared_subtype)
+                        || is_maybe_descriptor_instance(declared_subtype, false)
+                        || is_maybe_descriptor_class(declared_subtype)
+                });
+
+                if is_descriptor_or_property {
+                    return Some(subtype);
+                }
+
+                let member_type = evaluator.make_top_level_type_vars_concrete(
+                    evaluator.get_type_of_member(member_info),
+                    false,
+                    None,
+                );
+                let mut can_narrow = true;
+
+                if is_positive_test {
+                    do_for_each_subtype(
+                        member_type,
+                        &mut |member_subtype, _, _| {
+                            let member_subtype =
+                                evaluator.make_top_level_type_vars_concrete(member_subtype, false, None);
+
+                            if is_any_or_unknown(member_subtype)
+                                || is_none_instance(member_subtype)
+                                || is_never(member_subtype)
+                            {
+                                can_narrow = false;
+                            }
+                        },
+                        false,
+                    );
+                } else {
+                    can_narrow = is_none_instance(member_type);
+                }
+
+                if can_narrow {
+                    return None;
+                }
+            }
+
+            Some(subtype)
+        },
+        None,
+    )
 }
 
 // analyzer/typeGuards.ts:2607
+// Attempts to narrow a type based on a "type(x) is y" or "type(x) is not y" check.
 pub(crate) fn narrow_type_for_type_is(
     evaluator: &TypeEvaluator,
     type_: P<Type>,
     class_types: &[ClassType],
     is_positive_test: bool,
 ) -> P<Type> {
-    todo!()
+    use crate::analyzer::type_utils::{add_condition_to_type, get_type_condition};
+    use crate::analyzer::types::{
+        TypeVarType, combine_types, is_any_or_unknown, is_class_instance, is_type_var,
+    };
+
+    // We currently don't support narrowing in the negative direction
+    // when there are more than one class types.
+    if !is_positive_test && class_types.len() > 1 {
+        return type_;
+    }
+
+    let types_to_combine: Vec<P<Type>> = class_types
+        .iter()
+        .map(|&class_type| {
+            evaluator.map_subtypes_expand_type_vars(
+                type_,
+                /* options */ None,
+                &mut |subtype, unexpanded_subtype, _| {
+                    let include_subclasses = || {
+                        class_type
+                            .d()
+                            .priv_
+                            .borrow()
+                            .include_subclasses
+                            .unwrap_or(false)
+                    };
+
+                    if is_class_instance(subtype) {
+                        let matches = ClassType::is_derived_from(
+                            class_type,
+                            ClassType::clone_as_instantiable(ClassType(subtype), true),
+                            None,
+                        );
+                        if is_positive_test {
+                            if matches {
+                                if ClassType::is_same_generic_class(
+                                    ClassType::clone_as_instantiable(ClassType(subtype), true),
+                                    class_type,
+                                    0,
+                                ) {
+                                    return Some(add_condition_to_type(
+                                        subtype,
+                                        get_type_condition(class_type.0).as_deref(),
+                                        None,
+                                    ));
+                                }
+
+                                let subtype_condition = subtype
+                                    .props
+                                    .borrow()
+                                    .as_ref()
+                                    .and_then(|props| props.condition.clone());
+                                return Some(add_condition_to_type(
+                                    ClassType::clone_as_instance(class_type, true).0,
+                                    subtype_condition.as_deref(),
+                                    None,
+                                ));
+                            }
+
+                            if !include_subclasses() {
+                                return None;
+                            }
+
+                            if !is_type_var(unexpanded_subtype)
+                                || !TypeVarType::is_self(TypeVarType(unexpanded_subtype))
+                            {
+                                let class_condition = class_type
+                                    .props
+                                    .borrow()
+                                    .as_ref()
+                                    .and_then(|props| props.condition.clone());
+                                return Some(add_condition_to_type(
+                                    subtype,
+                                    class_condition.as_deref(),
+                                    None,
+                                ));
+                            }
+                        }
+
+                        if !include_subclasses() {
+                            // If the class if marked final and it matches, then
+                            // we can eliminate it in the negative case.
+                            if matches && ClassType::is_final(ClassType(subtype)) {
+                                return None;
+                            }
+
+                            // We can't eliminate the subtype in the negative
+                            // case because it could be a subclass of the type,
+                            // in which case `type(x) is y` would fail.
+                            return Some(subtype);
+                        }
+                    }
+
+                    if is_any_or_unknown(subtype) {
+                        return if is_positive_test {
+                            Some(
+                                ClassType::clone_as_instance(
+                                    ClassType(add_condition_to_type(
+                                        class_type.0,
+                                        get_type_condition(subtype).as_deref(),
+                                        None,
+                                    )),
+                                    true,
+                                )
+                                .0,
+                            )
+                        } else {
+                            Some(subtype)
+                        };
+                    }
+
+                    Some(unexpanded_subtype)
+                },
+                0,
+            )
+        })
+        .collect();
+
+    combine_types(&types_to_combine, None)
 }
 
 // analyzer/typeGuards.ts:2669
+// Attempts to narrow a type based on a comparison with a class using "is" or
+// "is not". This pattern is sometimes used for sentinels.
 pub(crate) fn narrow_type_for_class_comparison(
     evaluator: &TypeEvaluator,
     reference_type: P<Type>,
     class_type: ClassType,
     is_positive_test: bool,
 ) -> P<Type> {
-    todo!()
+    use crate::analyzer::type_utils::{
+        add_condition_to_type, convert_to_instantiable, get_type_condition, map_subtypes,
+    };
+    use crate::analyzer::types::{
+        TypeBase, UnknownType, is_any_or_unknown, is_class, is_class_instance,
+        is_instantiable_class,
+    };
+
+    let include_subclasses =
+        |type_: ClassType| type_.d().priv_.borrow().include_subclasses.unwrap_or(false);
+
+    map_subtypes(
+        reference_type,
+        &mut |subtype| {
+            let mut concrete_subtype =
+                evaluator.make_top_level_type_vars_concrete(subtype, false, None);
+
+            if is_positive_test {
+                if is_class_instance(concrete_subtype)
+                    && TypeBase::is_instance(subtype)
+                    && ClassType::is_built_in(
+                        ClassType(concrete_subtype),
+                        Some(&["type".to_string()]),
+                    )
+                {
+                    let type_args = ClassType(concrete_subtype).d().priv_.borrow().type_args.clone();
+                    concrete_subtype = match type_args {
+                        Some(type_args) if !type_args.is_empty() => {
+                            convert_to_instantiable(type_args[0], true)
+                        }
+                        _ => UnknownType::create(false).0,
+                    };
+                }
+
+                if is_any_or_unknown(concrete_subtype) {
+                    return Some(add_condition_to_type(
+                        class_type.0,
+                        get_type_condition(concrete_subtype).as_deref(),
+                        None,
+                    ));
+                }
+
+                if is_class(concrete_subtype) {
+                    let concrete_class = ClassType(concrete_subtype);
+                    if TypeBase::is_instance(concrete_subtype) {
+                        return if ClassType::is_built_in(
+                            concrete_class,
+                            Some(&["object".to_string()]),
+                        ) {
+                            Some(class_type.0)
+                        } else {
+                            None
+                        };
+                    }
+
+                    let is_super_type =
+                        is_filter_superclass(subtype, concrete_class, class_type.0, class_type);
+
+                    if !include_subclasses(class_type) {
+                        // Handle the case where the LHS and RHS operands are specific
+                        // classes, as opposed to types that represent classes and their
+                        // subclasses.
+                        if !include_subclasses(concrete_class) {
+                            return if ClassType::is_same_generic_class(
+                                concrete_class,
+                                class_type,
+                                0,
+                            ) {
+                                Some(class_type.0)
+                            } else {
+                                None
+                            };
+                        }
+
+                        if is_super_type {
+                            return Some(add_condition_to_type(
+                                class_type.0,
+                                get_type_condition(concrete_subtype).as_deref(),
+                                None,
+                            ));
+                        }
+
+                        let is_sub_type =
+                            ClassType::is_derived_from(class_type, concrete_class, None);
+                        if is_sub_type {
+                            return Some(add_condition_to_type(
+                                class_type.0,
+                                get_type_condition(concrete_subtype).as_deref(),
+                                None,
+                            ));
+                        }
+
+                        return None;
+                    }
+
+                    if ClassType::is_final(concrete_class) && !is_super_type {
+                        return None;
+                    }
+                }
+            } else if is_instantiable_class(concrete_subtype)
+                && ClassType::is_same_generic_class(class_type, ClassType(concrete_subtype), 0)
+                && ClassType::is_final(class_type)
+            {
+                return None;
+            }
+
+            Some(subtype)
+        },
+        None,
+    )
 }
 
 // analyzer/typeGuards.ts:2739
@@ -2890,33 +3993,140 @@ pub(crate) fn is_filter_superclass(
     filter_type: P<Type>,
     concrete_filter_type: ClassType,
 ) -> bool {
-    todo!()
+    use crate::analyzer::type_utils::convert_to_instance;
+    use crate::analyzer::types::{TypeSameOptions, is_type_same, is_type_var};
+
+    if is_type_var(filter_type)
+        || concrete_filter_type
+            .d()
+            .priv_
+            .borrow()
+            .literal_value
+            .is_some()
+    {
+        return is_type_same(
+            convert_to_instance(filter_type, true),
+            var_type,
+            &TypeSameOptions::default(),
+            0,
+        );
+    }
+
+    // If the filter type represents all possible subclasses
+    // of a type, we can't make any statements about its superclass
+    // relationship with concreteVarType.
+    if concrete_filter_type
+        .d()
+        .priv_
+        .borrow()
+        .include_subclasses
+        .unwrap_or(false)
+    {
+        return false;
+    }
+
+    if ClassType::is_derived_from(concrete_var_type, concrete_filter_type, None) {
+        return true;
+    }
+
+    // Handle the special case where the variable type is a TypedDict and
+    // we're filtering against 'dict'. TypedDict isn't derived from dict,
+    // but at runtime, isinstance returns True.
+    if ClassType::is_built_in(concrete_filter_type, Some(&["dict".to_string()]))
+        && ClassType::is_typed_dict_class(concrete_var_type)
+    {
+        return true;
+    }
+
+    false
 }
 
 // analyzer/typeGuards.ts:2773
+// Determines whether the specified class is an enum class whose members derive
+// from a primitive type (e.g. IntEnum or StrEnum). Members of such classes
+// compare equal to their underlying primitive value at runtime.
 pub(crate) fn is_primitive_backed_enum_class(class_type: ClassType) -> bool {
-    todo!()
+    use crate::analyzer::type_utils::derives_from_stdlib_class;
+
+    if !ClassType::is_enum_class(class_type) {
+        return false;
+    }
+
+    derives_from_stdlib_class(class_type, "int") || derives_from_stdlib_class(class_type, "str")
 }
 
 // analyzer/typeGuards.ts:2783
+// Determines whether enumType is a primitive-backed enum class and primitiveType
+// is the primitive type (int or str) from which it derives.
 pub(crate) fn is_primitive_backed_enum_and_primitive(
     enum_type: ClassType,
     primitive_type: ClassType,
 ) -> bool {
-    todo!()
+    use crate::analyzer::type_utils::derives_from_stdlib_class;
+
+    if ClassType::is_enum_class(primitive_type) || !is_primitive_backed_enum_class(enum_type) {
+        return false;
+    }
+
+    // Exclude bool, which derives from int but whose literal values are distinct
+    // from the corresponding int literals.
+    if ClassType::is_built_in(primitive_type, Some(&["int".to_string()])) {
+        return derives_from_stdlib_class(enum_type, "int");
+    }
+
+    if ClassType::is_built_in(primitive_type, Some(&["str".to_string()])) {
+        return derives_from_stdlib_class(enum_type, "str");
+    }
+
+    false
 }
 
 // analyzer/typeGuards.ts:2804
+// If the specified type is a literal member of a primitive-backed enum class,
+// returns the corresponding primitive literal type. Otherwise returns the type
+// unmodified.
 pub(crate) fn unwrap_primitive_backed_enum_literal(class_type: ClassType) -> ClassType {
-    todo!()
+    use crate::analyzer::types::{LiteralValue, is_class_instance};
+
+    let literal_value = class_type.d().priv_.borrow().literal_value.clone();
+    let Some(LiteralValue::EnumLiteral(literal_value)) = literal_value else {
+        return class_type;
+    };
+    if !is_primitive_backed_enum_class(class_type) {
+        return class_type;
+    }
+
+    let item_type = literal_value.item_type;
+    if is_class_instance(item_type)
+        && ClassType(item_type)
+            .d()
+            .priv_
+            .borrow()
+            .literal_value
+            .is_some()
+    {
+        return ClassType(item_type);
+    }
+
+    class_type
 }
 
 // analyzer/typeGuards.ts:2822
+// Determines whether two literal types compare equal using the `==` operator at
+// runtime. This differs from ClassType.isLiteralValueSame only for members of
+// primitive-backed enum classes, which compare equal to their underlying
+// primitive values.
 pub(crate) fn is_literal_value_equal_at_runtime(type1: ClassType, type2: ClassType) -> bool {
-    todo!()
+    ClassType::is_literal_value_same(
+        unwrap_primitive_backed_enum_literal(type1),
+        unwrap_primitive_backed_enum_literal(type2),
+    )
 }
 
 // analyzer/typeGuards.ts:2832
+// Attempts to narrow a type (make it more constrained) based on a comparison
+// (equal or not equal) to a literal value. It also handles "is" or "is not"
+// operators if isIsOperator is true.
 pub(crate) fn narrow_type_for_literal_comparison(
     evaluator: &TypeEvaluator,
     reference_type: P<Type>,
@@ -2924,7 +4134,157 @@ pub(crate) fn narrow_type_for_literal_comparison(
     is_positive_test: bool,
     is_is_operator: bool,
 ) -> P<Type> {
-    todo!()
+    use crate::analyzer::type_evaluator_types::AssignTypeFlags;
+    use crate::analyzer::type_utils::{is_none_instance, is_sentinel_literal};
+    use crate::analyzer::types::{combine_types, is_any_or_unknown, is_class_instance};
+
+    evaluator.map_subtypes_expand_type_vars(
+        reference_type,
+        /* options */ None,
+        &mut |subtype, _, _| {
+            let subtype = evaluator.make_top_level_type_vars_concrete(subtype, false, None);
+
+            if is_any_or_unknown(subtype) {
+                if is_positive_test {
+                    return Some(literal_type.0);
+                }
+
+                return Some(subtype);
+            }
+
+            // Determine whether this is a comparison between a primitive-backed enum
+            // (e.g. IntEnum or StrEnum) and its underlying primitive type. Such a
+            // comparison can be used for narrowing because the enum member compares
+            // equal to its underlying primitive value at runtime.
+            let is_primitive_backed_enum_comparison = !is_is_operator
+                && is_class_instance(subtype)
+                && (is_primitive_backed_enum_and_primitive(ClassType(subtype), literal_type)
+                    || is_primitive_backed_enum_and_primitive(literal_type, ClassType(subtype)));
+
+            if is_class_instance(subtype)
+                && (ClassType::is_same_generic_class(literal_type, ClassType(subtype), 0)
+                    || is_primitive_backed_enum_comparison)
+            {
+                let subtype_class = ClassType(subtype);
+                let has_literal_value = subtype_class.d().priv_.borrow().literal_value.is_some();
+                if has_literal_value {
+                    let literal_value_matches = if is_primitive_backed_enum_comparison {
+                        is_literal_value_equal_at_runtime(subtype_class, literal_type)
+                    } else {
+                        ClassType::is_literal_value_same(subtype_class, literal_type)
+                    };
+                    if is_positive_test {
+                        return if literal_value_matches {
+                            Some(subtype)
+                        } else {
+                            None
+                        };
+                    }
+
+                    let is_singleton = ClassType::is_enum_class(literal_type)
+                        || is_sentinel_literal(subtype)
+                        || ClassType::is_built_in(literal_type, Some(&["bool".to_string()]));
+
+                    // For negative tests, we can eliminate the literal value if it doesn't match,
+                    // but only for equality tests or for 'is' tests that involve enums, bools, or sentinels.
+                    return if literal_value_matches && (is_singleton || !is_is_operator) {
+                        None
+                    } else {
+                        Some(subtype)
+                    };
+                }
+
+                if is_positive_test {
+                    if is_primitive_backed_enum_comparison {
+                        // If the reference type is the enum, attempt to find the member
+                        // whose value matches the primitive literal. If no member can be
+                        // identified (e.g. for an IntFlag class, whose members cannot be
+                        // enumerated), retain the reference type rather than narrowing it
+                        // to the primitive literal type.
+                        if ClassType::is_enum_class(subtype_class) {
+                            let all_literal_types =
+                                enumerate_literals_for_type(evaluator, subtype_class);
+                            let found = all_literal_types.and_then(|all_literal_types| {
+                                all_literal_types.into_iter().find(|type_| {
+                                    is_literal_value_equal_at_runtime(*type_, literal_type)
+                                })
+                            });
+                            return Some(found.map(|found| found.0).unwrap_or(subtype));
+                        }
+
+                        // The reference type is the primitive type, so narrowing it to the
+                        // enum literal would lose its (potentially derived) class. Retain
+                        // the reference type instead.
+                        return Some(subtype);
+                    }
+
+                    return Some(literal_type.0);
+                }
+
+                // If we're able to enumerate all possible literal values
+                // (for bool or enum), we can eliminate all others in a negative test.
+                let all_literal_types = enumerate_literals_for_type(evaluator, subtype_class);
+                if let Some(all_literal_types) = all_literal_types
+                    && !all_literal_types.is_empty()
+                {
+                    let remaining: Vec<P<Type>> = all_literal_types
+                        .iter()
+                        .filter(|type_| {
+                            if is_primitive_backed_enum_comparison {
+                                !is_literal_value_equal_at_runtime(**type_, literal_type)
+                            } else {
+                                !ClassType::is_literal_value_same(**type_, literal_type)
+                            }
+                        })
+                        .map(|type_| type_.0)
+                        .collect();
+                    return Some(combine_types(&remaining, None));
+                }
+
+                return Some(subtype);
+            }
+
+            if is_positive_test {
+                if is_class_instance(subtype)
+                    && ClassType::is_built_in(
+                        ClassType(subtype),
+                        Some(&["LiteralString".to_string()]),
+                    )
+                {
+                    return Some(literal_type.0);
+                }
+
+                if is_is_operator || is_none_instance(subtype) {
+                    let compare_type =
+                        get_innermost_new_type_base_instance(subtype).unwrap_or(subtype);
+
+                    let is_subtype = evaluator.assign_type(
+                        compare_type,
+                        literal_type.0,
+                        None,
+                        None,
+                        AssignTypeFlags::Default,
+                        0,
+                    );
+                    if is_subtype {
+                        return Some(
+                            if is_class_instance(subtype)
+                                && ClassType::is_new_type_class(ClassType(subtype))
+                            {
+                                subtype
+                            } else {
+                                literal_type.0
+                            },
+                        );
+                    }
+                    return None;
+                }
+            }
+
+            Some(subtype)
+        },
+        0,
+    )
 }
 
 // analyzer/typeGuards.ts:2940
@@ -2932,23 +4292,129 @@ pub fn enumerate_literals_for_type(
     evaluator: &TypeEvaluator,
     type_: ClassType,
 ) -> Option<Vec<ClassType>> {
-    todo!()
+    use crate::analyzer::enums::transform_type_for_enum_member;
+    use crate::analyzer::types::{LiteralValue, is_class, is_class_instance};
+
+    if ClassType::is_built_in(type_, Some(&["bool".to_string()])) {
+        // Booleans have only two types: True and False.
+        return Some(vec![
+            ClassType::clone_with_literal(type_, /* value */ Some(LiteralValue::Boolean(true))),
+            ClassType::clone_with_literal(type_, /* value */ Some(LiteralValue::Boolean(false))),
+        ]);
+    }
+
+    if ClassType::is_enum_class(type_) {
+        // Enum expansion doesn't apply if the member set cannot be statically
+        // enumerated or if the class derives from enum.Flag.
+        if ClassType::is_enum_member_set_may_be_dynamically_modified(type_) || {
+            let mro = type_.d().shared.get().mro.borrow().clone();
+            mro.iter().any(|mro_class| {
+                is_class(*mro_class)
+                    && ClassType::is_built_in(ClassType(*mro_class), Some(&["Flag".to_string()]))
+            })
+        } {
+            return None;
+        }
+
+        // Enumerate all of the values in this enumeration.
+        let mut enum_list: Vec<ClassType> = Vec::new();
+        let fields = ClassType::get_symbol_table(type_);
+        fields.for_each(|symbol, name| {
+            if !symbol.is_ignored_for_protocol_match() {
+                let mut symbol_type = evaluator.get_effective_type_of_symbol(symbol);
+                symbol_type = transform_type_for_enum_member(
+                    evaluator,
+                    type_,
+                    name,
+                    evaluator.get_analyzer_node_info_reader().get(),
+                    false,
+                    0,
+                )
+                .unwrap_or(symbol_type);
+
+                if is_class_instance(symbol_type)
+                    && ClassType::is_same_generic_class(type_, ClassType(symbol_type), 0)
+                    && ClassType(symbol_type)
+                        .d()
+                        .priv_
+                        .borrow()
+                        .literal_value
+                        .is_some()
+                {
+                    enum_list.push(ClassType(symbol_type));
+                }
+            }
+        });
+
+        return Some(enum_list);
+    }
+
+    None
 }
 
 // analyzer/typeGuards.ts:2986
+// Determines whether the expression name node is in the same scope or
+// an outer scope from the reference name node. This allows isMatchingExpression
+// to determine whether two name nodes are referring to the same symbol.
 pub(crate) fn is_name_same_scope(
     evaluator: &TypeEvaluator,
     reference: NameNode,
     expression: NameNode,
 ) -> bool {
-    todo!()
+    use crate::analyzer::scope_utils::is_scope_contained_within;
+
+    let ref_symbol = evaluator.look_up_symbol_recursive(
+        reference.0,
+        &reference.d().value,
+        /* honorCodeFlow */ false,
+        false,
+    );
+    let expr_symbol = evaluator.look_up_symbol_recursive(
+        expression.0,
+        &expression.d().value,
+        /* honorCodeFlow */ false,
+        false,
+    );
+
+    let (Some(ref_symbol), Some(expr_symbol)) = (ref_symbol, expr_symbol) else {
+        // This shouldn't happen, but just to be safe...
+        return true;
+    };
+
+    let ref_scope = ref_symbol.scope;
+    let expr_scope = expr_symbol.scope;
+
+    if ref_scope == expr_scope {
+        return true;
+    }
+
+    is_scope_contained_within(ref_scope, expr_scope)
 }
 
 // analyzer/typeGuards.ts:3008
+// Matches a reference against an expression, including the RHS of an assignment
+// expression. This keeps walrus narrowing consistent with truthiness handling in
+// getTypeNarrowingCallbackForAssignmentExpression.
 pub(crate) fn is_matching_expression_or_walrus_rhs(
     evaluator: &TypeEvaluator,
     reference: ExpressionNode,
     expression: ExpressionNode,
 ) -> bool {
-    todo!()
+    use crate::analyzer::parse_tree_utils::is_matching_expression;
+
+    let compare_name = |ref_: NameNode, expr: NameNode| is_name_same_scope(evaluator, ref_, expr);
+
+    if is_matching_expression(reference, expression, Some(&compare_name)) {
+        return true;
+    }
+
+    if let Some(expression) = AssignmentExpressionNode::cast(expression) {
+        return is_matching_expression(
+            reference,
+            expression.d().right_expr.get(),
+            Some(&compare_name),
+        );
+    }
+
+    false
 }
