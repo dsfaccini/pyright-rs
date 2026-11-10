@@ -12,7 +12,7 @@ use crate::common::path_utils::{
 use crate::common::uri::base_uri::combine_path_elements;
 use crate::common::uri::uri::{Uri, UriData, UriKind};
 
-// common/uri/fileUri.ts:31
+// common/uri/fileUri.ts:32
 pub struct FileUriData {
     pub(crate) file_path: String,
     pub(crate) query: String,
@@ -30,7 +30,7 @@ thread_local! {
     static FILE_URI_CACHE: std::cell::RefCell<FxHashMap<CacheKey, Uri>> = Default::default();
 }
 
-// common/uri/fileUri.ts:89
+// common/uri/fileUri.ts:84
 pub fn create_file_uri(
     file_path: &str,
     query: &str,
@@ -76,7 +76,7 @@ pub fn create_file_uri(
     uri
 }
 
-// common/uri/fileUri.ts:290
+// common/uri/fileUri.ts:316
 fn create_key(file_path: &str, query: &str, fragment: &str) -> String {
     let mut key = file_path.to_string();
     if !query.is_empty() {
@@ -99,7 +99,7 @@ impl Uri {
         create_file_uri(file_path, query, fragment, None, self.is_case_sensitive())
     }
 
-    // common/uri/fileUri.ts:66
+    // common/uri/fileUri.ts:61
     pub fn file_name(&self) -> &'static str {
         match self.file_data() {
             Some(f) => self
@@ -111,7 +111,7 @@ impl Uri {
         }
     }
 
-    // common/uri/fileUri.ts:71
+    // common/uri/fileUri.ts:66
     pub fn last_extension(&self) -> &'static str {
         match self.file_data() {
             Some(f) => self
@@ -123,7 +123,7 @@ impl Uri {
         }
     }
 
-    // common/uri/fileUri.ts:76
+    // common/uri/fileUri.ts:71
     pub fn root(&self) -> Uri {
         let Some(f) = self.file_data() else {
             return *self;
@@ -138,7 +138,7 @@ impl Uri {
         })
     }
 
-    // common/uri/fileUri.ts:131
+    // common/uri/fileUri.ts:134
     pub(crate) fn file_to_string(&self) -> &'static str {
         let f = self.file_ref();
         self.0.get().formatted_string.get_or_init(|| {
@@ -151,7 +151,7 @@ impl Uri {
         })
     }
 
-    // common/uri/fileUri.ts:144
+    // common/uri/fileUri.ts:147
     pub fn add_path(&self, extra: &str) -> Uri {
         match self.file_data() {
             Some(f) => self.create_sibling(&format!("{}{extra}", f.file_path), "", ""),
@@ -159,13 +159,13 @@ impl Uri {
         }
     }
 
-    // common/uri/fileUri.ts:148
+    // common/uri/fileUri.ts:151
     pub fn is_root(&self) -> bool {
         self.file_data()
             .is_some_and(|f| is_disk_path_root(&f.file_path))
     }
 
-    // common/uri/fileUri.ts:152
+    // common/uri/fileUri.ts:155
     pub fn is_child(&self, parent: Uri) -> bool {
         let (Some(f), Some(p)) = (self.file_data(), parent.file_data()) else {
             return false;
@@ -174,12 +174,12 @@ impl Uri {
         p.file_path.len() < f.file_path.len() && self.starts_with(Some(parent))
     }
 
-    // common/uri/fileUri.ts:160
+    // common/uri/fileUri.ts:163
     pub fn is_local(&self) -> bool {
         self.file_data().is_some()
     }
 
-    // common/uri/fileUri.ts:164
+    // common/uri/fileUri.ts:167
     pub fn starts_with(&self, other: Option<Uri>) -> bool {
         let (Some(f), Some(other)) = (self.file_data(), other) else {
             return false;
@@ -207,7 +207,7 @@ impl Uri {
         false
     }
 
-    // common/uri/fileUri.ts:195
+    // common/uri/fileUri.ts:201
     pub fn resolve_paths(&self, paths: &[&str]) -> Uri {
         let Some(f) = self.file_data() else {
             return *self;
@@ -223,7 +223,7 @@ impl Uri {
         *self
     }
 
-    // common/uri/fileUri.ts:207
+    // common/uri/fileUri.ts:215
     pub fn combine_paths(&self, paths: &[&str]) -> Uri {
         if self.file_data().is_none() {
             return *self;
@@ -259,7 +259,7 @@ impl Uri {
         self.combine_paths_unsafe(paths)
     }
 
-    // common/uri/fileUri.ts:238
+    // common/uri/fileUri.ts:250
     pub fn combine_paths_unsafe(&self, paths: &[&str]) -> Uri {
         let Some(f) = self.file_data() else {
             return *self;
@@ -271,7 +271,7 @@ impl Uri {
         *self
     }
 
-    // common/uri/fileUri.ts:246
+    // common/uri/fileUri.ts:261
     pub fn get_directory(&self) -> Uri {
         let Some(f) = self.file_data() else {
             return *self;
@@ -290,7 +290,7 @@ impl Uri {
         })
     }
 
-    // common/uri/fileUri.ts:260
+    // common/uri/fileUri.ts:274
     pub fn with_fragment(&self, fragment: &str) -> Uri {
         match self.file_data() {
             Some(f) => self.create_sibling(&f.file_path, &f.query, fragment),
@@ -298,7 +298,7 @@ impl Uri {
         }
     }
 
-    // common/uri/fileUri.ts:264
+    // common/uri/fileUri.ts:278
     pub fn with_query(&self, query: &str) -> Uri {
         match self.file_data() {
             Some(f) => self.create_sibling(&f.file_path, query, &f.fragment),
@@ -306,7 +306,7 @@ impl Uri {
         }
     }
 
-    // common/uri/fileUri.ts:268
+    // common/uri/fileUri.ts:282
     pub fn strip_extension(&self) -> Uri {
         let Some(f) = self.file_data() else {
             return *self;
@@ -318,7 +318,7 @@ impl Uri {
         *self
     }
 
-    // common/uri/fileUri.ts:276
+    // common/uri/fileUri.ts:290
     pub fn strip_all_extensions(&self) -> Uri {
         let Some(f) = self.file_data() else {
             return *self;
@@ -330,7 +330,7 @@ impl Uri {
         *self
     }
 
-    // common/uri/fileUri.ts:284
+    // common/uri/fileUri.ts:298
     pub(crate) fn get_path_components_impl(&self) -> Vec<String> {
         let Some(f) = self.file_data() else {
             return Vec::new();
@@ -345,7 +345,7 @@ impl Uri {
             .collect()
     }
 
-    // common/uri/fileUri.ts:292
+    // common/uri/fileUri.ts:308
     pub(crate) fn get_root_path(&self) -> String {
         match self.file_data() {
             Some(f) => f.file_path[..get_root_length(&f.file_path)].to_string(),
@@ -353,12 +353,12 @@ impl Uri {
         }
     }
 
-    // common/uri/fileUri.ts:296
+    // common/uri/fileUri.ts:312
     pub(crate) fn get_comparable_path(&self) -> &'static str {
         self.get_path()
     }
 
-    // common/uri/fileUri.ts:304
+    // common/uri/fileUri.ts:320
     pub(crate) fn normalized_path(&self) -> &'static str {
         let f = self.file_ref();
         self.0
@@ -368,7 +368,7 @@ impl Uri {
     }
 }
 
-// common/uri/baseUri.ts:205
+// common/uri/baseUri.ts:248
 fn normalize_backslashes(path: &str) -> String {
     if path.contains('\\') {
         path.replace('\\', "/")

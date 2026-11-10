@@ -19,6 +19,7 @@ pub mod path_utils;
 pub mod position_utils;
 pub mod python_version;
 pub mod real_file_system;
+pub mod service_provider;
 pub mod string_utils;
 pub mod text_range;
 pub mod text_range_collection;

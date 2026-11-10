@@ -66,7 +66,7 @@ pub fn convert_level_to_category(level: DiagnosticLevel) -> DiagnosticCategory {
     }
 }
 
-// common/diagnostic.ts:57
+// common/diagnostic.ts:58
 /// `DiagnosticAction` and its one check-path subtype, `CreateTypeStubFileAction`.
 #[derive(Clone, Debug)]
 pub struct DiagnosticAction {
@@ -74,13 +74,13 @@ pub struct DiagnosticAction {
     pub module_name: Option<String>,
 }
 
-// common/diagnostic.ts:61
+// common/diagnostic.ts:62
 pub struct DiagnosticWithinFile {
     pub uri: Uri,
     pub diagnostic: P<Diagnostic>,
 }
 
-// common/diagnostic.ts:71
+// common/diagnostic.ts:72
 #[derive(Clone, Debug)]
 pub struct DiagnosticRelatedInfo {
     pub message: String,
@@ -89,7 +89,7 @@ pub struct DiagnosticRelatedInfo {
     pub priority: TaskListPriority,
 }
 
-// common/diagnostic.ts:97
+// common/diagnostic.ts:100
 /// A diagnostic is shared: the sink stores it and the caller sets its rule
 /// afterwards. Pass it around as `P<Diagnostic>`.
 #[derive(Debug)]
@@ -104,12 +104,12 @@ pub struct Diagnostic {
 }
 
 impl Diagnostic {
-    // common/diagnostic.ts:103
+    // common/diagnostic.ts:106
     pub fn new(category: DiagnosticCategory, message: String, range: Range) -> P<Diagnostic> {
         Diagnostic::with_priority(category, message, range, TaskListPriority::Normal)
     }
 
-    // common/diagnostic.ts:103
+    // common/diagnostic.ts:106
     pub fn with_priority(
         category: DiagnosticCategory,
         message: String,
@@ -127,7 +127,7 @@ impl Diagnostic {
         })
     }
 
-    // common/diagnostic.ts:133
+    // common/diagnostic.ts:135
     pub fn add_action(&self, action: DiagnosticAction) {
         self.actions
             .borrow_mut()
@@ -135,22 +135,22 @@ impl Diagnostic {
             .push(action);
     }
 
-    // common/diagnostic.ts:149
+    // common/diagnostic.ts:151
     pub fn get_actions(&self) -> Option<Vec<DiagnosticAction>> {
         self.actions.borrow().clone()
     }
 
-    // common/diagnostic.ts:153
+    // common/diagnostic.ts:155
     pub fn set_rule(&self, rule: &str) {
         *self.rule.borrow_mut() = Some(rule.to_string());
     }
 
-    // common/diagnostic.ts:157
+    // common/diagnostic.ts:159
     pub fn get_rule(&self) -> Option<String> {
         self.rule.borrow().clone()
     }
 
-    // common/diagnostic.ts:161
+    // common/diagnostic.ts:163
     pub fn add_related_info(
         &self,
         message: String,
@@ -166,13 +166,13 @@ impl Diagnostic {
         });
     }
 
-    // common/diagnostic.ts:165
+    // common/diagnostic.ts:167
     pub fn get_related_info(&self) -> Vec<DiagnosticRelatedInfo> {
         self.related_info.borrow().clone()
     }
 }
 
-// common/diagnostic.ts:171
+// common/diagnostic.ts:173
 pub fn compare_diagnostics(d1: &Diagnostic, d2: &Diagnostic) -> i32 {
     if d1.range.start.line < d2.range.start.line {
         return -1;
@@ -189,7 +189,7 @@ pub fn compare_diagnostics(d1: &Diagnostic, d2: &Diagnostic) -> i32 {
     0
 }
 
-// common/diagnostic.ts:189
+// common/diagnostic.ts:191
 /// Shared: `createAddendum` returns a child the caller keeps writing to.
 #[derive(Default)]
 pub struct DiagnosticAddendum {
@@ -204,24 +204,24 @@ impl DiagnosticAddendum {
         P::new(DiagnosticAddendum::default())
     }
 
-    // common/diagnostic.ts:203
+    // common/diagnostic.ts:205
     pub fn add_message(&self, message: String) {
         self.messages.borrow_mut().push(message);
     }
 
-    // common/diagnostic.ts:207
+    // common/diagnostic.ts:209
     pub fn add_message_multiline(&self, message: &str) {
         for line in message.split('\n') {
             self.messages.borrow_mut().push(line.to_string());
         }
     }
 
-    // common/diagnostic.ts:213
+    // common/diagnostic.ts:215
     pub fn add_text_range(&self, range: TextRange) {
         self.range.set(Some(range));
     }
 
-    // common/diagnostic.ts:218
+    // common/diagnostic.ts:220
     pub fn create_addendum(&self) -> P<DiagnosticAddendum> {
         let new_addendum = DiagnosticAddendum::new();
         new_addendum
@@ -231,7 +231,7 @@ impl DiagnosticAddendum {
         new_addendum
     }
 
-    // common/diagnostic.ts:225
+    // common/diagnostic.ts:227
     pub fn get_string(&self, max_depth: i32, max_line_count: usize) -> String {
         let mut lines = self.get_lines_recursive(max_depth, max_line_count, 0);
 
@@ -248,32 +248,32 @@ impl DiagnosticAddendum {
         String::new()
     }
 
-    // common/diagnostic.ts:240
+    // common/diagnostic.ts:243
     pub fn is_empty(&self) -> bool {
         self.get_message_count(0) == 0
     }
 
-    // common/diagnostic.ts:244
+    // common/diagnostic.ts:247
     pub fn add_addendum(&self, addendum: P<DiagnosticAddendum>) {
         self.child_addenda.borrow_mut().push(addendum);
     }
 
-    // common/diagnostic.ts:248
+    // common/diagnostic.ts:251
     pub fn get_children(&self) -> Vec<P<DiagnosticAddendum>> {
         self.child_addenda.borrow().clone()
     }
 
-    // common/diagnostic.ts:252
+    // common/diagnostic.ts:255
     pub fn get_messages(&self) -> Vec<String> {
         self.messages.borrow().clone()
     }
 
-    // common/diagnostic.ts:256
+    // common/diagnostic.ts:259
     pub fn get_nest_level(&self) -> i32 {
         self.nest_level.get().unwrap_or(0)
     }
 
-    // common/diagnostic.ts:263
+    // common/diagnostic.ts:266
     pub fn get_effective_text_range(&self) -> Option<TextRange> {
         let range = self.get_text_range_recursive(0);
 
@@ -284,7 +284,7 @@ impl DiagnosticAddendum {
         range
     }
 
-    // common/diagnostic.ts:275
+    // common/diagnostic.ts:278
     fn get_text_range_recursive(&self, recursion_count: i32) -> Option<TextRange> {
         if recursion_count > MAX_RECURSION_COUNT {
             return None;
@@ -311,7 +311,7 @@ impl DiagnosticAddendum {
         self.range.get()
     }
 
-    // common/diagnostic.ts:298
+    // common/diagnostic.ts:303
     fn get_message_count(&self, recursion_count: i32) -> usize {
         if recursion_count > MAX_RECURSION_COUNT {
             return 0;
@@ -326,7 +326,7 @@ impl DiagnosticAddendum {
         message_count
     }
 
-    // common/diagnostic.ts:313
+    // common/diagnostic.ts:318
     fn get_lines_recursive(
         &self,
         max_depth: i32,

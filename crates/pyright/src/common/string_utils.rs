@@ -5,13 +5,13 @@
 use crate::common::core::{Comparison, compare_comparable_values_str};
 use jsrt::JsStr;
 
-// common/stringUtils.ts:103
+// common/stringUtils.ts:104
 /// Hashes the UTF-16 code units of `contents`, as JS `charCodeAt` sees them.
 pub fn hash_string(contents: &str) -> i32 {
     hash_string_utf16(contents.encode_utf16())
 }
 
-// common/stringUtils.ts:103
+// common/stringUtils.ts:104
 /// `hashString` over UTF-16 code units, for text that may hold lone surrogates.
 pub fn hash_string_utf16(contents: impl IntoIterator<Item = u16>) -> i32 {
     let mut hash: i32 = 0;
@@ -65,12 +65,12 @@ pub fn compare_strings_case_insensitive(a: Option<&str>, b: Option<&str>) -> Com
     }
 }
 
-// common/stringUtils.ts:169
+// common/stringUtils.ts:168
 pub fn compare_strings_case_sensitive(a: Option<&str>, b: Option<&str>) -> Comparison {
     compare_comparable_values_str(a, b)
 }
 
-// common/stringUtils.ts:173
+// common/stringUtils.ts:172
 pub fn get_string_comparer(ignore_case: bool) -> fn(Option<&str>, Option<&str>) -> Comparison {
     if ignore_case {
         compare_strings_case_insensitive
@@ -79,17 +79,17 @@ pub fn get_string_comparer(ignore_case: bool) -> fn(Option<&str>, Option<&str>) 
     }
 }
 
-// common/stringUtils.ts:185
+// common/stringUtils.ts:184
 pub fn equate_strings_case_insensitive(a: &str, b: &str) -> bool {
     compare_strings_case_insensitive(Some(a), Some(b)) == Comparison::EqualTo
 }
 
-// common/stringUtils.ts:195
+// common/stringUtils.ts:194
 pub fn equate_strings_case_sensitive(a: &str, b: &str) -> bool {
     compare_strings_case_sensitive(Some(a), Some(b)) == Comparison::EqualTo
 }
 
-// common/stringUtils.ts:199
+// common/stringUtils.ts:198
 /// Counts the UTF-16 code units of `value` equal to `ch`, a single code unit.
 pub fn get_character_count(value: &str, ch: char) -> i32 {
     let mut result = 0;
@@ -101,7 +101,7 @@ pub fn get_character_count(value: &str, ch: char) -> i32 {
     result
 }
 
-// common/stringUtils.ts:209
+// common/stringUtils.ts:208
 pub fn get_last_dotted_string(text: &str) -> &str {
     match text.rfind('.') {
         Some(index) if index > 0 => &text[index + 1..],
@@ -109,7 +109,7 @@ pub fn get_last_dotted_string(text: &str) -> &str {
     }
 }
 
-// common/stringUtils.ts:214
+// common/stringUtils.ts:213
 pub fn truncate(text: &str, max_length: usize) -> String {
     if text.js_len() as usize > max_length {
         return format!(
@@ -120,7 +120,7 @@ pub fn truncate(text: &str, max_length: usize) -> String {
     text.to_string()
 }
 
-// common/stringUtils.ts:221
+// common/stringUtils.ts:220
 pub fn escape_reg_exp(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     for c in text.chars() {

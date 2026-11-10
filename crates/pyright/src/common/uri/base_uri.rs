@@ -5,7 +5,7 @@ use crate::common::uri::uri::Uri;
 use jsrt::JsStr;
 
 impl Uri {
-    // common/uri/baseUri.ts:33
+    // common/uri/baseUri.ts:36
     pub fn file_name_without_extensions(&self) -> &'static str {
         let file_name = self.file_name();
         match file_name.rfind('.') {
@@ -14,7 +14,7 @@ impl Uri {
         }
     }
 
-    // common/uri/baseUri.ts:47
+    // common/uri/baseUri.ts:54
     pub fn package_uri(&self) -> Uri {
         *self
             .0
@@ -23,7 +23,7 @@ impl Uri {
             .get_or_init(|| self.add_extension(".py"))
     }
 
-    // common/uri/baseUri.ts:52
+    // common/uri/baseUri.ts:61
     pub fn package_stub_uri(&self) -> Uri {
         *self
             .0
@@ -32,7 +32,7 @@ impl Uri {
             .get_or_init(|| self.add_extension(".pyi"))
     }
 
-    // common/uri/baseUri.ts:57
+    // common/uri/baseUri.ts:68
     pub fn init_py_uri(&self) -> Uri {
         *self
             .0
@@ -41,7 +41,7 @@ impl Uri {
             .get_or_init(|| self.combine_paths_unsafe(&["__init__.py"]))
     }
 
-    // common/uri/baseUri.ts:62
+    // common/uri/baseUri.ts:75
     pub fn init_pyi_uri(&self) -> Uri {
         *self
             .0
@@ -50,7 +50,7 @@ impl Uri {
             .get_or_init(|| self.combine_paths_unsafe(&["__init__.pyi"]))
     }
 
-    // common/uri/baseUri.ts:67
+    // common/uri/baseUri.ts:82
     pub fn pytyped_uri(&self) -> Uri {
         *self
             .0
@@ -59,7 +59,7 @@ impl Uri {
             .get_or_init(|| self.combine_paths_unsafe(&["py.typed"]))
     }
 
-    // common/uri/baseUri.ts:93
+    // common/uri/baseUri.ts:102
     pub fn replace_extension(&self, ext: &str) -> Uri {
         let dir = self.get_directory();
         let base = self.file_name();
@@ -67,12 +67,12 @@ impl Uri {
         dir.combine_paths_unsafe(&[&new_base])
     }
 
-    // common/uri/baseUri.ts:100
+    // common/uri/baseUri.ts:109
     pub fn add_extension(&self, ext: &str) -> Uri {
         self.add_path(ext)
     }
 
-    // common/uri/baseUri.ts:104
+    // common/uri/baseUri.ts:113
     pub fn has_extension(&self, ext: &str) -> bool {
         if self.is_case_sensitive() {
             self.last_extension() == ext
@@ -81,7 +81,7 @@ impl Uri {
         }
     }
 
-    // common/uri/baseUri.ts:110
+    // common/uri/baseUri.ts:119
     pub fn contains_extension(&self, ext: &str) -> bool {
         let file_name = self.file_name();
         // `fileName.split(/(?=\.)/g)`: split before every dot.
@@ -103,32 +103,32 @@ impl Uri {
         })
     }
 
-    // common/uri/baseUri.ts:127
+    // common/uri/baseUri.ts:134
     pub fn get_root_path_length(&self) -> usize {
         self.get_root_path().len()
     }
 
-    // common/uri/baseUri.ts:137
+    // common/uri/baseUri.ts:146
     pub fn is_untitled(&self) -> bool {
         self.scheme() == "untitled"
     }
 
-    // common/uri/baseUri.ts:147
+    // common/uri/baseUri.ts:156
     pub fn path_starts_with(&self, name: &str) -> bool {
         self.get_comparable_path().starts_with(name)
     }
 
-    // common/uri/baseUri.ts:151
+    // common/uri/baseUri.ts:161
     pub fn path_ends_with(&self, name: &str) -> bool {
         self.get_comparable_path().ends_with(name)
     }
 
-    // common/uri/baseUri.ts:155
+    // common/uri/baseUri.ts:166
     pub fn path_includes(&self, include: &str) -> bool {
         self.get_comparable_path().contains(include)
     }
 
-    // common/uri/baseUri.ts:167
+    // common/uri/baseUri.ts:183
     pub fn get_relative_path(&self, child: Uri) -> Option<String> {
         if self.scheme() != child.scheme() {
             return None;
@@ -145,12 +145,12 @@ impl Uri {
         None
     }
 
-    // common/uri/baseUri.ts:181
+    // common/uri/baseUri.ts:199
     pub fn get_path_components(&self) -> Vec<String> {
         self.get_path_components_impl()
     }
 
-    // common/uri/baseUri.ts:189
+    // common/uri/baseUri.ts:208
     pub fn get_relative_path_components(&self, to: Uri) -> Vec<String> {
         let from_components = self.get_path_components();
         let to_components = to.get_path_components();
@@ -186,13 +186,13 @@ impl Uri {
         relative
     }
 
-    // common/uri/baseUri.ts:220
+    // common/uri/baseUri.ts:238
     pub fn get_shortened_file_name(&self, max_dir_length: i32) -> String {
         get_shortened_file_name(self.get_path(), max_dir_length)
     }
 }
 
-// common/uri/baseUri.ts:234
+// common/uri/baseUri.ts:255
 pub fn combine_path_elements(path_string: &str, separator: &str, paths: &[&str]) -> String {
     let mut path_string = path_string.to_string();
     for relative_path in paths {

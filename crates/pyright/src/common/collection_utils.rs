@@ -10,7 +10,7 @@ use jsrt::JsMap;
 
 use crate::common::core::Comparison;
 
-// common/collectionUtils.ts:16
+// common/collectionUtils.ts:14
 pub fn contains<T>(
     array: Option<&[T]>,
     value: &T,
@@ -40,12 +40,12 @@ pub fn append<T>(to: Option<Vec<T>>, value: Option<T>) -> Option<Vec<T>> {
     }
 }
 
-// common/collectionUtils.ts:61
+// common/collectionUtils.ts:65
 pub fn append_array<T: Clone>(to: &mut Vec<T>, elements_to_push: &[T]) {
     to.extend_from_slice(elements_to_push);
 }
 
-// common/collectionUtils.ts:72
+// common/collectionUtils.ts:77
 pub fn partition<T>(
     array: impl IntoIterator<Item = T>,
     cb: impl Fn(&T) -> bool,
@@ -64,7 +64,7 @@ pub fn partition<T>(
     (true_items, false_items)
 }
 
-// common/collectionUtils.ts:105
+// common/collectionUtils.ts:112
 fn to_offset(len: usize, offset: isize) -> usize {
     if offset < 0 {
         (len as isize + offset) as usize
@@ -96,12 +96,12 @@ pub fn add_range<T: Clone>(
     }
 }
 
-// common/collectionUtils.ts:149
+// common/collectionUtils.ts:155
 pub fn insert_at<T>(array: &mut Vec<T>, index: usize, value: T) {
     array.insert(index, value);
 }
 
-// common/collectionUtils.ts:180
+// common/collectionUtils.ts:182
 /// `array.slice().sort(comparer)`. V8 sorts with a stable TimSort; for a
 /// consistent comparer every stable sort gives the same order.
 pub fn clone_and_sort<T: Clone>(array: &[T], comparer: impl Fn(&T, &T) -> Comparison) -> Vec<T> {
@@ -110,7 +110,7 @@ pub fn clone_and_sort<T: Clone>(array: &[T], comparer: impl Fn(&T, &T) -> Compar
     result
 }
 
-// common/collectionUtils.ts:200
+// common/collectionUtils.ts:197
 pub fn stable_sort<T: Clone>(array: &[T], comparer: impl Fn(&T, &T) -> Comparison) -> Vec<T> {
     let mut indices: Vec<usize> = (0..array.len()).collect();
     indices.sort_by(|&x, &y| match comparer(&array[x], &array[y]) {
@@ -120,7 +120,7 @@ pub fn stable_sort<T: Clone>(array: &[T], comparer: impl Fn(&T, &T) -> Compariso
     indices.into_iter().map(|i| array[i].clone()).collect()
 }
 
-// common/collectionUtils.ts:257
+// common/collectionUtils.ts:254
 pub fn binary_search<T, U>(
     array: &[T],
     value: &T,
@@ -137,7 +137,7 @@ pub fn binary_search<T, U>(
     )
 }
 
-// common/collectionUtils.ts:279
+// common/collectionUtils.ts:274
 pub fn binary_search_key<T, U>(
     array: &[T],
     key: &U,
@@ -164,7 +164,7 @@ pub fn binary_search_key<T, U>(
     !low
 }
 
-// common/collectionUtils.ts:330
+// common/collectionUtils.ts:337
 pub fn get_or_add<K: Hash + Eq, V: Clone>(
     map: &mut JsMap<K, V>,
     key: K,
@@ -180,12 +180,12 @@ pub fn get_or_add<K: Hash + Eq, V: Clone>(
     new_value
 }
 
-// common/collectionUtils.ts:346
+// common/collectionUtils.ts:355
 pub fn remove_array_elements<T>(array: &mut Vec<T>, predicate: impl Fn(&T) -> bool) {
     array.retain(|item| !predicate(item));
 }
 
-// common/collectionUtils.ts:360
+// common/collectionUtils.ts:368
 pub fn create_map_from_items<T>(
     items: impl IntoIterator<Item = T>,
     key_getter: impl Fn(&T) -> String,
@@ -198,7 +198,7 @@ pub fn create_map_from_items<T>(
     map
 }
 
-// common/collectionUtils.ts:374
+// common/collectionUtils.ts:385
 pub fn add_if_unique<T>(arr: &mut Vec<T>, t: T, equality_comparer: impl Fn(&T, &T) -> bool) {
     if contains(Some(arr), &t, equality_comparer) {
         return;
@@ -207,7 +207,7 @@ pub fn add_if_unique<T>(arr: &mut Vec<T>, t: T, equality_comparer: impl Fn(&T, &
     arr.push(t);
 }
 
-// common/collectionUtils.ts:383
+// common/collectionUtils.ts:394
 pub fn get_map_values<K, V: Clone>(m: &JsMap<K, V>, predicate: impl Fn(&K, &V) -> bool) -> Vec<V> {
     m.iter()
         .filter(|(k, v)| predicate(k, v))
@@ -215,7 +215,7 @@ pub fn get_map_values<K, V: Clone>(m: &JsMap<K, V>, predicate: impl Fn(&K, &V) -
         .collect()
 }
 
-// common/collectionUtils.ts:403
+// common/collectionUtils.ts:414
 pub fn array_equals<T>(c1: &[T], c2: &[T], predicate: impl Fn(&T, &T) -> bool) -> bool {
     if c1.len() != c2.len() {
         return false;

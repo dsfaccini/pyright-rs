@@ -4,7 +4,6 @@
 
 pub mod arena;
 pub mod collections;
-pub mod infra_shims;
 pub mod node_path;
 pub mod number;
 pub mod string;
