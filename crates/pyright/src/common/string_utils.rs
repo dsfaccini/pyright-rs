@@ -26,6 +26,7 @@ pub fn hash_string_utf16(contents: impl IntoIterator<Item = u16>) -> i32 {
 }
 
 // common/stringUtils.ts:113
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct StringFingerprint {
     pub primary: i32,
     pub secondary: i32,

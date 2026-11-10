@@ -91,12 +91,7 @@ pub fn contains_only_whitespace(text: &str, start: Option<i32>, end: Option<i32>
         None => text.to_string(),
     };
 
-    text.chars().all(is_js_whitespace_char)
-}
-
-/// JS regex `\s` for one character. Every JS whitespace character is in the BMP.
-pub fn is_js_whitespace_char(c: char) -> bool {
-    (c as u32) <= 0xFFFF && jsrt::string::is_js_whitespace(c as u16)
+    text.chars().all(jsrt::string::is_js_whitespace_char)
 }
 
 #[cfg(test)]

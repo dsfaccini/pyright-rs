@@ -4,9 +4,12 @@
 
 pub mod arena;
 pub mod collections;
+pub mod command_line_args;
 pub mod js_regex;
+pub mod jsonc;
 pub mod node_path;
 pub mod number;
+pub mod smol_toml;
 pub mod sort;
 pub mod string;
 pub mod vscode_uri;
