@@ -10,11 +10,10 @@
 
 use crate::analyzer::symbol::Symbol;
 use crate::analyzer::types::{ClassType, SignatureWithOffsets, Type, TypeVarType};
-use jsrt::{P, js_flags};
+use jsrt::{P, flag_ops};
 use std::cell::RefCell;
 
 // analyzer/typeUtils.ts:78
-#[derive(Clone)]
 pub struct ClassMember {
     pub symbol: P<Symbol>,
     pub class_type: P<Type>,
@@ -49,10 +48,9 @@ impl MemberAccessFlags {
     pub const SkipTypedDictEntries: MemberAccessFlags = MemberAccessFlags(0x1000);
 }
 
-js_flags!(MemberAccessFlags);
+flag_ops!(MemberAccessFlags);
 
 // analyzer/typeUtils.ts:189
-#[derive(Clone)]
 pub struct InferenceContext {
     pub expected_type: P<Type>,
     pub is_type_incomplete: Option<bool>,
@@ -60,7 +58,6 @@ pub struct InferenceContext {
 }
 
 // analyzer/typeUtils.ts:220
-#[derive(Clone)]
 pub struct ApplyTypeVarOptions {
     pub type_class_type: Option<ClassType>,
     pub replace_unsolved: Option<ApplyTypeVarOptionsReplaceUnsolved>,
@@ -72,7 +69,6 @@ pub struct UniqueSignatureTracker {
 }
 
 // Inline object type at ApplyTypeVarOptions.replaceUnsolved.
-#[derive(Clone)]
 pub struct ApplyTypeVarOptionsReplaceUnsolved {
     pub scope_ids: Vec<String>,
     pub tuple_class_type: Option<ClassType>,

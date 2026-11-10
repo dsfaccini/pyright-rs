@@ -13,6 +13,7 @@ use crate::analyzer::source_file::IPythonMode;
 use crate::analyzer::symbol::Symbol;
 use crate::common::config_options::{DiagnosticRuleSet, ExecutionEnvironment};
 use crate::common::diagnostic_sink::TextRangeDiagnosticSink;
+use crate::common::text_range::TextRange;
 use crate::common::text_range_collection::TextRangeCollection;
 use crate::common::uri::uri::Uri;
 use jsrt::{JsMap, JsSet, P};
@@ -20,14 +21,12 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 // analyzer/analyzerFileInfo.ts:22
-#[derive(Clone)]
 pub struct AbsoluteModuleDescriptor {
     pub importing_file_uri: Uri,
     pub name_parts: Vec<String>,
 }
 
 // analyzer/analyzerFileInfo.ts:27
-#[derive(Clone)]
 pub struct LookupImportOptions {
     pub skip_file_needed_check: bool,
     pub skip_parsing: Option<bool>,
@@ -42,7 +41,6 @@ pub type ImportLookup = Rc<
 >;
 
 // analyzer/analyzerFileInfo.ts:37
-#[derive(Clone)]
 pub struct ImportLookupResult {
     pub symbol_table: JsMap<String, P<Symbol>>,
     pub dunder_all_names: Option<Vec<String>>,
@@ -59,7 +57,7 @@ pub struct AnalyzerFileInfo {
     pub diagnostic_sink: P<TextRangeDiagnosticSink>,
     pub execution_environment: P<ExecutionEnvironment>,
     pub diagnostic_rule_set: P<DiagnosticRuleSet>,
-    pub lines: P<TextRangeCollection>,
+    pub lines: TextRangeCollection<TextRange>,
     pub typing_symbol_aliases: JsMap<String, String>,
     pub defined_constants: JsMap<String, bool /*? boolean | string */>,
     pub file_id: String,

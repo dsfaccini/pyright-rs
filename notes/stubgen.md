@@ -10,8 +10,8 @@ None. New files only: `tools/stubgen/`, `docs/evaluator-design.md`, this file.
 
 ## Needs from others
 
-- jsrt owner: `js_flags!` (bit operators for a flags newtype `pub struct X(pub u32)`), `JsBigInt`, `NumberValue` (porting.md "numbers"), `JsRegExp`. The compile check shims them from `tools/stubgen/jsrt_shim.rs`; the real ones may differ in body, not in name or shape.
-- frontend owner: the stubs name parse nodes and tokens by the porting.md pattern: `P<ParseNode>`, typed handles `FunctionNode(P<ParseNode>)` with `cast` and `d()`, `ParseNodeDetails::<Kind>`, `<Name>NodeDetails`, aliases such as `pub type ExpressionNode = P<ParseNode>`, and `Token` the same way with variant `Plain` for tokens created as `Token`. `ParseTreeKey` maps to `P<ParseNode>`, the module node. The check compiles the stubs against `parser/parse_nodes.rs` as soon as it holds code.
+- jsrt owner: `flag_ops!`, exported from jsrt. The frontend defines it locally in `parser/tokenizer_types.rs`; porting.md puts Rust-only helpers in jsrt, and every generated flags enum calls `jsrt::flag_ops!`. The compile check shims it from `tools/stubgen/jsrt_shim.rs` with the frontend's body.
+- frontend owner: none. The stubs compile against the ported `parse_nodes.rs` and `tokenizer_types.rs`. They name `ParseTreeKey` as `P<ParseNode>`, the module node.
 - common/uri owner: `Uri` is one opaque value type at `crate::common::uri::uri::Uri`; `uriInterface.ts`'s `Uri` is merged into it.
 
 ## Doubts

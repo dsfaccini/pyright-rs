@@ -256,7 +256,9 @@ export class FileEmitter {
             this.uses.add(['std::marker::PhantomData']);
             fields.push(`    pub _phantom: PhantomData<(${unused.join(', ')}${unused.length === 1 ? ',' : ''})>,`);
         }
-        const derive = mode === 'value' ? ['#[derive(Clone)]'] : [];
+        // Structs derive nothing: a derive would require every field type, ported or not, to
+        // implement the trait. Porters add `Clone` where the TypeScript copies a value.
+        const derive: string[] = [];
         this.out.push(this.marker(decl), ...derive, `pub struct ${name}${generics} {`, ...fields, '}', '');
     }
 
@@ -279,6 +281,8 @@ export class FileEmitter {
     }
 
     private currentStruct = '';
+    // Static fields of the class being emitted.
+    private classStatics: string[] = [];
 
     private field(p: ts.Node, owner: string, handle: boolean, forceInterior = false, subst?: Map<string, IR>): string | undefined {
         const name = memberName(p);
@@ -621,6 +625,8 @@ export class FileEmitter {
         if (inherent.length) {
             this.out.push(`impl${generics} ${selfType} {`, ...trimBlank(inherent), '}', '');
         }
+        this.scopedVariables(name, this.classStatics);
+        this.classStatics = [];
         this.currentImpl = '';
     }
 
@@ -789,7 +795,7 @@ export class FileEmitter {
             if (n === undefined || this.mode !== 'stubs') {
                 return undefined;
             }
-            this.moduleVariable(m, `${cls}_${n}`, m.initializer, m.type, hasModifier(m, ts.SyntaxKind.ReadonlyKeyword));
+            this.classStatics.push(...this.moduleVariable(m, n, cls, m.initializer, m.type, hasModifier(m, ts.SyntaxKind.ReadonlyKeyword)));
             return undefined;
         }
         return undefined;
@@ -947,12 +953,13 @@ export class FileEmitter {
         }
         this.currentImpl = `${implTarget}#${lineOf(ns)}`;
         const items: string[] = [];
+        const vars: string[] = [];
         for (const st of ns.body.statements) {
             if (ts.isFunctionDeclaration(st) && st.name && st.body) {
                 const vis = isExported(st) ? 'pub ' : 'pub(crate) ';
                 items.push(...this.fnStub({ name: st.name.text, vis, receiver: undefined, decl: st, site: `${name}.${st.name.text}`, outerGenerics: new Set(), body: true }, '    '));
             } else if (ts.isVariableStatement(st)) {
-                this.variableStatement(st, name);
+                this.variableStatement(st, name, vars);
             } else {
                 this.statement(st);
             }
@@ -961,11 +968,12 @@ export class FileEmitter {
         if (items.length) {
             this.out.push(`impl ${implTarget} {`, ...trimBlank(items), '}', '');
         }
+        this.scopedVariables(`${name}#${lineOf(ns)}`.replace(/#.*/, ''), vars);
     }
 
     // ---- variables ------------------------------------------------------------------------
 
-    private variableStatement(st: ts.VariableStatement, ns: string | undefined) {
+    private variableStatement(st: ts.VariableStatement, ns: string | undefined, into?: string[]) {
         const isConst = (st.declarationList.flags & ts.NodeFlags.Const) !== 0;
         for (const d of st.declarationList.declarations) {
             if (!ts.isIdentifier(d.name)) {
@@ -987,35 +995,38 @@ export class FileEmitter {
                 );
                 continue;
             }
-            this.moduleVariable(d, ns ? `${ns}_${name}` : name, d.initializer, d.type, isConst);
+            const lines = this.moduleVariable(d, name, ns, d.initializer, d.type, isConst);
+            (into ?? this.out).push(...lines);
         }
     }
 
-    private moduleVariable(d: ts.VariableDeclaration | ts.PropertyDeclaration, rustName: string, initializer: ts.Expression | undefined, typeNode: ts.TypeNode | undefined, isConst: boolean) {
-        const site = this.site(rustName.replace(/_/, '.'));
-        const keyName = memberName(d) ?? (ts.isVariableDeclaration(d) && ts.isIdentifier(d.name) ? d.name.text : rustName);
-        const t = this.gen.mapDecl(typeNode, d, { ...site, key: rustName.includes('_') && rustName !== keyName ? rustName.replace(/_/, '.') : keyName });
-        const name = screaming(rustName);
+    // A module variable, or a namespace or static class field when `scope` is set. Returns the lines;
+    // the caller puts scoped ones in `pub mod <scope>` (`UnboundType._instance` is
+    // `unbound_type::INSTANCE`).
+    private moduleVariable(d: ts.VariableDeclaration | ts.PropertyDeclaration, tsName: string, scope: string | undefined, initializer: ts.Expression | undefined, typeNode: ts.TypeNode | undefined, isConst: boolean): string[] {
+        const t = this.gen.mapDecl(typeNode, d, this.site(scope ? `${scope}.${tsName}` : tsName));
+        const name = screaming(tsName);
         const lit = initializer ? literalOf(skipParens(initializer)) : undefined;
         const w = this.gen.writes;
         const written = w.reassigned.has(d) || w.written.has(d);
         const mutated = w.mutated.has(d) || w.writtenThrough.has(d);
-        const vis = isExported(ts.isVariableDeclaration(d) ? d.parent.parent : d) ? 'pub ' : 'pub(crate) ';
+        const exported = ts.isVariableDeclaration(d) ? isExported(d.parent.parent) : !isPrivate(d);
+        const vis = exported ? 'pub ' : 'pub(crate) ';
+        const float = (v: string) => (t.k === 'num' && t.rust === 'f64' && /^-?\d+$/.test(v) ? `${v}.0` : v);
         if (isConst && !written && lit !== undefined && (t.k === 'num' || t.k === 'str' || t.k === 'bool')) {
             const rt = t.k === 'str' ? '&str' : render(t, 'field', this.uses);
-            let value = lit;
-            if (t.k === 'num' && t.rust === 'f64' && /^-?\d+$/.test(lit)) {
-                value = `${lit}.0`;
-            }
-            this.out.push(this.marker(d), `${vis}const ${name}: ${rt} = ${value};`, '');
-            return;
+            return [this.marker(d), `${vis}const ${name}: ${rt} = ${float(lit)};`, ''];
         }
         const interior = !isConst || written || mutated;
         const ty = renderField(t, this.uses, interior);
-        const init = interior && lit !== undefined && (t.k === 'num' || t.k === 'bool')
-            ? `const { ${isCopy(t) ? 'Cell' : 'RefCell'}::new(${t.k === 'num' && t.rust === 'f64' && /^-?\d+$/.test(lit) ? `${lit}.0` : lit}) }`
-            : 'todo!()';
-        this.out.push(this.marker(d), 'thread_local! {', `    ${vis}static ${name}: ${ty} = ${init};`, '}', '');
+        const init = interior && lit !== undefined && (t.k === 'num' || t.k === 'bool') ? `const { ${isCopy(t) ? 'Cell' : 'RefCell'}::new(${float(lit)}) }` : 'todo!()';
+        return ['thread_local! {', `    ${this.marker(d)}`, `    ${vis}static ${name}: ${ty} = ${init};`, '}', ''];
+    }
+
+    private scopedVariables(scope: string, lines: string[]) {
+        if (lines.length) {
+            this.out.push(`// Variables of \`${scope}\`.`, `pub mod ${snake(scope)} {`, '    use super::*;', '', ...trimBlank(lines).map((l) => (l ? `    ${l}` : l)), '}', '');
+        }
     }
 
     // ---- enums ----------------------------------------------------------------------------
@@ -1049,7 +1060,7 @@ export class FileEmitter {
         const forced = this.gen.table.flagEnums.get(key);
         const flags = forced ?? values.some((v) => /<<|\|/.test(v.init));
         if (flags) {
-            this.uses.add(['jsrt::js_flags']);
+            this.uses.add(['jsrt::flag_ops']);
             this.out.push(
                 this.marker(e),
                 '#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Default)]',
@@ -1059,7 +1070,7 @@ export class FileEmitter {
                 ...values.map((v) => `    pub const ${v.name}: ${name} = ${name}(${hex(Number(v.value ?? 0))});`),
                 '}',
                 '',
-                `js_flags!(${name});`,
+                `flag_ops!(${name});`,
                 ''
             );
             return;
@@ -1090,7 +1101,7 @@ export class FileEmitter {
         const key = `${this.file}:${name}`;
         const fam = this.gen.familyByRootKey.get(key);
         if (fam) {
-            this.out.push(this.marker(a), `// \`${name}\`, the union of every member, is \`P<${fam.name}>\`: struct ${fam.name} and enum ${fam.name}Details.`, '');
+            this.out.push(`${this.marker(a)}: \`${name}\`, the union of every member, is \`P<${fam.name}>\`: struct ${fam.name} and enum ${fam.name}Details.`, '');
             return;
         }
         const tps = this.typeParams(a);
@@ -1108,7 +1119,7 @@ export class FileEmitter {
         if (shape === 'struct' && ts.isTypeLiteralNode(a.type)) {
             this.emittedStructs.add(name);
             const fields = a.type.members.map((m) => this.field(m, name, false)).filter((f): f is string => f !== undefined);
-            this.out.push(this.marker(a), '#[derive(Clone)]', `pub struct ${name}${generics} {`, ...fields, '}', '');
+            this.out.push(this.marker(a), `pub struct ${name}${generics} {`, ...fields, '}', '');
             return;
         }
         if (shape === 'enum' && ts.isUnionTypeNode(a.type)) {
@@ -1144,7 +1155,7 @@ export class FileEmitter {
                 used.add(v);
                 variants.push(`    ${v}(${render(t, 'elem', this.uses)}),`);
             });
-            this.out.push(this.marker(a), '#[derive(Clone)]', `pub enum ${name}${generics} {`, ...variants, '}', '');
+            this.out.push(this.marker(a), `pub enum ${name}${generics} {`, ...variants, '}', '');
             return;
         }
         const t = this.gen.mapNode(a.type, site, new Map());
@@ -1182,7 +1193,7 @@ export class FileEmitter {
                         fields.push(`    pub ${fieldName(p.getName())}: ${render(t, 'field', this.uses)},`);
                     }
                 }
-                this.out.push(`// Inline object type at ${a.site}.`, '#[derive(Clone)]', `pub struct ${a.name} {`, ...fields, '}', '');
+                this.out.push(`// Inline object type at ${a.site}.`, `pub struct ${a.name} {`, ...fields, '}', '');
             }
             if (!added) {
                 break;

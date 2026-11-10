@@ -11,7 +11,7 @@
 use crate::parser::parse_nodes::{
     CallNode, ExpressionNode, ImportFromNode, MatchNode, NameNode, ParseNode, SuiteNode,
 };
-use jsrt::{JsSet, P, js_flags};
+use jsrt::{JsSet, P, flag_ops};
 use std::cell::{Cell, RefCell};
 use std::ops::Deref;
 
@@ -41,7 +41,7 @@ impl FlowFlags {
     pub const ExhaustedMatch: FlowFlags = FlowFlags(0x80000);
 }
 
-js_flags!(FlowFlags);
+flag_ops!(FlowFlags);
 
 // analyzer/codeFlowTypes.ts:59
 pub type CodeFlowReferenceExpressionNode = P<ParseNode>;

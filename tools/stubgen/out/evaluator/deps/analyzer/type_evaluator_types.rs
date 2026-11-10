@@ -15,7 +15,7 @@ use crate::common::diagnostic::DiagnosticAddendum;
 use crate::parser::parse_nodes::{
     ArgCategory, ArgumentNode, CallNode, ExpressionNode, NameNode, ParamCategory, ParseNode,
 };
-use jsrt::{P, js_flags};
+use jsrt::{P, flag_ops};
 use std::rc::Rc;
 
 // analyzer/typeEvaluatorTypes.ts:66
@@ -62,10 +62,9 @@ impl EvalFlags {
     pub const IsInstanceArgDefaults: EvalFlags = EvalFlags(0x2000027a);
 }
 
-js_flags!(EvalFlags);
+flag_ops!(EvalFlags);
 
 // analyzer/typeEvaluatorTypes.ts:207
-#[derive(Clone)]
 pub struct PrefetchedTypes {
     pub none_type_class: P<Type>,
     pub object_class: P<Type>,
@@ -88,7 +87,6 @@ pub struct PrefetchedTypes {
 }
 
 // analyzer/typeEvaluatorTypes.ts:228
-#[derive(Clone)]
 pub struct TypeResult {
     pub type_: P<Type>,
     pub is_incomplete: Option<bool>,
@@ -111,7 +109,6 @@ pub struct TypeResult {
 }
 
 // analyzer/typeEvaluatorTypes.ts:289
-#[derive(Clone)]
 pub struct TypeResultWithNode {
     pub type_: P<Type>,
     pub is_incomplete: Option<bool>,
@@ -135,7 +132,6 @@ pub struct TypeResultWithNode {
 }
 
 // analyzer/typeEvaluatorTypes.ts:296
-#[derive(Clone)]
 pub struct MemberAccessDeprecationInfo {
     pub access_type: String,
     pub access_method: String,
@@ -143,7 +139,6 @@ pub struct MemberAccessDeprecationInfo {
 }
 
 // analyzer/typeEvaluatorTypes.ts:302
-#[derive(Clone)]
 pub struct MagicMethodDeprecationInfo {
     pub class_name: String,
     pub method_name: String,
@@ -151,7 +146,6 @@ pub struct MagicMethodDeprecationInfo {
 }
 
 // analyzer/typeEvaluatorTypes.ts:308
-#[derive(Clone)]
 pub struct EvaluatorUsage {
     pub method: String,
     pub set_type: Option<TypeResult>,
@@ -160,35 +154,30 @@ pub struct EvaluatorUsage {
 }
 
 // analyzer/typeEvaluatorTypes.ts:317
-#[derive(Clone)]
 pub struct ClassTypeResult {
     pub class_type: ClassType,
     pub decorated_type: P<Type>,
 }
 
 // analyzer/typeEvaluatorTypes.ts:322
-#[derive(Clone)]
 pub struct FunctionTypeResult {
     pub function_type: FunctionType,
     pub decorated_type: P<Type>,
 }
 
 // analyzer/typeEvaluatorTypes.ts:327
-#[derive(Clone)]
 pub struct CallSignature {
     pub type_: FunctionType,
     pub active_param: Option<FunctionParam>,
 }
 
 // analyzer/typeEvaluatorTypes.ts:332
-#[derive(Clone)]
 pub struct CallSignatureInfo {
     pub signatures: Vec<CallSignature>,
     pub call_node: CallNode,
 }
 
 // analyzer/typeEvaluatorTypes.ts:339
-#[derive(Clone)]
 pub struct AbstractSymbol {
     pub symbol: P<Symbol>,
     pub symbol_name: String,
@@ -197,7 +186,6 @@ pub struct AbstractSymbol {
 }
 
 // analyzer/typeEvaluatorTypes.ts:356
-#[derive(Clone)]
 pub struct ArgWithType {
     pub arg_category: ArgCategory,
     pub node: Option<ArgumentNode>,
@@ -209,7 +197,6 @@ pub struct ArgWithType {
 }
 
 // analyzer/typeEvaluatorTypes.ts:360
-#[derive(Clone)]
 pub struct ArgWithExpression {
     pub arg_category: ArgCategory,
     pub node: Option<ArgumentNode>,
@@ -221,14 +208,12 @@ pub struct ArgWithExpression {
 }
 
 // analyzer/typeEvaluatorTypes.ts:364
-#[derive(Clone)]
 pub enum Arg {
     ArgWithType(ArgWithType),
     ArgWithExpression(ArgWithExpression),
 }
 
 // analyzer/typeEvaluatorTypes.ts:366
-#[derive(Clone)]
 pub struct EffectiveTypeResult {
     pub type_: P<Type>,
     pub is_incomplete: bool,
@@ -240,7 +225,6 @@ pub struct EffectiveTypeResult {
 }
 
 // analyzer/typeEvaluatorTypes.ts:376
-#[derive(Clone)]
 pub struct ValidateArgTypeParams {
     pub param_category: ParamCategory,
     pub param_type: P<Type>,
@@ -256,7 +240,6 @@ pub struct ValidateArgTypeParams {
 }
 
 // analyzer/typeEvaluatorTypes.ts:390
-#[derive(Clone)]
 pub struct ExpectedTypeOptions {
     pub allow_final: Option<bool>,
     pub allow_required: Option<bool>,
@@ -281,7 +264,6 @@ pub struct ExpectedTypeOptions {
 }
 
 // analyzer/typeEvaluatorTypes.ts:413
-#[derive(Clone)]
 pub struct ExpectedTypeResult {
     pub type_: P<Type>,
     pub node: P<ParseNode>,
@@ -289,7 +271,6 @@ pub struct ExpectedTypeResult {
 }
 
 // analyzer/typeEvaluatorTypes.ts:429
-#[derive(Clone)]
 pub struct ArgResult {
     pub is_compatible: bool,
     pub arg_type: P<Type>,
@@ -299,7 +280,6 @@ pub struct ArgResult {
 }
 
 // analyzer/typeEvaluatorTypes.ts:437
-#[derive(Clone)]
 pub struct CallResult {
     pub return_type: Option<P<Type>>,
     pub is_type_incomplete: Option<bool>,
@@ -313,7 +293,6 @@ pub struct CallResult {
 }
 
 // analyzer/typeEvaluatorTypes.ts:473
-#[derive(Clone)]
 pub struct ClassMemberLookup {
     pub symbol: Option<P<Symbol>>,
     pub type_: P<Type>,
@@ -328,7 +307,6 @@ pub struct ClassMemberLookup {
 }
 
 // analyzer/typeEvaluatorTypes.ts:505
-#[derive(Clone)]
 pub struct SolveConstraintsOptions {
     pub use_lower_bound_only: Option<bool>,
 }
@@ -344,7 +322,6 @@ pub enum Reachability {
 }
 
 // analyzer/typeEvaluatorTypes.ts:528
-#[derive(Clone)]
 pub struct PrintTypeOptions {
     pub expand_type_alias: Option<bool>,
     pub enforce_python_syntax: Option<bool>,
@@ -357,7 +334,6 @@ pub struct PrintTypeOptions {
 }
 
 // analyzer/typeEvaluatorTypes.ts:539
-#[derive(Clone)]
 pub struct DeclaredSymbolTypeInfo {
     pub type_: Option<P<Type>>,
     pub is_type_alias: Option<bool>,
@@ -365,14 +341,12 @@ pub struct DeclaredSymbolTypeInfo {
 }
 
 // analyzer/typeEvaluatorTypes.ts:545
-#[derive(Clone)]
 pub struct ResolveAliasOptions {
     pub allow_externally_hidden_access: Option<bool>,
     pub skip_file_needed_check: Option<bool>,
 }
 
 // analyzer/typeEvaluatorTypes.ts:550
-#[derive(Clone)]
 pub struct ValidateTypeArgsOptions {
     pub allow_empty_tuple: Option<bool>,
     pub allow_type_var_tuple: Option<bool>,
@@ -382,7 +356,6 @@ pub struct ValidateTypeArgsOptions {
 }
 
 // analyzer/typeEvaluatorTypes.ts:558
-#[derive(Clone)]
 pub struct MapSubtypesOptions {
     pub condition_filter: Option<Vec<TypeCondition>>,
     pub sort_subtypes: Option<bool>,
@@ -390,14 +363,12 @@ pub struct MapSubtypesOptions {
 }
 
 // analyzer/typeEvaluatorTypes.ts:564
-#[derive(Clone)]
 pub struct CallSiteEvaluationInfo {
     pub error_node: ExpressionNode,
     pub args: Vec<ValidateArgTypeParams>,
 }
 
 // analyzer/typeEvaluatorTypes.ts:569
-#[derive(Clone)]
 pub struct SymbolDeclInfo {
     pub decls: Vec<P<Declaration>>,
     pub synthesized_types: Vec<SynthesizedTypeInfo>,
@@ -427,10 +398,9 @@ impl AssignTypeFlags {
     pub const DisallowExtraKwargsForTd: AssignTypeFlags = AssignTypeFlags(0x20000);
 }
 
-js_flags!(AssignTypeFlags);
+flag_ops!(AssignTypeFlags);
 
 // Inline object type at PartialPrefetchedTypes.
-#[derive(Clone)]
 pub struct PartialPrefetchedTypes {
     pub none_type_class: Option<P<Type>>,
     pub object_class: Option<P<Type>>,

@@ -9,14 +9,14 @@
 )]
 
 use crate::common::string_utils::StringFingerprint;
+use crate::common::text_range::TextRange;
 use crate::common::text_range_collection::TextRangeCollection;
 use crate::parser::parse_nodes::{ModuleNameNode, ModuleNode};
 use crate::parser::string_annotation_info::StringAnnotationInfo;
 use crate::parser::tokenizer::TokenizerOutput;
-use jsrt::{JsMap, JsSet, P};
+use jsrt::{JsMap, JsSet};
 
 // parser/parser.ts:189
-#[derive(Clone)]
 pub struct ParserOutput {
     pub parse_tree: ModuleNode,
     pub string_annotations: StringAnnotationInfo,
@@ -25,11 +25,10 @@ pub struct ParserOutput {
     pub contains_wildcard_import: bool,
     pub typing_symbol_aliases: JsMap<String, String>,
     pub has_type_annotations: bool,
-    pub lines: P<TextRangeCollection>,
+    pub lines: TextRangeCollection<TextRange>,
 }
 
 // parser/parser.ts:200
-#[derive(Clone)]
 pub struct ParseFileResults {
     pub text: String,
     pub content_hash: StringFingerprint,
@@ -38,7 +37,6 @@ pub struct ParseFileResults {
 }
 
 // parser/parser.ts:214
-#[derive(Clone)]
 pub struct ModuleImport {
     pub name_node: ModuleNameNode,
     pub leading_dots: f64,

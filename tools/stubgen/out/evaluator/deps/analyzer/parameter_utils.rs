@@ -22,7 +22,6 @@ pub enum ParamKind {
 }
 
 // analyzer/parameterUtils.ts:48
-#[derive(Clone)]
 pub struct VirtualParamDetails {
     pub param: FunctionParam,
     pub type_: P<Type>,
@@ -33,7 +32,6 @@ pub struct VirtualParamDetails {
 }
 
 // analyzer/parameterUtils.ts:57
-#[derive(Clone)]
 pub struct ParamListDetails {
     pub params: Vec<VirtualParamDetails>,
     pub position_only_param_count: u32,

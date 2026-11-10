@@ -45,13 +45,11 @@ pub enum DiagnosticCategory {
 }
 
 // common/diagnostic.ts:58
-#[derive(Clone)]
 pub struct DiagnosticAction {
     pub action: String,
 }
 
 // common/diagnostic.ts:72
-#[derive(Clone)]
 pub struct DiagnosticRelatedInfo {
     pub message: String,
     pub uri: Uri,

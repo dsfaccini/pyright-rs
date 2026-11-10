@@ -29,7 +29,6 @@ impl PythonReleaseLevel {
 }
 
 // common/pythonVersion.ts:12
-#[derive(Clone)]
 pub struct PythonVersion {
     pub major: f64,
     pub minor: f64,

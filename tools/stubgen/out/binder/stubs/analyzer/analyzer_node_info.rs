@@ -22,7 +22,6 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 // analyzer/analyzerNodeInfo.ts:34
-#[derive(Clone)]
 pub struct DunderAllInfo {
     pub names: Vec<String>,
     pub string_nodes: Vec<StringNode>,
@@ -54,13 +53,11 @@ pub trait AnalyzerNodeInfoReader {
 }
 
 // analyzer/analyzerNodeInfo.ts:87
-#[derive(Clone)]
 pub struct AnalyzerNodeInfoReaderPropertyProvider {
     pub analyzer_node_info_reader: &'static dyn AnalyzerNodeInfoReader,
 }
 
 // analyzer/analyzerNodeInfo.ts:91
-#[derive(Clone)]
 pub struct AnalyzerNodeInfoReaderMethodProvider {
     pub get_analyzer_node_info_reader: Rc<dyn Fn() -> &'static dyn AnalyzerNodeInfoReader>,
 }
@@ -157,13 +154,12 @@ pub struct AnalyzerNodeInfoContextLayer {
     pub removed_keys: RefCell<JsSet<P<ParseNode>>>,
 }
 
-// analyzer/analyzerNodeInfo.ts:167
 thread_local! {
+    // analyzer/analyzerNodeInfo.ts:167
     pub(crate) static RETIRED_STORES: () /*? unique symbol */ = todo!();
 }
 
 // analyzer/analyzerNodeInfo.ts:169
-#[derive(Clone)]
 pub struct RetiredAnalyzerNodeInfoHost {}
 
 // analyzer/analyzerNodeInfo.ts:173

@@ -13,7 +13,6 @@ use jsrt::{JsMap, JsSet, P};
 use std::cell::RefCell;
 
 // analyzer/constraintTracker.ts:27
-#[derive(Clone)]
 pub struct TypeVarConstraints {
     pub type_var: TypeVarType,
     pub lower_bound: Option<P<Type>>,

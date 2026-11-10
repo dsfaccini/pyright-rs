@@ -28,14 +28,12 @@ pub struct SpeculativeContext {
 }
 
 // analyzer/typeCacheUtils.ts:29
-#[derive(Clone)]
 pub struct DependentType {
     pub speculative_root_node: P<ParseNode>,
     pub dependent_type: P<Type>,
 }
 
 // analyzer/typeCacheUtils.ts:34
-#[derive(Clone)]
 pub struct TypeResult {
     pub type_: P<Type>,
     pub is_incomplete: Option<bool>,
@@ -50,7 +48,6 @@ pub struct SpeculativeTypeEntry {
 }
 
 // analyzer/typeCacheUtils.ts:49
-#[derive(Clone)]
 pub struct SpeculativeModeOptions {
     pub dependent_type: Option<P<Type>>,
     pub allow_diagnostics: Option<bool>,

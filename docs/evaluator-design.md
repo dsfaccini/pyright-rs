@@ -120,9 +120,11 @@ A class or interface is held one of four ways ("mode"). `[modes]` overrides the 
 | mode | Rust | param | default for |
 | --- | --- | --- | --- |
 | `handle` | `P<T>`, identity, shared | `P<T>` | classes; interfaces with a field written after construction |
-| `value` | owned struct, `#[derive(Clone)]` | `&T`, or `&mut T` when the callee writes it | interfaces never written after construction |
+| `value` | owned struct | `&T`, or `&mut T` when the callee writes it | interfaces never written after construction |
 | `owned` | owned struct, methods take `&mut self` | `&T` | classes that implement a trait class (walkers) |
 | `opaque` | placeholder struct, ported by hand | `&T` | none; `Uri` |
+
+Generated structs derive nothing: a derive would require every field type, including ones other agents port, to implement the trait. Porters add `Clone` where the TypeScript copies a value.
 
 The default for interfaces follows porting.md: an object shared and written after construction needs identity. The run report lists every interface the default made a handle, with the write that decided it, so each can be reviewed.
 `typemap.toml` makes these interfaces values, each for a reason given there:
@@ -182,7 +184,7 @@ An alias declared inside a function body is inlined.
 
 ### enums
 
-- An enum with a `<<` or `|` initializer, or listed in `[enums] flags`, is a flags newtype `pub struct X(pub u32)` with one associated constant per member and `jsrt::js_flags!(X)` for the bit operators.
+- An enum with a `<<` or `|` initializer, or listed in `[enums] flags`, is a flags newtype `pub struct X(pub u32)` with one associated constant per member and `jsrt::flag_ops!(X)` for the bit operators and `any()`.
 - Any other numeric enum is `#[repr(i32)]` with the same values. A member that repeats an earlier value is an associated constant.
 - A string enum is a plain enum with `as_str()`.
 
@@ -208,7 +210,8 @@ An alias declared inside a function body is inlined.
 - A missing return annotation takes the checker's inferred type.
 - A class becomes a struct and an `impl`: `new(..)` returns `P<Self>` for handles and `Self` otherwise; getters are methods; setters are `set_<name>`; static methods are associated functions; static fields are module-level items named `<CLASS>_<FIELD>`.
 - A namespace merged with a type adds associated functions to it (`ClassType::create_instantiable`). Any other namespace becomes a unit struct of the same name (`TypeBase`) holding them; next to a trait of that name, the unit struct is `<Name>Fns`.
-- A module `const` with a literal value is a Rust `const`. Every other module variable is a `thread_local!` static: `Cell`/`RefCell` when written, with a `todo!()` initializer unless the value is a literal.
+- A module `const` with a literal value is a Rust `const`. Every other module variable is a `thread_local!` static: `Cell`/`RefCell` when written, with a `todo!()` initializer unless the value is a literal. Its marker sits inside the `thread_local!` block, above the `static`.
+- Variables of a namespace and static fields of a class go in a module named after it: `UnboundType._instance` is `unbound_type::INSTANCE`.
 - A closure factory follows section 1.
 
 ## 5. Dependency placeholders and the compile check
@@ -217,11 +220,13 @@ A run writes `out/<run>/stubs/`, one module per stubbed file, and `out/<run>/dep
 
 - A placeholder holds the types other emitted code names, to a fixpoint, and the whole family when it holds a family. Never copy a placeholder into `crates/`.
 - `--check` copies `crates/` to `target/stubgen-check/<run>`, places each stub, places each placeholder only where the crate's file is still an empty skeleton, and runs `cargo check -p pyright`. Once a file is ported, the stubs compile against the real one; a name mismatch then fails the check.
+- Where a ported file chose a shape the rules would not give, `typemap.toml` records it: `TextRangeCollection<T>` keeps its generic, `ConsoleInterface` is a trait.
 - `jsrt` items the stubs use but `crates/jsrt` lacks come from `tools/stubgen/jsrt_shim.rs`. The check report lists each: they are requests to the `jsrt` owner.
 
 ## 6. Open
 
 - Collections shared by reference between holders that change them need a `[sites]` entry each. The write analysis does not see aliasing; only the binder's code-flow expression set is mapped so far.
+- `RegExp` has no mapping yet; jsrt's `js_regex` translates patterns for the `regex` crate. Neither run uses it.
 - The remaining `/*? .. */` sites in each run's report need a decision: `definedConstants` values (`boolean | string`), `ImportLookup`'s `Uri | AbsoluteModuleDescriptor` parameter, the `any` results in `staticExpressions.ts`.
 - Number sites ending in `?` in `numbers.toml` are unreviewed guesses. The binder group, `typeEvaluator.ts` and `types.ts` have none; the remaining ones sit in files only placeholders cover so far.
-- Parse node and token names follow the porting.md pattern. Once `crates/pyright/src/parser/parse_nodes.rs` lands, the check compiles the stubs against it.
+- The stubs compile against the ported `parse_nodes.rs`, `tokenizer_types.rs` and the ported `common/` files on `main` at the time of the run. A later change to their names fails the check until the table follows.

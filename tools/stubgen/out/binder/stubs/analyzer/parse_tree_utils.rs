@@ -23,7 +23,7 @@ use crate::parser::parse_nodes::{
 use crate::parser::parser::ParseFileResults;
 use crate::parser::tokenizer::TokenizerOutput;
 use crate::parser::tokenizer_types::{Comment, OperatorType, StringToken, Token};
-use jsrt::{P, js_flags};
+use jsrt::{P, flag_ops};
 use std::rc::Rc;
 
 // analyzer/parseTreeUtils.ts:55
@@ -36,10 +36,9 @@ impl PrintExpressionFlags {
     pub const DoNotLimitStringLength: PrintExpressionFlags = PrintExpressionFlags(2);
 }
 
-js_flags!(PrintExpressionFlags);
+flag_ops!(PrintExpressionFlags);
 
 // analyzer/parseTreeUtils.ts:66
-#[derive(Clone)]
 pub struct EvaluationScopeInfo {
     pub node: EvaluationScopeNode,
     pub use_proxy_scope: Option<bool>,
@@ -55,7 +54,7 @@ pub fn get_node_depth(node: P<ParseNode>) -> u32 {
 pub fn find_node_by_position(
     node: P<ParseNode>,
     position: &Position,
-    lines: P<TextRangeCollection>,
+    lines: &TextRangeCollection<TextRange>,
     reader: Option<&dyn AnalyzerNodeInfoReader>,
 ) -> Option<P<ParseNode>> {
     todo!()
@@ -414,7 +413,7 @@ pub fn get_enclosing_param(node: P<ParseNode>) -> Option<ParameterNode> {
 pub fn get_call_node_and_active_param_index(
     node: P<ParseNode>,
     insertion_offset: i32,
-    tokens: P<TextRangeCollection>,
+    tokens: &TextRangeCollection<P<Token>>,
 ) -> Option<GetCallNodeAndActiveParamIndexReturn> {
     todo!()
 }
@@ -422,7 +421,7 @@ pub fn get_call_node_and_active_param_index(
 // analyzer/parseTreeUtils.ts:1900
 /// TS defaults: includeWhitespace = false, includeZeroLengthToken = false.
 pub fn get_token_index_at_left(
-    tokens: P<TextRangeCollection>,
+    tokens: &TextRangeCollection<P<Token>>,
     position: i32,
     include_whitespace: bool,
     include_zero_length_token: bool,
@@ -433,7 +432,7 @@ pub fn get_token_index_at_left(
 // analyzer/parseTreeUtils.ts:1929
 /// TS defaults: includeWhitespace = false, includeZeroLengthToken = false.
 pub fn get_token_at_left(
-    tokens: P<TextRangeCollection>,
+    tokens: &TextRangeCollection<P<Token>>,
     position: i32,
     include_whitespace: bool,
     include_zero_length_token: bool,
@@ -443,7 +442,7 @@ pub fn get_token_at_left(
 
 // analyzer/parseTreeUtils.ts:1943
 pub fn get_token_index_after(
-    tokens: P<TextRangeCollection>,
+    tokens: &TextRangeCollection<P<Token>>,
     position: i32,
     predicate: &mut dyn FnMut(P<Token>) -> bool,
 ) -> i32 {
@@ -452,7 +451,7 @@ pub fn get_token_index_after(
 
 // analyzer/parseTreeUtils.ts:1963
 pub fn get_token_after(
-    tokens: P<TextRangeCollection>,
+    tokens: &TextRangeCollection<P<Token>>,
     position: i32,
     predicate: &mut dyn FnMut(P<Token>) -> bool,
 ) -> Option<P<Token>> {
@@ -460,28 +459,34 @@ pub fn get_token_after(
 }
 
 // analyzer/parseTreeUtils.ts:1972
-pub fn get_token_at_index(tokens: P<TextRangeCollection>, index: i32) -> Option<P<Token>> {
+pub fn get_token_at_index(tokens: &TextRangeCollection<P<Token>>, index: i32) -> Option<P<Token>> {
     todo!()
 }
 
 // analyzer/parseTreeUtils.ts:1980
-pub fn get_token_at(tokens: P<TextRangeCollection>, position: i32) -> Option<P<Token>> {
+pub fn get_token_at(tokens: &TextRangeCollection<P<Token>>, position: i32) -> Option<P<Token>> {
     todo!()
 }
 
 // analyzer/parseTreeUtils.ts:1984
-pub fn get_token_overlapping(tokens: P<TextRangeCollection>, position: i32) -> Option<P<Token>> {
+pub fn get_token_overlapping(
+    tokens: &TextRangeCollection<P<Token>>,
+    position: i32,
+) -> Option<P<Token>> {
     todo!()
 }
 
 // analyzer/parseTreeUtils.ts:1989
-pub fn get_index_of_token_overlapping(tokens: P<TextRangeCollection>, position: i32) -> i32 {
+pub fn get_index_of_token_overlapping(
+    tokens: &TextRangeCollection<P<Token>>,
+    position: i32,
+) -> i32 {
     todo!()
 }
 
 // analyzer/parseTreeUtils.ts:2000
 pub fn get_comments_at_token_index(
-    tokens: P<TextRangeCollection>,
+    tokens: &TextRangeCollection<P<Token>>,
     index: i32,
 ) -> Option<Vec<Comment>> {
     todo!()
@@ -709,7 +714,7 @@ pub fn is_simple_default(node: ExpressionNode) -> bool {
 
 // analyzer/parseTreeUtils.ts:2775
 pub fn get_previous_non_whitespace_token(
-    tokens: P<TextRangeCollection>,
+    tokens: &TextRangeCollection<P<Token>>,
     offset: i32,
 ) -> Option<P<Token>> {
     todo!()
@@ -717,7 +722,7 @@ pub fn get_previous_non_whitespace_token(
 
 // analyzer/parseTreeUtils.ts:2790
 pub fn get_next_non_whitespace_token(
-    tokens: P<TextRangeCollection>,
+    tokens: &TextRangeCollection<P<Token>>,
     offset: i32,
 ) -> Option<P<Token>> {
     todo!()
@@ -726,7 +731,7 @@ pub fn get_next_non_whitespace_token(
 // analyzer/parseTreeUtils.ts:2794
 /// TS defaults: exit = () => false.
 pub fn get_next_matching_token(
-    tokens: P<TextRangeCollection>,
+    tokens: &TextRangeCollection<P<Token>>,
     offset: i32,
     match_: &mut dyn FnMut(P<Token>) -> bool,
     exit: &mut dyn FnMut(P<Token>) -> bool,
@@ -735,7 +740,6 @@ pub fn get_next_matching_token(
 }
 
 // Inline object type at getCallNodeAndActiveParamIndex.return.
-#[derive(Clone)]
 pub struct GetCallNodeAndActiveParamIndexReturn {
     pub call_node: CallNode,
     pub active_index: i32,
@@ -743,7 +747,6 @@ pub struct GetCallNodeAndActiveParamIndexReturn {
 }
 
 // Inline object type at getFullStatementRange.options.
-#[derive(Clone)]
 pub struct GetFullStatementRangeOptions {
     pub include_trailing_blank_lines: bool,
 }

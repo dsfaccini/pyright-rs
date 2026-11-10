@@ -9,6 +9,7 @@
 )]
 
 use crate::common::diagnostic::Diagnostic;
+use crate::common::text_range::TextRange;
 use crate::common::text_range_collection::TextRangeCollection;
 use jsrt::{JsMap, P};
 use std::cell::RefCell;
@@ -18,5 +19,5 @@ use std::cell::RefCell;
 pub struct TextRangeDiagnosticSink {
     pub(crate) _diagnostic_list: RefCell<Vec<P<Diagnostic>>>,
     pub(crate) _diagnostic_map: RefCell<JsMap<String, P<Diagnostic>>>,
-    pub(crate) _lines: P<TextRangeCollection>,
+    pub(crate) _lines: TextRangeCollection<TextRange>,
 }

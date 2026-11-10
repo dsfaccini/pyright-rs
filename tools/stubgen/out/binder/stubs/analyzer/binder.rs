@@ -40,7 +40,6 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 // analyzer/binder.ts:138
-#[derive(Clone)]
 pub struct MemberAccessInfo {
     pub class_node: ClassNode,
     pub method_node: FunctionNode,
@@ -56,21 +55,18 @@ pub struct DeferredBindingTask {
 }
 
 // analyzer/binder.ts:151
-#[derive(Clone)]
 pub struct FinalInfo {
     pub is_final: bool,
     pub final_type_node: Option<ExpressionNode>,
 }
 
 // analyzer/binder.ts:156
-#[derive(Clone)]
 pub struct ClassVarInfo {
     pub is_class_var: bool,
     pub class_var_type_node: Option<ExpressionNode>,
 }
 
 // analyzer/binder.ts:161
-#[derive(Clone)]
 pub struct NarrowExprOptions {
     pub filter_for_never_narrowing: Option<bool>,
     pub is_complex_expression: Option<bool>,
@@ -137,16 +133,6 @@ pub struct Binder {
     pub(crate) _code_flow_complexity: f64,
     pub(crate) _module_symbol_only: Option<bool>,
     pub(crate) _cell_chain_index: Option<&'static dyn CellChainIndexProvider>,
-}
-
-// analyzer/binder.ts:336
-thread_local! {
-    pub(crate) static BINDER__UNREACHABLE_STATIC_CONDITION_FLOW_NODE: Cell<P<FlowNode>> = todo!();
-}
-
-// analyzer/binder.ts:341
-thread_local! {
-    pub(crate) static BINDER__UNREACHABLE_STRUCTURAL_FLOW_NODE: Cell<P<FlowNode>> = todo!();
 }
 
 impl ParseTreeWalker for Binder {
@@ -911,6 +897,21 @@ impl Binder {
         text_range: &TextRange,
     ) -> P<Diagnostic> {
         todo!()
+    }
+}
+
+// Variables of `Binder`.
+pub mod binder {
+    use super::*;
+
+    thread_local! {
+        // analyzer/binder.ts:336
+        pub(crate) static UNREACHABLE_STATIC_CONDITION_FLOW_NODE: Cell<P<FlowNode>> = todo!();
+    }
+
+    thread_local! {
+        // analyzer/binder.ts:341
+        pub(crate) static UNREACHABLE_STRUCTURAL_FLOW_NODE: Cell<P<FlowNode>> = todo!();
     }
 }
 

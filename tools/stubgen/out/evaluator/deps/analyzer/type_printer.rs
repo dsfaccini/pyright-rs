@@ -8,7 +8,7 @@
     clippy::all
 )]
 
-use jsrt::js_flags;
+use jsrt::flag_ops;
 
 // analyzer/typePrinter.ts:54
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Default)]
@@ -32,4 +32,4 @@ impl PrintTypeFlags {
     pub const OmitTypeVarScope: PrintTypeFlags = PrintTypeFlags(0x2000);
 }
 
-js_flags!(PrintTypeFlags);
+flag_ops!(PrintTypeFlags);

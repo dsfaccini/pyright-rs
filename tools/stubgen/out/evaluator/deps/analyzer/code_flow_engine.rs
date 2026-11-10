@@ -25,7 +25,6 @@ pub struct FlowNodeTypeResult {
 }
 
 // analyzer/codeFlowEngine.ts:104
-#[derive(Clone)]
 pub struct FlowNodeTypeOptions {
     pub target_symbol_id: Option<u32>,
     pub type_at_start: Option<TypeResult>,
@@ -37,7 +36,6 @@ pub struct FlowNodeTypeOptions {
 // CodeFlowEngine: the struct `CodeFlowEngine` built by `getCodeFlowEngine` in analyzer/codeFlowEngine.ts.
 
 // analyzer/codeFlowEngine.ts:130
-#[derive(Clone)]
 pub struct IncompleteSubtypeInfo {
     pub type_: P<Type>,
     pub is_incomplete: bool,
@@ -61,7 +59,6 @@ pub struct ReachabilityCacheEntry {
 }
 
 // analyzer/codeFlowEngine.ts:168
-#[derive(Clone)]
 pub enum CachedType {
     Type(P<Type>),
     IncompleteType(P<IncompleteType>),

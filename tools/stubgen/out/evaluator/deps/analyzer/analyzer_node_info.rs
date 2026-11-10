@@ -20,7 +20,6 @@ use jsrt::{JsMap, JsSet, P};
 use std::cell::{Cell, RefCell};
 
 // analyzer/analyzerNodeInfo.ts:34
-#[derive(Clone)]
 pub struct DunderAllInfo {
     pub names: Vec<String>,
     pub string_nodes: Vec<StringNode>,

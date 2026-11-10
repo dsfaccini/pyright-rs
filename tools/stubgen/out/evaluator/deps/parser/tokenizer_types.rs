@@ -8,7 +8,7 @@
     clippy::all
 )]
 
-use jsrt::{NumberValue, P, js_flags};
+use jsrt::{NumberValue, P, flag_ops};
 use std::ops::Deref;
 
 // parser/tokenizerTypes.ts:16
@@ -169,7 +169,7 @@ impl StringTokenFlags {
     pub const Unterminated: StringTokenFlags = StringTokenFlags(0x10000);
 }
 
-js_flags!(StringTokenFlags);
+flag_ops!(StringTokenFlags);
 
 // parser/tokenizerTypes.ts:187
 #[repr(i32)]
@@ -183,7 +183,6 @@ pub enum CommentType {
 }
 
 // parser/tokenizerTypes.ts:195
-#[derive(Clone)]
 pub struct Comment {
     pub start: i32,
     pub length: i32,

@@ -10,13 +10,13 @@
 
 use crate::common::text_range::TextRange;
 use crate::common::text_range_collection::TextRangeCollection;
+use crate::parser::tokenizer_types::Token;
 use jsrt::{JsMap, P};
 
 // parser/tokenizer.ts:574
-#[derive(Clone)]
 pub struct TokenizerOutput {
-    pub tokens: P<TextRangeCollection>,
-    pub lines: P<TextRangeCollection>,
+    pub tokens: TextRangeCollection<P<Token>>,
+    pub lines: TextRangeCollection<TextRange>,
     pub type_ignore_lines: JsMap<u32, IgnoreComment>,
     pub pyright_ignore_lines: JsMap<u32, IgnoreComment>,
     pub type_ignore_all: Option<IgnoreComment>,
@@ -27,14 +27,12 @@ pub struct TokenizerOutput {
 }
 
 // parser/tokenizer.ts:617
-#[derive(Clone)]
 pub struct IgnoreCommentRule {
     pub text: String,
     pub range: TextRange,
 }
 
 // parser/tokenizer.ts:622
-#[derive(Clone)]
 pub struct IgnoreComment {
     pub range: TextRange,
     pub rules_list: Option<Vec<IgnoreCommentRule>>,

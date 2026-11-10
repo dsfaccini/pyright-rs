@@ -59,7 +59,6 @@ use std::cell::{Cell, OnceCell, RefCell};
 use std::rc::Rc;
 
 // analyzer/typeEvaluator.ts:391
-#[derive(Clone)]
 pub struct GetTypeArgsOptions {
     pub is_annotated_class: Option<bool>,
     pub has_custom_class_get_item: Option<bool>,
@@ -69,7 +68,6 @@ pub struct GetTypeArgsOptions {
 }
 
 // analyzer/typeEvaluator.ts:399
-#[derive(Clone)]
 pub struct MatchArgsToParamsResult {
     pub overload: FunctionType,
     pub overload_index: i32,
@@ -85,7 +83,6 @@ pub struct MatchArgsToParamsResult {
 }
 
 // analyzer/typeEvaluator.ts:423
-#[derive(Clone)]
 pub struct MemberAccessTypeResult {
     pub type_: P<Type>,
     pub is_descriptor_applied: Option<bool>,
@@ -95,7 +92,6 @@ pub struct MemberAccessTypeResult {
 }
 
 // analyzer/typeEvaluator.ts:431
-#[derive(Clone)]
 pub struct ScopedTypeVarResult {
     pub type_: TypeVarType,
     pub scope_node: Option<P<ParseNode>>,
@@ -103,7 +99,6 @@ pub struct ScopedTypeVarResult {
 }
 
 // analyzer/typeEvaluator.ts:437
-#[derive(Clone)]
 pub struct AliasMapEntry {
     pub alias: String,
     pub module: String,
@@ -114,14 +109,12 @@ pub struct AliasMapEntry {
 }
 
 // analyzer/typeEvaluator.ts:446
-#[derive(Clone)]
 pub struct AssignClassToSelfInfo {
     pub class: ClassType,
     pub assumed_variance: Variance,
 }
 
 // analyzer/typeEvaluator.ts:451
-#[derive(Clone)]
 pub struct MatchedOverloadInfo {
     pub overload: FunctionType,
     pub match_results: MatchArgsToParamsResult,
@@ -132,7 +125,6 @@ pub struct MatchedOverloadInfo {
 }
 
 // analyzer/typeEvaluator.ts:460
-#[derive(Clone)]
 pub struct ValidateArgTypeOptions {
     pub skip_unknown_arg_check: Option<bool>,
     pub is_arg_first_pass: Option<bool>,
@@ -141,25 +133,23 @@ pub struct ValidateArgTypeOptions {
 }
 
 // analyzer/typeEvaluator.ts:467
-#[derive(Clone)]
 pub struct EffectiveReturnTypeOptions {
     pub call_site_info: Option<CallSiteEvaluationInfo>,
 }
 
 // analyzer/typeEvaluator.ts:471
-#[derive(Clone)]
 pub struct SignatureTrackerStackEntry {
     pub tracker: P<UniqueSignatureTracker>,
     pub root_node: P<ParseNode>,
 }
 
-// analyzer/typeEvaluator.ts:480
 thread_local! {
+    // analyzer/typeEvaluator.ts:480
     pub(crate) static NON_SUBSCRIPTABLE_BUILTIN_TYPES: JsMap<String, PythonVersion> = todo!();
 }
 
-// analyzer/typeEvaluator.ts:501
 thread_local! {
+    // analyzer/typeEvaluator.ts:501
     pub(crate) static TYPE_PROMOTIONS: JsMap<String, Vec<String>> = todo!();
 }
 
@@ -172,14 +162,12 @@ pub struct SymbolResolutionStackEntry {
 }
 
 // analyzer/typeEvaluator.ts:521
-#[derive(Clone)]
 pub struct ReturnTypeInferenceContext {
     pub function_node: FunctionNode,
     pub code_flow_analyzer: P<CodeFlowAnalyzer>,
 }
 
 // analyzer/typeEvaluator.ts:526
-#[derive(Clone)]
 pub struct ParamSpecArgResult {
     pub argument_errors: bool,
     pub constraint_trackers: Vec<Option<P<ConstraintTracker>>>,
@@ -237,7 +225,6 @@ pub(crate) const PRINT_EXPRESSION_TYPES: bool = false;
 pub const MAX_CODE_COMPLEXITY: f64 = 768.0;
 
 // analyzer/typeEvaluator.ts:616
-#[derive(Clone)]
 pub struct EvaluatorOptions {
     pub print_type_flags: PrintTypeFlags,
     pub log_calls: bool,
@@ -254,7 +241,6 @@ pub struct DeferredClassCompletion {
 }
 
 // analyzer/typeEvaluator.ts:634
-#[derive(Clone)]
 pub struct TypeCacheEntry {
     pub type_result: TypeResult,
     pub incomplete_gen_count: u32,
@@ -262,7 +248,6 @@ pub struct TypeCacheEntry {
 }
 
 // analyzer/typeEvaluator.ts:640
-#[derive(Clone)]
 pub struct TypeFormTypeCacheEntry {
     pub type_result: TypeResult,
     pub incomplete_gen_count: u32,
@@ -271,14 +256,12 @@ pub struct TypeFormTypeCacheEntry {
 }
 
 // analyzer/typeEvaluator.ts:642
-#[derive(Clone)]
 pub struct CodeFlowAnalyzerCacheEntry {
     pub type_at_start: Option<TypeResult>,
     pub code_flow_analyzer: P<CodeFlowAnalyzer>,
 }
 
 // analyzer/typeEvaluator.ts:647
-#[derive(Clone)]
 pub struct FunctionRecursionInfo {
     pub caller_node: Option<ExpressionNode>,
 }
@@ -3774,7 +3757,7 @@ impl TypeEvaluator {
         flow_node: P<FlowNode>,
         reference: Option<CodeFlowReferenceExpressionNode>,
         call_name: &str,
-        logger: &ConsoleInterface,
+        logger: &dyn ConsoleInterface,
     ) {
         todo!()
     }
@@ -3797,14 +3780,12 @@ impl TypeEvaluator {
 }
 
 // Inline object type at createTypeEvaluator.getOverloadArgParamPairs.return.
-#[derive(Clone)]
 pub struct CreateTypeEvaluatorGetOverloadArgParamPairsReturn {
     pub arg_type: P<Type>,
     pub param_type: P<Type>,
 }
 
 // Inline object type at createTypeEvaluator.printSrcDestTypes.return.
-#[derive(Clone)]
 pub struct CreateTypeEvaluatorPrintSrcDestTypesReturn {
     pub source_type: String,
     pub dest_type: String,

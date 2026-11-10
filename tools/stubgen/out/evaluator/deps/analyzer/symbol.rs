@@ -11,7 +11,7 @@
 use crate::analyzer::declaration::Declaration;
 use crate::analyzer::types::Type;
 use crate::parser::parse_nodes::NameNode;
-use jsrt::{P, js_flags};
+use jsrt::{P, flag_ops};
 use std::cell::{Cell, RefCell};
 
 // analyzer/symbol.ts:17
@@ -37,10 +37,9 @@ impl SymbolFlags {
     pub const DataClassKeywordOnly: SymbolFlags = SymbolFlags(0x4000);
 }
 
-js_flags!(SymbolFlags);
+flag_ops!(SymbolFlags);
 
 // analyzer/symbol.ts:88
-#[derive(Clone)]
 pub struct SynthesizedTypeInfo {
     pub type_: P<Type>,
     pub node: Option<NameNode>,

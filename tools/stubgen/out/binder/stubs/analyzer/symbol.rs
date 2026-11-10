@@ -11,7 +11,7 @@
 use crate::analyzer::declaration::Declaration;
 use crate::analyzer::types::Type;
 use crate::parser::parse_nodes::NameNode;
-use jsrt::{JsMap, P, js_flags};
+use jsrt::{JsMap, P, flag_ops};
 use std::cell::{Cell, RefCell};
 
 // analyzer/symbol.ts:17
@@ -37,10 +37,10 @@ impl SymbolFlags {
     pub const DataClassKeywordOnly: SymbolFlags = SymbolFlags(0x4000);
 }
 
-js_flags!(SymbolFlags);
+flag_ops!(SymbolFlags);
 
-// analyzer/symbol.ts:80
 thread_local! {
+    // analyzer/symbol.ts:80
     pub(crate) static NEXT_SYMBOL_ID: Cell<u32> = const { Cell::new(1) };
 }
 
@@ -53,7 +53,6 @@ pub(crate) fn get_unique_symbol_id() -> u32 {
 pub const INDETERMINATE_SYMBOL_ID: u32 = 0;
 
 // analyzer/symbol.ts:88
-#[derive(Clone)]
 pub struct SynthesizedTypeInfo {
     pub type_: P<Type>,
     pub node: Option<NameNode>,

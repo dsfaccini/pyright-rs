@@ -10,7 +10,6 @@
 # mapped type arguments.
 [types]
 bigint = { rust = "jsrt::JsBigInt" }
-RegExp = { rust = "jsrt::JsRegExp" }
 # porting.md "numbers": a Python number literal is NumberValue.
 "bigint | number" = { rust = "NumberValue", use = "jsrt::NumberValue" }
 # A class name or a list of class names.
@@ -18,6 +17,8 @@ RegExp = { rust = "jsrt::JsRegExp" }
 # The CLI check runs to completion: nothing cancels it and nothing on the check path awaits.
 CancellationToken = { rust = "()", copy = true }
 Promise = "$0"
+# Ported by hand as a generic over its element (crates/pyright/src/common/text_range_collection.rs).
+"common/textRangeCollection.ts:TextRangeCollection" = { rust = "TextRangeCollection<$0>", use = "crate::common::text_range_collection::TextRangeCollection" }
 # The key of a parse tree: its module node (`node.a = node` in ModuleNode.create).
 "parser/parseNodes.ts:ParseTreeKey" = { rust = "jsrt::P<crate::parser::parse_nodes::ParseNode>", copy = true }
 
@@ -71,6 +72,8 @@ Promise = "$0"
 "analyzer/analyzerNodeInfo.ts:AnalyzerNodeInfoBindingSession" = {}
 "analyzer/analyzerNodeInfo.ts:AnalyzerNodeInfoContext" = {}
 "analyzer/cellChainIndex.ts:CellChainIndexProvider" = {}
+# Ported as a trait (crates/pyright/src/common/console.rs).
+"common/console.ts:ConsoleInterface" = {}
 
 # Unions discriminated by a kind field become one struct plus an enum of per-kind details
 # (docs/porting.md, "types, classes and unions").

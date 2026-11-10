@@ -8,13 +8,17 @@
     clippy::all
 )]
 
-use std::rc::Rc;
-
 // common/console.ts:22
-#[derive(Clone)]
-pub struct ConsoleInterface {
-    pub error: Rc<dyn Fn(&str)>,
-    pub warn: Rc<dyn Fn(&str)>,
-    pub info: Rc<dyn Fn(&str)>,
-    pub log: Rc<dyn Fn(&str)>,
+pub trait ConsoleInterface {
+    // common/console.ts:23
+    fn error(&self, a0: &str);
+
+    // common/console.ts:24
+    fn warn(&self, a0: &str);
+
+    // common/console.ts:25
+    fn info(&self, a0: &str);
+
+    // common/console.ts:26
+    fn log(&self, a0: &str);
 }

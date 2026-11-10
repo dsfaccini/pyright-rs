@@ -14,7 +14,7 @@ use crate::common::uri::uri::Uri;
 use crate::parser::parse_nodes::{
     ArgumentNode, ExpressionNode, NameNode, ParamCategory, TypeAnnotationNode,
 };
-use jsrt::{JsBigInt, JsMap, JsSet, NumberValue, P, js_flags};
+use jsrt::{JsBigInt, JsMap, JsSet, NumberValue, P, flag_ops};
 use std::cell::{Cell, RefCell};
 use std::ops::Deref;
 use std::rc::Rc;
@@ -47,7 +47,7 @@ impl TypeFlags {
     pub const TypeCompatibilityMask: TypeFlags = TypeFlags(3);
 }
 
-js_flags!(TypeFlags);
+flag_ops!(TypeFlags);
 
 // analyzer/types.ts:67
 pub type UnionableType = P<Type>;
@@ -68,7 +68,6 @@ pub struct SentinelLiteral {
 }
 
 // analyzer/types.ts:108
-#[derive(Clone)]
 pub enum LiteralValue {
     Number(f64),
     Bigint(JsBigInt),
@@ -91,14 +90,12 @@ pub struct TypeAliasSharedInfo {
 }
 
 // analyzer/types.ts:153
-#[derive(Clone)]
 pub struct TypeAliasInfo {
     pub shared: P<TypeAliasSharedInfo>,
     pub type_args: Option<Vec<P<Type>>>,
 }
 
 // analyzer/types.ts:160
-#[derive(Clone)]
 pub struct CachedTypeInfo {
     pub instantiable_type: Option<P<Type>>,
     pub instance_type: Option<P<Type>>,
@@ -108,7 +105,6 @@ pub struct CachedTypeInfo {
 }
 
 // analyzer/types.ts:174
-#[derive(Clone)]
 pub struct TypeBaseProps {
     pub instantiable_depth: Option<u32>,
     pub special_form: Option<ClassType>,
@@ -172,7 +168,6 @@ impl Deref for UnboundType {
 }
 
 // analyzer/types.ts:412
-#[derive(Clone)]
 pub struct UnknownDetailsPriv {
     pub is_incomplete: bool,
     pub possible_type: Option<P<Type>>,
@@ -212,7 +207,6 @@ impl Deref for UnknownType {
 }
 
 // analyzer/types.ts:478
-#[derive(Clone)]
 pub struct ModuleDetailsPriv {
     pub fields: JsMap<String, P<Symbol>>,
     pub doc_string: Option<String>,
@@ -274,7 +268,6 @@ pub struct DataClassEntry {
 }
 
 // analyzer/types.ts:561
-#[derive(Clone)]
 pub struct TypedDictEntry {
     pub value_type: P<Type>,
     pub is_required: bool,
@@ -323,7 +316,7 @@ impl ClassTypeFlags {
     pub const EnumMemberSetMayBeDynamicallyModified: ClassTypeFlags = ClassTypeFlags(0x4000000);
 }
 
-js_flags!(ClassTypeFlags);
+flag_ops!(ClassTypeFlags);
 
 // analyzer/types.ts:686
 pub struct DataClassBehaviors {
@@ -375,7 +368,6 @@ pub struct ClassDetailsShared {
 }
 
 // analyzer/types.ts:757
-#[derive(Clone)]
 pub struct TupleTypeArg {
     pub type_: P<Type>,
     pub is_unbounded: bool,
@@ -383,14 +375,12 @@ pub struct TupleTypeArg {
 }
 
 // analyzer/types.ts:770
-#[derive(Clone)]
 pub struct PropertyMethodInfo {
     pub method_type: P<Type>,
     pub class_type: Option<ClassType>,
 }
 
 // analyzer/types.ts:780
-#[derive(Clone)]
 pub struct ClassDetailsPriv {
     pub type_args: Option<Vec<P<Type>>>,
     pub is_empty_container: Option<bool>,
@@ -457,10 +447,9 @@ impl FunctionParamFlags {
     pub const TypeInferred: FunctionParamFlags = FunctionParamFlags(4);
 }
 
-js_flags!(FunctionParamFlags);
+flag_ops!(FunctionParamFlags);
 
 // analyzer/types.ts:1602
-#[derive(Clone)]
 pub struct FunctionParam {
     pub category: ParamCategory,
     pub flags: FunctionParamFlags,
@@ -498,7 +487,7 @@ impl FunctionTypeFlags {
     pub const BuiltIn: FunctionTypeFlags = FunctionTypeFlags(0x100000);
 }
 
-js_flags!(FunctionTypeFlags);
+flag_ops!(FunctionTypeFlags);
 
 // analyzer/types.ts:1729
 pub struct FunctionDetailsShared {
@@ -519,7 +508,6 @@ pub struct FunctionDetailsShared {
 }
 
 // analyzer/types.ts:1757
-#[derive(Clone)]
 pub struct SpecializedFunctionTypes {
     pub parameter_types: Vec<P<Type>>,
     pub parameter_default_types: Option<Vec<Option<P<Type>>>>,
@@ -527,14 +515,12 @@ pub struct SpecializedFunctionTypes {
 }
 
 // analyzer/types.ts:1772
-#[derive(Clone)]
 pub struct CallSiteInferenceTypeCacheEntry {
     pub param_types: Vec<P<Type>>,
     pub return_type: P<Type>,
 }
 
 // analyzer/types.ts:1782
-#[derive(Clone)]
 pub struct FunctionDetailsPriv {
     pub constructor_type_var_scope_id: Option<String>,
     pub specialized_types: Option<SpecializedFunctionTypes>,
@@ -581,7 +567,6 @@ impl Deref for FunctionType {
 }
 
 // analyzer/types.ts:2422
-#[derive(Clone)]
 pub struct OverloadedDetailsPriv {
     pub _overloads: Vec<FunctionType>,
     pub _implementation: Option<P<Type>>,
@@ -621,7 +606,6 @@ impl Deref for OverloadedType {
 }
 
 // analyzer/types.ts:2474
-#[derive(Clone)]
 pub struct NeverDetailsPriv {
     pub is_no_return: bool,
 }
@@ -660,7 +644,6 @@ impl Deref for NeverType {
 }
 
 // analyzer/types.ts:2519
-#[derive(Clone)]
 pub struct AnyDetailsPriv {
     pub is_ellipsis: bool,
 }
@@ -699,7 +682,6 @@ impl Deref for AnyType {
 }
 
 // analyzer/types.ts:2572
-#[derive(Clone)]
 pub struct TypeCondition {
     pub type_var: TypeVarType,
     pub constraint_index: i32,
@@ -713,7 +695,6 @@ pub struct LiteralTypes {
 }
 
 // analyzer/types.ts:2674
-#[derive(Clone)]
 pub struct UnionDetailsPriv {
     pub subtypes: Vec<UnionableType>,
     pub literal_instances: P<LiteralTypes>,
@@ -819,7 +800,6 @@ pub enum TypeVarScopeType {
 }
 
 // analyzer/types.ts:2876
-#[derive(Clone)]
 pub struct TypeVarDetailsPriv {
     pub scope_id: Option<String>,
     pub scope_name: Option<String>,
@@ -912,7 +892,6 @@ impl Deref for TypeVarTupleType {
 }
 
 // Inline object type at FunctionDetailsShared.inferredReturnType.
-#[derive(Clone)]
 pub struct FunctionDetailsSharedInferredReturnType {
     pub type_: P<Type>,
     pub is_incomplete: Option<bool>,

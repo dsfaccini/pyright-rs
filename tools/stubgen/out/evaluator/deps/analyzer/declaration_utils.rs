@@ -12,7 +12,6 @@ use crate::analyzer::declaration::Declaration;
 use jsrt::P;
 
 // analyzer/declarationUtils.ts:20
-#[derive(Clone)]
 pub struct ResolvedAliasInfo {
     pub declaration: Option<P<Declaration>>,
     pub is_private: bool,

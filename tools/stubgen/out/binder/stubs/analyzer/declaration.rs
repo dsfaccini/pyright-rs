@@ -15,8 +15,8 @@ use jsrt::{JsMap, P};
 use std::cell::{Cell, RefCell};
 use std::ops::Deref;
 
-// analyzer/declaration.ts:36
 thread_local! {
+    // analyzer/declaration.ts:36
     pub static UNRESOLVED_MODULE_MARKER: Uri = todo!();
 }
 
@@ -410,8 +410,7 @@ pub struct ModuleLoaderActions {
     pub implicit_imports: RefCell<Option<JsMap<String, P<ModuleLoaderActions>>>>,
 }
 
-// analyzer/declaration.ts:255
-// `Declaration`, the union of every member, is `P<Declaration>`: struct Declaration and enum DeclarationDetails.
+// analyzer/declaration.ts:255: `Declaration`, the union of every member, is `P<Declaration>`: struct Declaration and enum DeclarationDetails.
 
 // analyzer/declaration.ts:266
 pub fn is_function_declaration(decl: P<Declaration>) -> bool {
