@@ -29,6 +29,9 @@ Promise = "$0"
 "common/textRangeCollection.ts:TextRangeCollection" = { rust = "TextRangeCollection<$0>", use = "crate::common::text_range_collection::TextRangeCollection" }
 # The key of a parse tree: its module node (`node.a = node` in ModuleNode.create).
 "parser/parseNodes.ts:ParseTreeKey" = { rust = "jsrt::P<crate::parser::parse_nodes::ParseNode>", copy = true }
+# A `Map<string, Symbol>` held by reference: a module type holds its scope's table (typeEvaluator.ts:24280),
+# `isTypeSame` compares module tables with `===` (types.ts:3766), and spread copies of a type share it.
+"analyzer/symbol.ts:SymbolTable" = { rust = "SymbolTable", use = "crate::analyzer::symbol::SymbolTable", copy = true }
 
 # How a class or interface is held (default rules in docs/evaluator-design.md, "objects"):
 # "handle": `P<T>`, shared by reference; fields written after construction get Cell/RefCell.
@@ -176,8 +179,13 @@ interface = "analyzer/codeFlowEngine.ts:CodeFlowAnalyzer"
 "analyzer/analyzerNodeInfo.ts:AnalyzerNodeInfoAccessor.setCodeFlowExpressions.expressions" = "jsrt::P<std::cell::RefCell<jsrt::JsSet<String>>>"
 "analyzer/analyzerNodeInfo.ts:getCodeFlowExpressions.return" = "Option<jsrt::P<std::cell::RefCell<jsrt::JsSet<String>>>>"
 "analyzer/analyzerNodeInfo.ts:setCodeFlowExpressions.expressions" = "jsrt::P<std::cell::RefCell<jsrt::JsSet<String>>>"
+# Arrays held by reference. `{ ...type.shared }` and `FunctionType.clone` copy the reference, and
+# `expandTypedKwargs` splices and pushes the clone's arrays, which changes the original function too
+# (typeEvaluator.ts:2919-2923, 2944).
+"analyzer/types.ts:FunctionDetailsShared.parameters" = "jsrt::P<std::cell::RefCell<Vec<crate::analyzer::types::FunctionParam>>>"
+"analyzer/types.ts:SpecializedFunctionTypes.parameterTypes" = "jsrt::P<std::cell::RefCell<Vec<jsrt::P<crate::analyzer::types::Type>>>>"
+"analyzer/types.ts:SpecializedFunctionTypes.parameterDefaultTypes" = "Option<jsrt::P<std::cell::RefCell<Vec<Option<jsrt::P<crate::analyzer::types::Type>>>>>>"
 # Getters that return live state their callers write to.
-"analyzer/types.ts:ClassType.getSymbolTable.return" = "&'static std::cell::RefCell<jsrt::JsMap<String, jsrt::P<crate::analyzer::symbol::Symbol>>>"
 "analyzer/types.ts:TypeBase.addProps.return" = "std::cell::RefMut<'static, crate::analyzer::types::TypeBaseProps>"
 # The type caches are passed by reference to the speculative type tracker, which deletes from the
 # very map it was given (typeCacheUtils.ts:133); the return-inference ones are swapped per call.
@@ -208,6 +216,8 @@ interface = "analyzer/codeFlowEngine.ts:CodeFlowAnalyzer"
 [mutable]
 # A shared map handle ([sites]): writes go through its RefCell, and the field is never reassigned.
 "analyzer/codeFlowEngine.ts:CodeFlowTypeCache.cache" = false
+# `OverloadedType.addOverload` pushes onto `priv._overloads` after the type exists (types.ts:2462).
+"analyzer/types.ts:OverloadedType.priv" = true
 
 [enums]
 # Enums to emit as flags newtypes, or as plain enums, against the detection rule.

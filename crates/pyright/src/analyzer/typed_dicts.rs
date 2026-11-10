@@ -11,7 +11,7 @@
 
 use crate::analyzer::analyzer_node_info::AnalyzerNodeInfoAccessor;
 use crate::analyzer::constraint_tracker::ConstraintTracker;
-use crate::analyzer::symbol::Symbol;
+use crate::analyzer::symbol::{Symbol, SymbolTable};
 use crate::analyzer::type_evaluator::TypeEvaluator;
 use crate::analyzer::type_evaluator_types::{
     Arg, AssignTypeFlags, EvaluatorUsage, TypeResult, TypeResultWithNode,
@@ -19,7 +19,7 @@ use crate::analyzer::type_evaluator_types::{
 use crate::analyzer::types::{ClassType, Type, TypedDictEntries, TypedDictEntry};
 use crate::common::diagnostic::DiagnosticAddendum;
 use crate::parser::parse_nodes::{DictionaryNode, ExpressionNode, IndexNode, ParseNode};
-use jsrt::{JsMap, P};
+use jsrt::P;
 use std::rc::Rc;
 
 // analyzer/typedDicts.ts:79
@@ -86,7 +86,7 @@ pub fn get_typed_dict_dict_equivalent(
 pub(crate) fn get_typed_dict_fields_from_dict_syntax(
     evaluator: &TypeEvaluator,
     entry_dict: DictionaryNode,
-    class_fields: &mut JsMap<String, P<Symbol>>,
+    class_fields: SymbolTable,
     is_inline: bool,
     node_info: &AnalyzerNodeInfoAccessor,
 ) {

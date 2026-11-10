@@ -10,7 +10,7 @@
 )]
 
 use crate::analyzer::constraint_solution::{ConstraintSolution, ConstraintSolutionSet};
-use crate::analyzer::symbol::Symbol;
+use crate::analyzer::symbol::{Symbol, SymbolTable};
 use crate::analyzer::types::{
     ClassType, ClassTypeFlags, FunctionType, ModuleType, SignatureWithOffsets, TupleTypeArg, Type,
     TypeCondition, TypeSameOptions, TypeVarType, UnknownType, Variance,
@@ -719,17 +719,14 @@ pub fn convert_to_instantiable(type_: P<Type>, include_subclasses: bool) -> P<Ty
 // analyzer/typeUtils.ts:2512
 pub fn get_members_for_class(
     class_type: ClassType,
-    symbol_table: &mut JsMap<String, P<Symbol>>,
+    symbol_table: SymbolTable,
     include_instance_vars: bool,
 ) {
     todo!()
 }
 
 // analyzer/typeUtils.ts:2566
-pub fn get_members_for_module(
-    module_type: ModuleType,
-    symbol_table: &mut JsMap<String, P<Symbol>>,
-) {
+pub fn get_members_for_module(module_type: ModuleType, symbol_table: SymbolTable) {
     todo!()
 }
 

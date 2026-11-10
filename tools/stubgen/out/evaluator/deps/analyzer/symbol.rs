@@ -11,7 +11,7 @@
 use crate::analyzer::declaration::Declaration;
 use crate::analyzer::types::Type;
 use crate::parser::parse_nodes::NameNode;
-use jsrt::P;
+use jsrt::{JsMap, P};
 use std::cell::{Cell, RefCell};
 
 // analyzer/symbol.ts:88
@@ -29,3 +29,6 @@ pub struct Symbol {
     pub(crate) _synthesized_type_info: RefCell<Option<SynthesizedTypeInfo>>,
     pub(crate) _typing_symbol_alias: RefCell<Option<String>>,
 }
+
+// analyzer/symbol.ts:322
+pub type SymbolTable = JsMap<String, P<Symbol>>;
