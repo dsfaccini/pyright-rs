@@ -357,7 +357,8 @@ impl DiagnosticAddendum {
             }
         }
 
-        let extra_space = if !messages.is_empty() { "  " } else { "" };
+        // Two U+00A0 (no-break space) characters, as in pyright.
+        let extra_space = if !messages.is_empty() { "\u{a0}\u{a0}" } else { "" };
         messages
             .into_iter()
             .chain(child_lines)
@@ -382,7 +383,7 @@ mod tests {
                 DEFAULT_MAX_DIAGNOSTIC_DEPTH,
                 DEFAULT_MAX_DIAGNOSTIC_LINE_COUNT
             ),
-            "\n  first\n    second"
+            "\n\u{a0}\u{a0}first\n\u{a0}\u{a0}\u{a0}\u{a0}second"
         );
         assert_eq!(grandchild.get_nest_level(), 2);
 
@@ -394,7 +395,8 @@ mod tests {
             DEFAULT_MAX_DIAGNOSTIC_DEPTH,
             DEFAULT_MAX_DIAGNOSTIC_LINE_COUNT,
         );
-        assert!(text.ends_with("  m7\n  ..."));
+        // Message lines indent with U+00A0; the truncation marker uses ASCII spaces.
+        assert!(text.ends_with("\u{a0}\u{a0}m7\n  ..."));
     }
 
     #[test]
