@@ -12,7 +12,7 @@ tools/stubgen/stubgen --run evaluator --check-only
 tools/stubgen/stubgen --run evaluator --install       # write the run's stubs into crates/pyright/src
 ```
 
-`--install` works only for a run with `install = true` in `runs.toml`. It keeps every function already ported at its marker, and changes nothing when it would drop ported code (`docs/evaluator-design.md`, section 5, "install").
+`--install` places the stubs the last run wrote to `out/<run>/`; it does not regenerate them. After a change to the table or the generator, run `tools/stubgen/stubgen --run evaluator` first, then `--install`. `--install` works only for a run with `install = true` in `runs.toml`. It keeps every function already ported at its marker, and changes nothing when it would drop ported code (`docs/evaluator-design.md`, section 5, "install").
 
 Needs `bun`, `cargo`, `rustfmt`, and the pinned pyright at `~/pyright` (or `PYRIGHT_ROOT`).
 The generator uses that checkout's `typescript` and `smol-toml`: `link-deps` symlinks them into `tools/stubgen/node_modules`.
