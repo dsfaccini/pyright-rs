@@ -8061,7 +8061,194 @@ impl TypeEvaluator {
         node: MemberAccessNode,
         flags: EvalFlags,
     ) -> P<TypeResult> {
-        todo!()
+        // Compute flags specifically for evaluating the left expression.
+        let mut left_expr_flags = EvalFlags::MemberAccessBaseDefaults;
+        left_expr_flags |= flags
+            & (EvalFlags::TypeExpression
+                | EvalFlags::VarTypeAnnotation
+                | EvalFlags::ForwardRefs
+                | EvalFlags::NotParsed
+                | EvalFlags::NoTypeVarWithScopeId
+                | EvalFlags::TypeVarGetsCurScope);
+
+        // Handle special casing for ParamSpec "args" and "kwargs" accesses.
+        if flags.any(EvalFlags::InstantiableType) {
+            let member_name = &node.d().member.get().d().value;
+            if member_name == "args" || member_name == "kwargs" {
+                left_expr_flags |= EvalFlags::NoConvertSpecialForm;
+            }
+        }
+        let base_type_result =
+            self.get_type_of_expression(node.d().left_expr.get(), left_expr_flags, None);
+
+        if analyzer::type_utils::is_type_alias_placeholder(base_type_result.type_.get()) {
+            return P::new_eval(TypeResult {
+                is_incomplete: Cell::new(Some(true)),
+                ..TypeResult::new(analyzer::types::UnknownType::create(true).0)
+            });
+        }
+
+        let get_usage = EvaluatorUsage {
+            method: "get".to_string(),
+            set_type: None,
+            set_error_node: None,
+            set_expected_type_diag: None,
+        };
+        let type_result = self.get_type_of_member_access_with_base_type(
+            node,
+            base_type_result,
+            &get_usage,
+            flags | EvalFlags::NoSpecialize,
+            true,
+        );
+
+        if analyzer::code_flow_types::is_code_flow_supported_for_reference(node.node()) {
+            // Before performing code flow analysis, update the cache to prevent recursion.
+            self.write_type_cache(
+                node.node(),
+                P::new_eval(TypeResult {
+                    is_incomplete: Cell::new(Some(true)),
+                    ..(*type_result).clone()
+                }),
+                Some(flags),
+                None,
+                false,
+            );
+            self.write_type_cache(
+                node.d().member.get().node(),
+                P::new_eval(TypeResult {
+                    is_incomplete: Cell::new(Some(true)),
+                    ..(*type_result).clone()
+                }),
+                Some(flags),
+                None,
+                false,
+            );
+
+            // If the type is initially unbound, see if there's a parent class that
+            // potentially initialized the value.
+            let mut type_at_start = type_result.type_.get();
+            let mut is_type_at_start_incomplete = type_result.is_incomplete.get().unwrap_or(false);
+            if analyzer::types::is_unbound(type_at_start) {
+                let base_type =
+                    self.make_top_level_type_vars_concrete(base_type_result.type_.get(), false, None);
+
+                let mut class_member_info: Option<ClassMember> = None;
+                if analyzer::types::is_instantiable_class(base_type) {
+                    class_member_info = analyzer::type_utils::look_up_class_member(
+                        ClassType(base_type),
+                        &node.d().member.get().d().value,
+                        MemberAccessFlags::SkipOriginalClass,
+                        None,
+                    );
+                } else if analyzer::types::is_class_instance(base_type) {
+                    class_member_info = analyzer::type_utils::look_up_object_member(
+                        ClassType(base_type),
+                        &node.d().member.get().d().value,
+                        MemberAccessFlags::SkipOriginalClass,
+                        None,
+                    );
+                }
+
+                if let Some(class_member_info) = &class_member_info {
+                    type_at_start = self.get_type_of_member(class_member_info);
+                    is_type_at_start_incomplete = false;
+                }
+            }
+
+            // See if we can refine the type based on code flow analysis.
+            let code_flow_type_result = self.get_flow_type_of_reference(
+                node.node(),
+                None,
+                Some(&FlowNodeTypeOptions {
+                    target_symbol_id: Some(analyzer::symbol::INDETERMINATE_SYMBOL_ID),
+                    type_at_start: Some(P::new_eval(TypeResult {
+                        is_incomplete: Cell::new(Some(is_type_at_start_incomplete)),
+                        ..TypeResult::new(type_at_start)
+                    })),
+                    skip_conditional_narrowing: Some(flags.any(EvalFlags::TypeExpression)),
+                }),
+            );
+
+            if let Some(code_flow_type) = code_flow_type_result.type_ {
+                type_result.type_.set(code_flow_type);
+            }
+
+            if code_flow_type_result.is_incomplete {
+                type_result.is_incomplete.set(Some(true));
+            }
+
+            // Detect, report, and fill in missing type arguments if appropriate.
+            type_result.type_.set(self.report_missing_type_args(
+                node.node(),
+                type_result.type_.get(),
+                flags,
+            ));
+
+            // Add TypeForm details if appropriate.
+            type_result.type_.set(self.add_type_form_for_symbol(
+                node.node(),
+                type_result.type_.get(),
+                flags,
+                false,
+            ));
+        }
+
+        if base_type_result.is_incomplete.get().unwrap_or(false) {
+            type_result.is_incomplete.set(Some(true));
+        }
+
+        // See if we need to log an "unknown member access" diagnostic.
+        let mut skip_partial_unknown_check = type_result.is_incomplete.get().unwrap_or(false);
+
+        // Don't report an error if the type is a partially-specialized
+        // class being passed as an argument. This comes up frequently in
+        // cases where a type is passed as an argument (e.g. "defaultdict(list)").
+        // It can also come up in cases like "isinstance(x, (list, dict))".
+        // We need to check for functions as well to handle Callable.
+        let result_type = type_result.type_.get();
+        if (analyzer::types::is_instantiable_class(result_type)
+            && !ClassType(result_type)
+                .d()
+                .priv_
+                .borrow()
+                .include_subclasses
+                .unwrap_or(false))
+            || result_type
+                .props
+                .borrow()
+                .as_ref()
+                .is_some_and(|props| props.special_form.is_some())
+        {
+            let arg_node = analyzer::parse_tree_utils::get_parent_node_of_type(
+                node.node(),
+                parser::parse_nodes::ParseNodeType::Argument,
+            );
+            if let Some(arg_node) = arg_node {
+                if arg_node.parent.get().map(|parent| parent.node_type)
+                    == Some(parser::parse_nodes::ParseNodeType::Call)
+                {
+                    skip_partial_unknown_check = true;
+                }
+            }
+        }
+
+        if !skip_partial_unknown_check {
+            let file_info = self.node_info.get_file_info(node.node());
+            self.report_possible_unknown_assignment(
+                file_info.diagnostic_rule_set.report_unknown_member_type,
+                DiagnosticRule::reportUnknownMemberType,
+                node.d().member.get(),
+                type_result.type_.get(),
+                node.node(),
+                false,
+            );
+        }
+
+        // Cache the type information in the member name node.
+        self.write_type_cache(node.d().member.get().node(), type_result, Some(flags), None, false);
+
+        type_result
     }
 
     // analyzer/typeEvaluator.ts:6110
@@ -8074,7 +8261,718 @@ impl TypeEvaluator {
         flags: EvalFlags,
         allow_function_signature_assignment: bool,
     ) -> P<TypeResult> {
-        todo!()
+        let mut base_type = analyzer::type_utils::transform_possible_recursive_type_alias(
+            Some(base_type_result.type_.get()),
+            0,
+        )
+        .unwrap();
+        let member = node.d().member.get();
+        let member_name = member.d().value.clone();
+        let mut diag = DiagnosticAddendum::new();
+        let file_info = self.node_info.get_file_info(node.node());
+        let mut type_: Option<P<Type>> = None;
+        let mut narrowed_type_for_set: Option<P<Type>> = None;
+        let mut type_errors = false;
+        let mut is_incomplete = base_type_result.is_incomplete.get().unwrap_or(false);
+        let mut is_asymmetric_accessor: Option<bool> = None;
+        let is_required = false;
+        let is_not_required = false;
+        let mut member_access_deprecation_info: Option<MemberAccessDeprecationInfo> = None;
+
+        if usage
+            .set_type
+            .is_some_and(|set_type| set_type.is_incomplete.get().unwrap_or(false))
+        {
+            is_incomplete = true;
+        }
+
+        // If the base type was incomplete and unbound, don't proceed
+        // because false positive errors will be generated.
+        if base_type_result.is_incomplete.get().unwrap_or(false)
+            && analyzer::types::is_unbound(base_type)
+        {
+            return P::new_eval(TypeResult {
+                is_incomplete: Cell::new(Some(true)),
+                ..TypeResult::new(analyzer::types::UnknownType::create(true).0)
+            });
+        }
+
+        let special_form = base_type
+            .props
+            .borrow()
+            .as_ref()
+            .and_then(|props| props.special_form);
+        if let Some(special_form) = special_form {
+            if !flags.any(EvalFlags::TypeExpression) {
+                base_type = special_form.0;
+            }
+        }
+
+        if analyzer::types::is_param_spec(base_type)
+            && TypeVarType(base_type)
+                .d()
+                .priv_
+                .borrow()
+                .param_spec_access
+                .is_some()
+        {
+            base_type = self.make_top_level_type_vars_concrete(base_type, false, None);
+        }
+
+        match base_type.category {
+            analyzer::types::TypeCategory::Any
+            | analyzer::types::TypeCategory::Unknown
+            | analyzer::types::TypeCategory::Never => {
+                type_ = Some(base_type);
+            }
+
+            analyzer::types::TypeCategory::Unbound => {}
+
+            analyzer::types::TypeCategory::TypeVar => 'case: {
+                if analyzer::types::is_param_spec(base_type) {
+                    // Handle special cases for "P.args" and "P.kwargs".
+                    if member_name == "args" || member_name == "kwargs" {
+                        let is_args = member_name == "args";
+                        let param_node =
+                            analyzer::parse_tree_utils::get_enclosing_param(node.node());
+                        let expected_category = if is_args {
+                            ParamCategory::ArgsList
+                        } else {
+                            ParamCategory::KwargsDict
+                        };
+
+                        if param_node
+                            .is_none_or(|param_node| param_node.d().category.get() != expected_category)
+                        {
+                            let error_message = if is_args {
+                                crate::localization::localize::LocMessage::param_spec_args_usage()
+                            } else {
+                                crate::localization::localize::LocMessage::param_spec_kwargs_usage()
+                            };
+                            self.add_diagnostic(
+                                DiagnosticRule::reportInvalidTypeForm,
+                                &error_message,
+                                node.node(),
+                                None,
+                            );
+                            type_ = Some(analyzer::types::UnknownType::create(is_incomplete).0);
+                            break 'case;
+                        }
+
+                        type_ = Some(
+                            TypeVarType::clone_for_param_spec_access(
+                                ParamSpecType(base_type),
+                                Some(if is_args {
+                                    analyzer::types::ParamSpecAccess::Args
+                                } else {
+                                    analyzer::types::ParamSpecAccess::Kwargs
+                                }),
+                            )
+                            .0,
+                        );
+                        break 'case;
+                    }
+
+                    if !is_incomplete {
+                        self.add_diagnostic(
+                            DiagnosticRule::reportGeneralTypeIssues,
+                            &crate::localization::localize::LocMessage::param_spec_unknown_member()
+                                .format(&[("name", &member_name)]),
+                            node.node(),
+                            None,
+                        );
+                    }
+
+                    type_ = Some(analyzer::types::UnknownType::create(is_incomplete).0);
+                    break 'case;
+                }
+
+                // It's illegal to reference a member from a type variable.
+                if flags.any(EvalFlags::TypeExpression) {
+                    if !is_incomplete {
+                        self.add_diagnostic(
+                            DiagnosticRule::reportGeneralTypeIssues,
+                            &crate::localization::localize::LocMessage::type_var_no_member()
+                                .format(&[
+                                    ("type", &self.print_type(base_type, None)),
+                                    ("name", &member_name),
+                                ]),
+                            node.d().left_expr.get(),
+                            None,
+                        );
+                    }
+
+                    type_ = Some(analyzer::types::UnknownType::create(is_incomplete).0);
+                    break 'case;
+                }
+
+                if TypeVarType(base_type)
+                    .d()
+                    .shared
+                    .get()
+                    .recursive_alias
+                    .get()
+                    .is_some()
+                {
+                    type_ = Some(analyzer::types::UnknownType::create(true).0);
+                    is_incomplete = true;
+                    break 'case;
+                }
+
+                if analyzer::types::is_type_var_tuple(base_type) {
+                    break 'case;
+                }
+
+                let concrete_type = self.make_top_level_type_vars_concrete(base_type, false, None);
+                let bind_to_self_type = if analyzer::types::TypeBase::is_instantiable(base_type) {
+                    analyzer::type_utils::convert_to_instance(base_type, true)
+                } else {
+                    base_type
+                };
+                return self.get_type_of_member_access_with_base_type(
+                    node,
+                    P::new_eval(TypeResult {
+                        bind_to_self_type: Some(bind_to_self_type),
+                        is_incomplete: Cell::new(Some(is_incomplete)),
+                        ..TypeResult::new(concrete_type)
+                    }),
+                    usage,
+                    EvalFlags::None,
+                    true,
+                );
+            }
+
+            analyzer::types::TypeCategory::Class => {
+                let mut type_result: Option<P<TypeResult>> = None;
+
+                // If this is a class-like function created via NewType, treat
+                // it like a function for purposes of member accesses.
+                if ClassType::is_new_type_class(ClassType(base_type))
+                    && !ClassType(base_type)
+                        .d()
+                        .priv_
+                        .borrow()
+                        .include_subclasses
+                        .unwrap_or(false)
+                {
+                    let function_class = self
+                        .prefetched
+                        .borrow()
+                        .as_ref()
+                        .and_then(|prefetched| prefetched.function_class);
+                    if let Some(function_class) = function_class {
+                        if analyzer::types::is_class(function_class) {
+                            base_type =
+                                ClassType::clone_as_instance(ClassType(function_class), true).0;
+                        }
+                    }
+                }
+
+                let enum_member_result = analyzer::enums::get_type_of_enum_member(
+                    self,
+                    node.node(),
+                    ClassType(base_type),
+                    &member_name,
+                    is_incomplete,
+                    &self.node_info,
+                );
+
+                if let Some(enum_member_result) = enum_member_result {
+                    if usage.method == "get" {
+                        type_result = Some(enum_member_result);
+                    } else {
+                        // Is this an attempt to delete or overwrite an enum member?
+                        let enum_member_type = enum_member_result.type_.get();
+                        if analyzer::types::is_class_instance(enum_member_type)
+                            && ClassType::is_same_generic_class(
+                                ClassType(enum_member_type),
+                                ClassType::clone_as_instance(ClassType(base_type), true),
+                                0,
+                            )
+                            && ClassType(enum_member_type)
+                                .d()
+                                .priv_
+                                .borrow()
+                                .literal_value
+                                .is_some()
+                        {
+                            let diag_message = if usage.method == "set" {
+                                crate::localization::localize::LocMessage::enum_member_set()
+                            } else {
+                                crate::localization::localize::LocMessage::enum_member_delete()
+                            };
+                            let message = diag_message.format(&[("name", &member_name)])
+                                + &diag.get_string(
+                                    common::diagnostic::DEFAULT_MAX_DIAGNOSTIC_DEPTH,
+                                    common::diagnostic::DEFAULT_MAX_DIAGNOSTIC_LINE_COUNT,
+                                );
+                            let range = diag.get_effective_text_range().unwrap_or_else(|| {
+                                common::text_range::HasTextRange::text_range(&member)
+                            });
+                            self.add_diagnostic(
+                                DiagnosticRule::reportAttributeAccessIssue,
+                                &message,
+                                member.node(),
+                                Some(&range),
+                            );
+                        }
+                    }
+                }
+
+                if type_result.is_none() {
+                    type_result = self.get_type_of_bound_member(
+                        Some(member.node()),
+                        ClassType(base_type),
+                        &member_name,
+                        usage,
+                        Some(diag),
+                        if !flags.any(EvalFlags::TypeExpression) {
+                            MemberAccessFlags::Default
+                        } else {
+                            MemberAccessFlags::TypeExpression
+                        },
+                        base_type_result.bind_to_self_type,
+                        0,
+                    );
+                }
+
+                if let Some(type_result) = type_result {
+                    if !type_result.type_errors.get().unwrap_or(false) {
+                        type_ = Some(analyzer::type_utils::add_condition_to_type(
+                            type_result.type_.get(),
+                            analyzer::type_utils::get_type_condition(base_type).as_deref(),
+                            Some(&analyzer::type_utils::AddConditionOptions {
+                                skip_self_condition: Some(true),
+                                skip_bound_type_vars: Some(true),
+                            }),
+                        ));
+                    } else {
+                        type_errors = true;
+                    }
+
+                    if type_result.is_asymmetric_accessor.unwrap_or(false) {
+                        is_asymmetric_accessor = Some(true);
+                    }
+
+                    if type_result.is_incomplete.get().unwrap_or(false) {
+                        is_incomplete = true;
+                    }
+
+                    if let Some(narrowed) = type_result.narrowed_type_for_set {
+                        narrowed_type_for_set = Some(analyzer::type_utils::add_condition_to_type(
+                            narrowed,
+                            analyzer::type_utils::get_type_condition(base_type).as_deref(),
+                            Some(&analyzer::type_utils::AddConditionOptions {
+                                skip_self_condition: Some(true),
+                                skip_bound_type_vars: Some(true),
+                            }),
+                        ));
+                    }
+
+                    if let Some(info) = &type_result.member_access_deprecation_info {
+                        member_access_deprecation_info = Some(info.clone());
+                    }
+                }
+            }
+
+            analyzer::types::TypeCategory::Module => {
+                let module_type = analyzer::types::ModuleType(base_type);
+                let mut symbol = analyzer::types::ModuleType::get_field(module_type, &member_name);
+
+                // If the symbol isn't found in the module's symbol table,
+                // see if it's defined in the `ModuleType` class. This is
+                // needed for modules that are synthesized for namespace
+                // packages.
+                if symbol.is_none() {
+                    let module_type_class = self
+                        .prefetched
+                        .borrow()
+                        .as_ref()
+                        .and_then(|prefetched| prefetched.module_type_class);
+                    if let Some(module_type_class) = module_type_class {
+                        if analyzer::types::is_instantiable_class(module_type_class) {
+                            symbol = ClassType::get_symbol_table(ClassType(module_type_class))
+                                .get(&member_name);
+                        }
+                    }
+                }
+
+                let module_name = module_type.d().priv_.borrow().module_name.clone();
+
+                if let Some(symbol) = symbol.filter(|symbol| !symbol.is_externally_hidden()) {
+                    if usage.method == "get" {
+                        self.set_symbol_accessed(file_info, symbol, member.node());
+                    }
+
+                    let type_result = self.get_effective_type_of_symbol_for_usage(symbol, None, true);
+                    let mut symbol_type = type_result.type_.get();
+
+                    if flags.any(EvalFlags::TypeExpression) {
+                        symbol_type = self.validate_symbol_is_type_expression(
+                            node.node(),
+                            symbol_type,
+                            type_result.includes_variable_decl.get().unwrap_or(false),
+                        );
+                    }
+
+                    // Add TypeForm details if appropriate.
+                    symbol_type = self.add_type_form_for_symbol(
+                        node.node(),
+                        symbol_type,
+                        flags,
+                        type_result.includes_variable_decl.get().unwrap_or(false),
+                    );
+
+                    if analyzer::types::is_type_var(symbol_type) {
+                        symbol_type =
+                            self.validate_type_var_usage(node.node(), TypeVarType(symbol_type), flags);
+                    }
+
+                    // If the type resolved to "unbound", treat it as "unknown" in
+                    // the case of a module reference because if it's truly unbound,
+                    // that error will be reported within the module and should not
+                    // leak into other modules that import it.
+                    if analyzer::types::is_unbound(symbol_type) {
+                        symbol_type = analyzer::types::UnknownType::create(true).0;
+                    }
+
+                    type_ = Some(symbol_type);
+
+                    if symbol.is_private_member() {
+                        self.add_diagnostic(
+                            DiagnosticRule::reportPrivateUsage,
+                            &crate::localization::localize::LocMessage::private_used_outside_of_module()
+                                .format(&[("name", &member_name)]),
+                            member.node(),
+                            None,
+                        );
+                    }
+
+                    if symbol.is_private_py_typed_import() {
+                        self.add_diagnostic(
+                            DiagnosticRule::reportPrivateImportUsage,
+                            &crate::localization::localize::LocMessage::private_import_from_py_typed_module()
+                                .format(&[("name", &member_name), ("module", &module_name)]),
+                            member.node(),
+                            None,
+                        );
+                    }
+                } else {
+                    // Does the module export a top-level __getattr__ function?
+                    if usage.method == "get" {
+                        let get_attr_symbol =
+                            analyzer::types::ModuleType::get_field(module_type, "__getattr__");
+                        if let Some(get_attr_symbol) = get_attr_symbol {
+                            let is_module_get_attr_supported =
+                                PythonVersion::is_greater_or_equal_to(
+                                    &file_info.execution_environment.python_version,
+                                    &common::python_version::PYTHON_VERSION3_7,
+                                ) || get_attr_symbol
+                                    .get_declarations()
+                                    .iter()
+                                    .any(|decl| decl.uri.get().has_extension(".pyi"));
+
+                            if is_module_get_attr_supported {
+                                let get_attr_type_result = self
+                                    .get_effective_type_of_symbol_for_usage(
+                                        get_attr_symbol,
+                                        None,
+                                        false,
+                                    );
+                                if analyzer::types::is_function(get_attr_type_result.type_.get()) {
+                                    let return_type_result = self.get_effective_return_type_result(
+                                        FunctionType(get_attr_type_result.type_.get()),
+                                        None,
+                                    );
+                                    type_ = Some(return_type_result.type_.get());
+                                    if get_attr_type_result.is_incomplete
+                                        || return_type_result.is_incomplete.get().unwrap_or(false)
+                                    {
+                                        is_incomplete = true;
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // If the field was not found and the module type is marked
+                    // such that all fields should be Any/Unknown, return that type.
+                    if type_.is_none() {
+                        let not_present_field_type =
+                            module_type.d().priv_.borrow().not_present_field_type;
+                        if let Some(not_present_field_type) = not_present_field_type {
+                            type_ = Some(not_present_field_type);
+                        }
+                    }
+
+                    if type_.is_none() {
+                        if !is_incomplete {
+                            self.add_diagnostic(
+                                DiagnosticRule::reportAttributeAccessIssue,
+                                &crate::localization::localize::LocMessage::module_unknown_member()
+                                    .format(&[
+                                        ("memberName", &member_name),
+                                        ("moduleName", &module_name),
+                                    ]),
+                                member.node(),
+                                None,
+                            );
+                        }
+                        type_ = Some(if self.evaluator_options.evaluate_unknown_imports_as_any {
+                            analyzer::types::AnyType::create(false).0
+                        } else {
+                            analyzer::types::UnknownType::create(false).0
+                        });
+                    }
+                }
+            }
+
+            analyzer::types::TypeCategory::Union => {
+                let mapped = analyzer::type_utils::map_subtypes(
+                    base_type,
+                    &mut |subtype| {
+                        if analyzer::types::is_unbound(subtype) {
+                            // Don't do anything if it's unbound. The error will already
+                            // be reported elsewhere.
+                            return None;
+                        }
+
+                        if analyzer::type_utils::is_none_instance(subtype) {
+                            common::debug::assert(
+                                analyzer::types::is_class_instance(subtype),
+                                None,
+                            );
+                            let type_result = self.get_type_of_bound_member(
+                                Some(member.node()),
+                                ClassType(subtype),
+                                &member_name,
+                                usage,
+                                Some(diag),
+                                MemberAccessFlags::Default,
+                                None,
+                                0,
+                            );
+
+                            if let Some(type_result) = type_result {
+                                if !type_result.type_errors.get().unwrap_or(false) {
+                                    type_ = Some(analyzer::type_utils::add_condition_to_type(
+                                        type_result.type_.get(),
+                                        analyzer::type_utils::get_type_condition(base_type)
+                                            .as_deref(),
+                                        Some(&analyzer::type_utils::AddConditionOptions {
+                                            skip_self_condition: None,
+                                            skip_bound_type_vars: Some(true),
+                                        }),
+                                    ));
+                                    if type_result.is_incomplete.get().unwrap_or(false) {
+                                        is_incomplete = true;
+                                    }
+
+                                    return type_;
+                                }
+                            }
+
+                            if !is_incomplete {
+                                self.add_diagnostic(
+                                    DiagnosticRule::reportOptionalMemberAccess,
+                                    &crate::localization::localize::LocMessage::none_unknown_member()
+                                        .format(&[("name", &member_name)]),
+                                    member.node(),
+                                    None,
+                                );
+                            }
+
+                            return None;
+                        }
+
+                        let type_result = self.get_type_of_member_access_with_base_type(
+                            node,
+                            P::new_eval(TypeResult {
+                                is_incomplete: Cell::new(base_type_result.is_incomplete.get()),
+                                ..TypeResult::new(subtype)
+                            }),
+                            usage,
+                            EvalFlags::None,
+                            true,
+                        );
+
+                        if type_result.is_incomplete.get().unwrap_or(false) {
+                            is_incomplete = true;
+                        }
+
+                        if let Some(info) = &type_result.member_access_deprecation_info {
+                            member_access_deprecation_info = Some(info.clone());
+                        }
+
+                        if type_result.type_errors.get().unwrap_or(false) {
+                            type_errors = true;
+                        }
+
+                        Some(type_result.type_.get())
+                    },
+                    None,
+                );
+                type_ = Some(mapped);
+            }
+
+            analyzer::types::TypeCategory::Function | analyzer::types::TypeCategory::Overloaded => {
+                let has_self = analyzer::types::is_method_type(base_type);
+                let function_types = if analyzer::types::is_function(base_type) {
+                    vec![FunctionType(base_type)]
+                } else {
+                    OverloadedType::get_overloads(OverloadedType(base_type))
+                };
+                let is_builtins_function = function_types.iter().any(|function_type| {
+                    FunctionType::is_built_in(*function_type, None)
+                        && function_type.d().shared.get().module_name == "builtins"
+                });
+
+                if member_name == "__self__" && has_self {
+                    // Handle "__self__" specially because MethodType defines
+                    // it simply as "object". We can do better here.
+                    let mut function_type: Option<FunctionType> = None;
+
+                    if analyzer::types::is_function(base_type) {
+                        function_type = Some(FunctionType(base_type));
+                    } else {
+                        let overloads = OverloadedType::get_overloads(OverloadedType(base_type));
+                        if !overloads.is_empty() {
+                            function_type = Some(overloads[0]);
+                        }
+                    }
+
+                    type_ = function_type
+                        .and_then(|function_type| function_type.d().priv_.borrow().bound_to_type)
+                        .map(|bound_to_type| bound_to_type.0);
+                } else {
+                    let alt_type = {
+                        let prefetched = self.prefetched.borrow();
+                        if has_self {
+                            prefetched.as_ref().and_then(|prefetched| prefetched.method_class)
+                        } else {
+                            prefetched.as_ref().and_then(|prefetched| prefetched.function_class)
+                        }
+                    };
+                    let alt_instance = match alt_type {
+                        Some(alt_type) => analyzer::type_utils::convert_to_instance(alt_type, true),
+                        None => analyzer::types::UnknownType::create(false).0,
+                    };
+                    type_ = Some(
+                        self.get_type_of_member_access_with_base_type(
+                            node,
+                            P::new_eval(TypeResult::new(alt_instance)),
+                            usage,
+                            flags,
+                            !has_self && !is_builtins_function,
+                        )
+                        .type_
+                        .get(),
+                    );
+                }
+            }
+        }
+
+        // If type is undefined, emit a general error message indicating that the
+        // member could not be accessed.
+        let mut type_ = match type_ {
+            Some(type_) => type_,
+            None => {
+                let function_class_names = ["function".to_string(), "FunctionType".to_string()];
+                let is_function_rule = analyzer::types::is_function_or_overloaded(base_type)
+                    || (analyzer::types::is_class_instance(base_type)
+                        && ClassType::is_built_in(ClassType(base_type), Some(&function_class_names)));
+
+                // These signature metadata attributes can be assigned on function objects at runtime.
+                let is_function_signature_assignment = allow_function_signature_assignment
+                    && usage.method == "set"
+                    && (member_name == "__signature__" || member_name == "__text_signature__")
+                    && analyzer::types::is_class_instance(base_type)
+                    && ClassType::is_built_in(ClassType(base_type), Some(&function_class_names));
+
+                if !base_type_result.is_incomplete.get().unwrap_or(false)
+                    && !is_function_signature_assignment
+                {
+                    let mut diag_message = crate::localization::localize::LocMessage::member_access();
+                    if usage.method == "set" {
+                        diag_message = crate::localization::localize::LocMessage::member_set();
+                    } else if usage.method == "del" {
+                        diag_message = crate::localization::localize::LocMessage::member_delete();
+                    }
+
+                    // If there is an expected type diagnostic addendum (used for assignments),
+                    // use that rather than the local diagnostic addendum because it will be
+                    // more informative.
+                    if let Some(set_expected_type_diag) = usage.set_expected_type_diag {
+                        if !set_expected_type_diag.is_empty() {
+                            diag = set_expected_type_diag;
+                        }
+                    }
+
+                    // If the class is a TypedDict, and there's a key with the same name,
+                    // suggest that they user want to use ["key"] name instead.
+                    if analyzer::types::is_class(base_type) {
+                        let typed_dict_entries =
+                            ClassType(base_type).d().shared.get().typed_dict_entries.get();
+                        if let Some(typed_dict_entries) = typed_dict_entries {
+                            let has_td_key =
+                                typed_dict_entries.known_items.borrow().contains_key(&member_name);
+                            if has_td_key {
+                                let sub_diag = DiagnosticAddendum::new();
+                                sub_diag.add_message(
+                                    crate::localization::localize::LocAddendum::typed_dict_key_access()
+                                        .format(&[("name", &member_name)]),
+                                );
+                                diag.add_addendum(sub_diag);
+                            }
+                        }
+                    }
+
+                    let rule = if is_function_rule {
+                        DiagnosticRule::reportFunctionMemberAccess
+                    } else {
+                        DiagnosticRule::reportAttributeAccessIssue
+                    };
+
+                    let message = diag_message.format(&[
+                        ("name", &member_name),
+                        ("type", &self.print_type(base_type, None)),
+                    ]) + &diag.get_string(
+                        common::diagnostic::DEFAULT_MAX_DIAGNOSTIC_DEPTH,
+                        common::diagnostic::DEFAULT_MAX_DIAGNOSTIC_LINE_COUNT,
+                    );
+                    let range = diag
+                        .get_effective_text_range()
+                        .unwrap_or_else(|| common::text_range::HasTextRange::text_range(&member));
+                    self.add_diagnostic(rule, &message, member.node(), Some(&range));
+                }
+
+                // If this is member access on a function, use "Any" so if the
+                // reportFunctionMemberAccess rule is disabled, we don't trigger
+                // additional reportUnknownMemberType diagnostics.
+                if is_function_rule {
+                    analyzer::types::AnyType::create(false).0
+                } else {
+                    analyzer::types::UnknownType::create(false).0
+                }
+            }
+        };
+
+        if !flags.any(EvalFlags::TypeExpression) {
+            self.report_use_of_type_check_only(type_, member.node());
+        }
+
+        type_ = self.convert_special_form_to_runtime_value(type_, flags, false);
+
+        P::new_eval(TypeResult {
+            is_incomplete: Cell::new(Some(is_incomplete)),
+            is_asymmetric_accessor,
+            narrowed_type_for_set,
+            is_required: Some(is_required),
+            is_not_required: Some(is_not_required),
+            member_access_deprecation_info,
+            type_errors: Cell::new(Some(type_errors)),
+            ..TypeResult::new(type_)
+        })
     }
 
     // analyzer/typeEvaluator.ts:6610
@@ -8090,7 +8988,481 @@ impl TypeEvaluator {
         self_type: Option<P<Type>>,
         recursion_count: u32,
     ) -> Option<ClassMemberLookup> {
-        todo!()
+        let mut flags = flags;
+        let is_accessed_through_object = analyzer::types::TypeBase::is_instance(class_type.0);
+
+        // Always look for a member with a declared type first.
+        let mut member_info = analyzer::type_utils::look_up_class_member(
+            class_type,
+            member_name,
+            flags | MemberAccessFlags::DeclaredTypesOnly,
+            None,
+        );
+
+        // If we couldn't find a symbol with a declared type, use
+        // a symbol with an inferred type.
+        if member_info.is_none() {
+            member_info =
+                analyzer::type_utils::look_up_class_member(class_type, member_name, flags, None);
+        }
+
+        let Some(member_info) = member_info else {
+            // No attribute of that name was found. If this is a member access
+            // through an object, see if there's an attribute access override
+            // method ("__getattr__", etc.).
+            if !flags.any(MemberAccessFlags::SkipAttributeAccessOverride) {
+                if let Some(error_node) = error_node {
+                    let general_attr_type = self.apply_attribute_access_override(
+                        error_node,
+                        class_type,
+                        usage,
+                        member_name,
+                        self_type,
+                    );
+                    if let Some(general_attr_type) = general_attr_type {
+                        return Some(ClassMemberLookup {
+                            symbol: None,
+                            type_: general_attr_type.type_,
+                            is_type_incomplete: false,
+                            is_descriptor_error: false,
+                            is_class_member: false,
+                            class_type: None,
+                            is_class_var: false,
+                            is_asymmetric_accessor: general_attr_type
+                                .is_asymmetric_accessor
+                                .unwrap_or(false),
+                            narrowed_type_for_set: None,
+                            member_access_deprecation_info: None,
+                        });
+                    }
+                }
+            }
+
+            // Report that the member could not be accessed.
+            if let Some(diag) = diag {
+                diag.add_message(
+                    crate::localization::localize::LocAddendum::member_unknown()
+                        .format(&[("name", member_name)]),
+                );
+            }
+            return None;
+        };
+
+        let mut type_: Option<P<Type>> = None;
+        let mut is_type_incomplete = false;
+        let mut narrowed_type_for_set: Option<P<Type>> = None;
+
+        if member_info.symbol.is_init_var() {
+            if let Some(diag) = diag {
+                diag.add_message(
+                    crate::localization::localize::LocAddendum::member_is_init_var()
+                        .format(&[("name", member_name)]),
+                );
+            }
+            return None;
+        }
+
+        if usage.method != "get" {
+            if let Some(error_node) = error_node {
+                // If the usage indicates a 'set' or 'delete' and the access is within the
+                // class definition itself, use only the declared type to avoid circular
+                // type evaluation.
+                let containing_class =
+                    analyzer::parse_tree_utils::get_enclosing_class(error_node, false);
+                if let Some(containing_class) = containing_class {
+                    let containing_class_type = self
+                        .get_type_of_class(containing_class)
+                        .map(|class_type_result| class_type_result.class_type);
+                    if let Some(containing_class_type) = containing_class_type {
+                        if analyzer::types::is_instantiable_class(containing_class_type.0)
+                            && ClassType::is_same_generic_class(
+                                if is_accessed_through_object {
+                                    ClassType::clone_as_instance(containing_class_type, true)
+                                } else {
+                                    containing_class_type
+                                },
+                                class_type,
+                                0,
+                            )
+                        {
+                            type_ = self.get_declared_type_of_symbol(member_info.symbol, None).type_;
+                            if let Some(declared_type) = type_ {
+                                if analyzer::types::is_instantiable_class(member_info.class_type) {
+                                    type_ = Some(analyzer::type_utils::partially_specialize_type(
+                                        declared_type,
+                                        ClassType(member_info.class_type),
+                                        None,
+                                        self_type,
+                                    ));
+                                }
+                            }
+
+                            // If we're setting a class variable via a write through an object,
+                            // this is normally considered a type violation. But it is allowed
+                            // if the class variable is a descriptor object. In this case, we will
+                            // clear the flag that causes an error to be generated.
+                            if usage.method == "set"
+                                && analyzer::symbol_utils::is_effectively_class_var(
+                                    member_info.symbol,
+                                    ClassType::is_data_class(containing_class_type),
+                                )
+                                && is_accessed_through_object
+                            {
+                                // `selfType ?? memberName === '__new__' ? undefined : classType`
+                                // parses as `(selfType ?? memberName === '__new__') ? ...`.
+                                let self_class = if self_type.is_some() || member_name == "__new__" {
+                                    None
+                                } else {
+                                    Some(class_type.0)
+                                };
+                                let type_result = self.get_type_of_member_internal(
+                                    Some(error_node),
+                                    &member_info,
+                                    self_class,
+                                    flags,
+                                );
+
+                                if let Some(type_result) = type_result {
+                                    if analyzer::type_utils::is_descriptor_instance(
+                                        type_result.type_.get(),
+                                        true,
+                                    ) {
+                                        type_ = Some(type_result.type_.get());
+                                        flags &= MemberAccessFlags::DisallowClassVarWrites;
+                                    }
+                                }
+                            }
+
+                            if type_.is_none() {
+                                type_ = Some(analyzer::types::UnknownType::create(false).0);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        let mut type_ = match type_ {
+            Some(type_) => type_,
+            None => {
+                let self_class: Option<P<Type>> = if let Some(self_type) = self_type {
+                    Some(analyzer::type_utils::convert_to_instantiable(self_type, true))
+                } else {
+                    // Skip this for __new__ methods because they are not bound
+                    // to the class but rather assume the type of the cls argument.
+                    if member_name != "__new__" {
+                        Some(class_type.0)
+                    } else {
+                        None
+                    }
+                };
+
+                let type_result =
+                    self.get_type_of_member_internal(error_node, &member_info, self_class, flags);
+
+                let member_type = match type_result {
+                    Some(type_result) => type_result.type_.get(),
+                    None => analyzer::types::UnknownType::create(false).0,
+                };
+                if type_result
+                    .is_some_and(|type_result| type_result.is_incomplete.get().unwrap_or(false))
+                {
+                    is_type_incomplete = true;
+                }
+                member_type
+            }
+        };
+
+        // Don't include variables within typed dict classes.
+        if analyzer::types::is_class(member_info.class_type)
+            && ClassType::is_typed_dict_class(ClassType(member_info.class_type))
+        {
+            let typed_decls = member_info.symbol.get_typed_declarations();
+            if !typed_decls.is_empty()
+                && typed_decls[0].type_ == analyzer::declaration::DeclarationType::Variable
+            {
+                if let Some(diag) = diag {
+                    diag.add_message(
+                        crate::localization::localize::LocAddendum::member_unknown()
+                            .format(&[("name", member_name)]),
+                    );
+                }
+                return None;
+            }
+        }
+
+        if usage.method == "get" {
+            // Mark the member accessed if it's not coming from a parent class.
+            if let Some(error_node) = error_node {
+                if analyzer::types::is_instantiable_class(member_info.class_type)
+                    && ClassType::is_same_generic_class(
+                        ClassType(member_info.class_type),
+                        if is_accessed_through_object {
+                            ClassType::clone_as_instantiable(class_type, true)
+                        } else {
+                            class_type
+                        },
+                        0,
+                    )
+                {
+                    self.set_symbol_accessed(
+                        self.node_info.get_file_info(error_node),
+                        member_info.symbol,
+                        error_node,
+                    );
+                }
+            }
+
+            // Special-case `__init_subclass` and `__class_getitem__` because
+            // these are always treated as class methods even if they're not
+            // decorated as such.
+            if member_name == "__init_subclass__" || member_name == "__class_getitem__" {
+                if analyzer::types::is_function(type_)
+                    && !FunctionType::is_class_method(FunctionType(type_))
+                {
+                    let function_type = FunctionType(type_);
+                    type_ = FunctionType::clone_with_new_flags(
+                        function_type,
+                        function_type.d().shared.get().flags.get() | FunctionTypeFlags::ClassMethod,
+                    )
+                    .0;
+                }
+            }
+        }
+
+        // If the member is a descriptor object, apply the descriptor protocol
+        // now. If the member is an instance or class method, bind the method.
+        let mut is_descriptor_error = false;
+        let mut is_asymmetric_accessor = false;
+        let mut is_descriptor_applied = false;
+        let mut member_access_deprecation_info: Option<MemberAccessDeprecationInfo> = None;
+
+        type_ = analyzer::type_utils::map_subtypes(
+            type_,
+            &mut |subtype| {
+                let concrete_subtype = self.make_top_level_type_vars_concrete(subtype, false, None);
+                let is_class_member = member_info.is_class_member && !member_info.is_slots_member;
+                let result_type: P<Type>;
+
+                if analyzer::types::is_class(concrete_subtype)
+                    && is_class_member
+                    && error_node.is_some()
+                {
+                    let desc_result = self.apply_descriptor_access_method(
+                        subtype,
+                        ClassType(concrete_subtype),
+                        Some(&member_info),
+                        class_type,
+                        self_type,
+                        flags,
+                        error_node.unwrap(),
+                        member_name,
+                        usage,
+                        diag,
+                    );
+
+                    if desc_result.is_asymmetric_accessor.unwrap_or(false) {
+                        is_asymmetric_accessor = true;
+                    }
+
+                    if let Some(info) = desc_result.member_access_deprecation_info {
+                        member_access_deprecation_info = Some(info);
+                    }
+
+                    if desc_result.type_errors.unwrap_or(false) {
+                        is_descriptor_error = true;
+                    }
+
+                    if desc_result.is_descriptor_applied.unwrap_or(false) {
+                        is_descriptor_applied = true;
+                    }
+
+                    result_type = desc_result.type_;
+                } else if analyzer::types::is_function_or_overloaded(concrete_subtype)
+                    && analyzer::types::TypeBase::is_instance(concrete_subtype)
+                {
+                    let type_result = self.bind_method_for_member_access(
+                        subtype,
+                        concrete_subtype,
+                        Some(&member_info),
+                        class_type,
+                        self_type,
+                        flags,
+                        member_name,
+                        usage,
+                        diag,
+                        recursion_count,
+                    );
+
+                    result_type = type_result.type_.get();
+                    if type_result.type_errors.get().unwrap_or(false) {
+                        is_descriptor_error = true;
+                    }
+                } else {
+                    result_type = subtype;
+                }
+
+                // If this is a "set" or "delete" operation, we have a bit more work to do.
+                if usage.method == "get" {
+                    return Some(result_type);
+                }
+
+                // Check for an attempt to overwrite or delete a ClassVar member from an instance.
+                if !is_descriptor_applied
+                    && analyzer::symbol_utils::is_effectively_class_var(
+                        member_info.symbol,
+                        ClassType::is_data_class(class_type),
+                    )
+                    && flags.any(MemberAccessFlags::DisallowClassVarWrites)
+                {
+                    if let Some(diag) = diag {
+                        diag.add_message(
+                            crate::localization::localize::LocAddendum::member_set_class_var()
+                                .format(&[("name", member_name)]),
+                        );
+                    }
+                    is_descriptor_error = true;
+                }
+
+                // Check for an attempt to overwrite or delete a final member variable.
+                let final_var_type_decl = member_info
+                    .symbol
+                    .get_declarations()
+                    .into_iter()
+                    .find(|decl| self.is_final_variable_declaration(*decl));
+
+                if let Some(final_var_type_decl) = final_var_type_decl {
+                    if let Some(error_node) = error_node {
+                        if !analyzer::parse_tree_utils::is_node_contained_within(
+                            error_node,
+                            final_var_type_decl.node.get(),
+                        ) {
+                            // If a Final instance variable is declared in the class body but is
+                            // being assigned within an __init__ method, it's allowed.
+                            let enclosing_function_node =
+                                analyzer::parse_tree_utils::get_enclosing_function(error_node);
+                            if enclosing_function_node.is_none_or(|enclosing_function_node| {
+                                enclosing_function_node.d().name.get().d().value != "__init__"
+                            }) || final_var_type_decl
+                                .variable()
+                                .and_then(|variable| variable.inferred_type_source.get())
+                                .is_some()
+                                || analyzer::types::is_instantiable_class(class_type.0)
+                            {
+                                if let Some(diag) = diag {
+                                    diag.add_message(
+                                        crate::localization::localize::LocMessage::final_reassigned()
+                                            .format(&[("name", member_name)]),
+                                    );
+                                }
+                                is_descriptor_error = true;
+                            }
+                        }
+                    }
+                }
+
+                // Check for an attempt to overwrite or delete an instance variable that is
+                // read-only (e.g. in a named tuple).
+                if member_info.is_instance_member
+                    && analyzer::types::is_class(member_info.class_type)
+                    && member_info.is_read_only
+                {
+                    if let Some(diag) = diag {
+                        diag.add_message(
+                            crate::localization::localize::LocAddendum::read_only_attribute()
+                                .format(&[("name", member_name)]),
+                        );
+                    }
+                    is_descriptor_error = true;
+                }
+
+                Some(result_type)
+            },
+            Some(&analyzer::type_utils::MapSubtypesOptions {
+                retain_type_alias: Some(true),
+                ..Default::default()
+            }),
+        );
+
+        if !is_descriptor_error && usage.method == "set" {
+            if let Some(set_type) = usage.set_type {
+                if error_node.is_some() && member_info.symbol.has_typed_declarations() {
+                    // This is an assignment to a member with a declared type. Apply
+                    // narrowing logic based on the assigned type. Skip this for
+                    // descriptor-based accesses.
+                    narrowed_type_for_set = Some(if is_descriptor_applied {
+                        set_type.type_.get()
+                    } else {
+                        self.narrow_type_based_on_assignment(type_, set_type).type_.get()
+                    });
+                }
+
+                // Verify that the assigned type is compatible.
+                if !self.assign_type(
+                    type_,
+                    set_type.type_.get(),
+                    diag.map(|diag| diag.create_addendum()),
+                    None,
+                    AssignTypeFlags::Default,
+                    0,
+                ) {
+                    if !set_type.is_incomplete.get().unwrap_or(false) {
+                        if let Some(diag) = diag {
+                            diag.add_message(
+                                crate::localization::localize::LocAddendum::member_assignment()
+                                    .format(&[
+                                        ("type", &self.print_type(set_type.type_.get(), None)),
+                                        ("name", member_name),
+                                        ("classType", &self.print_object_type_for_class(class_type)),
+                                    ]),
+                            );
+                        }
+                    }
+
+                    // Do not narrow the type in this case. Assume the declared type.
+                    narrowed_type_for_set = Some(type_);
+                    is_descriptor_error = true;
+                }
+
+                if analyzer::types::is_instantiable_class(member_info.class_type)
+                    && ClassType::is_data_class_frozen(ClassType(member_info.class_type))
+                    && is_accessed_through_object
+                {
+                    if let Some(diag) = diag {
+                        diag.add_message(
+                            crate::localization::localize::LocAddendum::data_class_frozen().format(
+                                &[(
+                                    "name",
+                                    &self.print_type(
+                                        ClassType::clone_as_instance(
+                                            ClassType(member_info.class_type),
+                                            true,
+                                        )
+                                        .0,
+                                        None,
+                                    ),
+                                )],
+                            ),
+                        );
+                    }
+
+                    is_descriptor_error = true;
+                }
+            }
+        }
+
+        Some(ClassMemberLookup {
+            symbol: Some(member_info.symbol),
+            type_,
+            is_type_incomplete,
+            is_descriptor_error,
+            is_class_member: !member_info.is_instance_member,
+            is_class_var: member_info.is_class_var,
+            class_type: Some(member_info.class_type),
+            is_asymmetric_accessor,
+            narrowed_type_for_set,
+            member_access_deprecation_info,
+        })
     }
 
     // analyzer/typeEvaluator.ts:6946
@@ -8107,7 +9479,352 @@ impl TypeEvaluator {
         usage: &EvaluatorUsage,
         diag: Option<P<DiagnosticAddendum>>,
     ) -> MemberAccessTypeResult {
-        todo!()
+        let mut member_type = member_type;
+        let is_accessed_through_object = analyzer::types::TypeBase::is_instance(class_type.0);
+
+        let access_method_name = if usage.method == "get" {
+            "__get__"
+        } else if usage.method == "set" {
+            "__set__"
+        } else {
+            "__delete__"
+        };
+
+        let sub_diag = if diag.is_some() {
+            Some(DiagnosticAddendum::new())
+        } else {
+            None
+        };
+
+        let method_type_result = self.get_type_of_bound_member(
+            Some(error_node),
+            concrete_member_type,
+            access_method_name,
+            &EvaluatorUsage {
+                method: "get".to_string(),
+                set_type: None,
+                set_error_node: None,
+                set_expected_type_diag: None,
+            },
+            sub_diag,
+            MemberAccessFlags::SkipInstanceMembers | MemberAccessFlags::SkipAttributeAccessOverride,
+            None,
+            0,
+        );
+
+        let method_type_result = match method_type_result {
+            Some(method_type_result) if !method_type_result.type_errors.get().unwrap_or(false) => {
+                method_type_result
+            }
+            _ => {
+                // Provide special error messages for properties.
+                if ClassType::is_property_class(concrete_member_type) && usage.method != "get" {
+                    if let Some(diag) = diag {
+                        let message = if usage.method == "set" {
+                            crate::localization::localize::LocAddendum::property_missing_setter()
+                        } else {
+                            crate::localization::localize::LocAddendum::property_missing_deleter()
+                        };
+                        diag.add_message(message.format(&[("name", member_name)]));
+                    }
+                    return MemberAccessTypeResult {
+                        type_: analyzer::types::AnyType::create(false).0,
+                        is_descriptor_applied: None,
+                        is_asymmetric_accessor: None,
+                        member_access_deprecation_info: None,
+                        type_errors: Some(true),
+                    };
+                }
+
+                let type_var_scope_id = class_type
+                    .d()
+                    .shared
+                    .get()
+                    .type_var_scope_id
+                    .borrow()
+                    .clone()
+                    .filter(|scope_id| !scope_id.is_empty());
+                if let Some(type_var_scope_id) = type_var_scope_id {
+                    member_type =
+                        analyzer::type_utils::make_type_vars_bound(member_type, Some(&[type_var_scope_id]));
+                }
+
+                return MemberAccessTypeResult {
+                    type_: member_type,
+                    is_descriptor_applied: None,
+                    is_asymmetric_accessor: None,
+                    member_access_deprecation_info: None,
+                    type_errors: None,
+                };
+            }
+        };
+
+        let method_class_type = method_type_result.class_type;
+        let mut method_type = method_type_result.type_.get();
+
+        let Some(method_class_type) = method_class_type else {
+            if let (Some(diag), Some(sub_diag)) = (diag, sub_diag) {
+                diag.add_addendum(sub_diag);
+            }
+            return MemberAccessTypeResult {
+                type_: analyzer::types::UnknownType::create(false).0,
+                is_descriptor_applied: None,
+                is_asymmetric_accessor: None,
+                member_access_deprecation_info: None,
+                type_errors: Some(true),
+            };
+        };
+
+        if !analyzer::types::is_function_or_overloaded(method_type) {
+            if analyzer::types::is_any_or_unknown(method_type) {
+                return MemberAccessTypeResult {
+                    type_: method_type,
+                    is_descriptor_applied: None,
+                    is_asymmetric_accessor: None,
+                    member_access_deprecation_info: None,
+                    type_errors: None,
+                };
+            }
+
+            // TODO - emit an error for this condition.
+            return MemberAccessTypeResult {
+                type_: member_type,
+                is_descriptor_applied: None,
+                is_asymmetric_accessor: None,
+                member_access_deprecation_info: None,
+                type_errors: Some(true),
+            };
+        }
+
+        // Special-case logic for properties.
+        if let Some(member_info) = member_info.filter(|member_info| {
+            ClassType::is_property_class(concrete_member_type)
+                && analyzer::types::is_instantiable_class(member_info.class_type)
+        }) {
+            // If the property is being accessed from a protocol class (not an instance),
+            // flag this as an error because a property within a protocol is meant to be
+            // interpreted as a read-only attribute rather than a protocol, so accessing
+            // it directly from the class has an ambiguous meaning.
+            if flags.any(MemberAccessFlags::SkipInstanceMembers)
+                && ClassType::is_protocol_class(class_type)
+            {
+                if let Some(diag) = diag {
+                    diag.add_message(
+                        crate::localization::localize::LocAddendum::property_access_from_protocol_class(),
+                    );
+                }
+                return MemberAccessTypeResult {
+                    type_: member_type,
+                    is_descriptor_applied: None,
+                    is_asymmetric_accessor: None,
+                    member_access_deprecation_info: None,
+                    type_errors: Some(true),
+                };
+            }
+
+            // Infer return types before specializing. Otherwise a generic inferred
+            // return type won't be properly specialized.
+            self.infer_return_type_if_necessary(method_type);
+
+            // This specialization is required specifically for properties, which should be
+            // generic but are not defined that way. Because of this, we use type variables
+            // in the synthesized methods (e.g. __get__) for the property class that are
+            // defined in the class that declares the fget method.
+            let access_method_class: Option<ClassType> = {
+                let priv_ = concrete_member_type.d().priv_.borrow();
+                if usage.method == "get" {
+                    priv_.fget_info.as_ref().and_then(|info| info.class_type)
+                } else if usage.method == "set" {
+                    priv_.fset_info.as_ref().and_then(|info| info.class_type)
+                } else {
+                    priv_.fdel_info.as_ref().and_then(|info| info.class_type)
+                }
+            };
+
+            if let Some(access_method_class) = access_method_class {
+                let constraints = ConstraintTracker::new();
+                let access_method_class =
+                    analyzer::type_utils::self_specialize_class(access_method_class, None);
+                self.assign_type(
+                    ClassType::clone_as_instance(access_method_class, true).0,
+                    ClassType::clone_as_instance(ClassType(member_info.class_type), true).0,
+                    None,
+                    Some(constraints),
+                    AssignTypeFlags::Default,
+                    0,
+                );
+                let access_method_class = ClassType(self.solve_and_apply_constraints(
+                    access_method_class.0,
+                    constraints,
+                    None,
+                    None,
+                ));
+
+                let specialized_type = analyzer::type_utils::partially_specialize_type(
+                    method_type,
+                    access_method_class,
+                    self.get_type_class_type(),
+                    Some(match self_type {
+                        Some(self_type) => analyzer::type_utils::convert_to_instantiable(self_type, true),
+                        None => class_type.0,
+                    }),
+                );
+
+                if analyzer::types::is_function_or_overloaded(specialized_type) {
+                    method_type = specialized_type;
+                }
+            }
+        }
+
+        // Determine if we're calling __set__ on an asymmetric descriptor or property.
+        let mut is_asymmetric_accessor = false;
+        if usage.method == "set" && analyzer::types::is_class(method_class_type) {
+            if self.is_asymmetric_descriptor_class(ClassType(method_class_type)) {
+                is_asymmetric_accessor = true;
+            }
+        }
+
+        // The TS `!methodType` check that follows here cannot succeed: methodType is
+        // always a function or overloaded type at this point.
+
+        // Simulate a call to the access method.
+        let mut arg_list: Vec<Arg> = Vec::new();
+        let simple_arg = |type_result: TypeResult| {
+            Arg::ArgWithType(P::new_eval(analyzer::type_evaluator_types::ArgWithType {
+                arg_category: parser::parse_nodes::ArgCategory::Simple,
+                node: None,
+                name: None,
+                type_result: P::new_eval(type_result),
+                value_expression: None,
+                active: None,
+                enforce_iterable: None,
+            }))
+        };
+
+        // Provide "obj" argument.
+        let obj_arg_type: P<Type> = if ClassType::is_class_property(concrete_member_type) {
+            // Handle "class properties" as a special case. We need to pass
+            // the class rather than the object instance in this case.
+            if is_accessed_through_object {
+                ClassType::clone_as_instantiable(class_type, true).0
+            } else {
+                class_type.0
+            }
+        } else if is_accessed_through_object {
+            match self_type {
+                Some(self_type) => self_type,
+                None => ClassType::clone_as_instance(class_type, true).0,
+            }
+        } else {
+            self.get_none_type()
+        };
+
+        arg_list.push(simple_arg(TypeResult::new(obj_arg_type)));
+
+        if usage.method == "get" {
+            let class_arg_type: P<Type> = if let Some(self_type) = self_type {
+                analyzer::type_utils::convert_to_instantiable(self_type, true)
+            } else if is_accessed_through_object {
+                ClassType::clone_as_instantiable(class_type, true).0
+            } else {
+                class_type.0
+            };
+
+            // Provide "owner" argument.
+            arg_list.push(simple_arg(TypeResult::new(class_arg_type)));
+        } else if usage.method == "set" {
+            // Provide "value" argument.
+            let value_type = match usage.set_type {
+                Some(set_type) => set_type.type_.get(),
+                None => analyzer::types::UnknownType::create(false).0,
+            };
+            arg_list.push(simple_arg(TypeResult {
+                is_incomplete: Cell::new(Some(
+                    usage
+                        .set_type
+                        .is_some_and(|set_type| set_type.is_incomplete.get().unwrap_or(false)),
+                )),
+                ..TypeResult::new(value_type)
+            }));
+        }
+
+        // Suppress diagnostics for these method calls because they would be redundant.
+        let call_result = self.suppress_diagnostics(
+            error_node,
+            &mut || {
+                self.validate_call_args(
+                    error_node,
+                    &arg_list,
+                    P::new_eval(TypeResult::new(method_type)),
+                    None,
+                    Some(true),
+                    None,
+                    0,
+                )
+            },
+            Some(&mut |suppressed_diags: &[String]| {
+                // If diagnostics were recorded when suppressed, add them to the
+                // diagnostic as messages.
+                if let Some(diag) = diag {
+                    for message in suppressed_diags {
+                        diag.add_message_multiline(message);
+                    }
+                }
+            }),
+        );
+
+        // Collect deprecation information associated with the member access method.
+        let mut deprecation_info: Option<MemberAccessDeprecationInfo> = None;
+        if let Some(overloads_used_for_call) = &call_result.overloads_used_for_call {
+            if !overloads_used_for_call.is_empty() {
+                let overload_used = overloads_used_for_call[0];
+                let deprecated_message = overload_used
+                    .d()
+                    .shared
+                    .get()
+                    .deprecated_message
+                    .borrow()
+                    .clone()
+                    .filter(|message| !message.is_empty());
+                if let Some(deprecated_message) = deprecated_message {
+                    deprecation_info = Some(MemberAccessDeprecationInfo {
+                        deprecated_message,
+                        access_type: if ClassType::is_property_class(concrete_member_type) {
+                            "property".to_string()
+                        } else {
+                            "descriptor".to_string()
+                        },
+                        access_method: usage.method.clone(),
+                    });
+                }
+            }
+        }
+
+        if !call_result.argument_errors.unwrap_or(false) {
+            return MemberAccessTypeResult {
+                // For set or delete, always return Any.
+                type_: if usage.method == "get" {
+                    match call_result.return_type {
+                        Some(return_type) => return_type,
+                        None => analyzer::types::UnknownType::create(false).0,
+                    }
+                } else {
+                    analyzer::types::AnyType::create(false).0
+                },
+                is_descriptor_applied: Some(true),
+                is_asymmetric_accessor: Some(is_asymmetric_accessor),
+                member_access_deprecation_info: deprecation_info,
+                type_errors: None,
+            };
+        }
+
+        MemberAccessTypeResult {
+            type_: analyzer::types::UnknownType::create(false).0,
+            is_descriptor_applied: Some(true),
+            is_asymmetric_accessor: Some(is_asymmetric_accessor),
+            member_access_deprecation_info: deprecation_info,
+            type_errors: Some(true),
+        }
     }
 
     // analyzer/typeEvaluator.ts:7196
@@ -8125,12 +9842,171 @@ impl TypeEvaluator {
         diag: Option<P<DiagnosticAddendum>>,
         recursion_count: u32,
     ) -> P<TypeResult> {
-        todo!()
+        // Check for an attempt to overwrite a final method.
+        if usage.method == "set" {
+            let impl_ = if analyzer::types::is_function(concrete_type) {
+                Some(concrete_type)
+            } else {
+                OverloadedType::get_implementation(OverloadedType(concrete_type))
+            };
+
+            if let Some(impl_) = impl_ {
+                if analyzer::types::is_function(impl_) && FunctionType::is_final(FunctionType(impl_)) {
+                    if let Some(member_info) = member_info {
+                        if analyzer::types::is_class(member_info.class_type) {
+                            if let Some(diag) = diag {
+                                diag.add_message(
+                                    crate::localization::localize::LocMessage::final_method_override()
+                                        .format(&[
+                                            ("name", member_name),
+                                            (
+                                                "className",
+                                                &ClassType(member_info.class_type)
+                                                    .d()
+                                                    .shared
+                                                    .get()
+                                                    .name,
+                                            ),
+                                        ]),
+                                );
+                            }
+
+                            return P::new_eval(TypeResult {
+                                type_errors: Cell::new(Some(true)),
+                                ..TypeResult::new(analyzer::types::UnknownType::create(false).0)
+                            });
+                        }
+                    }
+                }
+            }
+        }
+
+        // If this function is an instance member (e.g. a lambda that was
+        // assigned to an instance variable), don't perform any binding.
+        if analyzer::types::TypeBase::is_instance(class_type.0) {
+            if member_info.is_none_or(|member_info| member_info.is_instance_member) {
+                return P::new_eval(TypeResult::new(type_));
+            }
+        }
+
+        let bound_type = self.bind_function_to_class_or_object(
+            Some(class_type),
+            concrete_type,
+            member_info
+                .filter(|member_info| analyzer::types::is_instantiable_class(member_info.class_type))
+                .map(|member_info| ClassType(member_info.class_type)),
+            flags.any(MemberAccessFlags::TreatConstructorAsClassMethod),
+            self_type.map(|self_type| {
+                if analyzer::types::is_class(self_type) {
+                    ClassType::clone_include_subclasses(ClassType(self_type), true).0
+                } else {
+                    self_type
+                }
+            }),
+            diag,
+            recursion_count,
+        );
+
+        P::new_eval(TypeResult {
+            type_errors: Cell::new(Some(bound_type.is_none())),
+            ..TypeResult::new(match bound_type {
+                Some(bound_type) => bound_type,
+                None => analyzer::types::UnknownType::create(false).0,
+            })
+        })
     }
 
     // analyzer/typeEvaluator.ts:7245
     pub(crate) fn is_asymmetric_descriptor_class(&self, class_type: ClassType) -> bool {
-        todo!()
+        // If the value has already been cached in this type, return the cached value.
+        let cached = class_type.d().priv_.borrow().is_asymmetric_descriptor;
+        if let Some(cached) = cached {
+            return cached;
+        }
+
+        let mut is_asymmetric = false;
+
+        let getter_symbol_result = analyzer::type_utils::look_up_class_member(
+            class_type,
+            "__get__",
+            MemberAccessFlags::SkipBaseClasses,
+            None,
+        );
+        let setter_symbol_result = analyzer::type_utils::look_up_class_member(
+            class_type,
+            "__set__",
+            MemberAccessFlags::SkipBaseClasses,
+            None,
+        );
+
+        match (getter_symbol_result, setter_symbol_result) {
+            (Some(getter_symbol_result), Some(setter_symbol_result)) => {
+                let mut getter_type = self.get_type_of_member(&getter_symbol_result);
+                let setter_type = self.get_type_of_member(&setter_symbol_result);
+
+                // If this is an overload, find the appropriate overload.
+                if analyzer::types::is_overloaded(getter_type) {
+                    let get_overloads: Vec<FunctionType> =
+                        OverloadedType::get_overloads(OverloadedType(getter_type))
+                            .into_iter()
+                            .filter(|overload| {
+                                if overload.d().shared.get().parameters.get().borrow().len() < 2 {
+                                    return false;
+                                }
+                                let param1_type = FunctionType::get_param_type(*overload, 1);
+                                !analyzer::type_utils::is_none_instance(param1_type)
+                            })
+                            .collect();
+
+                    if get_overloads.len() == 1 {
+                        getter_type = get_overloads[0].0;
+                    } else {
+                        is_asymmetric = true;
+                    }
+                }
+
+                // If this is an overload, find the appropriate overload.
+                if analyzer::types::is_overloaded(setter_type) {
+                    is_asymmetric = true;
+                }
+
+                // If either the setter or getter is an overload (or some other non-function type),
+                // conservatively assume that it's not asymmetric.
+                if analyzer::types::is_function(getter_type) && analyzer::types::is_function(setter_type)
+                {
+                    let getter_function = FunctionType(getter_type);
+                    let setter_function = FunctionType(setter_type);
+
+                    // If there's no declared return type on the getter, assume it's symmetric.
+                    if setter_function.d().shared.get().parameters.get().borrow().len() >= 3
+                        && getter_function.d().shared.get().declared_return_type.get().is_some()
+                    {
+                        let setter_value_type = FunctionType::get_param_type(setter_function, 2);
+                        let getter_return_type =
+                            match FunctionType::get_effective_return_type(getter_function, true) {
+                                Some(return_type) => return_type,
+                                None => analyzer::types::UnknownType::create(false).0,
+                            };
+
+                        if !analyzer::types::is_type_same(
+                            setter_value_type,
+                            getter_return_type,
+                            &Default::default(),
+                            0,
+                        ) {
+                            is_asymmetric = true;
+                        }
+                    }
+                }
+            }
+            _ => {
+                is_asymmetric = false;
+            }
+        }
+
+        // Cache the value for next time.
+        class_type.d().priv_.borrow_mut().is_asymmetric_descriptor = Some(is_asymmetric);
+        is_asymmetric
     }
 
     // analyzer/typeEvaluator.ts:7304
@@ -8138,7 +10014,69 @@ impl TypeEvaluator {
         &self,
         class_type: ClassType,
     ) -> bool {
-        todo!()
+        // If the value has already been cached in this type, return the cached value.
+        let cached = class_type.d().priv_.borrow().is_asymmetric_attribute_accessor;
+        if let Some(cached) = cached {
+            return cached;
+        }
+
+        let mut is_asymmetric = false;
+
+        let getter_symbol_result = analyzer::type_utils::look_up_class_member(
+            class_type,
+            "__getattr__",
+            MemberAccessFlags::SkipBaseClasses,
+            None,
+        );
+        let setter_symbol_result = analyzer::type_utils::look_up_class_member(
+            class_type,
+            "__setattr__",
+            MemberAccessFlags::SkipBaseClasses,
+            None,
+        );
+
+        match (getter_symbol_result, setter_symbol_result) {
+            (Some(getter_symbol_result), Some(setter_symbol_result)) => {
+                let getter_type = self.get_effective_type_of_symbol(getter_symbol_result.symbol);
+                let setter_type = self.get_effective_type_of_symbol(setter_symbol_result.symbol);
+
+                // If either the setter or getter is an overload (or some other non-function type),
+                // conservatively assume that it's not asymmetric.
+                if analyzer::types::is_function(getter_type) && analyzer::types::is_function(setter_type)
+                {
+                    let getter_function = FunctionType(getter_type);
+                    let setter_function = FunctionType(setter_type);
+
+                    // If there's no declared return type on the getter, assume it's symmetric.
+                    if setter_function.d().shared.get().parameters.get().borrow().len() >= 3
+                        && getter_function.d().shared.get().declared_return_type.get().is_some()
+                    {
+                        let setter_value_type = FunctionType::get_param_type(setter_function, 2);
+                        let getter_return_type =
+                            match FunctionType::get_effective_return_type(getter_function, true) {
+                                Some(return_type) => return_type,
+                                None => analyzer::types::UnknownType::create(false).0,
+                            };
+
+                        if !analyzer::types::is_type_same(
+                            setter_value_type,
+                            getter_return_type,
+                            &Default::default(),
+                            0,
+                        ) {
+                            is_asymmetric = true;
+                        }
+                    }
+                }
+            }
+            _ => {
+                is_asymmetric = false;
+            }
+        }
+
+        // Cache the value for next time.
+        class_type.d().priv_.borrow_mut().is_asymmetric_attribute_accessor = Some(is_asymmetric);
+        is_asymmetric
     }
 
     // analyzer/typeEvaluator.ts:7343
@@ -8150,13 +10088,295 @@ impl TypeEvaluator {
         member_name: &str,
         self_type: Option<P<Type>>,
     ) -> Option<MemberAccessTypeResult> {
-        todo!()
+        let get_usage = EvaluatorUsage {
+            method: "get".to_string(),
+            set_type: None,
+            set_error_node: None,
+            set_expected_type_diag: None,
+        };
+        let get_attribute_access_member = |name: &str| -> Option<P<Type>> {
+            self.get_type_of_bound_member(
+                Some(error_node),
+                class_type,
+                name,
+                &get_usage,
+                None,
+                MemberAccessFlags::SkipInstanceMembers
+                    | MemberAccessFlags::SkipObjectBaseClass
+                    | MemberAccessFlags::SkipTypeBaseClass
+                    | MemberAccessFlags::SkipAttributeAccessOverride,
+                self_type,
+                0,
+            )
+            .map(|type_result| type_result.type_.get())
+        };
+
+        let access_member_type: Option<P<Type>> = if usage.method == "get" {
+            get_attribute_access_member("__getattribute__")
+                .or_else(|| get_attribute_access_member("__getattr__"))
+        } else if usage.method == "set" {
+            get_attribute_access_member("__setattr__")
+        } else {
+            common::debug::assert(usage.method == "del", None);
+            get_attribute_access_member("__delattr__")
+        };
+
+        let access_member_type = access_member_type?;
+
+        let mut arg_list: Vec<Arg> = Vec::new();
+        let simple_arg = |type_result: TypeResult| {
+            Arg::ArgWithType(P::new_eval(analyzer::type_evaluator_types::ArgWithType {
+                arg_category: parser::parse_nodes::ArgCategory::Simple,
+                node: None,
+                name: None,
+                type_result: P::new_eval(type_result),
+                value_expression: None,
+                active: None,
+                enforce_iterable: None,
+            }))
+        };
+
+        // Provide "name" argument.
+        let str_class = self
+            .prefetched
+            .borrow()
+            .as_ref()
+            .and_then(|prefetched| prefetched.str_class);
+        let name_type = match str_class {
+            Some(str_class) if analyzer::types::is_instantiable_class(str_class) => {
+                ClassType::clone_with_literal(
+                    ClassType::clone_as_instance(ClassType(str_class), true),
+                    Some(LiteralValue::String(member_name.to_string())),
+                )
+                .0
+            }
+            _ => analyzer::types::AnyType::create(false).0,
+        };
+        arg_list.push(simple_arg(TypeResult::new(name_type)));
+
+        if usage.method == "set" {
+            // Provide "value" argument.
+            let value_type = match usage.set_type {
+                Some(set_type) => set_type.type_.get(),
+                None => analyzer::types::UnknownType::create(false).0,
+            };
+            arg_list.push(simple_arg(TypeResult {
+                is_incomplete: Cell::new(Some(
+                    usage
+                        .set_type
+                        .is_some_and(|set_type| set_type.is_incomplete.get().unwrap_or(false)),
+                )),
+                ..TypeResult::new(value_type)
+            }));
+        }
+
+        if !analyzer::types::is_function_or_overloaded(access_member_type) {
+            if analyzer::types::is_any_or_unknown(access_member_type) {
+                return Some(MemberAccessTypeResult {
+                    type_: access_member_type,
+                    is_descriptor_applied: None,
+                    is_asymmetric_accessor: None,
+                    member_access_deprecation_info: None,
+                    type_errors: None,
+                });
+            }
+
+            // TODO - emit an error for this condition.
+            return None;
+        }
+
+        let call_result = self.validate_call_args(
+            error_node,
+            &arg_list,
+            P::new_eval(TypeResult::new(access_member_type)),
+            None,
+            Some(true),
+            None,
+            0,
+        );
+
+        let mut is_asymmetric_accessor = false;
+        if usage.method == "set" {
+            is_asymmetric_accessor = self.is_class_with_asymmetric_attribute_accessor(class_type);
+        }
+
+        Some(MemberAccessTypeResult {
+            type_: match call_result.return_type {
+                Some(return_type) => return_type,
+                None => analyzer::types::UnknownType::create(false).0,
+            },
+            is_descriptor_applied: None,
+            is_asymmetric_accessor: Some(is_asymmetric_accessor),
+            member_access_deprecation_info: None,
+            type_errors: call_result.argument_errors,
+        })
     }
 
     // analyzer/typeEvaluator.ts:7433
     /// TS defaults: flags = EvalFlags.None.
     pub(crate) fn get_type_of_index(&self, node: IndexNode, flags: EvalFlags) -> P<TypeResult> {
-        todo!()
+        let base_type_result = self.get_type_of_expression(
+            node.d().left_expr.get(),
+            flags | EvalFlags::IndexBaseDefaults,
+            None,
+        );
+
+        // If this is meant to be a type and the base expression is a string expression,
+        // emit an error because this is an illegal annotation form and will generate a
+        // runtime exception.
+        if flags.any(EvalFlags::InstantiableType) {
+            if node.d().left_expr.get().node_type == parser::parse_nodes::ParseNodeType::StringList {
+                self.add_diagnostic(
+                    DiagnosticRule::reportIndexIssue,
+                    &crate::localization::localize::LocMessage::string_not_subscriptable(),
+                    node.d().left_expr.get(),
+                    None,
+                );
+            }
+        }
+
+        // Check for builtin classes that will generate runtime exceptions if subscripted.
+        if !flags.any(EvalFlags::ForwardRefs) {
+            // We can skip this check if the class is used within a PEP 526 variable
+            // type annotation within a class or function. For some undocumented reason,
+            // they don't result in runtime exceptions when used in this manner.
+            let mut skip_subscript_check = flags.any(EvalFlags::VarTypeAnnotation);
+            if skip_subscript_check {
+                let scope_node = analyzer::parse_tree_utils::get_execution_scope_node(
+                    node.node(),
+                    self.node_info.reader(),
+                );
+                if scope_node.node_type == parser::parse_nodes::ParseNodeType::Module {
+                    skip_subscript_check = false;
+                }
+            }
+
+            if !skip_subscript_check {
+                let file_info = self.node_info.get_file_info(node.node());
+                let base_type = base_type_result.type_.get();
+                if analyzer::types::is_instantiable_class(base_type)
+                    && ClassType::is_built_in(ClassType(base_type), None)
+                    && ClassType(base_type)
+                        .d()
+                        .priv_
+                        .borrow()
+                        .alias_name
+                        .as_ref()
+                        .is_none_or(|alias_name| alias_name.is_empty())
+                {
+                    let base_class = ClassType(base_type);
+                    let full_name = base_class.d().shared.get().full_name.clone();
+                    let min_python_version = NON_SUBSCRIPTABLE_BUILTIN_TYPES
+                        .with(|types| types.get(&full_name).cloned());
+                    if let Some(min_python_version) = min_python_version {
+                        if PythonVersion::is_less_than(
+                            &file_info.execution_environment.python_version,
+                            &min_python_version,
+                        ) && !file_info.is_stub_file
+                        {
+                            let alias_name = base_class
+                                .d()
+                                .priv_
+                                .borrow()
+                                .alias_name
+                                .clone()
+                                .filter(|alias_name| !alias_name.is_empty());
+                            let name = match alias_name {
+                                Some(alias_name) => alias_name,
+                                None => base_class.d().shared.get().name.clone(),
+                            };
+                            self.add_diagnostic(
+                                DiagnosticRule::reportIndexIssue,
+                                &crate::localization::localize::LocMessage::class_not_runtime_subscriptable()
+                                    .format(&[("name", &name)]),
+                                node.d().left_expr.get(),
+                                None,
+                            );
+                        }
+                    }
+                }
+            }
+        }
+
+        let index_type_result = self.get_type_of_index_with_base_type(
+            node,
+            base_type_result,
+            &EvaluatorUsage {
+                method: "get".to_string(),
+                set_type: None,
+                set_error_node: None,
+                set_expected_type_diag: None,
+            },
+            flags,
+        );
+
+        if analyzer::code_flow_types::is_code_flow_supported_for_reference(node.node()) {
+            // We limit type narrowing for index expressions to built-in types that are
+            // known to have symmetric __getitem__ and __setitem__ methods (i.e. the value
+            // passed to __setitem__ is the same type as the value returned by __getitem__).
+            let mut base_type_supports_index_narrowing =
+                !analyzer::types::is_any(base_type_result.type_.get());
+            self.map_subtypes_expand_type_vars(
+                base_type_result.type_.get(),
+                None,
+                &mut |subtype, _unexpanded_subtype, _is_last_iteration| {
+                    if !analyzer::types::is_class_instance(subtype)
+                        || !(ClassType::is_built_in(ClassType(subtype), None)
+                            || ClassType::is_typed_dict_class(ClassType(subtype)))
+                    {
+                        base_type_supports_index_narrowing = false;
+                    }
+
+                    None
+                },
+                0,
+            );
+
+            if base_type_supports_index_narrowing {
+                // Before performing code flow analysis, update the cache to prevent recursion.
+                self.write_type_cache(
+                    node.node(),
+                    P::new_eval(TypeResult {
+                        is_incomplete: Cell::new(Some(true)),
+                        ..(*index_type_result).clone()
+                    }),
+                    Some(flags),
+                    None,
+                    false,
+                );
+
+                // See if we can refine the type based on code flow analysis.
+                let code_flow_type_result = self.get_flow_type_of_reference(
+                    node.node(),
+                    None,
+                    Some(&FlowNodeTypeOptions {
+                        target_symbol_id: Some(analyzer::symbol::INDETERMINATE_SYMBOL_ID),
+                        type_at_start: Some(P::new_eval(TypeResult {
+                            is_incomplete: Cell::new(Some(
+                                base_type_result.is_incomplete.get().unwrap_or(false)
+                                    || index_type_result.is_incomplete.get().unwrap_or(false),
+                            )),
+                            ..TypeResult::new(index_type_result.type_.get())
+                        })),
+                        skip_conditional_narrowing: Some(flags.any(EvalFlags::TypeExpression)),
+                    }),
+                );
+
+                if let Some(code_flow_type) = code_flow_type_result.type_ {
+                    index_type_result.type_.set(code_flow_type);
+                }
+
+                if code_flow_type_result.is_incomplete {
+                    index_type_result.is_incomplete.set(Some(true));
+                }
+            }
+        }
+
+        if base_type_result.is_incomplete.get().unwrap_or(false) {
+            index_type_result.is_incomplete.set(Some(true));
+        }
+
+        index_type_result
     }
 
     // analyzer/typeEvaluator.ts:7534
@@ -8166,7 +10386,224 @@ impl TypeEvaluator {
         type_params: &[TypeVarType],
         error_node: ExpressionNode,
     ) -> Vec<TypeResultWithNode> {
-        todo!()
+        // `typeArgs` is reassigned to new arrays below; until then it is the caller's
+        // array, which a final `push` changes in place.
+        let mut cur_type_args: Vec<TypeResultWithNode> = type_args.clone();
+        let mut is_caller_array = true;
+
+        // Array.prototype.slice with JS index rules (negative indexes count from the end).
+        let js_slice = |args: &[TypeResultWithNode], start: i64, end: i64| -> Vec<TypeResultWithNode> {
+            let len = i64::try_from(args.len()).unwrap();
+            let clamp = |index: i64| {
+                if index < 0 {
+                    (len + index).max(0)
+                } else {
+                    index.min(len)
+                }
+            };
+            let (start, end) = (clamp(start), clamp(end));
+            if end <= start {
+                return Vec::new();
+            }
+            args[usize::try_from(start).unwrap()..usize::try_from(end).unwrap()].to_vec()
+        };
+        let as_index = |index: usize| i64::try_from(index).unwrap();
+
+        let variadic_index: i64 = type_params
+            .iter()
+            .position(|param| analyzer::types::is_type_var_tuple(param.0))
+            .map_or(-1, as_index);
+
+        // Is there a *tuple[T, ...] somewhere in the type arguments that we can expand if needed?
+        let mut src_unbounded_tuple_type: Option<P<Type>> = None;
+        let find_unbounded_tuple_index = |args: &[TypeResultWithNode],
+                                          start_arg_index: i64,
+                                          src_unbounded_tuple_type: &mut Option<P<Type>>|
+         -> i64 {
+            for (index, arg) in args.iter().enumerate() {
+                if as_index(index) < start_arg_index {
+                    continue;
+                }
+                if analyzer::types::is_unpacked_class(arg.type_) {
+                    let tuple_type_args = ClassType(arg.type_).d().priv_.borrow().tuple_type_args.clone();
+                    if let Some(tuple_type_args) = tuple_type_args {
+                        if tuple_type_args.len() == 1 && tuple_type_args[0].is_unbounded {
+                            *src_unbounded_tuple_type = Some(tuple_type_args[0].type_);
+                            return as_index(index);
+                        }
+                    }
+                }
+            }
+            -1
+        };
+        let mut src_unbounded_tuple_index =
+            find_unbounded_tuple_index(&cur_type_args, 0, &mut src_unbounded_tuple_type);
+
+        // Allow only one unpacked tuple that maps to a TypeVarTuple.
+        if src_unbounded_tuple_index >= 0 {
+            let second_unbounded_tuple_index = find_unbounded_tuple_index(
+                &cur_type_args,
+                src_unbounded_tuple_index + 1,
+                &mut src_unbounded_tuple_type,
+            );
+            if second_unbounded_tuple_index >= 0 {
+                self.add_diagnostic(
+                    DiagnosticRule::reportInvalidTypeForm,
+                    &crate::localization::localize::LocMessage::variadic_type_args_too_many(),
+                    cur_type_args[usize::try_from(second_unbounded_tuple_index).unwrap()].node,
+                    None,
+                );
+            }
+        }
+
+        if let Some(src_unbounded_tuple_type) = src_unbounded_tuple_type {
+            if src_unbounded_tuple_index >= 0
+                && variadic_index >= 0
+                && cur_type_args.len() < type_params.len()
+            {
+                // "Smear" the tuple type across type argument slots prior to the TypeVarTuple.
+                while variadic_index > src_unbounded_tuple_index {
+                    let node = cur_type_args[usize::try_from(src_unbounded_tuple_index).unwrap()].node;
+                    let mut new_type_args = js_slice(&cur_type_args, 0, src_unbounded_tuple_index);
+                    new_type_args.push(TypeResultWithNode::new(src_unbounded_tuple_type, node));
+                    new_type_args.extend(js_slice(
+                        &cur_type_args,
+                        src_unbounded_tuple_index,
+                        as_index(cur_type_args.len()),
+                    ));
+                    cur_type_args = new_type_args;
+                    is_caller_array = false;
+                    src_unbounded_tuple_index += 1;
+                }
+
+                // "Smear" the tuple type across type argument slots following the TypeVarTuple.
+                while cur_type_args.len() < type_params.len() {
+                    let node = cur_type_args[usize::try_from(src_unbounded_tuple_index).unwrap()].node;
+                    let mut new_type_args =
+                        js_slice(&cur_type_args, 0, src_unbounded_tuple_index + 1);
+                    new_type_args.push(TypeResultWithNode::new(src_unbounded_tuple_type, node));
+                    new_type_args.extend(js_slice(
+                        &cur_type_args,
+                        src_unbounded_tuple_index + 1,
+                        as_index(cur_type_args.len()),
+                    ));
+                    cur_type_args = new_type_args;
+                    is_caller_array = false;
+                }
+            }
+        }
+
+        // Do we need to adjust the type arguments to map to a variadic type
+        // param somewhere in the list?
+        if variadic_index >= 0 {
+            let variadic_type_var = type_params[usize::try_from(variadic_index).unwrap()];
+
+            // If the type param list ends with a ParamSpec with a default value,
+            // we can ignore it for purposes of finding type args that map to the
+            // TypeVarTuple.
+            let mut type_param_count = type_params.len();
+            while type_param_count > 0 {
+                let last_type_param = type_params[type_param_count - 1];
+                if !analyzer::types::is_param_spec(last_type_param.0)
+                    || !last_type_param.d().shared.get().is_default_explicit.get()
+                {
+                    break;
+                }
+
+                type_param_count -= 1;
+            }
+
+            if variadic_index < as_index(cur_type_args.len()) {
+                // If there are typeArg lists at the end, these should map to ParamSpecs rather
+                // than the TypeVarTuple, so exclude them.
+                let mut variadic_end_index =
+                    variadic_index + 1 + as_index(cur_type_args.len()) - as_index(type_param_count);
+                while variadic_end_index > variadic_index {
+                    if cur_type_args[usize::try_from(variadic_end_index - 1).unwrap()]
+                        .type_list
+                        .is_none()
+                    {
+                        break;
+                    }
+                    variadic_end_index -= 1;
+                }
+                let variadic_type_results =
+                    js_slice(&cur_type_args, variadic_index, variadic_end_index);
+
+                // If the type args consist of a lone TypeVarTuple, don't wrap it in a tuple.
+                if variadic_type_results.len() == 1
+                    && analyzer::types::is_type_var_tuple(variadic_type_results[0].type_)
+                {
+                    self.validate_type_var_tuple_is_unpacked(
+                        TypeVarTupleType(variadic_type_results[0].type_),
+                        variadic_type_results[0].node,
+                    );
+                } else {
+                    for (index, arg) in variadic_type_results.iter().enumerate() {
+                        self.validate_type_arg(
+                            arg,
+                            Some(&ValidateTypeArgsOptions {
+                                allow_empty_tuple: Some(index == 0),
+                                allow_type_var_tuple: Some(true),
+                                allow_unpacked_tuples: Some(true),
+                                ..Default::default()
+                            }),
+                        );
+                    }
+
+                    let mut variadic_types: Vec<TupleTypeArg> = Vec::new();
+                    if variadic_type_results.len() != 1
+                        || !variadic_type_results[0].is_empty_tuple_shorthand.unwrap_or(false)
+                    {
+                        for type_result in &variadic_type_results {
+                            let tuple_type_args = if analyzer::types::is_unpacked_class(type_result.type_)
+                            {
+                                ClassType(type_result.type_).d().priv_.borrow().tuple_type_args.clone()
+                            } else {
+                                None
+                            };
+                            if let Some(tuple_type_args) = tuple_type_args {
+                                variadic_types.extend(tuple_type_args);
+                            } else {
+                                variadic_types.push(TupleTypeArg {
+                                    type_: analyzer::type_utils::convert_to_instance(
+                                        type_result.type_,
+                                        true,
+                                    ),
+                                    is_unbounded: false,
+                                    is_optional: None,
+                                });
+                            }
+                        }
+                    }
+
+                    let tuple_object =
+                        analyzer::tuples::make_tuple_object(self, &variadic_types, true);
+
+                    let node = cur_type_args[usize::try_from(variadic_index).unwrap()].node;
+                    let mut new_type_args = js_slice(&cur_type_args, 0, variadic_index);
+                    new_type_args.push(TypeResultWithNode::new(tuple_object, node));
+                    new_type_args.extend(js_slice(
+                        &cur_type_args,
+                        variadic_end_index,
+                        as_index(cur_type_args.len()),
+                    ));
+                    cur_type_args = new_type_args;
+                }
+            } else if !variadic_type_var.d().shared.get().is_default_explicit.get() {
+                // Add an empty tuple that maps to the TypeVarTuple type parameter.
+                let entry = TypeResultWithNode::new(
+                    analyzer::tuples::make_tuple_object(self, &[], true),
+                    error_node,
+                );
+                if is_caller_array {
+                    type_args.push(entry.clone());
+                }
+                cur_type_args.push(entry);
+            }
+        }
+
+        cur_type_args
     }
 
     // analyzer/typeEvaluator.ts:7678
