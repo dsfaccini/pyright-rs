@@ -16,7 +16,7 @@ The check path is about 135k lines of TypeScript (see `docs/research/pyright-map
 1. **Comparison tool.** A TypeScript-side dumper in a pyright fork, plus a compare tool that reports the first difference per file and stage.
    - Stages: tokens, parse tree, scopes and symbols, flow nodes, the printed type of every expression (read from the cache only), diagnostics.
    - Corpus: pyright's 1,353 test sample files, typeshed, pydantic-ai, a slice of mypy_primer projects.
-2. **Ground rules in code.** Arena with 32-bit handles and `RefCell` fields for types; insertion-ordered maps everywhere; JavaScript string semantics (UTF-16 positions, lone surrogates); helpers for V8's sort, pyright's `hashString`, `String.replace` with `$&`, NFKC; the type evaluator as one struct with `&self` methods.
+2. **Ground rules in code.** Arena handles (`jsrt::P<T>`, a pointer into a leak arena; its API hides the width, so 32-bit compression can come later as a measured change) and `RefCell` fields for types; insertion-ordered maps everywhere; JavaScript string semantics (UTF-16 positions, lone surrogates); helpers for V8's sort, pyright's `hashString`, `String.replace` with `$&`, NFKC; the type evaluator as one struct with `&self` methods.
 3. **Stub generator.** TypeScript signatures to Rust stubs with `todo!()` bodies and `// file.ts:LINE` markers.
 4. **Milestone 1: tokenizer, parser, binder** (about 30k lines).
    - Done when dumps and parse/bind diagnostics match on the whole corpus.
