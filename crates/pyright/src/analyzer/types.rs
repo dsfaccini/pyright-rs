@@ -2381,8 +2381,19 @@ pub struct SynthesizeMethodsDeferred {
 impl SynthesizeMethodsDeferred {
     // analyzer/typeEvaluator.ts:19577
     /// The closure calls the local closure `synthesizeMethods` (:19554).
+    /// It clears its own slot first, so call it on a copy taken out of the slot.
     pub fn call(&self) {
-        todo!()
+        *self.class_type.d().shared.get().synthesize_methods_deferred.borrow_mut() = None;
+        analyzer::data_classes::synthesize_data_class_methods(
+            &self.type_evaluator,
+            self.node,
+            self.class_type,
+            self.is_named_tuple_subclass,
+            self.skip_synthesized_init,
+            self.has_existing_init_method,
+            self.skip_synthesize_hash,
+            &self.type_evaluator.node_info,
+        );
     }
 }
 
@@ -2396,7 +2407,7 @@ pub struct SynthesizeDataClassSlotsDeferred {
 impl SynthesizeDataClassSlotsDeferred {
     // analyzer/typeEvaluator.ts:19573
     pub fn call(&self) {
-        todo!()
+        analyzer::data_classes::synthesize_data_class_slots(&self.type_evaluator, self.class_type);
     }
 }
 
@@ -2408,7 +2419,39 @@ pub struct CalculateInheritedSlotsNamesDeferred {
 
 impl CalculateInheritedSlotsNamesDeferred {
     // analyzer/typeEvaluator.ts:19586
+    /// It clears its own slot first, so call it on a copy taken out of the slot.
     pub fn call(&self) {
-        todo!()
+        let shared = self.class_type.d().shared.get();
+        *shared.calculate_inherited_slots_names_deferred.borrow_mut() = None;
+
+        let local_slots_names = shared.local_slots_names.borrow().clone();
+        if let Some(local_slots_names) = local_slots_names {
+            let mut is_limited_to_slots = true;
+            let mut extended_slots_names = local_slots_names;
+
+            let base_classes = shared.base_classes.borrow().clone();
+            for base_class in base_classes {
+                if is_instantiable_class(base_class) {
+                    let base_class = ClassType(base_class);
+                    if !ClassType::is_built_in(base_class, Some(&["object".to_string()]))
+                        && !ClassType::is_built_in(base_class, Some(&["type".to_string()]))
+                        && !ClassType::is_built_in(base_class, Some(&["Generic".to_string()]))
+                    {
+                        let inherited_slots_names = ClassType::get_inherited_slots_names(base_class);
+                        if let Some(inherited_slots_names) = inherited_slots_names {
+                            extended_slots_names.extend(inherited_slots_names);
+                        } else {
+                            is_limited_to_slots = false;
+                        }
+                    }
+                } else {
+                    is_limited_to_slots = false;
+                }
+            }
+
+            if is_limited_to_slots {
+                *shared.inherited_slots_names_cached.borrow_mut() = Some(extended_slots_names);
+            }
+        }
     }
 }

@@ -10,6 +10,9 @@ None yet. Share D's three stored callbacks in `types.rs` (`typeEvaluator.ts:1957
 
 ## Needs from others
 
+- share A (`typeUtils.ts:1628`, `validateTypeVarDefault`, and `TypeVarDefaultValidator`): TypeScript hands `invalidTypeVars` to the validator, which adds to it, and the caller reads it afterwards (`validateTypeParamDefault`, typeEvaluator.ts:19682). The stub takes `&JsSet<String>` and the validator stores its own `JsSet`, so the caller's set stays empty and `typeVarDefaultInvalidTypeVar` is never reported. The set needs a shared or `&mut` mapping in `tools/stubgen` (`[sites]`); share D's caller then passes it on.
+- shares A and H, callers of the three deferred class callbacks (`types.ts:1295`, `1346`, `1380`, `1385`; `dataClasses.ts:95`): `SynthesizeMethodsDeferred::call` and `CalculateInheritedSlotsNamesDeferred::call` clear their own slot first, as the closures' `delete` does. Take the callback out of the `RefCell` (`let cb = shared.synthesize_methods_deferred.borrow().clone();`) and call the copy; calling it through a live borrow panics.
+
 - tools/stubgen owner: `stubgen --install` rewrites more than the stubs of unported functions. Run on main at 980e3e3 it put back the stub header (`//! Stubs for ...`, `#![allow(...)]`, split `use` lines) on fully ported files (`sentinel.rs`, `symbol_utils.rs`, `type_complexity.rs`, `type_walker.rs`), and it sorts `use crate::{analyzer, common, parser};` below the other imports where main keeps it first. I reverted those changes by hand each time.
 
 ## Doubts
