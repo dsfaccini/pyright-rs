@@ -13,7 +13,14 @@ use std::rc::Rc;
 use jsrt::{JsMap, JsSet, JsStr, JsString, P};
 
 use crate::analyzer::analyzer_file_info::{AnalyzerFileInfo, ImportLookup};
+use crate::analyzer::analyzer_node_info::{
+    AnalyzerNodeInfoContext, AnalyzerNodeInfoContextImpl, AnalyzerNodeInfoReader, create_analyzer_node_info_accessor,
+    get_dunder_all_info,
+};
+use crate::analyzer::binder::Binder;
 use crate::analyzer::circular_dependency::CircularDependency;
+use crate::analyzer::scope::Scope;
+use crate::analyzer::symbol::SymbolTable;
 use crate::analyzer::comment_utils::{CommentDiagnostic, get_file_level_directives};
 use crate::analyzer::import_resolver::{ImportResolver, ImportedModuleDescriptor};
 use crate::analyzer::import_result::ImportResult;
@@ -31,7 +38,7 @@ use crate::common::text_range::{Range, TextRange, get_empty_range};
 use crate::common::text_range_collection::TextRangeCollection;
 use crate::common::uri::Uri;
 use crate::localization::localize::LocMessage;
-use crate::oracle::dumper::oracle_dump_parse;
+use crate::oracle::dumper::{oracle_dump_bind, oracle_dump_parse};
 use crate::parser::parse_nodes::{ModuleNode, ParseNode};
 use crate::parser::parser::{ModuleImport, ParseFileResults, ParseOptions, Parser, ParserOutput};
 use crate::parser::tokenizer::{IgnoreComment, TokenizerOutput};
@@ -107,6 +114,7 @@ pub struct WriteableData {
     pub import_info: Vec<ImportInfoRecord>,
     pub is_file_deleted: bool,
     pub parser_output: Option<P<ParserOutput>>,
+    pub module_symbol_table: Option<SymbolTable>,
 }
 
 impl WriteableData {
@@ -149,6 +157,7 @@ impl WriteableData {
             import_info: Vec::new(),
             is_file_deleted: false,
             parser_output: None,
+            module_symbol_table: None,
         }
     }
 }
@@ -380,6 +389,7 @@ impl SourceFile {
         data.tokenizer_output = None;
         data.parsed_file_contents = None;
         data.parsed_file_contents_hash = None;
+        data.module_symbol_table = None;
         data.is_binding_needed = true;
         data.import_info = Vec::new();
         data.imports = Some(Vec::new());
@@ -394,23 +404,33 @@ impl SourceFile {
         data.no_circular_dependency_confirmed = false;
         data.is_checking_needed = true;
         data.is_binding_needed = true;
+        data.module_symbol_table = None;
         data.line_count = None;
     }
 
     // analyzer/sourceFile.ts:511
-    /// STAND-IN: the `getDunderAllInfo` test needs the binder's node info;
-    /// until it lands only the wildcard-import and forced cases rebind.
-    pub fn mark_reanalysis_required(&self, force_rebinding: bool) {
+    pub fn mark_reanalysis_required(&self, force_rebinding: bool, node_info_reader: &dyn AnalyzerNodeInfoReader) {
         let mut data = self.data_mut();
         data.semantic_version += 1;
         data.is_checking_needed = true;
         data.no_circular_dependency_confirmed = false;
 
+        // If the file contains a wildcard import or __all__ symbols,
+        // we need to rebind because a dependent import may have changed.
         if let Some(parser_output) = data.parser_output {
-            if parser_output.contains_wildcard_import || force_rebinding {
+            if parser_output.contains_wildcard_import
+                || get_dunder_all_info(parser_output.parse_tree, node_info_reader).is_some()
+                || force_rebinding
+            {
                 data.is_binding_needed = true;
+                data.module_symbol_table = None;
             }
         }
+    }
+
+    // analyzer/sourceFile.ts:408
+    pub fn get_module_symbol_table(&self) -> Option<SymbolTable> {
+        self.data().module_symbol_table
     }
 
     // analyzer/sourceFile.ts:539
@@ -656,8 +676,15 @@ impl SourceFile {
     }
 
     // analyzer/sourceFile.ts:905
-    /// Runs the binder through `run_binder`. Returns whether the file was bound.
-    pub fn bind(&self, config_options: &ConfigOptions, import_lookup: ImportLookup, future_imports: JsSet<String>) -> bool {
+    /// Returns whether the file was bound. The CLI has no cell chain index.
+    pub fn bind(
+        &self,
+        config_options: &ConfigOptions,
+        import_lookup: ImportLookup,
+        builtins_scope: Option<P<Scope>>,
+        future_imports: JsSet<String>,
+        node_info_context: P<AnalyzerNodeInfoContextImpl>,
+    ) -> bool {
         assert(!self.is_parse_required(), Some("Bind called before parsing"));
         assert(self.is_binding_required(), Some("Bind called unnecessarily"));
         assert(!self.data().is_binding_in_progress, Some("Bind called while binding in progress"));
@@ -665,15 +692,35 @@ impl SourceFile {
         assert(parser_output.is_some(), Some("Parse results not available"));
         let parser_output = parser_output.unwrap();
 
+        // Perform name binding.
+        let parse_tree = parser_output.parse_tree;
+        let binding_session = node_info_context.begin_write(parse_tree);
+        let node_info = create_analyzer_node_info_accessor(binding_session.get(), Some(binding_session.get()));
         let import_info = self.data().import_info.clone();
-        let file_info = self.build_file_info(config_options, import_lookup, future_imports);
+        for record in &import_info {
+            node_info.set_import_info(record.node, record.import_result);
+        }
 
+        let file_info = P::new(self.build_file_info(config_options, import_lookup, builtins_scope, future_imports));
+        node_info.set_file_info(parse_tree, file_info);
+
+        let mut binder = Binder::new(file_info, config_options.index_generation_mode, None, node_info);
         self.data_mut().is_binding_in_progress = true;
-        let bind_diagnostics = run_binder(&file_info, parser_output, &import_info);
+        binder.bind_module(parse_tree);
+
+        let bind_diagnostics = file_info.diagnostic_sink.fetch_and_clear();
+        let module_scope = node_info.get_scope(parse_tree);
+        assert(module_scope.is_some(), Some("Module scope not returned by binder"));
+
+        node_info_context.publish(binding_session);
+        oracle_dump_bind(self.uri, parse_tree, node_info_context);
         {
             let mut data = self.data_mut();
+            data.module_symbol_table = Some(module_scope.unwrap().symbol_table);
             data.bind_diagnostics = bind_diagnostics;
             data.is_binding_in_progress = false;
+
+            // Prepare for the next stage of the analysis.
             data.is_checking_needed = true;
             data.is_binding_needed = false;
         }
@@ -964,6 +1011,7 @@ impl SourceFile {
         &self,
         config_options: &ConfigOptions,
         import_lookup: ImportLookup,
+        builtins_scope: Option<P<Scope>>,
         future_imports: JsSet<String>,
     ) -> AnalyzerFileInfo {
         let (lines, parser_output) = {
@@ -975,9 +1023,7 @@ impl SourceFile {
         AnalyzerFileInfo {
             import_lookup,
             future_imports,
-            // STAND-IN: the `builtinsScope` argument of `bind` arrives when
-            // `run_binder` calls the binder.
-            builtins_scope: None,
+            builtins_scope,
             diagnostic_sink: analysis_diagnostics,
             execution_environment: config_options.find_exec_environment(self.uri),
             diagnostic_rule_set: self.diagnostic_rule_set.borrow().clone(),
@@ -1206,14 +1252,6 @@ fn add_task_list_diagnostics(
             }
         }
     }
-}
-
-/// STAND-IN for the binder call in `sourceFile.ts` `bind()`: record the import
-/// info on the name nodes, build the node info, run `new Binder(...).bindModule`,
-/// and return `fileInfo.diagnosticSink.fetchAndClear()`. Until the binder
-/// lands it binds nothing and reports no diagnostics.
-fn run_binder(file_info: &AnalyzerFileInfo, _parser_output: P<ParserOutput>, _import_info: &[ImportInfoRecord]) -> Vec<P<Diagnostic>> {
-    file_info.diagnostic_sink.fetch_and_clear()
 }
 
 /// The checker call in `sourceFile.ts` `check()`. No checker exists yet, so

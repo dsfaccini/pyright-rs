@@ -9,7 +9,7 @@
 - Localizer accessors: `LocMessage::import_resolve_failure()`, `LocAddendum::...`; names are the TypeScript names in snake_case.
 - `DiagnosticRule` variants keep the TypeScript member names; `as_str` gives the string value.
 - `Program`, `SourceFile` and `SourceFileInfo` are shared (`P<...>`) with `&self` methods: the import lookup re-enters the program while a file binds. No `RefCell` borrow is held across a call into another file.
-- `SourceFile::bind(config, import_lookup, future_imports)` and `SourceFile::check(config)`: the binder-typed arguments (`builtinsScope`, `cellChainIndex`, `nodeInfoContext`) and the checker arguments come with the binder and checker.
+- `SourceFile::bind(config, import_lookup, builtins_scope, future_imports, node_info_context)`: no `cellChainIndex` (the CLI has none). `SourceFile::check(config)`: the checker arguments come with the checker, which `run_checker` stands in for.
 - `AnalyzerService::run_timers` stands in for Node's event loop: `scheduleReanalysis` arms a flag instead of a `setTimeout`, and the CLI fires it after `enumerateSourceFiles(0)`, the order Node runs them in.
 - Import resolution: `ImportResolver` methods take `&ExecutionEnvironment` and `&ImportedModuleDescriptor`, return `P<ImportResult>` (shared; `filterImplicitImports` makes a new one), and take every TypeScript default argument explicitly (`get_module_name_for_import(uri, env, allow_invalid_module_name, detect_py_typed)`, `get_import_roots(env, for_logging)`, `get_python_search_paths(logger)`). Caches are cells, so every method takes `&self`.
 - `ParentDirectoryCache::new()` takes no `_importRootGetter`: it would capture the resolver that owns the cache. `check_valid_path(fs, source, root, import_root_getter)` takes it instead and calls it as lazily as pyright does.
@@ -34,7 +34,7 @@
 - `crates/jsrt/src/command_line_args.rs` (new): npm `command-line-args` 5.2.1 in strict mode, with its error kinds.
 - `crates/jsrt/Cargo.toml`: `serde_json` (preserve_order), `toml` 1.2.1 (preserve_order), `regex`.
 - `crates/jsrt/src/lib.rs`: declares the modules above.
-- `crates/pyright/src/oracle/diag.rs` and `oracle/dumper.rs` (new): the diag stage and the fork's dump hooks (env, file writes, `oracle-run.txt`). `oracle_dump_parse` writes the tokens stage through frontend's `dump_tokenizer_output`; tree, bind, flow and types write nothing until their dumpers exist.
+- `crates/pyright/src/oracle/diag.rs` and `oracle/dumper.rs` (new): the diag stage and the fork's dump hooks (env, file writes, `oracle-run.txt`). `oracle_dump_parse` writes tokens and tree through frontend's dumpers; `oracle_dump_bind`, called from `SourceFile::bind` after `publish`, writes bind and flow through binder's dumpers. The types stage writes nothing until the evaluator exists.
 - `crates/pyright/src/oracle/mod.rs`: declares `dumper`.
 - `crates/pyright/src/analyzer/mod.rs`: declares `analysis`, `background_analysis_program`, `circular_dependency`, `service_utils`.
 - Switched to `jsrt::number` (main 8a4b41e): deleted `crates/jsrt/src/infra_shims.rs`; `python_version.rs` parses with `jsrt::number::parse_int`.
@@ -42,8 +42,7 @@
 
 ## Needs from others
 
-- binder: `analyzer_file_info.rs` on branch `binder` is this branch's file plus `AnalyzerFileInfo.builtins_scope` and `ImportLookupResult.symbol_table`; take that version at merge. `source_file.rs` on `binder` only adds an `IPythonMode` shim; take this branch's. After the binder lands, infra wires `run_binder` in `source_file.rs` and the stand-ins in `program.rs` (`bind_file` builtins scope, `look_up_import_impl` result, `drop_parse_and_bind_info`) and `SourceFile::mark_reanalysis_required` (`getDunderAllInfo`).
-- binder: `symbolNameUtils` (`isDunderName`, `isPrivateOrProtectedName`).
+- evaluator/checker: `run_checker` in `analyzer/source_file.rs` is the one call into the checker; the types dump hooks into `oracle_dump_final`.
 
 ## Doubts
 
@@ -61,3 +60,5 @@
 - `importFailureInfo` is the logger's own array in pyright (`ImportLogger.getLogs()` returns it), so a result shows lines logged after it was built. `_resolve_best_absolute_import` copies the logger's final lines into the result it returns; no other path logs after building a kept result.
 - `typeshedInfoProvider.ts` logs `JSON.stringify(e)` when VERSIONS cannot be read; for a Node error that is `{"errno":...,"code":...,"syscall":...,"path":...}`. `FsError` keeps only a message, so the port logs that message. Only `--verbose` output with an unreadable VERSIONS file differs.
 - `filterImplicitImports` copies a result with `Object.assign`, sharing its maps; the port deep-clones `ImportResult`, so `import x` of a package with many submodules copies its implicit-import map. Output is the same.
+- `--verbose` prints a V8 `Heap stats: ...` line from `cacheManager.getUsedHeapRatio`; the port has no V8 heap and prints nothing there. The other verbose lines (config, auto-excludes, execution environments, search paths, `Found N source files`) match pyright on primer-bidict.
+- `ImportLookupResult.doc_string` is `Option<String>`; `getDocString` returns a UTF-16 string, converted lossily, so a lone surrogate in a module docstring becomes U+FFFD.
