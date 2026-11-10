@@ -24,6 +24,12 @@ export function rustIdent(name: string): string {
     return RUST_KEYWORDS.has(name) ? `${name}_` : name;
 }
 
+// A method name (a function with a receiver). `clone` becomes `clone_` (docs/porting.md "names"):
+// on a `P<T>`, `.clone()` resolves to `P`'s `Clone` and never reaches `T::clone`.
+export function fnIdent(name: string): string {
+    return name === 'clone' ? 'clone_' : rustIdent(name);
+}
+
 export function fieldName(name: string): string {
     return rustIdent(snake(name));
 }

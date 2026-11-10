@@ -10,6 +10,8 @@ All through `tools/stubgen`:
 - `ConstraintSolutionSet::set_type` returns nothing (`[sites]` value `"()"`, which `gen.ts` now maps to no return type). TypeScript returns the map from `Map.set`; no caller reads it.
 - The six internal printers of `typePrinter.ts` take `unique_name_map: &mut UniqueNameMap` (`[sites]`). `UniqueNameMap` methods take `&mut self` because `_addIfUnique` writes `_map`, and the printers call `isUnique`.
 
+- `ConstraintSet::clone` and `ConstraintTracker::clone` are `clone_` (`tools/stubgen/src/names.ts` `fnIdent`, applied to methods with a receiver). No caller on main called them.
+
 ## Shared-file edits
 
 - `tools/stubgen/src/merge.ts`: an install carries a ported `thread_local!` initializer (`static X: T = init;` under its marker) like a ported function. Before, an install refused to run once any module variable was ported.
