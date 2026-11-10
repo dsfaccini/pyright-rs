@@ -109,3 +109,5 @@ Every porting agent follows this file. Change a rule here first, then in the cod
 - Record every edit to a file you do not own under Shared-file edits.
 - Commit often. Before you report a deliverable, rebase on `main` and make `cargo build`, `cargo test` and `cargo clippy --all-targets` pass without warnings.
 - The main session merges branches into `main`. Never commit to `main`.
+- Commit a piece that is ready for `main` with a subject that starts with `READY:`. The main session merges `READY:` commits as they land.
+- Never rewrite a commit after the main session merged it. Rebase on `main` instead.
