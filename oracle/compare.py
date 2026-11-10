@@ -11,6 +11,7 @@ import sys
 from pathlib import Path
 
 STAGES = ("tokens", "tree", "bind", "flow", "types", "diag")
+DIAG_LISTS = ("parse", "comment", "bind", "checker", "taskList", "final")
 
 
 def parse_args(argv):
@@ -38,7 +39,24 @@ def parse_args(argv):
         help="print details for at most this many differing files (default 20; 0 for none)",
     )
     parser.add_argument("--list", action="store_true", help="list every differing and missing file")
-    return parser.parse_args(argv)
+    parser.add_argument(
+        "--diag-lists",
+        metavar="NAMES",
+        help="compare only these comma-separated lists of each diag file, from: " + ", ".join(DIAG_LISTS),
+    )
+    parser.add_argument(
+        "--ignore-reference-only",
+        action="store_true",
+        help="files only in the reference do not count as differences; the summary still counts them",
+    )
+    args = parser.parse_args(argv)
+    if args.diag_lists is not None:
+        names = [name.strip() for name in args.diag_lists.split(",") if name.strip()]
+        unknown = [name for name in names if name not in DIAG_LISTS]
+        if unknown or not names:
+            parser.error(f"--diag-lists: unknown or missing list names {unknown}; choose from {', '.join(DIAG_LISTS)}")
+        args.diag_lists = set(names)
+    return args
 
 
 def collect(root, stages, prefixes):
@@ -90,6 +108,26 @@ def split_lines(data):
     return lines
 
 
+def numbered_lines(key, data, diag_lists):
+    """The lines to compare and their 1-based line numbers in the file.
+
+    With diag_lists, a diag file keeps only the named lists: each list's header
+    line (`<name>: [<n>]`, depth 0) and the indented lines under it.
+    """
+    lines = split_lines(data)
+    if diag_lists is None or not key.startswith("diag/"):
+        return lines, list(range(1, len(lines) + 1))
+    kept, numbers = [], []
+    keep = False
+    for number, line in enumerate(lines, 1):
+        if not line.startswith(b" "):
+            keep = line.split(b":", 1)[0].decode("utf-8", errors="replace") in diag_lists
+        if keep:
+            kept.append(line)
+            numbers.append(number)
+    return kept, numbers
+
+
 def first_difference(ref_lines, cand_lines):
     for i, (a, b) in enumerate(zip(ref_lines, cand_lines)):
         if a != b:
@@ -97,24 +135,33 @@ def first_difference(ref_lines, cand_lines):
     return min(len(ref_lines), len(cand_lines))
 
 
-def report(key, ref_data, cand_data, context, out):
-    ref_lines = split_lines(ref_data)
-    cand_lines = split_lines(cand_data)
+def report(key, ref, cand, context, out):
+    """Prints the first difference. Line numbers are each file's own."""
+    ref_lines, ref_numbers = ref
+    cand_lines, cand_numbers = cand
     index = first_difference(ref_lines, cand_lines)
-    out.write(f"DIFF {key} line {index + 1} (reference {len(ref_lines)} lines, candidate {len(cand_lines)} lines)\n")
+    if index < len(ref_lines):
+        where = f"line {ref_numbers[index]}"
+    else:
+        where = f"after line {ref_numbers[-1] if ref_numbers else 0}"
+    out.write(f"DIFF {key} {where} (lines compared: reference {len(ref_lines)}, candidate {len(cand_lines)})\n")
 
     start = max(0, index - context)
     enclosing = [(i, line) for i, line in ancestors(ref_lines, index) if i < start]
     for i, line in enclosing:
-        out.write(f"  {i + 1:>7} | {show(line)}\n")
+        out.write(f"  {ref_numbers[i]:>7} | {show(line)}\n")
     if enclosing and enclosing[-1][0] < start - 1:
         out.write("          | ...\n")
     for i in range(start, index):
-        out.write(f"  {i + 1:>7} | {show(ref_lines[i])}\n")
-    ref_line = show(ref_lines[index]) if index < len(ref_lines) else "<end of file>"
-    cand_line = show(cand_lines[index]) if index < len(cand_lines) else "<end of file>"
-    out.write(f"- {index + 1:>7} | {ref_line}\n")
-    out.write(f"+ {index + 1:>7} | {cand_line}\n")
+        out.write(f"  {ref_numbers[i]:>7} | {show(ref_lines[i])}\n")
+    if index < len(ref_lines):
+        out.write(f"- {ref_numbers[index]:>7} | {show(ref_lines[index])}\n")
+    else:
+        out.write("-         | <end of file>\n")
+    if index < len(cand_lines):
+        out.write(f"+ {cand_numbers[index]:>7} | {show(cand_lines[index])}\n")
+    else:
+        out.write("+         | <end of file>\n")
     out.write("\n")
 
 
@@ -143,10 +190,15 @@ def main(argv):
         if ref_data == cand_data:
             counts[stage]["same"] += 1
             continue
+        ref = numbered_lines(key, ref_data, args.diag_lists)
+        cand = numbered_lines(key, cand_data, args.diag_lists)
+        if ref[0] == cand[0]:
+            counts[stage]["same"] += 1
+            continue
         counts[stage]["differ"] += 1
         differing.append(key)
         if reports < args.max_reports:
-            report(key, ref_data, cand_data, args.context, out)
+            report(key, ref, cand, args.context, out)
             reports += 1
 
     for key in only_ref:
@@ -157,11 +209,17 @@ def main(argv):
     if args.list:
         for key in differing:
             out.write(f"differs: {key}\n")
-    shown = only_ref if args.list else only_ref[:10]
-    for key in shown:
-        out.write(f"missing in candidate: {key}\n")
-    if len(shown) < len(only_ref):
-        out.write(f"... {len(only_ref) - len(shown)} more missing in candidate (--list shows all)\n")
+    if args.ignore_reference_only and only_ref:
+        shown = only_ref if args.list else []
+        for key in shown:
+            out.write(f"missing in candidate (ignored): {key}\n")
+        out.write(f"{len(only_ref)} files only in the reference, ignored (--ignore-reference-only)\n")
+    else:
+        shown = only_ref if args.list else only_ref[:10]
+        for key in shown:
+            out.write(f"missing in candidate: {key}\n")
+        if len(shown) < len(only_ref):
+            out.write(f"... {len(only_ref) - len(shown)} more missing in candidate (--list shows all)\n")
     shown = only_cand if args.list else only_cand[:10]
     for key in shown:
         out.write(f"missing in reference: {key}\n")
@@ -179,7 +237,7 @@ def main(argv):
         f"{'total':<8} {totals['same']:>8} {totals['differ']:>8} {totals['only_ref']:>9} {totals['only_cand']:>10}\n"
     )
 
-    failed = totals["differ"] + totals["only_ref"] + totals["only_cand"]
+    failed = totals["differ"] + totals["only_cand"] + (0 if args.ignore_reference_only else totals["only_ref"])
     return 1 if failed else 0
 
 
