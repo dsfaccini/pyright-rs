@@ -57,7 +57,6 @@ node_info_context.publish(session);
 ## Shared-file edits
 
 - `crates/pyright/src/analyzer/analyzer_file_info.rs`: adds `AnalyzerFileInfo.builtins_scope: Option<P<Scope>>` and `ImportLookupResult.symbol_table: SymbolTable`.
-- `crates/pyright/src/analyzer/source_file.rs`: `build_file_info` sets `builtins_scope: None` (STAND-IN). Infra passes `bind`'s `builtinsScope` when it wires `run_binder`.
 - `crates/pyright/src/analyzer/program.rs`: the `skipParsing` dummy `ImportLookupResult` gets `symbol_table: SymbolTable::new()`, as pyright's `new Map()`.
 - `crates/pyright/src/analyzer/import_statement_utils.rs`: adds `getWildcardImportNames` next to infra's `getDirectoryLeadingDotsPointsTo`.
 - `crates/pyright/src/analyzer/mod.rs`: `cell_chain_index`, `declaration_utils`, `types`.
@@ -67,20 +66,19 @@ node_info_context.publish(session);
 
 ## Oracle harness
 
-`crates/pyright/examples/oracle_bind.rs` binds the files of a reference dump and writes bind and flow dumps for `oracle/compare.py`, until infra's `Program` runs the binder:
+`crates/pyright/examples/oracle_bind.rs` binds the files of a reference dump and writes bind and flow dumps for `oracle/compare.py`, without `Program` or import resolution:
 
 ```
 cargo run --release --example oracle_bind -- [--path PREFIX]... [--python-version 3.11] [--mode strict] [--rule name=level]... <reference dump dir> <out dir>
 python3 oracle/compare.py <reference dump dir> <out dir> --stage bind --stage flow
+cargo run --release --example oracle_bind -- [options] --timing <reference dump dir>
 ```
+
+- `--timing` writes no dumps. It prints the file count, the Tokenize, Parse and Bind times (pyright's `--stats` timers) and the arena bytes. File reading, import replay, dump writing and the bind diagnostic comparison run outside the timers. As in pyright, a file bound on demand from an import lookup counts its tokenize and parse inside the importer's Bind too.
 
 - It replays each file's `importInfo` and `isInPyTypedPackage` from the reference dump; import lookups bind their target on demand, builtins first, as `Program._bindFile` does.
 - It compares bind diagnostics with the `bind:` list of the reference diag dump and prints the count of files that differ.
 - pydantic-ai needs `--python-version 3.11 --mode strict --rule reportMissingTypeStubs=false --rule reportUnnecessaryIsInstance=false --rule reportMissingModuleSource=false` (its `[tool.pyright]`). The other corpora use the defaults.
-
-## Needs from others
-
-- infra: wire `run_binder` in `SourceFile.bind` with the entry point above, pass `builtinsScope`, and fill `ImportLookupResult.symbol_table` in `Program._lookUpImport`. Then the oracle runs through `Program` and the harness can go.
 
 ## Doubts
 
