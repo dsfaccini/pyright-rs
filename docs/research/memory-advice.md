@@ -37,7 +37,10 @@ Estimate, not measured: if even 10% of pyright's 194 GB of allocations became `P
 - **Dropping and re-parsing trees mid-run.** pyright drops trees only together with the evaluator (`Program.emptyCache`). New node ids miss the id-keyed type cache and change evaluation order.
 - **Hash-consing types.** `TypeBase.cloneType` returns fresh objects that callers mutate, and results are cached on the source object (`cached.typeBaseInstanceType`). Merging identities changes later writes.
 - **Disk offload, mmap, compression.** The live set is touched continuously; the rest is garbage, and freeing beats compressing.
-- **Parallel checking.** pyright's `--threads` gives each worker its own evaluator, so per-file cache state differs from a serial run. Optimistic schemes that reproduce a serial order (Block-STM, https://arxiv.org/abs/2203.06871) would conflict on every shared cache miss. Untested: diffing `pyright --threads --outputjson` against the reference.
+- **Parallel checking.** pyright's `--threads` gives each worker its own evaluator, so per-file cache state differs from a serial run. Optimistic schemes that reproduce a serial order (Block-STM, https://arxiv.org/abs/2203.06871) would conflict on every shared cache miss. Tested 2026-11-10 with `--threads 4`, two runs per corpus, against the serial reference:
+  - identical on samples (6,546 diagnostics), the five primer projects and pydantic-ai (0 diagnostics, so weak evidence there);
+  - different on typeshed: 752 files checked instead of 737, and 12 extra diagnostics, all in core stubs the serial run reports nothing for (`builtins.pyi`, `abc.pyi`, `enum.pyi`, `typing_extensions.pyi`, ...). Same result on both runs.
+  - So pyright's own threaded mode does not reproduce serial output. Wall time on pydantic-ai: 50 s with 4 threads against 2:24 serial.
 - **Incremental frameworks** (Salsa, Adapton) need pure queries; speculative rollback and incomplete types are not pure.
 
 Speed beyond 3x comes from single-thread work: no GC or allocation overhead (1, 2), dense tables (5), compact layouts (4).
