@@ -55,7 +55,8 @@ pub fn dump_types(program: &Program, root: ModuleNode, printed: &mut FxHashMap<P
         out.push_str(&node_ref(&node));
         out.push(':');
         if let Some(flags) = flags {
-            out.push_str(&format!(" flags={}", flags.0));
+            // JS bitwise operators yield a signed 32-bit integer.
+            out.push_str(&format!(" flags={}", flags.0.cast_signed()));
         }
         if is_incomplete {
             out.push_str(" incomplete");
