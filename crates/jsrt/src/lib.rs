@@ -4,6 +4,8 @@
 
 pub mod arena;
 pub mod collections;
+pub mod string;
 
 pub use arena::P;
 pub use collections::{FxHashMap, FxHashSet, JsMap, JsSet};
+pub use string::{JsStr, JsString, NormalizationForm};
