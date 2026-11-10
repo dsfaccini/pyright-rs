@@ -14,7 +14,6 @@ use crate::analyzer::type_evaluator::TypeEvaluator;
 use crate::analyzer::types::{ClassType, FunctionType, FunctionTypeFlags, Type};
 use crate::parser::parse_nodes::{CallNode, DecoratorNode, FunctionNode};
 use jsrt::P;
-use std::rc::Rc;
 
 // analyzer/decorators.ts:49
 #[derive(Clone)]

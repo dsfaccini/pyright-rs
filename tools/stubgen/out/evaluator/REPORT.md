@@ -243,7 +243,7 @@ How each class and interface of the stubbed files is held (docs/porting.md "memo
 - `analyzer/sourceMapperUtils.ts:NumberReference`: owned; written: value at analyzer/sourceMapperUtils.ts:39; never stored in a second place
 - `analyzer/protocols.ts:ProtocolAssignmentStackEntry`: value; never written after construction; never stored in a second place
 - `analyzer/protocols.ts:ProtocolCompatibility`: value; never written after construction; stored at analyzer/protocols.ts:356
-- `analyzer/protocols.ts:ProtocolCompatibilityCheckState`: value; written: isOverloadedTypeBindingFailure at analyzer/protocols.ts:572; never stored in a second place
+- `analyzer/protocols.ts:ProtocolCompatibilityCheckState`: value; [modes]
 - `analyzer/enums.ts:EnumEvalStackEntry`: value; never written after construction; never stored in a second place
 - `analyzer/decorators.ts:FunctionDecoratorInfo`: value; never written after construction; never stored in a second place
 - `analyzer/checker.ts:TypeVarUsageInfo`: value; written: returnTypeUsageCount at analyzer/checker.ts:2440; never stored in a second place

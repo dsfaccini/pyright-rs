@@ -18,7 +18,6 @@ use crate::analyzer::types::{ClassType, TupleTypeArg, Type};
 use crate::common::diagnostic::DiagnosticAddendum;
 use crate::parser::parse_nodes::{ExpressionNode, SliceNode, TupleNode};
 use jsrt::P;
-use std::rc::Rc;
 
 // analyzer/tuples.ts:54
 pub(crate) const MAX_INFERRED_TUPLE_ENTRY_COUNT: u32 = 256;

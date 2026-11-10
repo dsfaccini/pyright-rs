@@ -145,9 +145,14 @@ export function render(t: IR, pos: Pos, uses: Uses, mutated = false): string {
         case 'generic':
             return t.name;
         case 'raw':
+            if (pos === 'param' && t.param !== undefined) {
+                // An `rc` object is read through `&T`: the parameter names no `Rc`.
+                uses.add(t.param.includes('Rc<') ? t.uses : t.uses.filter((u) => u !== 'std::rc::Rc'));
+                return t.param;
+            }
             uses.add(t.uses);
             if (pos === 'param') {
-                return t.param ?? (t.copy ? t.text : mutated ? `&mut ${t.text}` : `&${t.text}`);
+                return t.copy ? t.text : mutated ? `&mut ${t.text}` : `&${t.text}`;
             }
             return t.text;
         case 'unmapped': {

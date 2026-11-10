@@ -20,7 +20,6 @@ use crate::analyzer::types::{ClassType, Type, TypedDictEntries, TypedDictEntry};
 use crate::common::diagnostic::DiagnosticAddendum;
 use crate::parser::parse_nodes::{DictionaryNode, ExpressionNode, IndexNode, ParseNode};
 use jsrt::P;
-use std::rc::Rc;
 
 // analyzer/typedDicts.ts:79
 pub fn create_typed_dict_type(

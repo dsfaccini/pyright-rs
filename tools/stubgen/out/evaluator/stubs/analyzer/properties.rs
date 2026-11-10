@@ -17,7 +17,6 @@ use crate::analyzer::types::{ClassType, FunctionType, Type};
 use crate::common::diagnostic::DiagnosticAddendum;
 use crate::parser::parse_nodes::{DecoratorNode, FunctionNode, ParseNode};
 use jsrt::P;
-use std::rc::Rc;
 
 // analyzer/properties.ts:45
 pub fn validate_property_method(

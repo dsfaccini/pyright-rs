@@ -20,6 +20,7 @@ pub mod declaration;
 pub mod declaration_utils;
 pub mod decorators;
 pub mod deprecated_symbols;
+pub mod doc_string_conversion;
 pub mod doc_string_utils;
 pub mod enums;
 pub mod function_transform;
