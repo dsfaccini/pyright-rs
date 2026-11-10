@@ -55,6 +55,7 @@ use crate::parser::parse_nodes::{
     StringListNode, StringNode, TypeAliasNode, TypeAnnotationNode, TypeParameterListNode,
     TypeParameterNode, UnpackNode, WithItemNode, YieldFromNode, YieldNode,
 };
+use crate::{analyzer, common, parser};
 use jsrt::{JsMap, JsSet, P};
 use std::cell::{Cell, OnceCell, RefCell};
 use std::rc::Rc;

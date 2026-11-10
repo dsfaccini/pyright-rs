@@ -17,6 +17,7 @@ use crate::common::uri::uri::Uri;
 use crate::parser::parse_nodes::{
     ArgumentNode, ClassNode, ExpressionNode, NameNode, ParamCategory, TypeAnnotationNode,
 };
+use crate::{analyzer, common, parser};
 use jsrt::{JsBigInt, JsMap, JsSet, NumberValue, P, flag_ops};
 use std::cell::{Cell, RefCell, RefMut};
 use std::ops::Deref;

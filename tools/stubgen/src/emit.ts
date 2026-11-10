@@ -101,8 +101,14 @@ export class FileEmitter {
             '',
         ];
         const uses = [...this.uses.set]
-            .filter((u) => !u.startsWith(this.modPath + '::') || u.slice(this.modPath.length + 2).includes('::'))
-            .sort();
+            .filter((u) => !u.startsWith(this.modPath + '::') || u.slice(this.modPath.length + 2).includes('::'));
+        // Files with markers of several step 5 shares: ported code reaches items by
+        // `analyzer::`, `common::` and `parser::` paths instead of adding imports
+        // (docs/step5-shares.md, "files shared by several shares").
+        if (this.mode === 'stubs' && SHARED_PATH_IMPORT_FILES.has(this.file)) {
+            uses.push('crate::analyzer', 'crate::common', 'crate::parser');
+        }
+        uses.sort();
         return [...header, ...groupUses(uses), '', ...this.out].join('\n') + '\n';
     }
 
@@ -1690,6 +1696,8 @@ function groupUses(paths: string[]): string[] {
     }
     return out;
 }
+
+const SHARED_PATH_IMPORT_FILES = new Set(['analyzer/typeEvaluator.ts', 'analyzer/types.ts', 'analyzer/typePrinter.ts']);
 
 export function dedupeUses(lines: string[]): string[] {
     // Two imports of one name from different modules: keep the first, qualify nothing. The check

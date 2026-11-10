@@ -12,6 +12,7 @@
 use crate::analyzer::type_evaluator::TypeEvaluator;
 use crate::analyzer::types::{ClassType, FunctionType, Type, TypeVarType, UnionType};
 use crate::common::config_options::ConfigOptions;
+use crate::{analyzer, common, parser};
 use jsrt::{JsMap, P, flag_ops};
 
 // analyzer/typePrinter.ts:54
