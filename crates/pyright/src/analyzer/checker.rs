@@ -2369,7 +2369,201 @@ impl Checker {
 
     // analyzer/checker.ts:3924
     pub(crate) fn _validate_is_instance_call(&mut self, node: CallNode) {
-        todo!()
+        let left_expr = parser::parse_nodes::NameNode::cast(node.d().left_expr.get());
+        let Some(left_expr) = left_expr else {
+            return;
+        };
+        if (left_expr.d().value != "isinstance" && left_expr.d().value != "issubclass")
+            || node.d().args.borrow().len() != 2
+        {
+            return;
+        }
+
+        let call_name = left_expr.d().value.clone();
+        let is_instance_check = call_name == "isinstance";
+        let args = node.d().args.borrow().clone();
+
+        let arg0_type = self._evaluator.get_type(args[0].d().value_expr.get());
+        let Some(mut arg0_type) = arg0_type else {
+            return;
+        };
+        arg0_type = analyzer::type_utils::map_subtypes(
+            arg0_type,
+            &mut |subtype| analyzer::type_utils::transform_possible_recursive_type_alias(Some(subtype), 0),
+            None,
+        );
+
+        arg0_type = self._evaluator.expand_promotion_types(node.0, arg0_type, false);
+
+        let arg1_type = self._evaluator.get_type(args[1].d().value_expr.get());
+        let Some(arg1_type) = arg1_type else {
+            return;
+        };
+
+        let mut is_valid_type = true;
+        let diag = common::diagnostic::DiagnosticAddendum::new();
+        analyzer::type_utils::do_for_each_subtype(
+            arg1_type,
+            &mut |arg1_subtype, _index, _all_subtypes| {
+                let tuple_type_args = if analyzer::types::is_class_instance(arg1_subtype)
+                    && ClassType::is_tuple_class(ClassType(arg1_subtype))
+                {
+                    ClassType(arg1_subtype).d().priv_.borrow().tuple_type_args.clone()
+                } else {
+                    None
+                };
+                if let Some(tuple_type_args) = tuple_type_args {
+                    if tuple_type_args.iter().any(|type_arg| {
+                        !self._is_type_supported_type_for_is_instance(type_arg.type_, is_instance_check, diag)
+                    }) {
+                        is_valid_type = false;
+                    }
+                } else if !self._is_type_supported_type_for_is_instance(arg1_subtype, is_instance_check, diag) {
+                    is_valid_type = false;
+                }
+            },
+            false,
+        );
+
+        if !is_valid_type {
+            let message = if is_instance_check {
+                LocMessage::is_instance_invalid_type().format(&[("type", &self._evaluator.print_type(arg1_type, None))])
+                    + &diag.get_string(
+                        common::diagnostic::DEFAULT_MAX_DIAGNOSTIC_DEPTH,
+                        common::diagnostic::DEFAULT_MAX_DIAGNOSTIC_LINE_COUNT,
+                    )
+            } else {
+                LocMessage::is_subclass_invalid_type().format(&[("type", &self._evaluator.print_type(arg1_type, None))])
+                    + &diag.get_string(
+                        common::diagnostic::DEFAULT_MAX_DIAGNOSTIC_DEPTH,
+                        common::diagnostic::DEFAULT_MAX_DIAGNOSTIC_LINE_COUNT,
+                    )
+            };
+            self._evaluator
+                .add_diagnostic(DiagnosticRule::reportArgumentType, &message, args[1].0, None);
+        }
+
+        // If this call is an issubclass, check for the use of a "data protocol",
+        // which PEP 544 says cannot be used in issubclass.
+        if !is_instance_check {
+            let diag = common::diagnostic::DiagnosticAddendum::new();
+
+            analyzer::type_utils::do_for_each_subtype(
+                arg1_type,
+                &mut |arg1_subtype, _index, _all_subtypes| {
+                    let tuple_type_args = if analyzer::types::is_class_instance(arg1_subtype)
+                        && ClassType::is_tuple_class(ClassType(arg1_subtype))
+                    {
+                        ClassType(arg1_subtype).d().priv_.borrow().tuple_type_args.clone()
+                    } else {
+                        None
+                    };
+                    if let Some(tuple_type_args) = tuple_type_args {
+                        for type_arg in &tuple_type_args {
+                            self._validate_not_data_protocol(type_arg.type_, diag);
+                        }
+                    } else {
+                        self._validate_not_data_protocol(arg1_subtype, diag);
+                    }
+                },
+                false,
+            );
+
+            if !diag.is_empty() {
+                self._evaluator.add_diagnostic(
+                    DiagnosticRule::reportGeneralTypeIssues,
+                    &LocMessage::data_protocol_in_subclass_check(),
+                    args[1].0,
+                    None,
+                );
+            }
+        }
+
+        // If this call is within an assert statement, we won't check whether
+        // it's unnecessary.
+        if analyzer::parse_tree_utils::is_within_assert_expression(node.0) {
+            return;
+        }
+
+        let evaluator = self._evaluator;
+        let class_type_list = analyzer::type_guards::get_is_instance_class_types(&evaluator, arg1_type);
+        let Some(class_type_list) = class_type_list else {
+            return;
+        };
+
+        // Check for unsafe protocol overlaps.
+        for filter_type in &class_type_list {
+            if analyzer::types::is_instantiable_class(*filter_type) {
+                self._validate_unsafe_protocol_overlap(
+                    args[0].d().value_expr.get(),
+                    ClassType::clone_as_instance(ClassType(*filter_type), true),
+                    if is_instance_check {
+                        arg0_type
+                    } else {
+                        analyzer::type_utils::convert_to_instance(arg0_type, true)
+                    },
+                );
+            }
+        }
+
+        // Check for unnecessary isinstance or issubclass calls.
+        if self._file_info.diagnostic_rule_set.report_unnecessary_is_instance
+            != common::config_options::DiagnosticLevel::None
+        {
+            let narrowed_type_negative = analyzer::type_guards::narrow_type_for_instance_or_subclass(
+                &evaluator,
+                arg0_type,
+                &class_type_list,
+                is_instance_check,
+                /* isTypeIsCheck */ false,
+                /* isPositiveTest */ false,
+                node.0,
+                &self._node_info,
+            );
+
+            let narrowed_type_positive = analyzer::type_guards::narrow_type_for_instance_or_subclass(
+                &evaluator,
+                arg0_type,
+                &class_type_list,
+                is_instance_check,
+                /* isTypeIsCheck */ false,
+                /* isPositiveTest */ true,
+                node.0,
+                &self._node_info,
+            );
+
+            let is_always_true = analyzer::types::is_never(narrowed_type_negative);
+            let is_never_true = analyzer::types::is_never(narrowed_type_positive);
+
+            if is_always_true || is_never_true {
+                let instances: Vec<P<Type>> = class_type_list
+                    .iter()
+                    .map(|t| analyzer::type_utils::convert_to_instance(*t, true))
+                    .collect();
+                let class_type = analyzer::types::combine_types(&instances, None);
+                let message_template = if is_always_true {
+                    if is_instance_check {
+                        LocMessage::unnecessary_is_instance_always()
+                    } else {
+                        LocMessage::unnecessary_is_subclass_always()
+                    }
+                } else if is_instance_check {
+                    LocMessage::unnecessary_is_instance_never()
+                } else {
+                    LocMessage::unnecessary_is_subclass_never()
+                };
+
+                self._evaluator.add_diagnostic(
+                    DiagnosticRule::reportUnnecessaryIsInstance,
+                    &message_template.format(&[
+                        ("testType", &self._evaluator.print_type(arg0_type, None)),
+                        ("classType", &self._evaluator.print_type(class_type, None)),
+                    ]),
+                    node.0,
+                    None,
+                );
+            }
+        }
     }
 
     // analyzer/checker.ts:4082
@@ -2379,7 +2573,42 @@ impl Checker {
         protocol: ClassType,
         test_type: P<Type>,
     ) {
-        todo!()
+        // If this is a protocol class, check for an "unsafe overlap"
+        // with the arg0 type.
+        if ClassType::is_protocol_class(protocol) {
+            let mut is_unsafe_overlap = false;
+            let diag = common::diagnostic::DiagnosticAddendum::new();
+            let evaluator = self._evaluator;
+
+            analyzer::type_utils::do_for_each_subtype(
+                test_type,
+                &mut |test_subtype, _index, _all_subtypes| {
+                    if analyzer::types::is_class_instance(test_subtype)
+                        && analyzer::protocols::is_protocol_unsafe_overlap(&evaluator, protocol, ClassType(test_subtype))
+                    {
+                        is_unsafe_overlap = true;
+                        diag.add_message(LocAddendum::protocol_unsafe_overlap().format(&[(
+                            "name",
+                            &ClassType(test_subtype).d().shared.get().name,
+                        )]));
+                    }
+                },
+                false,
+            );
+
+            if is_unsafe_overlap {
+                self._evaluator.add_diagnostic(
+                    DiagnosticRule::reportGeneralTypeIssues,
+                    &(LocMessage::protocol_unsafe_overlap().format(&[("name", &protocol.d().shared.get().name)])
+                        + &diag.get_string(
+                            common::diagnostic::DEFAULT_MAX_DIAGNOSTIC_DEPTH,
+                            common::diagnostic::DEFAULT_MAX_DIAGNOSTIC_LINE_COUNT,
+                        )),
+                    error_node,
+                    None,
+                );
+            }
+        }
     }
 
     // analyzer/checker.ts:4116
@@ -2389,7 +2618,111 @@ impl Checker {
         is_instance_check: bool,
         diag: P<DiagnosticAddendum>,
     ) -> bool {
-        todo!()
+        let mut is_supported = true;
+        let evaluator = self._evaluator;
+        let is_built_in = |class_type: ClassType, name: &str| ClassType::is_built_in(class_type, Some(&[name.to_string()]));
+
+        analyzer::type_utils::do_for_each_subtype(
+            type_,
+            &mut |subtype, _index, _all_subtypes| {
+                let mut subtype = evaluator.make_top_level_type_vars_concrete(subtype, false, None);
+                subtype = analyzer::type_utils::transform_possible_recursive_type_alias(Some(subtype), 0).unwrap();
+
+                let special_form = subtype.props.borrow().as_ref().and_then(|props| props.special_form);
+                if special_form.is_some_and(|special_form| is_built_in(special_form, "TypeAliasType")) {
+                    diag.add_message(LocAddendum::type_alias_instance_check());
+                    is_supported = false;
+                    return;
+                }
+
+                match subtype.category {
+                    analyzer::types::TypeCategory::Any
+                    | analyzer::types::TypeCategory::Unknown
+                    | analyzer::types::TypeCategory::Unbound => {}
+
+                    analyzer::types::TypeCategory::Class => {
+                        let class_subtype = ClassType(subtype);
+                        let (is_type_arg_explicit, include_subclasses) = {
+                            let priv_ = class_subtype.d().priv_.borrow();
+                            (
+                                priv_.is_type_arg_explicit.unwrap_or(false),
+                                priv_.include_subclasses.unwrap_or(false),
+                            )
+                        };
+                        if is_built_in(class_subtype, "TypedDict") {
+                            diag.add_message(LocAddendum::typed_dict_not_allowed());
+                            is_supported = false;
+                        } else if is_built_in(class_subtype, "NamedTuple") {
+                            diag.add_message(LocAddendum::named_tuple_not_allowed());
+                            is_supported = false;
+                        } else if analyzer::type_utils::is_none_instance(subtype) {
+                            diag.add_message(LocAddendum::none_not_allowed());
+                            is_supported = false;
+                        } else if ClassType::is_typed_dict_class(class_subtype) {
+                            diag.add_message(LocAddendum::typed_dict_class_not_allowed());
+                            is_supported = false;
+                        } else if is_type_arg_explicit && !include_subclasses {
+                            // If it's a class, make sure that it has not been given explicit
+                            // type arguments. This will result in a TypeError exception.
+                            diag.add_message(LocAddendum::generic_class_not_allowed());
+                            is_supported = false;
+                        } else if ClassType::is_illegal_isinstance_class(class_subtype) {
+                            diag.add_message(
+                                LocAddendum::isinstance_class_not_supported()
+                                    .format(&[("type", &class_subtype.d().shared.get().name)]),
+                            );
+                            is_supported = false;
+                        } else if ClassType::is_protocol_class(class_subtype)
+                            && !ClassType::is_runtime_checkable(class_subtype)
+                            && !include_subclasses
+                        {
+                            // According to PEP 544, protocol classes cannot be used as the right-hand
+                            // argument to isinstance or issubclass unless they are annotated as
+                            // "runtime checkable".
+                            diag.add_message(LocAddendum::protocol_requires_runtime_checkable());
+                            is_supported = false;
+                        } else if ClassType::is_new_type_class(class_subtype) {
+                            diag.add_message(LocAddendum::new_type_class_not_allowed());
+                            is_supported = false;
+                        } else if special_form.is_some_and(|special_form| {
+                            analyzer::types::is_class_instance(special_form.0) && is_built_in(special_form, "Annotated")
+                        }) {
+                            diag.add_message(LocAddendum::annotated_not_allowed());
+                            is_supported = false;
+                        } else if special_form.is_some_and(|special_form| {
+                            analyzer::types::is_instantiable_class(special_form.0) && is_built_in(special_form, "Literal")
+                        }) {
+                            diag.add_message(LocAddendum::literal_not_allowed());
+                            is_supported = false;
+                        }
+                    }
+
+                    analyzer::types::TypeCategory::Function => {
+                        if !analyzer::types::TypeBase::is_instantiable(subtype)
+                            || FunctionType(subtype)
+                                .d()
+                                .priv_
+                                .borrow()
+                                .is_callable_with_type_args
+                                .unwrap_or(false)
+                        {
+                            diag.add_message(LocAddendum::generic_class_not_allowed());
+                            is_supported = false;
+                        }
+                    }
+
+                    analyzer::types::TypeCategory::TypeVar => {
+                        diag.add_message(LocAddendum::type_var_not_allowed());
+                        is_supported = false;
+                    }
+
+                    _ => {}
+                }
+            },
+            false,
+        );
+
+        is_supported
     }
 
     // analyzer/checker.ts:4205
@@ -2398,12 +2731,36 @@ impl Checker {
         type_: P<Type>,
         diag: P<DiagnosticAddendum>,
     ) {
-        todo!()
+        if analyzer::types::is_instantiable_class(type_)
+            && ClassType::is_protocol_class(ClassType(type_))
+            && !analyzer::protocols::is_method_only_protocol(ClassType(type_))
+        {
+            diag.add_message(
+                LocAddendum::data_protocol_unsupported().format(&[("name", &ClassType(type_).d().shared.get().name)]),
+            );
+        }
     }
 
     // analyzer/checker.ts:4215
     pub(crate) fn _is_symbol_private(&mut self, name_value: &str, scope_type: ScopeType) -> bool {
-        todo!()
+        // All variables within the scope of a function or a list
+        // comprehension are considered private.
+        if scope_type == ScopeType::Function || scope_type == ScopeType::Comprehension {
+            return true;
+        }
+
+        // See if the symbol is private.
+        if analyzer::symbol_name_utils::is_private_name(name_value) {
+            return true;
+        }
+
+        if analyzer::symbol_name_utils::is_protected_name(name_value) {
+            // Protected names outside of a class scope are considered private.
+            let is_class_scope = scope_type == ScopeType::Class;
+            return !is_class_scope;
+        }
+
+        false
     }
 
     // analyzer/checker.ts:4236
@@ -2412,7 +2769,13 @@ impl Checker {
         node: FunctionNode,
         function_type_result: &FunctionTypeResult,
     ) {
-        todo!()
+        if !analyzer::types::is_class_instance(function_type_result.decorated_type)
+            || !ClassType::is_class_property(ClassType(function_type_result.decorated_type))
+        {
+            return;
+        }
+
+        self._report_deprecated_diagnostic(node.d().name.get().0, &LocMessage::class_property_deprecated(), None);
     }
 
     // analyzer/checker.ts:4247
@@ -2421,7 +2784,30 @@ impl Checker {
         node: NameNode,
         info: &MemberAccessDeprecationInfo,
     ) {
-        todo!()
+        let mut error_message: Option<String> = None;
+        let name = node.d().value.as_str();
+
+        if info.access_type == "property" {
+            if info.access_method == "get" {
+                error_message = Some(LocMessage::deprecated_property_getter().format(&[("name", name)]));
+            } else if info.access_method == "set" {
+                error_message = Some(LocMessage::deprecated_property_setter().format(&[("name", name)]));
+            } else {
+                error_message = Some(LocMessage::deprecated_property_deleter().format(&[("name", name)]));
+            }
+        } else if info.access_type == "descriptor" {
+            if info.access_method == "get" {
+                error_message = Some(LocMessage::deprecated_descriptor_getter().format(&[("name", name)]));
+            } else if info.access_method == "set" {
+                error_message = Some(LocMessage::deprecated_descriptor_setter().format(&[("name", name)]));
+            } else {
+                error_message = Some(LocMessage::deprecated_descriptor_deleter().format(&[("name", name)]));
+            }
+        }
+
+        if let Some(error_message) = error_message.filter(|message| !message.is_empty()) {
+            self._report_deprecated_diagnostic(node.0, &error_message, Some(&info.deprecated_message));
+        }
     }
 
     // analyzer/checker.ts:4273
@@ -2430,7 +2816,19 @@ impl Checker {
         node: ExpressionNode,
         type_result: Option<P<TypeResult>>,
     ) {
-        todo!()
+        let deprecation_info = type_result.and_then(|type_result| type_result.magic_method_deprecation_info.clone());
+        let Some(deprecation_info) = deprecation_info else {
+            return;
+        };
+
+        self._report_deprecated_diagnostic(
+            node,
+            &LocMessage::deprecated_method().format(&[
+                ("className", &deprecation_info.class_name),
+                ("name", &deprecation_info.method_name),
+            ]),
+            Some(&deprecation_info.deprecated_message),
+        );
     }
 
     // analyzer/checker.ts:4289
@@ -2442,7 +2840,200 @@ impl Checker {
         type_: Option<P<Type>>,
         is_import_from_typing: bool,
     ) {
-        todo!()
+        let Some(type_) = type_ else {
+            return;
+        };
+
+        let mut error_message: Option<String> = None;
+        let mut deprecated_message: Option<String> = None;
+
+        // checker.ts:4297
+        fn get_deprecated_message_for_function(function_type: FunctionType) -> String {
+            let shared = function_type.d().shared.get();
+            if let Some(declaration) = shared.declaration.get() {
+                if declaration.node.get().node_type == ParseNodeType::Function {
+                    let containing_class =
+                        analyzer::parse_tree_utils::get_enclosing_class(declaration.node.get(), /* stopAtFunction */ true);
+
+                    if let Some(containing_class) = containing_class {
+                        return LocMessage::deprecated_method().format(&[
+                            ("name", if shared.name.is_empty() { "<anonymous>" } else { &shared.name }),
+                            ("className", &containing_class.d().name.get().d().value),
+                        ]);
+                    }
+                }
+            }
+
+            LocMessage::deprecated_function().format(&[("name", &shared.name)])
+        }
+
+        // checker.ts:4320
+        // Determine if the node is part of a call expression. If so,
+        // we can determine which overload(s) were used to satisfy
+        // the call expression and determine whether any of them
+        // are deprecated.
+        fn get_deprecated_message_for_overloaded_call(
+            evaluator: &TypeEvaluator,
+            node: NameNode,
+            type_: P<Type>,
+            error_message: &mut Option<String>,
+            deprecated_message: &mut Option<String>,
+        ) {
+            let mut call_type_result: Option<P<TypeResult>> = None;
+
+            let call_node = analyzer::parse_tree_utils::get_call_for_name(node);
+            if let Some(call_node) = call_node {
+                call_type_result = evaluator.get_type_result(call_node.0);
+            } else {
+                let decorator_node = analyzer::parse_tree_utils::get_decorator_for_name(node);
+                if let Some(decorator_node) = decorator_node {
+                    call_type_result = evaluator.get_type_result_for_decorator(decorator_node);
+                }
+            }
+
+            let Some(call_type_result) = call_type_result else {
+                return;
+            };
+            let overloads_used_for_call = call_type_result.overloads_used_for_call.borrow().clone();
+            let Some(overloads_used_for_call) = overloads_used_for_call else {
+                return;
+            };
+            if overloads_used_for_call.is_empty() {
+                return;
+            }
+
+            for overload in overloads_used_for_call {
+                let shared = overload.d().shared.get();
+                let overload_deprecated_message = shared.deprecated_message.borrow().clone();
+                if overload_deprecated_message.is_some() {
+                    if node.d().value == shared.name {
+                        *deprecated_message = overload_deprecated_message;
+                        *error_message = Some(get_deprecated_message_for_function(overload));
+                    } else if analyzer::types::is_instantiable_class(type_)
+                        && ["__init__", "__new__"].contains(&shared.name.as_str())
+                    {
+                        *deprecated_message = overload_deprecated_message;
+                        *error_message = Some(
+                            LocMessage::deprecated_constructor()
+                                .format(&[("name", &ClassType(type_).d().shared.get().name)]),
+                        );
+                    } else if analyzer::types::is_class_instance(type_) && shared.name == "__call__" {
+                        *deprecated_message = overload_deprecated_message;
+                        *error_message = Some(LocMessage::deprecated_function().format(&[("name", &node.d().value)]));
+                    }
+                }
+            }
+        }
+
+        let evaluator = self._evaluator;
+        analyzer::type_utils::do_for_each_subtype(
+            type_,
+            &mut |subtype, _index, _all_subtypes| {
+                if analyzer::types::is_class(subtype) {
+                    let class_subtype = ClassType(subtype);
+                    let shared = class_subtype.d().shared.get();
+                    let class_deprecated_message = shared.deprecated_message.borrow().clone();
+                    if !class_subtype.d().priv_.borrow().include_subclasses.unwrap_or(false)
+                        && class_deprecated_message.is_some()
+                        && node.d().value == shared.name
+                    {
+                        deprecated_message = class_deprecated_message;
+                        error_message = Some(LocMessage::deprecated_class().format(&[("name", &shared.name)]));
+                        return;
+                    }
+
+                    get_deprecated_message_for_overloaded_call(
+                        &evaluator,
+                        node,
+                        subtype,
+                        &mut error_message,
+                        &mut deprecated_message,
+                    );
+                    return;
+                }
+
+                if analyzer::types::is_function(subtype) {
+                    let function_subtype = FunctionType(subtype);
+                    let shared = function_subtype.d().shared.get();
+                    let function_deprecated_message = shared.deprecated_message.borrow().clone();
+                    if function_deprecated_message.is_some()
+                        && (shared.name.is_empty() || shared.name == "__call__" || node.d().value == shared.name)
+                    {
+                        deprecated_message = function_deprecated_message;
+                        error_message = Some(get_deprecated_message_for_function(function_subtype));
+                    }
+                } else if analyzer::types::is_overloaded(subtype) {
+                    // Determine if the node is part of a call expression. If so,
+                    // we can determine which overload(s) were used to satisfy
+                    // the call expression and determine whether any of them
+                    // are deprecated.
+                    get_deprecated_message_for_overloaded_call(
+                        &evaluator,
+                        node,
+                        subtype,
+                        &mut error_message,
+                        &mut deprecated_message,
+                    );
+
+                    // If there the implementation itself is deprecated, assume it
+                    // is deprecated even if it's outside of a call expression.
+                    let impl_ = OverloadedType::get_implementation(OverloadedType(subtype));
+                    if let Some(impl_) = impl_ {
+                        if analyzer::types::is_function(impl_) {
+                            let impl_function = FunctionType(impl_);
+                            let shared = impl_function.d().shared.get();
+                            let impl_deprecated_message = shared.deprecated_message.borrow().clone();
+                            if impl_deprecated_message.is_some() && (shared.name.is_empty() || node.d().value == shared.name) {
+                                deprecated_message = impl_deprecated_message;
+                                error_message = Some(get_deprecated_message_for_function(impl_function));
+                            }
+                        }
+                    }
+                }
+            },
+            false,
+        );
+
+        if let Some(error_message) = error_message.filter(|message| !message.is_empty()) {
+            self._report_deprecated_diagnostic(node.0, &error_message, deprecated_message.as_deref());
+        }
+
+        if self._file_info.diagnostic_rule_set.deprecate_typing_aliases {
+            let name = node.d().value.as_str();
+            let deprecated_form = analyzer::deprecated_symbols::DEPRECATED_ALIASES
+                .with(|aliases| aliases.get(name).cloned())
+                .or_else(|| analyzer::deprecated_symbols::DEPRECATED_SPECIAL_FORMS.with(|forms| forms.get(name).cloned()));
+
+            if let Some(deprecated_form) = deprecated_form {
+                if (analyzer::types::is_instantiable_class(type_)
+                    && ClassType(type_).d().shared.get().full_name == deprecated_form.full_name)
+                    || type_.props.borrow().as_ref().is_some_and(|props| {
+                        props
+                            .type_alias_info
+                            .as_ref()
+                            .is_some_and(|info| info.shared.full_name == deprecated_form.full_name)
+                    })
+                {
+                    if common::python_version::PythonVersion::is_greater_or_equal_to(
+                        &self._file_info.execution_environment.python_version,
+                        &deprecated_form.version,
+                    ) && (!deprecated_form.typing_import_only.unwrap_or(false) || is_import_from_typing)
+                    {
+                        self._report_deprecated_diagnostic(
+                            node.0,
+                            &LocMessage::deprecated_type().format(&[
+                                (
+                                    "version",
+                                    &common::python_version::PythonVersion::to_string(&deprecated_form.version),
+                                ),
+                                ("replacement", &deprecated_form.replacement_text),
+                            ]),
+                            None,
+                        );
+                    }
+                }
+            }
+        }
     }
 
     // analyzer/checker.ts:4445
@@ -2452,28 +3043,311 @@ impl Checker {
         diagnostic_message: &str,
         deprecated_message: Option<&str>,
     ) {
-        todo!()
+        let diag = common::diagnostic::DiagnosticAddendum::new();
+        if let Some(deprecated_message) = deprecated_message.filter(|message| !message.is_empty()) {
+            diag.add_message(deprecated_message.to_string());
+        }
+
+        let message = diagnostic_message.to_string()
+            + &diag.get_string(
+                common::diagnostic::DEFAULT_MAX_DIAGNOSTIC_DEPTH,
+                common::diagnostic::DEFAULT_MAX_DIAGNOSTIC_LINE_COUNT,
+            );
+        if self._file_info.diagnostic_rule_set.report_deprecated == common::config_options::DiagnosticLevel::None {
+            self._evaluator.add_deprecated(&message, node);
+        } else {
+            self._evaluator
+                .add_diagnostic(DiagnosticRule::reportDeprecated, &message, node, None);
+        }
     }
 
     // analyzer/checker.ts:4458
     pub(crate) fn _report_unbound_name(&mut self, node: NameNode) {
-        todo!()
+        if self._file_info.diagnostic_rule_set.report_unbound_variable == common::config_options::DiagnosticLevel::None {
+            return;
+        }
+
+        // Skip this for keyword argument names.
+        if let Some(parent) = node.parent.get().and_then(parser::parse_nodes::ArgumentNode::cast) {
+            if parent.d().name.get() == Some(node) {
+                return;
+            }
+        }
+
+        if !self._node_info.is_code_unreachable(node.0) {
+            let type_ = self._evaluator.get_type(node.0);
+
+            if let Some(type_) = type_ {
+                if analyzer::types::is_unbound(type_) {
+                    if self._evaluator.is_node_reachable(node.0, None) {
+                        self._evaluator.add_diagnostic(
+                            DiagnosticRule::reportUnboundVariable,
+                            &LocMessage::symbol_is_unbound().format(&[("name", &node.d().value)]),
+                            node.0,
+                            None,
+                        );
+                    }
+                } else if analyzer::types::is_possibly_unbound(type_) {
+                    self._evaluator.add_diagnostic(
+                        DiagnosticRule::reportPossiblyUnboundVariable,
+                        &LocMessage::symbol_is_possibly_unbound().format(&[("name", &node.d().value)]),
+                        node.0,
+                        None,
+                    );
+                }
+            }
+        }
     }
 
     // analyzer/checker.ts:4491
     pub(crate) fn _conditionally_report_private_usage(&mut self, node: NameNode) {
-        todo!()
+        if self._file_info.diagnostic_rule_set.report_private_usage == common::config_options::DiagnosticLevel::None {
+            return;
+        }
+
+        // Ignore privates in type stubs.
+        if self._file_info.is_stub_file {
+            return;
+        }
+
+        // Ignore privates in named arguments.
+        if let Some(parent) = node.parent.get().and_then(parser::parse_nodes::ArgumentNode::cast) {
+            if parent.d().name.get() == Some(node) {
+                return;
+            }
+        }
+
+        let name_value = node.d().value.clone();
+        let is_private_name = analyzer::symbol_name_utils::is_private_name(&name_value);
+        let is_protected_name = analyzer::symbol_name_utils::is_protected_name(&name_value);
+
+        // If it's not a protected or private name, don't bother with
+        // any further checks.
+        if !is_private_name && !is_protected_name {
+            return;
+        }
+
+        // Get the declarations for this name node, but filter out
+        // any variable declarations that are bound using nonlocal
+        // or global explicit bindings.
+        let declarations: Option<Vec<P<Declaration>>> =
+            self._evaluator.get_decl_info_for_name_node(node, true).map(|decl_info| {
+                decl_info
+                    .decls
+                    .into_iter()
+                    .filter(|decl| {
+                        decl.type_ != analyzer::declaration::DeclarationType::Variable
+                            || !decl.variable().unwrap().is_explicit_binding.get().unwrap_or(false)
+                    })
+                    .collect()
+            });
+
+        let mut primary_declaration = declarations.as_ref().and_then(|declarations| declarations.last().copied());
+        match primary_declaration {
+            None => return,
+            Some(decl) if decl.node.get() == node.0 => return,
+            Some(_) => {}
+        }
+
+        let decl = primary_declaration.unwrap();
+        if decl.type_ == analyzer::declaration::DeclarationType::Alias {
+            // If this symbol is an import alias (i.e. it's a local name rather than the
+            // original imported name), skip the private check.
+            if decl.alias().unwrap().uses_local_name.get() {
+                return;
+            }
+
+            let resolved_alias_info =
+                self._evaluator.resolve_alias_declaration_with_info(decl, /* resolveLocalNames */ true, None);
+
+            let Some(resolved_alias_info) = resolved_alias_info else {
+                return;
+            };
+
+            primary_declaration = resolved_alias_info.declaration;
+
+            // If the alias resolved to a stub file or py.typed source file
+            // and the declaration is marked "externally visible", it is
+            // exempt from private usage checks.
+            if !resolved_alias_info.is_private {
+                return;
+            }
+        }
+
+        let Some(primary_declaration) = primary_declaration else {
+            return;
+        };
+        if primary_declaration.node.get() == node.0 {
+            return;
+        }
+
+        let primary_node = primary_declaration.node.get();
+        let mut class_node = analyzer::parse_tree_utils::get_enclosing_class(primary_node, false);
+
+        // If this is the name of a class, find the class that contains it rather
+        // than constraining the use of the class name within the class itself.
+        if let Some(parent) = primary_node.parent.get() {
+            if let Some(enclosing) = class_node {
+                if parent == enclosing.0 {
+                    class_node = analyzer::parse_tree_utils::get_enclosing_class(enclosing.0, false);
+                }
+            }
+        }
+
+        // If it's a class member, check whether it's a legal protected access.
+        let mut is_protected_access = false;
+        if let Some(class_node) = class_node {
+            if is_protected_name {
+                let decl_class_type_info = self._evaluator.get_type_of_class(class_node);
+                if let Some(decl_class_type_info) = decl_class_type_info {
+                    if analyzer::types::is_instantiable_class(decl_class_type_info.decorated_type) {
+                        // If it's a member defined in a stub file, we'll assume that it's part
+                        // of the public contract even if it's named as though it's private.
+                        if ClassType::is_defined_in_stub(ClassType(decl_class_type_info.decorated_type)) {
+                            return;
+                        }
+
+                        // Note that the access is to a protected class member.
+                        is_protected_access = true;
+
+                        let enclosing_class_node = analyzer::parse_tree_utils::get_enclosing_class(node.0, false);
+                        if let Some(enclosing_class_node) = enclosing_class_node {
+                            let enclosing_class_type_info = self._evaluator.get_type_of_class(enclosing_class_node);
+
+                            // If the referencing class is a subclass of the declaring class, it's
+                            // allowed to access a protected name.
+                            if let Some(enclosing_class_type_info) = enclosing_class_type_info {
+                                if analyzer::types::is_instantiable_class(enclosing_class_type_info.decorated_type)
+                                    && analyzer::type_utils::derives_from_class_recursive(
+                                        ClassType(enclosing_class_type_info.decorated_type),
+                                        ClassType(decl_class_type_info.decorated_type),
+                                        /* ignoreUnknown */ true,
+                                    )
+                                {
+                                    return;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if let Some(class_node) = class_node {
+            if !analyzer::parse_tree_utils::is_node_contained_within(node.0, class_node.0) {
+                if is_protected_access {
+                    self._evaluator.add_diagnostic(
+                        DiagnosticRule::reportPrivateUsage,
+                        &LocMessage::protected_used_outside_of_class().format(&[("name", &name_value)]),
+                        node.0,
+                        None,
+                    );
+                } else {
+                    self._evaluator.add_diagnostic(
+                        DiagnosticRule::reportPrivateUsage,
+                        &LocMessage::private_used_outside_of_class().format(&[("name", &name_value)]),
+                        node.0,
+                        None,
+                    );
+                }
+            }
+        }
     }
 
     // analyzer/checker.ts:4626
     pub(crate) fn _validate_enum_class_override(&mut self, node: ClassNode, class_type: ClassType) {
-        todo!()
+        let base_classes = class_type.d().shared.get().base_classes.borrow().clone();
+        for (index, base_class) in base_classes.iter().enumerate() {
+            if analyzer::types::is_class(*base_class)
+                && analyzer::enums::is_enum_class_with_members(&self._evaluator, ClassType(*base_class), &self._node_info)
+            {
+                let argument = node.d().arguments.borrow()[index];
+                self._evaluator.add_diagnostic(
+                    DiagnosticRule::reportGeneralTypeIssues,
+                    &LocMessage::enum_class_override().format(&[("name", &ClassType(*base_class).d().shared.get().name)]),
+                    argument.0,
+                    None,
+                );
+            }
+        }
     }
 
     // analyzer/checker.ts:4641
     /// Nested in the TS body: validateStatement (:4648), validateSuite (:4688).
     pub(crate) fn _validate_typed_dict_class_suite(&mut self, suite_node: SuiteNode) {
-        todo!()
+        fn emit_bad_statement_error(evaluator: &TypeEvaluator, node: P<ParseNode>) {
+            evaluator.add_diagnostic(
+                DiagnosticRule::reportGeneralTypeIssues,
+                &LocMessage::typed_dict_bad_var(),
+                node,
+                None,
+            );
+        }
+
+        // checker.ts:4648
+        fn validate_statement(
+            evaluator: &TypeEvaluator,
+            node_info: &analyzer::analyzer_node_info::AnalyzerNodeInfoAccessor,
+            statement: StatementNode,
+        ) {
+            if node_info.is_code_unreachable(statement) {
+                return;
+            }
+
+            if let Some(statement_list) = StatementListNode::cast(statement) {
+                let substatements = statement_list.d().statements.borrow().clone();
+                for substatement in substatements {
+                    if substatement.node_type != ParseNodeType::TypeAnnotation
+                        && substatement.node_type != ParseNodeType::Ellipsis
+                        && substatement.node_type != ParseNodeType::StringList
+                        && substatement.node_type != ParseNodeType::Pass
+                    {
+                        emit_bad_statement_error(evaluator, substatement);
+                    }
+                }
+
+                return;
+            }
+
+            if let Some(if_node) = IfNode::cast(statement) {
+                let condition_value = node_info.get_static_condition_value(statement);
+                let Some(condition_value) = condition_value else {
+                    emit_bad_statement_error(evaluator, statement);
+                    return;
+                };
+
+                let reachable_suite = if condition_value {
+                    Some(if_node.d().if_suite.get().0)
+                } else {
+                    if_node.d().else_suite.get()
+                };
+                if let Some(reachable_suite) = reachable_suite {
+                    if reachable_suite.node_type == ParseNodeType::If {
+                        validate_statement(evaluator, node_info, reachable_suite);
+                    } else {
+                        validate_suite(evaluator, node_info, SuiteNode(reachable_suite));
+                    }
+                }
+
+                return;
+            }
+
+            emit_bad_statement_error(evaluator, statement);
+        }
+
+        // checker.ts:4688
+        fn validate_suite(
+            evaluator: &TypeEvaluator,
+            node_info: &analyzer::analyzer_node_info::AnalyzerNodeInfoAccessor,
+            suite: SuiteNode,
+        ) {
+            let statements = suite.d().statements.borrow().clone();
+            for statement in statements {
+                validate_statement(evaluator, node_info, statement);
+            }
+        }
+
+        validate_suite(&self._evaluator, &self._node_info, suite_node);
     }
 
     // analyzer/checker.ts:4695
@@ -2483,7 +3357,105 @@ impl Checker {
         function_type: FunctionType,
         is_method: bool,
     ) {
-        todo!()
+        let return_type = function_type.d().shared.get().declared_return_type.get();
+        let Some(return_type) = return_type else {
+            return;
+        };
+
+        let is_built_in = |class_type: ClassType, name: &str| ClassType::is_built_in(class_type, Some(&[name.to_string()]));
+
+        let mut guard_subtypes: Vec<ClassType> = Vec::new();
+        analyzer::type_utils::do_for_each_subtype(
+            return_type,
+            &mut |subtype, _index, _all_subtypes| {
+                if analyzer::types::is_class_instance(subtype)
+                    && (is_built_in(ClassType(subtype), "TypeGuard") || is_built_in(ClassType(subtype), "TypeIs"))
+                    && ClassType(subtype)
+                        .d()
+                        .priv_
+                        .borrow()
+                        .type_args
+                        .as_ref()
+                        .is_some_and(|type_args| !type_args.is_empty())
+                {
+                    guard_subtypes.push(ClassType(subtype));
+                }
+            },
+            false,
+        );
+
+        if guard_subtypes.is_empty() {
+            return;
+        }
+
+        // Make sure there's at least one input parameter provided.
+        let param_list_len = function_type.d().shared.get().parameters.get().borrow().len() as i32;
+        let mut param_count = param_list_len;
+        if is_method
+            && (FunctionType::is_instance_method(function_type)
+                || FunctionType::is_constructor_method(function_type)
+                || FunctionType::is_class_method(function_type))
+        {
+            param_count -= 1;
+        }
+
+        if param_count < 1 {
+            self._evaluator.add_diagnostic(
+                DiagnosticRule::reportGeneralTypeIssues,
+                &LocMessage::type_guard_param_count(),
+                node.d().name.get().0,
+                None,
+            );
+        }
+
+        let scope_ids = analyzer::type_utils::get_type_var_scope_ids(function_type.0);
+
+        // Determine the type of the first parameter.
+        let param_index: i32 = if is_method && !FunctionType::is_static_method(function_type) { 1 } else { 0 };
+        if param_index >= function_type.d().shared.get().parameters.get().borrow().len() as i32 {
+            return;
+        }
+
+        let param_type = analyzer::type_utils::make_type_vars_bound(
+            FunctionType::get_param_type(function_type, param_index),
+            Some(&scope_ids),
+        );
+
+        for guard_subtype in guard_subtypes {
+            if is_built_in(guard_subtype, "TypeIs") {
+                let narrowed_type = guard_subtype.d().priv_.borrow().type_args.as_ref().unwrap()[0];
+                let mut type_guard_type = analyzer::type_utils::make_type_vars_bound(narrowed_type, Some(&scope_ids));
+                type_guard_type = analyzer::types::TypeBase::clone_with_type_form(type_guard_type, Some(type_guard_type));
+
+                // Verify that the typeGuardType is a narrower type than the paramType.
+                if !self._evaluator.assign_type(
+                    param_type,
+                    type_guard_type,
+                    None,
+                    None,
+                    analyzer::type_evaluator_types::AssignTypeFlags::Default,
+                    0,
+                ) {
+                    let return_annotation = node.d().return_annotation.get().or_else(|| {
+                        node.d()
+                            .func_annotation_comment
+                            .get()
+                            .map(|comment| comment.d().return_annotation.get())
+                    });
+                    if let Some(return_annotation) = return_annotation {
+                        self._evaluator.add_diagnostic(
+                            DiagnosticRule::reportGeneralTypeIssues,
+                            &LocMessage::type_is_return_type().format(&[
+                                ("type", &self._evaluator.print_type(param_type, None)),
+                                ("returnType", &self._evaluator.print_type(narrowed_type, None)),
+                            ]),
+                            return_annotation,
+                            None,
+                        );
+                    }
+                }
+            }
+        }
     }
 
     // analyzer/checker.ts:4772
@@ -2493,7 +3465,44 @@ impl Checker {
         function_type: FunctionType,
         is_method: bool,
     ) {
-        todo!()
+        let function_name = function_type.d().shared.get().name.clone();
+
+        // Is this an '__init__' method? Verify that it returns None.
+        if is_method && function_name == "__init__" {
+            let return_annotation = node.d().return_annotation.get().or_else(|| {
+                node.d()
+                    .func_annotation_comment
+                    .get()
+                    .map(|comment| comment.d().return_annotation.get())
+            });
+            let declared_return_type = function_type.d().shared.get().declared_return_type.get();
+
+            if let (Some(return_annotation), Some(declared_return_type)) = (return_annotation, declared_return_type) {
+                if !analyzer::type_utils::is_none_instance(declared_return_type)
+                    && !analyzer::types::is_never(declared_return_type)
+                {
+                    self._evaluator.add_diagnostic(
+                        DiagnosticRule::reportGeneralTypeIssues,
+                        &LocMessage::init_must_return_none(),
+                        return_annotation,
+                        None,
+                    );
+                }
+            } else {
+                let inferred_return_type = self._evaluator.get_inferred_return_type(function_type);
+                if !analyzer::types::is_never(inferred_return_type)
+                    && !analyzer::type_utils::is_none_instance(inferred_return_type)
+                    && !analyzer::types::is_any_or_unknown(inferred_return_type)
+                {
+                    self._evaluator.add_diagnostic(
+                        DiagnosticRule::reportGeneralTypeIssues,
+                        &LocMessage::init_must_return_none(),
+                        node.d().name.get().0,
+                        None,
+                    );
+                }
+            }
+        }
     }
 
     // analyzer/checker.ts:4805
@@ -2502,7 +3511,102 @@ impl Checker {
         node: FunctionNode,
         function_type: FunctionType,
     ) {
-        todo!()
+        // Stub files are allowed not to return an actual value,
+        // so skip this if it's a stub file.
+        if self._file_info.is_stub_file {
+            return;
+        }
+
+        let return_annotation = node.d().return_annotation.get().or_else(|| {
+            node.d()
+                .func_annotation_comment
+                .get()
+                .map(|comment| comment.d().return_annotation.get())
+        });
+        if let Some(return_annotation) = return_annotation {
+            let function_never_returns = !self._evaluator.is_after_node_reachable(node.0);
+            let implicitly_returns_none = self._evaluator.is_after_node_reachable(node.d().suite.get().0);
+
+            let mut declared_return_type = function_type.d().shared.get().declared_return_type.get();
+
+            if let Some(return_type) = declared_return_type {
+                self._report_unknown_return_result(node, return_type);
+                self._validate_return_type_is_not_contravariant(return_type, return_annotation);
+
+                let live_scopes = analyzer::parse_tree_utils::get_type_var_scopes_for_node(node.0, self._node_info.reader());
+                declared_return_type = Some(analyzer::type_utils::make_type_vars_bound(return_type, Some(&live_scopes)));
+            }
+
+            // Wrap the declared type in a generator type if the function is a generator.
+            if FunctionType::is_generator(function_type) {
+                declared_return_type = analyzer::type_utils::get_declared_generator_return_type(function_type);
+            }
+
+            // The types of all return statement expressions were already checked
+            // against the declared type, but we need to verify the implicit None
+            // at the end of the function.
+            if let Some(declared_return_type) = declared_return_type {
+                if !function_never_returns && implicitly_returns_none {
+                    if analyzer::types::is_never(declared_return_type) {
+                        // If the function consists entirely of "...", assume that it's
+                        // an abstract method or a protocol method and don't require that
+                        // the return type matches. This check can also be skipped for an overload.
+                        if !analyzer::parse_tree_utils::is_suite_empty(node.d().suite.get())
+                            && !FunctionType::is_overloaded(function_type)
+                        {
+                            self._evaluator.add_diagnostic(
+                                DiagnosticRule::reportReturnType,
+                                &LocMessage::no_return_returns_none(),
+                                return_annotation,
+                                None,
+                            );
+                        }
+                    } else if !FunctionType::is_abstract_method(function_type) {
+                        // If the function consists entirely of "...", assume that it's
+                        // an abstract method or a protocol method and don't require that
+                        // the return type matches. This check can also be skipped for an overload.
+                        let is_empty_suite = analyzer::parse_tree_utils::is_suite_empty(node.d().suite.get())
+                            || FunctionType::is_overloaded(function_type);
+
+                        // Make sure that the function doesn't implicitly return None if the declared
+                        // type doesn't allow it. Skip this check for abstract methods.
+                        let diag_addendum = if is_empty_suite {
+                            None
+                        } else {
+                            Some(common::diagnostic::DiagnosticAddendum::new())
+                        };
+
+                        // If the declared type isn't compatible with 'None', flag an error.
+                        if !self._evaluator.assign_type(
+                            declared_return_type,
+                            self._evaluator.get_none_type(),
+                            diag_addendum,
+                            None,
+                            analyzer::type_evaluator_types::AssignTypeFlags::Default,
+                            0,
+                        ) && !is_empty_suite
+                        {
+                            // `diagAddendum?.getString()`: the addendum exists whenever the suite is not empty.
+                            self._evaluator.add_diagnostic(
+                                DiagnosticRule::reportReturnType,
+                                &(LocMessage::return_missing()
+                                    .format(&[("returnType", &self._evaluator.print_type(declared_return_type, None))])
+                                    + &diag_addendum.unwrap().get_string(
+                                        common::diagnostic::DEFAULT_MAX_DIAGNOSTIC_DEPTH,
+                                        common::diagnostic::DEFAULT_MAX_DIAGNOSTIC_LINE_COUNT,
+                                    )),
+                                return_annotation,
+                                None,
+                            );
+                        }
+                    }
+                }
+            }
+        } else {
+            let inferred_return_type = self._evaluator.get_inferred_return_type(function_type);
+            self._report_unknown_return_result(node, inferred_return_type);
+            self._validate_return_type_is_not_contravariant(inferred_return_type, node.d().name.get().0);
+        }
     }
 
     // analyzer/checker.ts:4879
@@ -2511,7 +3615,31 @@ impl Checker {
         return_type: P<Type>,
         error_node: ExpressionNode,
     ) {
-        todo!()
+        let mut is_contra_type_var = false;
+
+        analyzer::type_utils::do_for_each_subtype(
+            return_type,
+            &mut |subtype, _index, _all_subtypes| {
+                if analyzer::types::is_type_var(subtype) {
+                    let type_var = TypeVarType(subtype);
+                    if type_var.d().shared.get().declared_variance.get() == analyzer::types::Variance::Contravariant
+                        && type_var.d().priv_.borrow().scope_type == Some(analyzer::types::TypeVarScopeType::Class)
+                    {
+                        is_contra_type_var = true;
+                    }
+                }
+            },
+            false,
+        );
+
+        if is_contra_type_var {
+            self._evaluator.add_diagnostic(
+                DiagnosticRule::reportGeneralTypeIssues,
+                &LocMessage::return_type_contravariant(),
+                error_node,
+                None,
+            );
+        }
     }
 
     // analyzer/checker.ts:4901
@@ -2520,22 +3648,434 @@ impl Checker {
         node: FunctionNode,
         return_type: P<Type>,
     ) {
-        todo!()
+        if analyzer::types::is_unknown(return_type) {
+            self._evaluator.add_diagnostic(
+                DiagnosticRule::reportUnknownParameterType,
+                &LocMessage::return_type_unknown(),
+                node.d().name.get().0,
+                None,
+            );
+        } else if analyzer::type_utils::is_partly_unknown(return_type, 0) {
+            self._evaluator.add_diagnostic(
+                DiagnosticRule::reportUnknownParameterType,
+                &LocMessage::return_type_partially_unknown().format(&[(
+                    "returnType",
+                    &self._evaluator.print_type(
+                        return_type,
+                        Some(&analyzer::type_evaluator_types::PrintTypeOptions {
+                            expand_type_alias: Some(true),
+                            ..Default::default()
+                        }),
+                    ),
+                )]),
+                node.d().name.get().0,
+                None,
+            );
+        }
     }
 
     // analyzer/checker.ts:4921
     pub(crate) fn _validate_final_member_overrides(&mut self, class_type: ClassType) {
-        todo!()
+        let evaluator = self._evaluator;
+        ClassType::get_symbol_table(class_type).for_each(|local_symbol, name| {
+            let parent_symbol = analyzer::type_utils::look_up_class_member(
+                class_type,
+                name,
+                analyzer::type_utils::MemberAccessFlags::SkipOriginalClass,
+                None,
+            );
+
+            let Some(parent_symbol) = parent_symbol else {
+                return;
+            };
+            if analyzer::types::is_instantiable_class(parent_symbol.class_type)
+                && !analyzer::symbol_name_utils::is_private_name(name)
+            {
+                // Did the parent class explicitly declare the variable as final?
+                if evaluator.is_final_variable(parent_symbol.symbol) {
+                    let decl = local_symbol.get_declarations()[0];
+                    evaluator.add_diagnostic(
+                        DiagnosticRule::reportGeneralTypeIssues,
+                        &LocMessage::final_redeclaration_by_subclass().format(&[
+                            ("name", name),
+                            ("className", &ClassType(parent_symbol.class_type).d().shared.get().name),
+                        ]),
+                        decl.node.get(),
+                        None,
+                    );
+                } else if ClassType::has_named_tuple_entry(ClassType(parent_symbol.class_type), name)
+                    && !analyzer::symbol_name_utils::is_dunder_name(name)
+                {
+                    // If the parent class is a named tuple, all instance variables
+                    // (other than dundered ones) are implicitly final.
+                    let decl = local_symbol.get_declarations()[0];
+
+                    if decl.type_ == analyzer::declaration::DeclarationType::Variable {
+                        evaluator.add_diagnostic(
+                            DiagnosticRule::reportIncompatibleVariableOverride,
+                            &LocMessage::named_tuple_entry_redeclared().format(&[
+                                ("name", name),
+                                ("className", &ClassType(parent_symbol.class_type).d().shared.get().name),
+                            ]),
+                            decl.node.get(),
+                            None,
+                        );
+                    }
+                }
+            }
+        });
     }
 
     // analyzer/checker.ts:4962
     pub(crate) fn _validate_enum_members(&mut self, class_type: ClassType, node: ClassNode) {
-        todo!()
+        if !ClassType::is_enum_class(class_type) || ClassType::is_built_in(class_type, None) {
+            return;
+        }
+
+        let evaluator = self._evaluator;
+
+        // Does the "_value_" field have a declared type? If so, we'll enforce it.
+        let declared_value_type =
+            analyzer::enums::get_enum_declared_value_type(&evaluator, class_type, /* declaredTypesOnly */ true);
+
+        // Is there a custom "__new__" and/or "__init__" method? If so, we'll
+        // verify that the signature of these calls is compatible with the values.
+        let mut new_member_type_result = analyzer::constructors::get_bound_new_method(
+            &evaluator,
+            node.d().name.get().0,
+            class_type,
+            /* diag */ None,
+            analyzer::type_utils::MemberAccessFlags::SkipObjectBaseClass,
+        );
+
+        // If this __new__ comes from a built-in class like Enum, we'll ignore it.
+        if let Some(result_class_type) = new_member_type_result.and_then(|result| result.class_type) {
+            if analyzer::types::is_class(result_class_type) && ClassType::is_built_in(ClassType(result_class_type), None) {
+                new_member_type_result = None;
+            }
+        }
+
+        let mut init_member_type_result = analyzer::constructors::get_bound_init_method(
+            &evaluator,
+            node.d().name.get().0,
+            ClassType::clone_as_instance(class_type, true),
+            /* diag */ None,
+            analyzer::type_utils::MemberAccessFlags::SkipObjectBaseClass,
+        );
+
+        // If this __init__ comes from a built-in class like Enum, we'll ignore it.
+        if let Some(result_class_type) = init_member_type_result.and_then(|result| result.class_type) {
+            if analyzer::types::is_class(result_class_type) && ClassType::is_built_in(ClassType(result_class_type), None) {
+                init_member_type_result = None;
+            }
+        }
+
+        let node_info_reader = self._node_info.reader();
+        ClassType::get_symbol_table(class_type).for_each(|symbol, name| {
+            // Determine whether this is an enum member. We ignore the presence
+            // of an annotation in this case because the runtime does. From a
+            // type checking perspective, if the runtime treats the assignment
+            // as an enum member but there is a type annotation present, it is
+            // considered a type checking error.
+            let symbol_type = analyzer::enums::transform_type_for_enum_member(
+                &evaluator,
+                class_type,
+                name,
+                node_info_reader,
+                /* ignoreAnnotation */ true,
+                0,
+            );
+
+            // Is this symbol a literal instance of the enum class?
+            let Some(symbol_type) = symbol_type else {
+                return;
+            };
+            if !analyzer::types::is_class_instance(symbol_type)
+                || !ClassType::is_same_generic_class(
+                    ClassType(symbol_type),
+                    ClassType::clone_as_instance(class_type, true),
+                    0,
+                )
+            {
+                return;
+            }
+            let literal_value = ClassType(symbol_type).d().priv_.borrow().literal_value.clone();
+            let Some(analyzer::types::LiteralValue::EnumLiteral(enum_literal)) = literal_value else {
+                return;
+            };
+
+            // Enum members should not have type annotations.
+            let typed_decls = symbol.get_typed_declarations();
+            if !typed_decls.is_empty() {
+                if typed_decls[0].type_ == analyzer::declaration::DeclarationType::Variable
+                    && typed_decls[0].variable().unwrap().inferred_type_source.get().is_some()
+                {
+                    evaluator.add_diagnostic(
+                        DiagnosticRule::reportGeneralTypeIssues,
+                        &LocMessage::enum_member_type_annotation(),
+                        typed_decls[0].node.get(),
+                        None,
+                    );
+                }
+                return;
+            }
+
+            // Look for a duplicate assignment.
+            let decls = symbol.get_declarations();
+            if decls.len() >= 2 && decls[0].type_ == analyzer::declaration::DeclarationType::Variable {
+                evaluator.add_diagnostic(
+                    DiagnosticRule::reportGeneralTypeIssues,
+                    &LocMessage::duplicate_enum_member().format(&[("name", name)]),
+                    decls[1].node.get(),
+                    None,
+                );
+
+                return;
+            }
+
+            if decls[0].type_ != analyzer::declaration::DeclarationType::Variable {
+                return;
+            }
+
+            // Look for an enum attribute annotated with "Final".
+            if decls[0].variable().unwrap().is_final.get().unwrap_or(false) {
+                evaluator.add_diagnostic(
+                    DiagnosticRule::reportGeneralTypeIssues,
+                    &LocMessage::enum_member_type_annotation(),
+                    decls[0].node.get(),
+                    None,
+                );
+            }
+
+            let decl_node = decls[0].node.get();
+            let assigned_value_type = enum_literal.item_type;
+            let assignment_node = analyzer::parse_tree_utils::get_parent_node_of_type(decl_node, ParseNodeType::Assignment)
+                .and_then(parser::parse_nodes::AssignmentNode::cast);
+            let error_node = assignment_node
+                .map(|assignment_node| assignment_node.d().right_expr.get())
+                .unwrap_or(decl_node);
+
+            // Validate the __new__ and __init__ methods if present.
+            if new_member_type_result.is_some() || init_member_type_result.is_some() {
+                if !analyzer::types::is_any_or_unknown(assigned_value_type) {
+                    // Construct an argument list. If the assigned type is a tuple, we'll
+                    // unpack it. Otherwise, only one argument is passed.
+                    let arg_list = vec![analyzer::type_evaluator_types::Arg::ArgWithType(P::new_eval(
+                        analyzer::type_evaluator_types::ArgWithType {
+                            arg_category: if analyzer::types::is_class_instance(assigned_value_type)
+                                && analyzer::type_utils::is_tuple_class(ClassType(assigned_value_type))
+                            {
+                                parser::parse_nodes::ArgCategory::UnpackedList
+                            } else {
+                                parser::parse_nodes::ArgCategory::Simple
+                            },
+                            node: None,
+                            name: None,
+                            type_result: P::new_eval(TypeResult::new(assigned_value_type)),
+                            value_expression: None,
+                            active: None,
+                            enforce_iterable: None,
+                        },
+                    ))];
+
+                    if let Some(new_member_type_result) = new_member_type_result {
+                        evaluator.validate_call_args(
+                            error_node,
+                            &arg_list,
+                            new_member_type_result,
+                            /* constraints */ None,
+                            /* skipUnknownArgCheck */ None,
+                            /* inferenceContext */ None,
+                            0,
+                        );
+                    }
+
+                    if let Some(init_member_type_result) = init_member_type_result {
+                        evaluator.validate_call_args(
+                            error_node,
+                            &arg_list,
+                            init_member_type_result,
+                            /* constraints */ None,
+                            /* skipUnknownArgCheck */ None,
+                            /* inferenceContext */ None,
+                            0,
+                        );
+                    }
+                }
+            } else if let Some(declared_value_type) = declared_value_type {
+                let diag = common::diagnostic::DiagnosticAddendum::new();
+
+                // If the assigned value is already an instance of this enum class, skip this check.
+                if (!analyzer::types::is_class_instance(assigned_value_type)
+                    || !ClassType::is_same_generic_class(ClassType(assigned_value_type), class_type, 0))
+                    && !evaluator.assign_type(
+                        declared_value_type,
+                        assigned_value_type,
+                        Some(diag),
+                        None,
+                        analyzer::type_evaluator_types::AssignTypeFlags::Default,
+                        0,
+                    )
+                {
+                    let printed = evaluator.print_src_dest_types(assigned_value_type, declared_value_type, None);
+                    evaluator.add_diagnostic(
+                        DiagnosticRule::reportAssignmentType,
+                        &(LocMessage::type_assignment_mismatch()
+                            .format(&[("sourceType", &printed.source_type), ("destType", &printed.dest_type)])
+                            + &diag.get_string(
+                                common::diagnostic::DEFAULT_MAX_DIAGNOSTIC_DEPTH,
+                                common::diagnostic::DEFAULT_MAX_DIAGNOSTIC_LINE_COUNT,
+                            )),
+                        error_node,
+                        None,
+                    );
+                }
+            }
+        });
     }
 
     // analyzer/checker.ts:5133
     pub(crate) fn _validate_data_class_post_init(&mut self, class_type: ClassType) {
-        todo!()
+        if !ClassType::is_data_class(class_type) {
+            return;
+        }
+
+        let post_init_member = analyzer::type_utils::look_up_class_member(
+            class_type,
+            "__post_init__",
+            analyzer::type_utils::MemberAccessFlags::SkipBaseClasses
+                | analyzer::type_utils::MemberAccessFlags::DeclaredTypesOnly,
+            None,
+        );
+
+        // If there's no __post_init__ method, there's nothing to check.
+        let Some(post_init_member) = post_init_member else {
+            return;
+        };
+
+        // If the class derives from Any, we can't reliably apply the check.
+        if ClassType::derives_from_any_or_unknown(class_type) {
+            return;
+        }
+
+        // Collect the list of init-only variables in the order they were declared.
+        let mut init_only_symbol_map: jsrt::JsMap<String, P<Symbol>> = jsrt::JsMap::default();
+        for mro_class in ClassType::get_reverse_mro(class_type) {
+            if analyzer::types::is_class(mro_class) && ClassType::is_data_class(ClassType(mro_class)) {
+                ClassType::get_symbol_table(ClassType(mro_class)).for_each(|symbol, name| {
+                    if symbol.is_init_var() {
+                        init_only_symbol_map.insert(name.to_string(), symbol);
+                    }
+                });
+            }
+        }
+
+        let post_init_type = self._evaluator.get_type_of_member(&post_init_member);
+        if !analyzer::types::is_function(post_init_type)
+            || !FunctionType::is_instance_method(FunctionType(post_init_type))
+            || FunctionType(post_init_type).d().shared.get().declaration.get().is_none()
+        {
+            return;
+        }
+        let post_init_type = FunctionType(post_init_type);
+
+        let param_list_details = analyzer::parameter_utils::get_param_list_details(post_init_type, None);
+        // If there is an *args or **kwargs parameter or a keyword-only separator,
+        // don't bother checking.
+        if param_list_details.args_index.is_some()
+            || param_list_details.kwargs_index.is_some()
+            || param_list_details.first_keyword_only_index.is_some()
+        {
+            return;
+        }
+
+        // Verify that the parameter count matches.
+        // The filter indexes the virtual parameter list, as pyright does.
+        let non_default_params_count = param_list_details
+            .params
+            .iter()
+            .enumerate()
+            .filter(|(index, _param_info)| FunctionType::get_param_default_type(post_init_type, *index as i32).is_none())
+            .count();
+
+        // We expect to see one param for "self" plus one for each of the InitVars.
+        let expected_param_count = init_only_symbol_map.len() + 1;
+        let post_init_node = FunctionNode::cast(
+            post_init_type.d().shared.get().declaration.get().unwrap().node.get(),
+        )
+        .unwrap();
+
+        if expected_param_count < non_default_params_count || expected_param_count > param_list_details.params.len() {
+            self._evaluator.add_diagnostic(
+                DiagnosticRule::reportGeneralTypeIssues,
+                &LocMessage::data_class_post_init_param_count()
+                    .format(&[("expected", &init_only_symbol_map.len().to_string())]),
+                post_init_node.d().name.get().0,
+                None,
+            );
+        }
+
+        // Verify that the parameter types match.
+        let mut param_index = 1;
+
+        for (field_name, symbol) in init_only_symbol_map.iter() {
+            if param_index >= param_list_details.params.len() {
+                continue;
+            }
+
+            let param = param_list_details.params[param_index].param.clone();
+            let param_node = post_init_node
+                .d()
+                .params
+                .borrow()
+                .iter()
+                .find(|node| node.d().name.get().map(|name| name.d().value.clone()) == param.name)
+                .copied();
+            let annotation_node =
+                param_node.and_then(|param_node| param_node.d().annotation.get().or(param_node.d().annotation_comment.get()));
+
+            if let Some(annotation_node) = annotation_node.filter(|_| analyzer::types::FunctionParam::is_type_declared(&param)) {
+                let field_type = self._evaluator.get_declared_type_of_symbol(*symbol, None).type_;
+                let param_type = FunctionType::get_param_type(post_init_type, param_list_details.params[param_index].index);
+                let assign_type_diag = common::diagnostic::DiagnosticAddendum::new();
+
+                if let Some(field_type) = field_type {
+                    if !self._evaluator.assign_type(
+                        param_type,
+                        field_type,
+                        Some(assign_type_diag),
+                        None,
+                        analyzer::type_evaluator_types::AssignTypeFlags::Default,
+                        0,
+                    ) {
+                        let diagnostic = self._evaluator.add_diagnostic(
+                            DiagnosticRule::reportGeneralTypeIssues,
+                            &(LocMessage::data_class_post_init_type().format(&[("fieldName", field_name)])
+                                + &assign_type_diag.get_string(
+                                    common::diagnostic::DEFAULT_MAX_DIAGNOSTIC_DEPTH,
+                                    common::diagnostic::DEFAULT_MAX_DIAGNOSTIC_LINE_COUNT,
+                                )),
+                            annotation_node,
+                            None,
+                        );
+
+                        if let Some(diagnostic) = diagnostic {
+                            let field_decls = symbol.get_typed_declarations();
+                            if !field_decls.is_empty() {
+                                diagnostic.add_related_info(
+                                    LocAddendum::data_class_field_location(),
+                                    field_decls[0].uri.get(),
+                                    field_decls[0].range.get(),
+                                    common::diagnostic::TaskListPriority::Normal,
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+
+            param_index += 1;
+        }
     }
 
     // analyzer/checker.ts:5246
@@ -2544,7 +4084,47 @@ impl Checker {
         class_type: ClassType,
         error_node: ClassNode,
     ) {
-        todo!()
+        if !ClassType::is_final(class_type) {
+            return;
+        }
+
+        if !ClassType::supports_abstract_methods(class_type) {
+            return;
+        }
+
+        let abstract_symbols = self._evaluator.get_abstract_symbols(class_type);
+        if abstract_symbols.is_empty() {
+            return;
+        }
+
+        let diag_addendum = common::diagnostic::DiagnosticAddendum::new();
+        let errors_to_display = 2;
+
+        for (index, abstract_method) in abstract_symbols.iter().enumerate() {
+            if index == errors_to_display {
+                diag_addendum.add_message(
+                    LocAddendum::member_is_abstract_more()
+                        .format(&[("count", &(abstract_symbols.len() - errors_to_display).to_string())]),
+                );
+            } else if index < errors_to_display && analyzer::types::is_instantiable_class(abstract_method.class_type) {
+                let class_name = ClassType(abstract_method.class_type).d().shared.get().name.clone();
+                diag_addendum.add_message(
+                    LocAddendum::member_is_abstract()
+                        .format(&[("type", &class_name), ("name", &abstract_method.symbol_name)]),
+                );
+            }
+        }
+
+        self._evaluator.add_diagnostic(
+            DiagnosticRule::reportGeneralTypeIssues,
+            &(LocMessage::final_class_is_abstract().format(&[("type", &class_type.d().shared.get().name)])
+                + &diag_addendum.get_string(
+                    common::diagnostic::DEFAULT_MAX_DIAGNOSTIC_DEPTH,
+                    common::diagnostic::DEFAULT_MAX_DIAGNOSTIC_LINE_COUNT,
+                )),
+            error_node.d().name.get().0,
+            None,
+        );
     }
 
     // analyzer/checker.ts:5294
@@ -2553,7 +4133,185 @@ impl Checker {
         node: ClassNode,
         class_type: ClassType,
     ) {
-        todo!()
+        // This check doesn't apply to stub files.
+        if self._file_info.is_stub_file {
+            return;
+        }
+
+        // This check can be expensive, so don't perform it if the corresponding
+        // rule is disabled.
+        if self._file_info.diagnostic_rule_set.report_uninitialized_instance_variable
+            == common::config_options::DiagnosticLevel::None
+        {
+            return;
+        }
+
+        // Protocol classes and ABCs are exempted from this check unless they are
+        // marked @final.
+        if ClassType::is_protocol_class(class_type)
+            || (ClassType::supports_abstract_methods(class_type) && !ClassType::is_final(class_type))
+        {
+            return;
+        }
+
+        // If the class is final, see if it has any abstract base classes that define
+        // variables. We need to make sure these are initialized.
+        let mut abstract_symbols: jsrt::JsMap<String, ClassMember> = jsrt::JsMap::default();
+        if ClassType::is_final(class_type) {
+            analyzer::type_utils::get_protocol_symbols_recursive(
+                class_type,
+                &mut abstract_symbols,
+                analyzer::types::ClassTypeFlags::SupportsAbstractMethods,
+                0,
+            );
+        }
+
+        // If this is a dataclass, get all of the entries so we can tell which
+        // ones are initialized by the synthesized __init__ method.
+        let mut data_class_entries: Vec<P<analyzer::types::DataClassEntry>> = Vec::new();
+        if ClassType::is_data_class(class_type) {
+            analyzer::data_classes::add_inherited_data_class_entries(class_type, &mut data_class_entries);
+        }
+
+        let evaluator = self._evaluator;
+        ClassType::get_symbol_table(class_type).for_each(|local_symbol, name| {
+            abstract_symbols.shift_remove(name);
+
+            // This applies only to instance members.
+            if !local_symbol.is_instance_member() {
+                return;
+            }
+
+            let decls = local_symbol.get_declarations();
+
+            // If the symbol is assigned (or at least declared) within the
+            // class body or within the __init__ method, it can be ignored.
+            if decls.iter().any(|decl| {
+                let containing_class = analyzer::parse_tree_utils::get_enclosing_class_or_function(decl.node.get());
+                let Some(containing_class) = containing_class else {
+                    return true;
+                };
+
+                let decl_node = decl.node.get();
+                if containing_class.node_type == ParseNodeType::Class {
+                    // If this is part of an assignment statement, assume it has been
+                    // initialized as a class variable.
+                    if decl_node
+                        .parent
+                        .get()
+                        .is_some_and(|parent| parent.node_type == ParseNodeType::Assignment)
+                    {
+                        return true;
+                    }
+
+                    if decl_node.parent.get().is_some_and(|parent| {
+                        parent.node_type == ParseNodeType::TypeAnnotation
+                            && parent
+                                .parent
+                                .get()
+                                .is_some_and(|grandparent| grandparent.node_type == ParseNodeType::Assignment)
+                    }) {
+                        return true;
+                    }
+
+                    // If this is part of a dataclass, a class handled by a dataclass_transform,
+                    // or a NamedTuple, exempt it because the class variable will be transformed
+                    // into an instance variable in this case.
+                    if ClassType::is_data_class(class_type) || ClassType::has_named_tuple_entry(class_type, name) {
+                        return true;
+                    }
+
+                    // If this is part of a TypedDict, exempt it because the class variables
+                    // are not actually class variables in a TypedDict.
+                    if ClassType::is_typed_dict_class(class_type) {
+                        return true;
+                    }
+                }
+
+                let containing_name = match ClassNode::cast(containing_class) {
+                    Some(class_node) => class_node.d().name.get(),
+                    None => FunctionNode::cast(containing_class).unwrap().d().name.get(),
+                };
+                if containing_name.d().value == "__init__" {
+                    return true;
+                }
+
+                false
+            }) {
+                return;
+            }
+
+            // If the symbol is declared by its parent, we can assume it
+            // is initialized there.
+            let parent_symbol = analyzer::type_utils::look_up_class_member(
+                class_type,
+                name,
+                analyzer::type_utils::MemberAccessFlags::SkipOriginalClass,
+                None,
+            );
+            if parent_symbol.is_some() {
+                return;
+            }
+
+            // Report the variable as uninitialized only on the first decl.
+            evaluator.add_diagnostic(
+                DiagnosticRule::reportUninitializedInstanceVariable,
+                &LocMessage::uninitialized_instance_variable().format(&[("name", name)]),
+                decls[0].node.get(),
+                None,
+            );
+        });
+
+        // See if there are any variables from abstract base classes
+        // that are not initialized.
+        let diag_addendum = common::diagnostic::DiagnosticAddendum::new();
+        for (name, member) in abstract_symbols.iter() {
+            let decls = member.symbol.get_declarations();
+
+            if decls.is_empty() || !analyzer::types::is_class(member.class_type) {
+                continue;
+            }
+
+            if decls[0].type_ != analyzer::declaration::DeclarationType::Variable {
+                continue;
+            }
+
+            // Dataclass fields are typically exempted from this check because
+            // they have synthesized __init__ methods that initialize these variables.
+            let dc_entry = data_class_entries.iter().find(|entry| entry.name == *name);
+            if let Some(dc_entry) = dc_entry {
+                if dc_entry.include_in_init {
+                    continue;
+                }
+            } else {
+                // Do one or more declarations involve assignments?
+                if decls.iter().any(|decl| {
+                    decl.type_ == analyzer::declaration::DeclarationType::Variable
+                        && decl.variable().unwrap().inferred_type_source.get().is_some()
+                }) {
+                    continue;
+                }
+            }
+
+            diag_addendum.add_message(LocAddendum::uninitialized_abstract_variable().format(&[
+                ("name", name),
+                ("classType", &ClassType(member.class_type).d().shared.get().name),
+            ]));
+        }
+
+        if !diag_addendum.is_empty() {
+            self._evaluator.add_diagnostic(
+                DiagnosticRule::reportUninitializedInstanceVariable,
+                &(LocMessage::uninitialized_abstract_variables()
+                    .format(&[("classType", &class_type.d().shared.get().name)])
+                    + &diag_addendum.get_string(
+                        common::diagnostic::DEFAULT_MAX_DIAGNOSTIC_DEPTH,
+                        common::diagnostic::DEFAULT_MAX_DIAGNOSTIC_LINE_COUNT,
+                    )),
+                node.d().name.get().0,
+                None,
+            );
+        }
     }
 
     // analyzer/checker.ts:5450
@@ -2562,12 +4320,179 @@ impl Checker {
         error_node: ClassNode,
         class_type: ClassType,
     ) {
-        todo!()
+        // If this protocol has no TypeVars with specified variance, there's nothing to do here.
+        if class_type.d().shared.get().type_params.borrow().is_empty() {
+            return;
+        }
+
+        let object_type = self._evaluator.get_built_in_type(error_node.0, "object");
+        if !analyzer::types::is_instantiable_class(object_type) {
+            return;
+        }
+
+        let object_object = ClassType::clone_as_instance(ClassType(object_type), true);
+        let dummy_type_object = ClassType::create_instantiable(
+            "__varianceDummy",
+            "",
+            "",
+            &Uri::empty(),
+            analyzer::types::ClassTypeFlags::None,
+            0,
+            None,
+            None,
+            None,
+        );
+
+        let type_params = class_type.d().shared.get().type_params.borrow().clone();
+        for (param_index, param) in type_params.iter().enumerate() {
+            // Skip TypeVarTuples and ParamSpecs.
+            if analyzer::types::is_type_var_tuple(param.0) || analyzer::types::is_param_spec(param.0) {
+                continue;
+            }
+
+            // Skip type variables that have been internally synthesized
+            // for a variety of reasons.
+            if param.d().shared.get().is_synthesized.get() {
+                continue;
+            }
+
+            // Skip type variables with auto-variance.
+            if param.d().shared.get().declared_variance.get() == analyzer::types::Variance::Auto {
+                continue;
+            }
+
+            // Replace all type arguments with a dummy type except for the
+            // TypeVar of interest, which is replaced with an object instance.
+            let src_type_args: Vec<P<Type>> = class_type
+                .d()
+                .shared
+                .get()
+                .type_params
+                .borrow()
+                .clone()
+                .iter()
+                .enumerate()
+                .map(|(i, p)| {
+                    if analyzer::types::is_type_var_tuple(p.0) {
+                        return p.0;
+                    }
+                    if i == param_index { object_object.0 } else { dummy_type_object.0 }
+                })
+                .collect();
+
+            // Replace all type arguments with a dummy type except for the
+            // TypeVar of interest, which is replaced with itself.
+            let dest_type_args: Vec<P<Type>> = class_type
+                .d()
+                .shared
+                .get()
+                .type_params
+                .borrow()
+                .clone()
+                .iter()
+                .enumerate()
+                .map(|(i, p)| {
+                    if i == param_index || analyzer::types::is_type_var_tuple(p.0) {
+                        p.0
+                    } else {
+                        dummy_type_object.0
+                    }
+                })
+                .collect();
+
+            let src_type = ClassType::specialize(class_type, Some(&src_type_args), None, false, None, None);
+            let dest_type = ClassType::specialize(class_type, Some(&dest_type_args), None, false, None, None);
+
+            let is_dest_subtype_of_src =
+                self._evaluator
+                    .assign_class_to_self(src_type, dest_type, analyzer::types::Variance::Covariant, true, 0);
+
+            let expected_variance = if is_dest_subtype_of_src {
+                analyzer::types::Variance::Covariant
+            } else {
+                let is_src_subtype_of_dest = self._evaluator.assign_class_to_self(
+                    dest_type,
+                    src_type,
+                    analyzer::types::Variance::Contravariant,
+                    true,
+                    0,
+                );
+                if is_src_subtype_of_dest {
+                    analyzer::types::Variance::Contravariant
+                } else {
+                    analyzer::types::Variance::Invariant
+                }
+            };
+
+            let declared_variance = class_type.d().shared.get().type_params.borrow()[param_index]
+                .d()
+                .shared
+                .get()
+                .declared_variance
+                .get();
+            if expected_variance != declared_variance {
+                let variable = param.d().shared.get().name.borrow().clone();
+                let class_name = class_type.d().shared.get().name.clone();
+                let message = if expected_variance == analyzer::types::Variance::Covariant {
+                    LocMessage::protocol_variance_covariant().format(&[("variable", &variable), ("class", &class_name)])
+                } else if expected_variance == analyzer::types::Variance::Contravariant {
+                    LocMessage::protocol_variance_contravariant()
+                        .format(&[("variable", &variable), ("class", &class_name)])
+                } else {
+                    LocMessage::protocol_variance_invariant().format(&[("variable", &variable), ("class", &class_name)])
+                };
+
+                self._evaluator.add_diagnostic(
+                    DiagnosticRule::reportInvalidTypeVarUse,
+                    &message,
+                    error_node.d().name.get().0,
+                    None,
+                );
+            }
+        }
     }
 
     // analyzer/checker.ts:5548
     pub(crate) fn _validate_slots_class_var_conflict(&mut self, class_type: ClassType) {
-        todo!()
+        if class_type.d().shared.get().local_slots_names.borrow().is_none() {
+            // Nothing to check, since this class doesn't use __slots__.
+            return;
+        }
+
+        // Don't apply this for dataclasses because their class variables
+        // are transformed into instance variables.
+        if ClassType::is_data_class(class_type) {
+            return;
+        }
+
+        let evaluator = self._evaluator;
+        ClassType::get_symbol_table(class_type).for_each(|symbol, name| {
+            let decls = symbol.get_declarations();
+            let is_defined_by_slots = decls.iter().any(|decl| {
+                decl.type_ == analyzer::declaration::DeclarationType::Variable
+                    && decl.variable().unwrap().is_defined_by_slots.get().unwrap_or(false)
+            });
+
+            if is_defined_by_slots {
+                for decl in &decls {
+                    if decl.type_ == analyzer::declaration::DeclarationType::Variable
+                        && !decl.variable().unwrap().is_defined_by_slots.get().unwrap_or(false)
+                        && !decl.variable().unwrap().is_defined_by_member_access.get().unwrap_or(false)
+                    {
+                        if let Some(name_node) = NameNode::cast(decl.node.get()) {
+                            if analyzer::parse_tree_utils::is_write_access(name_node) {
+                                evaluator.add_diagnostic(
+                                    DiagnosticRule::reportGeneralTypeIssues,
+                                    &LocMessage::slots_class_var_conflict().format(&[("name", name)]),
+                                    decl.node.get(),
+                                    None,
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        });
     }
 
     // analyzer/checker.ts:5587
@@ -2576,7 +4501,176 @@ impl Checker {
         class_type: ClassType,
         error_node: ExpressionNode,
     ) {
-        todo!()
+        let evaluator = self._evaluator;
+
+        // If the class has a custom metaclass with a __call__ method, skip this check.
+        let call_method_result = analyzer::constructors::get_bound_call_method(&evaluator, error_node, class_type);
+        if call_method_result.is_some() {
+            return;
+        }
+
+        let new_method_result = analyzer::constructors::get_bound_new_method(
+            &evaluator,
+            error_node,
+            class_type,
+            None,
+            analyzer::type_utils::MemberAccessFlags::SkipObjectBaseClass,
+        );
+        let Some(new_method_result) = new_method_result else {
+            return;
+        };
+        if new_method_result.type_errors.get().unwrap_or(false) {
+            return;
+        }
+        let Some(new_method_class) = new_method_result.class_type.filter(|class_type| analyzer::types::is_class(*class_type))
+        else {
+            return;
+        };
+        let new_method_class = ClassType(new_method_class);
+
+        let init_method_result = analyzer::constructors::get_bound_init_method(
+            &evaluator,
+            error_node,
+            ClassType::clone_as_instance(class_type, true),
+            None,
+            analyzer::type_utils::MemberAccessFlags::SkipObjectBaseClass,
+        );
+        let Some(init_method_result) = init_method_result else {
+            return;
+        };
+        if init_method_result.type_errors.get().unwrap_or(false) {
+            return;
+        }
+        let Some(init_method_class) =
+            init_method_result.class_type.filter(|class_type| analyzer::types::is_class(*class_type))
+        else {
+            return;
+        };
+        let init_method_class = ClassType(init_method_class);
+
+        // If both the __new__ and __init__ come from subclasses, don't bother
+        // checking for this class.
+        if !ClassType::is_same_generic_class(init_method_class, class_type, 0)
+            && !ClassType::is_same_generic_class(new_method_class, class_type, 0)
+        {
+            return;
+        }
+
+        let mut new_member_type = new_method_result.type_.get();
+        if !analyzer::types::is_function_or_overloaded(new_member_type) {
+            return;
+        }
+
+        if analyzer::types::is_overloaded(new_member_type) {
+            // Find the implementation, not the overloaded signatures.
+            match OverloadedType::get_implementation(OverloadedType(new_member_type)) {
+                Some(implementation) if analyzer::types::is_function(implementation) => new_member_type = implementation,
+                _ => return,
+            }
+        }
+
+        let mut init_member_type = init_method_result.type_.get();
+        if !analyzer::types::is_function_or_overloaded(init_member_type) {
+            return;
+        }
+
+        if analyzer::types::is_overloaded(init_member_type) {
+            // Find the implementation, not the overloaded signatures.
+            match OverloadedType::get_implementation(OverloadedType(init_member_type)) {
+                Some(implementation) if analyzer::types::is_function(implementation) => init_member_type = implementation,
+                _ => return,
+            }
+        }
+
+        let new_member_function = FunctionType(new_member_type);
+        let init_member_function = FunctionType(init_member_type);
+
+        // If either of the functions has a default parameter signature
+        // (* args: Any, ** kwargs: Any), don't proceed with the check.
+        if FunctionType::has_default_params(init_member_function) || FunctionType::has_default_params(new_member_function) {
+            return;
+        }
+
+        if !evaluator.assign_type(
+            new_member_type,
+            init_member_type,
+            /* diag */ None,
+            /* constraints */ None,
+            analyzer::type_evaluator_types::AssignTypeFlags::SkipReturnTypeCheck,
+            0,
+        ) || !evaluator.assign_type(
+            init_member_type,
+            new_member_type,
+            /* diag */ None,
+            /* constraints */ None,
+            analyzer::type_evaluator_types::AssignTypeFlags::SkipReturnTypeCheck,
+            0,
+        ) {
+            let display_on_init = ClassType::is_same_generic_class(init_method_class, class_type, 0);
+            let init_decl = init_member_function.d().shared.get().declaration.get();
+            let new_decl = new_member_function.d().shared.get().declaration.get();
+
+            if let (Some(init_decl), Some(new_decl)) = (init_decl, new_decl) {
+                let main_decl = if display_on_init { init_decl } else { new_decl };
+                let main_decl_node = match FunctionNode::cast(main_decl.node.get()) {
+                    Some(function_node) => function_node.d().name.get().0,
+                    None => main_decl.node.get(),
+                };
+
+                let diag_addendum = common::diagnostic::DiagnosticAddendum::new();
+                let init_signature = evaluator.print_type(init_member_type, None);
+                let new_signature = evaluator.print_type(new_member_type, None);
+
+                diag_addendum.add_message(LocAddendum::init_method_signature().format(&[("type", &init_signature)]));
+                diag_addendum.add_message(LocAddendum::new_method_signature().format(&[("type", &new_signature)]));
+
+                let diagnostic = evaluator.add_diagnostic(
+                    DiagnosticRule::reportInconsistentConstructor,
+                    &(LocMessage::constructor_parameters_mismatch().format(&[(
+                        "classType",
+                        &evaluator.print_type(
+                            ClassType::clone_as_instance(
+                                if display_on_init { init_method_class } else { new_method_class },
+                                true,
+                            )
+                            .0,
+                            None,
+                        ),
+                    )]) + &diag_addendum.get_string(
+                        common::diagnostic::DEFAULT_MAX_DIAGNOSTIC_DEPTH,
+                        common::diagnostic::DEFAULT_MAX_DIAGNOSTIC_LINE_COUNT,
+                    )),
+                    main_decl_node,
+                    None,
+                );
+
+                if let Some(diagnostic) = diagnostic {
+                    let secondary_decl = if display_on_init { new_decl } else { init_decl };
+
+                    let location = if display_on_init {
+                        LocAddendum::new_method_location()
+                    } else {
+                        LocAddendum::init_method_location()
+                    };
+                    diagnostic.add_related_info(
+                        location.format(&[(
+                            "type",
+                            &evaluator.print_type(
+                                ClassType::clone_as_instance(
+                                    if display_on_init { new_method_class } else { init_method_class },
+                                    true,
+                                )
+                                .0,
+                                None,
+                            ),
+                        )]),
+                        secondary_decl.uri.get(),
+                        secondary_decl.range.get(),
+                        common::diagnostic::TaskListPriority::Normal,
+                    );
+                }
+            }
+        }
     }
 
     // analyzer/checker.ts:5729
