@@ -6,8 +6,9 @@
 //! same fields. Each interface also gets a typed handle (`FlowLabel`,
 //! `FlowAssignment`, ...) with `cast` and `d()`, as parse nodes do.
 
+use jsrt::flag_ops;
 use std::cell::{Cell, RefCell};
-use std::ops::{BitAnd, BitAndAssign, BitOr, BitOrAssign, Deref, Not};
+use std::ops::Deref;
 
 use jsrt::{JsSet, P};
 
@@ -44,46 +45,6 @@ impl FlowFlags {
     pub const ExhaustedMatch: FlowFlags = FlowFlags(1 << 19); // Control flow gate that is closed when match is provably exhaustive
 }
 
-/// Bit operators for a flags newtype over `u32`.
-macro_rules! flag_ops {
-    ($name:ident) => {
-        impl BitOr for $name {
-            type Output = $name;
-            fn bitor(self, rhs: $name) -> $name {
-                $name(self.0 | rhs.0)
-            }
-        }
-        impl BitOrAssign for $name {
-            fn bitor_assign(&mut self, rhs: $name) {
-                self.0 |= rhs.0;
-            }
-        }
-        impl BitAnd for $name {
-            type Output = $name;
-            fn bitand(self, rhs: $name) -> $name {
-                $name(self.0 & rhs.0)
-            }
-        }
-        impl BitAndAssign for $name {
-            fn bitand_assign(&mut self, rhs: $name) {
-                self.0 &= rhs.0;
-            }
-        }
-        impl Not for $name {
-            type Output = $name;
-            fn not(self) -> $name {
-                $name(!self.0)
-            }
-        }
-        impl $name {
-            /// `(flags & other) !== 0`.
-            pub fn any(self, other: $name) -> bool {
-                (self.0 & other.0) != 0
-            }
-        }
-    };
-}
-pub(crate) use flag_ops;
 
 flag_ops!(FlowFlags);
 

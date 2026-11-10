@@ -6,7 +6,8 @@
 //! `StringToken(P<Token>)`, with `cast`, `d()` and `Deref` to `Token`, as parse
 //! nodes do (see `docs/porting.md`).
 
-use std::ops::{BitAnd, BitAndAssign, BitOr, BitOrAssign, Deref, Not};
+use jsrt::flag_ops;
+use std::ops::Deref;
 
 use jsrt::{JsStr, JsString, NormalizationForm, P};
 
@@ -255,44 +256,6 @@ impl StringTokenFlags {
     pub const Unterminated: StringTokenFlags = StringTokenFlags(1 << 16);
 }
 
-macro_rules! flag_ops {
-    ($name:ident) => {
-        impl BitOr for $name {
-            type Output = $name;
-            fn bitor(self, rhs: $name) -> $name {
-                $name(self.0 | rhs.0)
-            }
-        }
-        impl BitOrAssign for $name {
-            fn bitor_assign(&mut self, rhs: $name) {
-                self.0 |= rhs.0;
-            }
-        }
-        impl BitAnd for $name {
-            type Output = $name;
-            fn bitand(self, rhs: $name) -> $name {
-                $name(self.0 & rhs.0)
-            }
-        }
-        impl BitAndAssign for $name {
-            fn bitand_assign(&mut self, rhs: $name) {
-                self.0 &= rhs.0;
-            }
-        }
-        impl Not for $name {
-            type Output = $name;
-            fn not(self) -> $name {
-                $name(!self.0)
-            }
-        }
-        impl $name {
-            /// `(flags & other) !== 0`.
-            pub fn any(self, other: $name) -> bool {
-                (self.0 & other.0) != 0
-            }
-        }
-    };
-}
 
 flag_ops!(OperatorFlags);
 flag_ops!(StringTokenFlags);

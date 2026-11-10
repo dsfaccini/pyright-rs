@@ -11,15 +11,15 @@
 // `P` hashes by address, so its interior mutability never changes a key.
 #![allow(clippy::mutable_key_type)]
 
+use jsrt::flag_ops;
 use std::cell::{Cell, RefCell};
-use std::ops::{BitAnd, BitAndAssign, BitOr, BitOrAssign, Not};
 
 use jsrt::{FxHashMap, FxHashSet, JsStr, P};
 
 use crate::analyzer::analyzer_node_info::AnalyzerNodeInfoAccessor;
 use crate::analyzer::code_flow_types::{
     FlowAssignment, FlowCall, FlowCondition, FlowFlags, FlowLabel, FlowNarrowForPattern, FlowNode,
-    FlowWildcardImport, flag_ops,
+    FlowWildcardImport,
 };
 use crate::common::position_utils::convert_offset_to_position;
 use crate::parser::parse_nodes::ParseNode;

@@ -1,11 +1,10 @@
 //! Port of `packages/pyright-internal/src/analyzer/symbol.ts`.
 
 use std::cell::{Cell, Ref, RefCell};
-use std::ops::{BitAnd, BitAndAssign, BitOr, BitOrAssign, Not};
 
 use jsrt::{JsMap, P};
 
-use super::code_flow_types::flag_ops;
+use jsrt::flag_ops;
 use super::declaration::{Declaration, DeclarationType};
 use super::declaration_utils::{are_declarations_same, has_type_for_declaration};
 use super::types::Type;

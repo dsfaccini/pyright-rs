@@ -4,6 +4,7 @@
 
 pub mod arena;
 pub mod collections;
+pub mod flags;
 pub mod command_line_args;
 pub mod js_regex;
 pub mod jsonc;

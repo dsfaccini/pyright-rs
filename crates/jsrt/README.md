@@ -82,3 +82,7 @@ Pyright's regexes have no `u` flag. Where the `regex` crate spells a JS escape d
 | `\s` test on one character | `string::is_js_whitespace_char(c)` |
 
 Lookahead and code-unit matching of astral characters have no fragment; `notes/jsrt.md` lists each call site and how to port it.
+
+## flags
+
+`jsrt::flag_ops!(X)` gives a flags newtype `pub struct X(pub u32)` the `|`, `|=`, `&`, `&=`, `!` operators and `any`, for TypeScript bit-flag enums.
