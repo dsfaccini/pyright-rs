@@ -35,3 +35,12 @@ Dumps off, median of three runs, peak RSS the maximum. pyright: the fork, `node 
 
 - pyright's CPU time exceeds its wall time because V8 collects garbage on helper threads. pyright-rs runs on one thread.
 - No memory work has landed yet: no collector, and `Type` is 584 bytes.
+
+## progress on pydantic-ai memory
+
+| `main` | change | `size_of::<Type>()` | result under a 30 GB cap | RSS growth |
+|---|---|---|---|---|
+| 27af4b8 | none | 584 bytes | killed after about 40 s | about 0.73 GB/s |
+| 897d847 | `Type` shrunk (`shrink` agent) | 144 bytes | killed after 58 s | about 0.53 GB/s |
+
+At 897d847, 12 GiB into the evaluator heap: `TypeResult` 4.5 GB (17.0M × 264 bytes), `Type` 2.9 GB (20.1M × 144), `ConstraintSet` 1.6 GB, `ConstraintSolutionSet` 1.2 GB, `DiagnosticAddendum` 1.0 GB.
