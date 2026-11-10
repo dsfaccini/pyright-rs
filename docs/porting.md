@@ -65,7 +65,7 @@ pyright allocates about 23 times what it keeps alive: 194 GB over a pydantic-ai 
 - Source text is `[u16]`, UTF-16 code units, as JavaScript holds it. The tokenizer reads it like `charCodeAt`.
 - Every text position and length is a UTF-16 offset. Never use a UTF-8 byte offset for a value pyright can observe.
 - Use `String` and `&str` for identifiers, messages, paths and other text. Source text always decodes to valid Unicode, so identifiers are valid `str`.
-- A string field that every clone of a hot evaluator object copies is `Rc<str>`: immutable and shared, as a JS string is (`TypeVarDetailsPriv` scope names, `[sites]` in `tools/stubgen/typemap.toml`).
+- A string field that every clone of a hot evaluator object copies is `Rc<str>`: immutable and shared, as a JS string is (`TypeVarDetailsPriv` scope names, `FunctionParam.name`; `[sites]` in `tools/stubgen/typemap.toml`).
 - Use `jsrt::JsString` (UTF-16) for unescaped Python string-literal values. Escapes such as `\ud800` give them lone surrogates.
 - Where JavaScript and Rust string operations differ, call the `jsrt` helper: length, `slice`, `substring`, `substr`, `charCodeAt`, `<` and `>`, `trim`, `toLowerCase`, `toUpperCase`, `split`, `indexOf`, `normalize('NFKC')`, `JSON.stringify` and `String.prototype.replace`.
 - Known gap: a `JsString` with a lone surrogate prints as U+FFFD inside a `String` message. Count such a case as a port failure when the oracle finds one.

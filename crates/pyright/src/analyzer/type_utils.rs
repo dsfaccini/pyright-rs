@@ -5292,7 +5292,7 @@ pub trait TypeVarTransformer {
 
                     if param.category != crate::parser::parse_nodes::ParamCategory::Simple || has_name || !swallow_position_only_separator {
                         let name = if has_name && crate::analyzer::types::FunctionParam::is_name_synthesized(&param) {
-                            Some(format!("__p{}", new_param_count()))
+                            Some(format!("__p{}", new_param_count()).into())
                         } else {
                             param.name.clone()
                         };
