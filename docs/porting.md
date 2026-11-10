@@ -49,7 +49,7 @@ pyright allocates about 23 times what it keeps alive: 194 GB over a pydantic-ai 
 - Never store a `&'static T` taken from `P::get` in a struct. Store the `P`.
 - Never capture a `P` in a closure that a struct stores. Write the stored callback as a struct with named fields and a method, so a collector can see every `P`.
 - Reach parse-node and type details only through typed handles and `d()`. Create them only through their `create` functions. Their memory layout will change.
-- Set `PYRIGHT_RS_ALLOC_STATS=1` to print objects and bytes per type and heap when `pyright-rs` exits.
+- Set `PYRIGHT_RS_ALLOC_STATS=1` to print objects and bytes per type and heap when `pyright-rs` exits. Set it to a number n to also print them each time the evaluator heap grows by another n GiB.
 
 ## collections
 

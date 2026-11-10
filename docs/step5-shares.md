@@ -61,7 +61,6 @@ A stored callback is a struct whose `call` body ports a closure written elsewher
 
 ## running the code
 
-- `PYRIGHT_RS_CHECKER=1` runs the checker and the types dump stage. Unset, `pyright-rs` parses and binds only and reaches no stub, so the milestone 1 corpus check stays green.
 - Allocate with `P::new_eval` (`docs/porting.md`, "memory").
 - To change a signature, regenerate with `tools/stubgen/stubgen --run evaluator`, then install with `tools/stubgen/stubgen --run evaluator --install`. `--install` alone copies the last generated stubs. The install changes only unported items of a ported file and leaves the rest of it byte for byte; it reports what it cannot place (`docs/evaluator-design.md`, section 5, "install").
 - Build a TypeScript `TypeResult` object literal as `P::new_eval(TypeResult { is_incomplete: Cell::new(Some(true)), ..TypeResult::new(t) })`, and a spread `{ ...r }` as `P::new_eval((*r).clone())` with the changed fields set after. `{ type, node }` is `TypeResultWithNode::new(t, node)`, and `{ ...r, node }` is `TypeResultWithNode::from_type_result(&r, node)`.

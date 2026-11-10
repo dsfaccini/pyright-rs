@@ -1,9 +1,6 @@
 //! The hooks of the fork's `src/oracle/oracleDumper.ts`: dump state from the
 //! environment, per-stage file writes and `oracle-run.txt`. Format:
 //! `oracle/FORMAT.md`, "running" and "files".
-//!
-//! The types stage writes only with `PYRIGHT_RS_CHECKER=1`, the stand-in for
-//! the fork's `program.evaluator` check until `Program` holds an evaluator.
 
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
@@ -21,7 +18,6 @@ use super::format;
 use super::tokens::dump_tokenizer_output;
 use super::tree::dump_parser_output;
 use super::types::dump_types;
-use crate::analyzer::source_file::checker_enabled;
 use crate::parser::parser::ParseFileResults;
 use crate::analyzer::program::Program;
 use crate::common::uri::Uri;
@@ -166,7 +162,7 @@ pub fn oracle_dump_final(program: &Program) {
             }
 
             let uri = source_file.get_uri();
-            if s.stages.contains(&Stage::Types) && checker_enabled() {
+            if s.stages.contains(&Stage::Types) && program.evaluator().is_some() {
                 if let Some(parser_output) = source_file.get_parser_output() {
                     let text = dump_types(program, parser_output.parse_tree, &mut printed);
                     write_dump(s, Stage::Types, uri, text);

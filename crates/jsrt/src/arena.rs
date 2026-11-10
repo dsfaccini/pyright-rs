@@ -17,6 +17,13 @@ thread_local! {
     static EVAL_ALLOCATED: Cell<usize> = const { Cell::new(0) };
     static STATS: RefCell<Option<FxHashMap<&'static str, AllocStat>>> =
         RefCell::new(std::env::var_os("PYRIGHT_RS_ALLOC_STATS").map(|_| FxHashMap::default()));
+    /// `PYRIGHT_RS_ALLOC_STATS=<n>` also prints the stats each time the
+    /// evaluator heap grows by another n GiB, so a run killed for memory still reports.
+    static REPORT_STEP: usize = std::env::var("PYRIGHT_RS_ALLOC_STATS")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .map_or(0, |gib| gib << 30);
+    static NEXT_REPORT: Cell<usize> = REPORT_STEP.with(|step| Cell::new(*step));
 }
 
 /// Objects and bytes allocated for one Rust type, per heap.
@@ -29,7 +36,7 @@ pub struct AllocStat {
 }
 
 fn record<T>(eval: bool) {
-    STATS.with(|stats| {
+    let enabled = STATS.with(|stats| {
         if let Some(stats) = stats.borrow_mut().as_mut() {
             let stat = stats.entry(std::any::type_name::<T>()).or_default();
             let bytes = size_of::<T>() as u64;
@@ -40,8 +47,24 @@ fn record<T>(eval: bool) {
                 stat.program_count += 1;
                 stat.program_bytes += bytes;
             }
+            true
+        } else {
+            false
         }
     });
+    if enabled && eval {
+        report_if_due();
+    }
+}
+
+fn report_if_due() {
+    let step = REPORT_STEP.with(|step| *step);
+    if step == 0 || eval_arena_allocated_bytes() < NEXT_REPORT.with(Cell::get) {
+        return;
+    }
+    NEXT_REPORT.with(|next| next.set(next.get() + step));
+    eprintln!("alloc stats at {} GiB of evaluator heap:", eval_arena_allocated_bytes() >> 30);
+    print_alloc_stats();
 }
 
 /// A handle to a value that lives until the thread exits.
@@ -114,6 +137,15 @@ pub fn alloc_stats() -> Option<Vec<(&'static str, AllocStat)>> {
         });
         Some(rows)
     })
+}
+
+/// Prints [`alloc_stats`] to stderr, when they are on.
+pub fn print_alloc_stats() {
+    let Some(rows) = alloc_stats() else { return };
+    eprintln!("{:>14} {:>14} {:>14} {:>14}  type", "program count", "program bytes", "eval count", "eval bytes");
+    for (name, s) in rows {
+        eprintln!("{:>14} {:>14} {:>14} {:>14}  {name}", s.program_count, s.program_bytes, s.eval_count, s.eval_bytes);
+    }
 }
 
 impl<T: ?Sized> Clone for P<T> {

@@ -1287,19 +1287,8 @@ fn add_task_list_diagnostics(
     }
 }
 
-/// Whether `PYRIGHT_RS_CHECKER=1` is set: the checker, and the evaluator it
-/// drives, run only then while their bodies are being ported (PLAN.md step 5).
-/// Unset, a run parses and binds only, and reaches no evaluator stub.
-pub fn checker_enabled() -> bool {
-    thread_local! {
-        static ENABLED: bool = std::env::var("PYRIGHT_RS_CHECKER").is_ok_and(|v| v == "1");
-    }
-    ENABLED.with(|e| *e)
-}
-
 /// The checker call in `sourceFile.ts` `check()`: builds the `Checker`, runs it, and
-/// returns `fileInfo.diagnosticSink.fetchAndClear()`. Without `checker_enabled()` the
-/// checker list stays empty.
+/// returns `fileInfo.diagnosticSink.fetchAndClear()`.
 ///
 /// The catch around it is not ported: it turns a crash into an
 /// `internalTypeCheckingError` diagnostic (docs/porting.md, "exceptions").
@@ -1310,9 +1299,6 @@ fn run_checker(
     dependent_files: Option<Vec<ParserOutput>>,
     node_info_reader: P<dyn AnalyzerNodeInfoReader>,
 ) -> Vec<P<Diagnostic>> {
-    if !checker_enabled() {
-        return Vec::new();
-    }
     let parser_output = source_file.data().parser_output.unwrap();
     let node_info = create_analyzer_node_info_accessor(node_info_reader.get(), None);
     let mut checker = Checker::new(import_resolver, evaluator, &parser_output, dependent_files, node_info_reader);

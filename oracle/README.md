@@ -55,7 +55,9 @@ Pins are in each `<corpus>.json`. The samples and typeshed corpora use an empty 
 
 ## comparing pyright-rs
 
-Run the same corpus script with the Rust checker, then compare:
+`oracle/corpus/check.sh OUTDIR [CORPUS...]` builds pyright-rs, runs it on each corpus under a memory cap, and compares `output.json` and every dump stage with the reference. Without corpus names it runs every corpus except pydantic-ai. It exits 0 when everything matches. Delete `OUTDIR` afterwards.
+
+To run one corpus by hand, run the same corpus script with the Rust checker, then compare:
 
 ```
 ORACLE_CHECKER="$HOME/pyright-rs/target/release/pyright-rs" ORACLE_OUT=/tmp/rs-samples oracle/corpus/samples.sh

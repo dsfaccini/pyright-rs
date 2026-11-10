@@ -742,14 +742,6 @@ fn log_diagnostic_to_console(diag: &PyrightJsonDiagnostic, prefix: &str) {
 /// Runs the CLI on a thread with a 1 GiB stack, since the analyzer recurses
 /// as deeply as pyright does on V8's stack.
 /// Rust-only: with `PYRIGHT_RS_ALLOC_STATS` set, prints per-type arena use to stderr.
-fn print_alloc_stats() {
-    let Some(rows) = jsrt::arena::alloc_stats() else { return };
-    eprintln!("{:>14} {:>14} {:>14} {:>14}  type", "program count", "program bytes", "eval count", "eval bytes");
-    for (name, s) in rows {
-        eprintln!("{:>14} {:>14} {:>14} {:>14}  {name}", s.program_count, s.program_bytes, s.eval_count, s.eval_bytes);
-    }
-}
-
 pub fn main() -> i32 {
     let argv: Vec<String> = std::env::args().skip(1).collect();
     let handle = std::thread::Builder::new()
@@ -760,7 +752,7 @@ pub fn main() -> i32 {
             timing_stats();
             oracle_init();
             let code = process_args(&argv) as i32;
-            print_alloc_stats();
+            jsrt::arena::print_alloc_stats();
             code
         })
         .expect("spawn the analysis thread");
