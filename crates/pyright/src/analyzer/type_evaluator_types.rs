@@ -527,3 +527,112 @@ impl ExpandCallback {
         }
     }
 }
+
+// Defined in tools/stubgen/typemap.toml [items].
+/// `{ type }` with every other field undefined: the object literal TypeScript writes for a
+/// TypeResult. Set other fields with struct update syntax:
+/// `P::new_eval(TypeResult { is_incomplete: Cell::new(Some(true)), ..TypeResult::new(t) })`.
+impl TypeResult {
+    pub fn new(type_: P<Type>) -> TypeResult {
+        TypeResult {
+            type_: Cell::new(type_),
+            is_incomplete: Cell::new(None),
+            bind_to_self_type: None,
+            unpacked_type: None,
+            type_list: None,
+            type_errors: Cell::new(None),
+            inlined_type_dict: None,
+            class_type: None,
+            is_empty_tuple_shorthand: None,
+            expected_type_diag_addendum: Cell::new(None),
+            is_asymmetric_accessor: None,
+            narrowed_type_for_set: None,
+            is_required: None,
+            is_not_required: None,
+            is_read_only: None,
+            overloads_used_for_call: RefCell::new(None),
+            member_access_deprecation_info: None,
+            magic_method_deprecation_info: None,
+        }
+    }
+}
+
+/// A spread, `{ ...typeResult }`: a new object with the same field values. Allocate the copy
+/// with `P::new_eval` to get a new identity.
+impl Clone for TypeResult {
+    fn clone(&self) -> TypeResult {
+        TypeResult {
+            type_: self.type_.clone(),
+            is_incomplete: self.is_incomplete.clone(),
+            bind_to_self_type: self.bind_to_self_type,
+            unpacked_type: self.unpacked_type,
+            type_list: self.type_list.clone(),
+            type_errors: self.type_errors.clone(),
+            inlined_type_dict: self.inlined_type_dict,
+            class_type: self.class_type,
+            is_empty_tuple_shorthand: self.is_empty_tuple_shorthand,
+            expected_type_diag_addendum: self.expected_type_diag_addendum.clone(),
+            is_asymmetric_accessor: self.is_asymmetric_accessor,
+            narrowed_type_for_set: self.narrowed_type_for_set,
+            is_required: self.is_required,
+            is_not_required: self.is_not_required,
+            is_read_only: self.is_read_only,
+            overloads_used_for_call: self.overloads_used_for_call.clone(),
+            member_access_deprecation_info: self.member_access_deprecation_info.clone(),
+            magic_method_deprecation_info: self.magic_method_deprecation_info.clone(),
+        }
+    }
+}
+
+// Defined in tools/stubgen/typemap.toml [items].
+/// `{ type, node }` with every other field undefined.
+impl TypeResultWithNode {
+    pub fn new(type_: P<Type>, node: P<ParseNode>) -> TypeResultWithNode {
+        TypeResultWithNode {
+            type_,
+            is_incomplete: None,
+            bind_to_self_type: None,
+            unpacked_type: None,
+            type_list: None,
+            type_errors: None,
+            inlined_type_dict: None,
+            class_type: None,
+            is_empty_tuple_shorthand: None,
+            expected_type_diag_addendum: None,
+            is_asymmetric_accessor: None,
+            narrowed_type_for_set: None,
+            is_required: None,
+            is_not_required: None,
+            is_read_only: None,
+            overloads_used_for_call: None,
+            member_access_deprecation_info: None,
+            magic_method_deprecation_info: None,
+            node,
+        }
+    }
+
+    /// `{ ...typeResult, node }`: every field of `type_result`, plus `node`.
+    pub fn from_type_result(type_result: &TypeResult, node: P<ParseNode>) -> TypeResultWithNode {
+        TypeResultWithNode {
+            type_: type_result.type_.get(),
+            is_incomplete: type_result.is_incomplete.get(),
+            bind_to_self_type: type_result.bind_to_self_type,
+            unpacked_type: type_result.unpacked_type,
+            type_list: type_result.type_list.clone(),
+            type_errors: type_result.type_errors.get(),
+            inlined_type_dict: type_result.inlined_type_dict,
+            class_type: type_result.class_type,
+            is_empty_tuple_shorthand: type_result.is_empty_tuple_shorthand,
+            expected_type_diag_addendum: type_result.expected_type_diag_addendum.get(),
+            is_asymmetric_accessor: type_result.is_asymmetric_accessor,
+            narrowed_type_for_set: type_result.narrowed_type_for_set,
+            is_required: type_result.is_required,
+            is_not_required: type_result.is_not_required,
+            is_read_only: type_result.is_read_only,
+            overloads_used_for_call: type_result.overloads_used_for_call.borrow().clone(),
+            member_access_deprecation_info: type_result.member_access_deprecation_info.clone(),
+            magic_method_deprecation_info: type_result.magic_method_deprecation_info.clone(),
+            node,
+        }
+    }
+}
