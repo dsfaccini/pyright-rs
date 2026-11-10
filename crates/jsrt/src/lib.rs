@@ -17,6 +17,6 @@ pub mod string;
 pub mod vscode_uri;
 
 pub use arena::P;
-pub use collections::{FxHashMap, FxHashSet, JsMap, JsSet};
+pub use collections::{FxHashMap, FxHashSet, JsMap, JsSet, LazyJsMap};
 pub use number::{JsBigInt, NumberValue};
 pub use string::{JsStr, JsString, NormalizationForm};
