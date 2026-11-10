@@ -27,3 +27,7 @@
 - `get_type_of_expression` writes `inference_context.expected_type` through `Option<&mut InferenceContext>` (typeEvaluator.ts:1251). eval-2's change makes `InferenceContext` a handle; the write and its pass-throughs convert then.
 - `get_type_of_ellipsis` drops `?? getBuiltInObject(node, 'ellipsis') ?? AnyType.create()` fallbacks: `getBuiltInObject` always returns a type, so they never run in pyright either.
 - `getTypeOfStringList` joins string parts as UTF-16 units before converting, so a surrogate pair split across two parts survives.
+- `get_type_of_class_member_name`: TypeScript `selfType ?? memberName === '__new__' ? undefined : classType` parses as `(selfType ?? (memberName === '__new__')) ? undefined : classType`; ported as parsed.
+- `adjust_type_args_for_type_var_tuple`: the final `typeArgs.push(...)` writes the caller's array while the local array has not been replaced; the port pushes into the caller's `&mut Vec` in that case. Index arithmetic follows JavaScript `slice` rules, negative indexes included.
+- A message built only behind `diag?.` is built inside `if let Some(diag)`, so `print_type` (which can infer return types) runs only when TypeScript runs it.
+
