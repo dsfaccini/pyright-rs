@@ -975,6 +975,9 @@ impl SourceFile {
         AnalyzerFileInfo {
             import_lookup,
             future_imports,
+            // STAND-IN: the `builtinsScope` argument of `bind` arrives when
+            // `run_binder` calls the binder.
+            builtins_scope: None,
             diagnostic_sink: analysis_diagnostics,
             execution_environment: config_options.find_exec_environment(self.uri),
             diagnostic_rule_set: self.diagnostic_rule_set.borrow().clone(),
