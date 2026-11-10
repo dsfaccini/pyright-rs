@@ -712,7 +712,7 @@ pub(crate) fn get_type_of_decorator(
     evaluator.set_type_result_for_node(
         node.0,
         P::new_eval(TypeResult {
-            overloads_used_for_call: RefCell::new(call_type_result.overloads_used_for_call.clone()),
+            overloads_used_for_call: RefCell::new(call_type_result.overloads_used_for_call.clone().map(Box::new)),
             is_incomplete: Cell::new(call_type_result.is_type_incomplete),
             ..TypeResult::new(node_type_result_type)
         }),

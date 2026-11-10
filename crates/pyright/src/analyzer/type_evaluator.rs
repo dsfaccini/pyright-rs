@@ -3372,7 +3372,7 @@ impl TypeEvaluator {
                 is_incomplete: Cell::new(Some(member_info.is_type_incomplete)),
                 is_asymmetric_accessor: Some(member_info.is_asymmetric_accessor),
                 narrowed_type_for_set: member_info.narrowed_type_for_set,
-                member_access_deprecation_info: member_info.member_access_deprecation_info.clone(),
+                member_access_deprecation_info: member_info.member_access_deprecation_info.clone().map(Box::new),
                 type_errors: Cell::new(Some(member_info.is_descriptor_error)),
                 ..TypeResult::new(member_info.type_)
             }));
@@ -8569,7 +8569,7 @@ impl TypeEvaluator {
                     }
 
                     if let Some(info) = &type_result.member_access_deprecation_info {
-                        member_access_deprecation_info = Some(info.clone());
+                        member_access_deprecation_info = Some((**info).clone());
                     }
                 }
             }
@@ -8800,7 +8800,7 @@ impl TypeEvaluator {
                         }
 
                         if let Some(info) = &type_result.member_access_deprecation_info {
-                            member_access_deprecation_info = Some(info.clone());
+                            member_access_deprecation_info = Some((**info).clone());
                         }
 
                         if type_result.type_errors.get().unwrap_or(false) {
@@ -8968,7 +8968,7 @@ impl TypeEvaluator {
             narrowed_type_for_set,
             is_required: Some(is_required),
             is_not_required: Some(is_not_required),
-            member_access_deprecation_info,
+            member_access_deprecation_info: member_access_deprecation_info.map(Box::new),
             type_errors: Cell::new(Some(type_errors)),
             ..TypeResult::new(type_)
         })
@@ -12803,7 +12803,7 @@ impl TypeEvaluator {
                     type_result.type_errors.set(Some(true));
                 } else {
                     *type_result.overloads_used_for_call.borrow_mut() =
-                        call_result.overloads_used_for_call.clone();
+                        call_result.overloads_used_for_call.clone().map(Box::new);
                 }
 
                 if call_result.is_type_incomplete.unwrap_or(false) {
@@ -22473,8 +22473,8 @@ impl TypeEvaluator {
 
         Some(P::new_eval(TypeResult {
             is_incomplete: Cell::new(Some(is_incomplete.get())),
-            magic_method_deprecation_info: deprecation_info.into_inner(),
-            overloads_used_for_call: RefCell::new(Some(overloads_used_for_call.into_inner())),
+            magic_method_deprecation_info: deprecation_info.into_inner().map(Box::new),
+            overloads_used_for_call: RefCell::new(Some(Box::new(overloads_used_for_call.into_inner()))),
             ..TypeResult::new(return_type)
         }))
     }

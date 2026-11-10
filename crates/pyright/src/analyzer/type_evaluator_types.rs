@@ -102,7 +102,7 @@ pub struct TypeResult {
     pub is_incomplete: Cell<Option<bool>>,
     pub bind_to_self_type: Option<P<Type>>,
     pub unpacked_type: Option<P<Type>>,
-    pub type_list: Option<Vec<TypeResultWithNode>>,
+    pub type_list: Option<Box<Vec<TypeResultWithNode>>>,
     pub type_errors: Cell<Option<bool>>,
     pub inlined_type_dict: Option<ClassType>,
     pub class_type: Option<P<Type>>,
@@ -113,10 +113,12 @@ pub struct TypeResult {
     pub is_required: Option<bool>,
     pub is_not_required: Option<bool>,
     pub is_read_only: Option<bool>,
-    pub overloads_used_for_call: RefCell<Option<Vec<FunctionType>>>,
-    pub member_access_deprecation_info: Option<MemberAccessDeprecationInfo>,
-    pub magic_method_deprecation_info: Option<MagicMethodDeprecationInfo>,
+    pub overloads_used_for_call: RefCell<Option<Box<Vec<FunctionType>>>>,
+    pub member_access_deprecation_info: Option<Box<MemberAccessDeprecationInfo>>,
+    pub magic_method_deprecation_info: Option<Box<MagicMethodDeprecationInfo>>,
 }
+// The evaluator creates millions; fields few results set are boxed (PLAN.md step 6).
+const _: () = assert!(size_of::<TypeResult>() <= 104);
 
 // analyzer/typeEvaluatorTypes.ts:289
 #[derive(Clone)]
@@ -624,7 +626,7 @@ impl TypeResultWithNode {
             is_incomplete: type_result.is_incomplete.get(),
             bind_to_self_type: type_result.bind_to_self_type,
             unpacked_type: type_result.unpacked_type,
-            type_list: type_result.type_list.clone(),
+            type_list: type_result.type_list.as_deref().cloned(),
             type_errors: type_result.type_errors.get(),
             inlined_type_dict: type_result.inlined_type_dict,
             class_type: type_result.class_type,
@@ -635,9 +637,19 @@ impl TypeResultWithNode {
             is_required: type_result.is_required,
             is_not_required: type_result.is_not_required,
             is_read_only: type_result.is_read_only,
-            overloads_used_for_call: type_result.overloads_used_for_call.borrow().clone(),
-            member_access_deprecation_info: type_result.member_access_deprecation_info.clone(),
-            magic_method_deprecation_info: type_result.magic_method_deprecation_info.clone(),
+            overloads_used_for_call: type_result
+                .overloads_used_for_call
+                .borrow()
+                .as_deref()
+                .cloned(),
+            member_access_deprecation_info: type_result
+                .member_access_deprecation_info
+                .as_deref()
+                .cloned(),
+            magic_method_deprecation_info: type_result
+                .magic_method_deprecation_info
+                .as_deref()
+                .cloned(),
             node,
         }
     }
