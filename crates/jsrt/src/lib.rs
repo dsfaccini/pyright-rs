@@ -4,8 +4,10 @@
 
 pub mod arena;
 pub mod collections;
+pub mod number;
 pub mod string;
 
 pub use arena::P;
 pub use collections::{FxHashMap, FxHashSet, JsMap, JsSet};
+pub use number::{JsBigInt, NumberValue};
 pub use string::{JsStr, JsString, NormalizationForm};

@@ -37,3 +37,23 @@ The trait `JsStr` gives JS results on `str` and `[u16]` (and so on `JsString`). 
 | WhiteSpace or LineTerminator test | `string::is_js_whitespace(unit)` |
 
 On `str`, `js_slice`, `js_substring`, `js_substr` and `js_split` return `Cow<str>`: a surrogate pair split in half becomes U+FFFD, which keeps the UTF-16 length. On `[u16]` they return `&[u16]`, exact.
+
+## numbers
+
+| JavaScript | Rust |
+|---|---|
+| `String(x)`, `x.toString()`, `${x}` for a number | `number::number_to_string(x)` |
+| `x.toString(radix)` | `number::number_to_string_radix(x, radix)` |
+| `parseInt(s, radix)` | `number::parse_int(s, radix)` (0 for an omitted radix) |
+| `parseFloat(s)` | `number::parse_float(s)` |
+| `Number(s)` for a string | `number::string_to_number(s)` |
+| `Math.round(x)` | `number::math_round(x)` |
+| `number \| bigint` | `NumberValue` (`Eq` and `Hash` are SameValueZero, as for `Map` keys) |
+| `BigInt(s)` | `number::parse_bigint(s)` (`None` is a SyntaxError) |
+| `BigInt(x)`, `Number(b)` | `JsBigInt::from_f64(x)` (`None` is a RangeError), `b.to_f64()` |
+| `b.toString()`, `b.toString(radix)` | `b.to_js_string()`, `b.to_string_radix(radix)` |
+| `a + b`, `-`, `*`, `/`, `%`, `**`, `<<`, `>>` on bigints | `a.checked_add(&b)` and so on (`None` where V8 throws: division by zero, negative exponent, results past 2^30 bits) |
+| `-b`, `~b`, `a & b`, `a \| b`, `a ^ b` | `-&b`, `!&b`, `&a & &b`, `&a \| &b`, `&a ^ &b` |
+| `a < b` between a bigint and a number | `JsBigInt: PartialOrd<f64>`, `PartialEq<f64>` |
+
+An integer below 1e21 prints the same through Rust's `Display` as through `number_to_string`.
