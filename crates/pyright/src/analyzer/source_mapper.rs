@@ -20,7 +20,9 @@ use crate::analyzer::type_evaluator::TypeEvaluator;
 use crate::analyzer::types::{ClassType, Type};
 use crate::common::config_options::ExecutionEnvironment;
 use crate::common::uri::uri::Uri;
-use crate::parser::parse_nodes::{CallNode, ClassNode, ExpressionNode, ModuleNode, ParseNode};
+use crate::parser::parse_nodes::{
+    CallNode, ClassNode, ExpressionNode, MemberAccessNode, ModuleNode, NameNode, ParseNode,
+};
 use jsrt::{JsSet, P};
 
 // analyzer/sourceMapper.ts:52
@@ -448,13 +450,25 @@ impl SourceMapper {
 
 // analyzer/sourceMapper.ts:1137
 pub fn is_stub_file(uri: &Uri) -> bool {
-    todo!()
+    uri.last_extension() == ".pyi"
 }
 
 // analyzer/sourceMapper.ts:1141
 /// TS defaults: allowMemberAccess = false.
 pub fn is_alias_factory_callee(call_target: ExpressionNode, allow_member_access: bool) -> bool {
-    todo!()
+    // typeshed exposes some stdlib collection aliases through CPython's private `_alias(...)` factory in
+    // `typing`. This recognizes the factory callee by name. Member-access forms (e.g. `typing._alias(...)`)
+    // are only matched when `allowMemberAccess` is set, because callers that *drop* declarations must stay
+    // strict to avoid discarding unrelated `x._alias(...)` user code.
+    if let Some(name) = NameNode::cast(call_target) {
+        return name.d().value == "_alias";
+    }
+
+    if allow_member_access && let Some(member_access) = MemberAccessNode::cast(call_target) {
+        return member_access.d().member.get().d().value == "_alias";
+    }
+
+    false
 }
 
 // analyzer/sourceMapper.ts:59
