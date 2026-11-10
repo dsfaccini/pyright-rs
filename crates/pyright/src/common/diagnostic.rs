@@ -200,8 +200,9 @@ pub struct DiagnosticAddendum {
 }
 
 impl DiagnosticAddendum {
+    /// On the evaluator heap: no diagnostic keeps an addendum after formatting its message.
     pub fn new() -> P<DiagnosticAddendum> {
-        P::new(DiagnosticAddendum::default())
+        P::new_eval(DiagnosticAddendum::default())
     }
 
     // common/diagnostic.ts:205
