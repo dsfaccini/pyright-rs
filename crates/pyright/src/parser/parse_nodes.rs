@@ -17,7 +17,7 @@ use std::ops::Deref;
 
 use jsrt::{JsString, P};
 
-use crate::jsrt_pending::NumberValue;
+use jsrt::NumberValue;
 
 use super::string_annotation_info::{StringAnnotationInfo, empty_string_annotation_info};
 use super::tokenizer_types::{

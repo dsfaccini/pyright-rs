@@ -5,7 +5,8 @@
 
 use std::sync::OnceLock;
 
-use jsrt::{JsMap, JsStr, JsString, P};
+use jsrt::number::{math_round, parse_bigint, parse_float, parse_int};
+use jsrt::{JsMap, JsStr, JsString, NumberValue, P};
 
 use super::character_stream::CharacterStream;
 use super::characters::{
@@ -21,8 +22,6 @@ use super::tokenizer_types::{
 use crate::common::char_codes::Char;
 use crate::common::text_range::TextRange;
 use crate::common::text_range_collection::TextRangeCollection;
-use crate::jsrt_pending::NumberValue;
-use crate::jsrt_pending::number::{parse_bigint, parse_float, parse_int};
 
 // This must be a Map, as operations like {}["constructor"] succeed.
 // parser/tokenizer.ts:51
@@ -939,7 +938,7 @@ impl<'a> Tokenizer<'a> {
             // Compute the average number of spaces per indent
             // to estimate the predominant tab value.
             let mut average_space_per_indent =
-                js_math_round(self._indent_spaces_total as f64 / self._indent_count as f64) as i32;
+                math_round(self._indent_spaces_total as f64 / self._indent_count as f64) as i32;
             if average_space_per_indent < 1 {
                 average_space_per_indent = 1;
             } else if average_space_per_indent > DEFAULT_TAB_SIZE {
@@ -2706,11 +2705,6 @@ const MIN_SAFE_INTEGER: f64 = -9007199254740991.0;
 /// `Number.MAX_SAFE_INTEGER`.
 const MAX_SAFE_INTEGER: f64 = 9007199254740991.0;
 
-/// `Math.round`: halves round toward +∞.
-fn js_math_round(x: f64) -> f64 {
-    (x + 0.5).floor()
-}
-
 /// `text.slice(start, end)` as a `String`; a lone surrogate becomes U+FFFD.
 fn js_slice_lossy(text: &[u16], start: i32, end: i32) -> String {
     let len = text.len() as i32;
@@ -2721,3 +2715,7 @@ fn js_slice_lossy(text: &[u16], start: i32, end: i32) -> String {
     }
     String::from_utf16_lossy(&text[start..end])
 }
+
+#[cfg(test)]
+#[path = "tokenizer_tests.rs"]
+mod tests;

@@ -3,6 +3,7 @@
 pub mod bind;
 pub mod diag;
 pub mod flow;
+pub mod format;
 pub mod tokens;
 pub mod tree;
 pub mod types;

@@ -35,13 +35,14 @@ Tokens (`parser/tokenizer_types.rs`) follow the same pattern: `Token { type_, st
 
 ## Shared-file edits
 
-- `crates/pyright/src/lib.rs`: `pub mod jsrt_pending;`.
-- `crates/pyright/src/jsrt_pending.rs` (new, temporary): `NumberValue`, `JsBigInt` and `jsrt::number::{parse_int, parse_float, parse_bigint}` stand-ins with the names jsrt announced. Delete when jsrt numbers land on main.
+- `crates/pyright/src/jsrt_pending.rs` held number stand-ins until jsrt numbers reached main (8a4b41e); removed, the tokenizer and parse nodes now use `jsrt::{NumberValue, JsBigInt}` and `jsrt::number::{parse_int, parse_float, parse_bigint, math_round}`.
+- `crates/pyright/src/oracle/format.rs` (new): the FORMAT.md value printer (string escaping, numbers, sorted fields) shared by the tokens and tree dumpers.
+- `crates/pyright/examples/oracle_dump.rs` (new): `cargo run --release --example oracle_dump -- [--stage tokens]... <reference dump dir> <out dir>` writes Rust dumps for every file of a reference dump, for `oracle/compare.py`.
 - `tools/unicode_tables.mjs` (new): generates `parser/unicode.rs` from the evaluated `unicode.ts`; the test `parser::unicode::tests::tables_match_typescript` reruns it and compares every table.
 
 ## Needs from others
 
-- jsrt: `NumberValue`, `JsBigInt` (`PartialOrd<f64>`), `number::{parse_int, parse_float, parse_bigint, number_to_string}`. Announced; the frontend uses the stand-ins until then.
+None.
 
 ## Doubts
 
