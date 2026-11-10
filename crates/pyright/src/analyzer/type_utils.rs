@@ -669,7 +669,7 @@ pub(crate) fn compare_types(a: P<Type>, b: P<Type>, recursion_count: u32) -> i32
                         (
                             Some(crate::analyzer::types::LiteralValue::String(a_value)),
                             Some(crate::analyzer::types::LiteralValue::String(b_value)),
-                        ) => match jsrt::JsStr::js_cmp(a_value.as_str(), b_value.as_str()) {
+                        ) => match jsrt::JsStr::js_cmp(a_value.units(), b_value.units()) {
                             std::cmp::Ordering::Less => return -1,
                             std::cmp::Ordering::Greater => return 1,
                             std::cmp::Ordering::Equal => {}

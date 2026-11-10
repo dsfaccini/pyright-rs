@@ -570,7 +570,7 @@ pub(crate) fn narrow_type_based_on_mapping_pattern(
     // (nested) `literalValue as string` on a str literal.
     fn str_literal_value(class_type: ClassType) -> Option<String> {
         match &class_type.d().priv_.borrow().literal_value {
-            Some(LiteralValue::String(value)) => Some(value.clone()),
+            Some(LiteralValue::String(value)) => Some(value.to_string_lossy()),
             _ => None,
         }
     }
@@ -890,7 +890,7 @@ pub(crate) fn get_positional_match_arg_names(
                         .iter()
                         .map(
                             |arg| match &ClassType(arg.type_).d().priv_.borrow().literal_value {
-                                Some(LiteralValue::String(value)) => value.clone(),
+                                Some(LiteralValue::String(value)) => value.to_string_lossy(),
                                 _ => unreachable!("a str literal holds a string"),
                             },
                         )
@@ -2826,7 +2826,7 @@ pub fn assign_type_to_pattern_targets(
                                             .literal_value
                                         {
                                             Some(LiteralValue::String(value)) => {
-                                                Some(value.clone())
+                                                Some(value.to_string_lossy())
                                             }
                                             _ => None,
                                         };

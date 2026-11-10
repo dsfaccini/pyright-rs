@@ -23,6 +23,7 @@ use std::cell::{Cell, RefCell, RefMut};
 use std::ops::Deref;
 use std::rc::Rc;
 use jsrt::OptionRefCell;
+use jsrt::JsString;
 
 // analyzer/types.ts:17
 #[repr(i32)]
@@ -125,7 +126,7 @@ pub enum LiteralValue {
     Number(f64),
     Bigint(JsBigInt),
     Boolean(bool),
-    String(String),
+    String(JsString),
     EnumLiteral(P<EnumLiteral>),
     SentinelLiteral(P<SentinelLiteral>),
 }
@@ -4080,7 +4081,7 @@ impl UnionType {
                         literal_maps
                             .literal_str_map
                             .get_or_insert_with(Default::default)
-                            .insert(value.clone(), new_type);
+                            .insert(value.to_string_lossy(), new_type);
                     }
                 } else if is_int {
                     let key = match &literal_value {
@@ -4161,7 +4162,7 @@ impl UnionType {
                     && let Some(map) = &literal_maps.literal_str_map
                 {
                     return match &literal_value {
-                        LiteralValue::String(value) => map.contains_key(value),
+                        LiteralValue::String(value) => map.contains_key(&value.to_string_lossy()),
                         _ => false,
                     };
                 } else if ClassType::is_built_in(class_subtype, Some(&["int".to_string()]))
@@ -5836,7 +5837,7 @@ pub(crate) fn _add_type_if_unique(
             && let Some(map) = &literal_maps.literal_str_map
         {
             let has = match literal_value {
-                LiteralValue::String(value) => map.contains_key(value),
+                LiteralValue::String(value) => map.contains_key(&value.to_string_lossy()),
                 _ => false,
             };
             drop(union_priv);

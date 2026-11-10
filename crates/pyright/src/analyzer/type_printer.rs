@@ -127,7 +127,7 @@ pub fn print_literal_value_truncated(type_: ClassType) -> String {
 /// TS defaults: quotation = "'".
 pub fn print_literal_value(type_: ClassType, quotation: &str) -> String {
     use analyzer::types::LiteralValue;
-    use jsrt::JsStr;
+    use jsrt::{JsStr, JsString};
 
     let literal_value = type_.d().priv_.borrow().literal_value.clone();
     let Some(literal_value) = literal_value else {
@@ -140,10 +140,10 @@ pub fn print_literal_value(type_: ClassType, quotation: &str) -> String {
 
             // Limit the length of the string literal.
             if literal_value.js_len() > MAX_LITERAL_STRING_LENGTH {
-                effective_literal_value = format!(
-                    "{}…",
-                    literal_value.js_substring(0, MAX_LITERAL_STRING_LENGTH)
-                );
+                effective_literal_value = JsString::from(
+                    literal_value.js_substring(0, MAX_LITERAL_STRING_LENGTH),
+                )
+                .concat(&"…".encode_utf16().collect::<Vec<u16>>());
             }
 
             if type_.d().shared.get().name == "bytes" {

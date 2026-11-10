@@ -610,7 +610,7 @@ pub fn synthesize_data_class_methods(
                                     .literal_value
                                     .clone();
                                 alias_name = match literal_value {
-                                    Some(LiteralValue::String(value)) => Some(value),
+                                    Some(LiteralValue::String(value)) => Some(value.to_string_lossy()),
                                     _ => unreachable!("a str literal holds a string"),
                                 };
                             }
@@ -1128,7 +1128,7 @@ pub fn synthesize_data_class_methods(
                 type_: ClassType::clone_as_instance(
                     ClassType::clone_with_literal(
                         ClassType(str_type),
-                        Some(LiteralValue::String(name.clone())),
+                        Some(LiteralValue::String(name.into())),
                     ),
                     true,
                 )

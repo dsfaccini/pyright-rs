@@ -117,7 +117,7 @@ fn union_of_str_literals_uses_literal_map() {
     let str_class = create_class("str", ClassTypeFlags::BuiltIn);
     let str_instance = ClassType::clone_as_instance(str_class, true);
     let literal = |value: &str| {
-        ClassType::clone_with_literal(str_instance, Some(LiteralValue::String(value.to_string()))).0
+        ClassType::clone_with_literal(str_instance, Some(LiteralValue::String(value.into()))).0
     };
 
     let a = literal("a");

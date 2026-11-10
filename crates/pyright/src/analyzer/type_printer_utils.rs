@@ -18,7 +18,7 @@ thread_local! {
 
 // analyzer/typePrinterUtils.ts:13
 /// TS defaults: quotation = '"'.
-pub fn print_string_literal(value: &str, quotation: &str) -> String {
+pub fn print_string_literal(value: &[u16], quotation: &str) -> String {
     // JSON.stringify will perform proper escaping for " case.
     // So, we only need to do our own escaping for ' case.
     let mut literal_str = value.js_json_stringify();
@@ -36,13 +36,13 @@ pub fn print_string_literal(value: &str, quotation: &str) -> String {
 }
 
 // analyzer/typePrinterUtils.ts:27
-pub fn print_bytes_literal(value: &str) -> String {
+pub fn print_bytes_literal(value: &[u16]) -> String {
     let mut bytes_string = String::new();
 
     // There's no good built-in conversion routine in javascript to convert
     // bytes strings. Determine on a character-by-character basis whether
     // it can be rendered into an ASCII character. If not, use an escape.
-    for char_code in value.encode_utf16() {
+    for &char_code in value {
         if (20..=126).contains(&char_code) {
             let char = char::from(char_code as u8);
             if char_code == 34 {

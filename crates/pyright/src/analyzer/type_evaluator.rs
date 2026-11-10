@@ -56,7 +56,7 @@ use crate::parser::parse_nodes::{
     StringListNode, StringNode, TypeAliasNode, TypeAnnotationNode, TypeParameterListNode,
     TypeParameterNode, UnpackNode, WithItemNode, YieldFromNode, YieldNode,
 };
-use jsrt::{JsMap, JsSet, P};
+use jsrt::{JsMap, JsSet, JsString, P};
 use std::cell::{Cell, OnceCell, RefCell};
 use std::rc::Rc;
 
@@ -2218,7 +2218,7 @@ impl TypeEvaluator {
                 ..TypeResult::new(self.clone_builtin_object_with_literal(
                     node.node(),
                     if is_bytes { "bytes" } else { "str" },
-                    &LiteralValue::String(String::from_utf16_lossy(&units)),
+                    &LiteralValue::String(JsString::from(units)),
                 ))
             }));
         }
@@ -2423,7 +2423,7 @@ impl TypeEvaluator {
                 ..TypeResult::new(self.clone_builtin_object_with_literal(
                     node,
                     if is_bytes { "bytes" } else { "str" },
-                    &LiteralValue::String(string_node.d().value.to_string_lossy()),
+                    &LiteralValue::String(string_node.d().value.clone()),
                 ))
             }));
         } else {
@@ -3066,7 +3066,7 @@ impl TypeEvaluator {
                         return Some(
                             ClassType::clone_with_literal(
                                 concrete_class,
-                                Some(LiteralValue::String(String::new())),
+                                Some(LiteralValue::String(JsString::default())),
                             )
                             .0,
                         );
@@ -10174,7 +10174,7 @@ impl TypeEvaluator {
             Some(str_class) if analyzer::types::is_instantiable_class(str_class) => {
                 ClassType::clone_with_literal(
                     ClassType::clone_as_instance(ClassType(str_class), true),
-                    Some(LiteralValue::String(member_name.to_string())),
+                    Some(LiteralValue::String(member_name.into())),
                 )
                 .0
             }
@@ -13700,7 +13700,7 @@ impl TypeEvaluator {
                         .borrow()
                         .literal_value
                     {
-                        Some(LiteralValue::String(value)) => Some(value.clone()),
+                        Some(LiteralValue::String(value)) => Some(value.to_string_lossy()),
                         _ => None,
                     }
                 } else {
@@ -17234,7 +17234,7 @@ impl TypeEvaluator {
                         if let Some(analyzer::types::LiteralValue::String(literal_value)) =
                             literal_value
                         {
-                            new_class_name = literal_value;
+                            new_class_name = literal_value.to_string_lossy();
                         }
                     }
                 }
@@ -18640,7 +18640,7 @@ impl TypeEvaluator {
                                                             analyzer::types::LiteralValue::String(
                                                                 value,
                                                             ),
-                                                        ) => Some(value.clone()),
+                                                        ) => Some(value.to_string_lossy()),
                                                         _ => None,
                                                     }
                                                 } else {
@@ -22209,7 +22209,7 @@ impl TypeEvaluator {
         }
         // `(arg0Type.priv.literalValue as string) || '_'`.
         let class_name = match &ClassType(arg0_type).d().priv_.borrow().literal_value {
-            Some(LiteralValue::String(value)) if !value.is_empty() => value.clone(),
+            Some(LiteralValue::String(value)) if !value.is_empty() => value.to_string_lossy(),
             _ => "_".to_string(),
         };
 
@@ -23119,6 +23119,7 @@ impl TypeEvaluator {
                     else {
                         return None;
                     };
+                    let key = key.to_string_lossy();
                     if entries.known_items.borrow().contains_key(&key)
                         || entries.extra_items.borrow().is_some()
                     {
@@ -23346,7 +23347,7 @@ impl TypeEvaluator {
                                 key_types.push(TypeResultWithNode::new(
                                     ClassType::clone_with_literal(
                                         str_object,
-                                        Some(LiteralValue::String(name.clone())),
+                                        Some(LiteralValue::String(name.into())),
                                     )
                                     .0,
                                     entry_node.0,
@@ -25550,7 +25551,7 @@ impl TypeEvaluator {
                 for s in &strings {
                     units.extend_from_slice(s.d().value.units());
                 }
-                let value = LiteralValue::String(String::from_utf16_lossy(&units));
+                let value = LiteralValue::String(JsString::from(units));
                 if is_bytes {
                     type_ = Some(
                         self.clone_builtin_class_with_literal(node.0, class_type, "bytes", &value),

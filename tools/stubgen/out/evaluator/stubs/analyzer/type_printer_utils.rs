@@ -23,11 +23,11 @@ thread_local! {
 
 // analyzer/typePrinterUtils.ts:13
 /// TS defaults: quotation = '"'.
-pub fn print_string_literal(value: &str, quotation: &str) -> String {
+pub fn print_string_literal(value: &[u16], quotation: &str) -> String {
     todo!()
 }
 
 // analyzer/typePrinterUtils.ts:27
-pub fn print_bytes_literal(value: &str) -> String {
+pub fn print_bytes_literal(value: &[u16]) -> String {
     todo!()
 }

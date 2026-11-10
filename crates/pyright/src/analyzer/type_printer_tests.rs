@@ -5,8 +5,8 @@ use jsrt::P;
 use crate::analyzer::type_printer::{FunctionReturnTypeCallback, PrintTypeFlags, print_type};
 use crate::analyzer::types::{
     AnyType, ClassType, ClassTypeFlags, FunctionParam, FunctionParamFlags, FunctionType,
-    FunctionTypeFlags, ModuleType, NeverType, ParamSpecType, Type, TypeVarKind, TypeVarType,
-    UnboundType, UnknownType, combine_types,
+    FunctionTypeFlags, LiteralValue, ModuleType, NeverType, ParamSpecType, Type, TypeVarKind,
+    TypeVarType, UnboundType, UnknownType, combine_types,
 };
 use crate::common::uri::Uri;
 use crate::parser::parse_nodes::ParamCategory;
@@ -298,4 +298,22 @@ fn function_types() {
 
     assert_eq!(print_type(func_type_d.0, PrintTypeFlags::None, callback), "(**P) -> Any");
     assert_eq!(print_type(func_type_d.0, PrintTypeFlags::PythonSyntax, callback), "Callable[P, Any]");
+}
+
+// Not in typePrinter.test.ts: printLiteralValue (typePrinter.ts:160) prints a str literal through
+// JSON.stringify, which writes a lone surrogate as an escape.
+#[test]
+fn literal_with_lone_surrogate() {
+    let callback = return_type_callback();
+    let str_class = create_class("str", "builtins.str", "builtins", ClassTypeFlags::BuiltIn);
+    let str_instance = ClassType::clone_as_instance(str_class, true);
+    let literal = |units: &[u16]| {
+        ClassType::clone_with_literal(str_instance, Some(LiteralValue::String(units.into()))).0
+    };
+
+    assert_eq!(print_type(literal(&[0xd800]), PrintTypeFlags::None, callback), "Literal['\\ud800']");
+    let file_dcff: Vec<u16> = "file-".encode_utf16().chain([0xdcff]).collect();
+    assert_eq!(print_type(literal(&file_dcff), PrintTypeFlags::None, callback), "Literal['file-\\udcff']");
+    let alpha: Vec<u16> = "al".encode_utf16().chain([0xd800]).chain("pha".encode_utf16()).collect();
+    assert_eq!(print_type(literal(&alpha), PrintTypeFlags::None, callback), "Literal['al\\ud800pha']");
 }
