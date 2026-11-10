@@ -296,7 +296,83 @@ function normalize() {
     dump('normalize.json', { ...Object.fromEntries(FORMS.map((f) => [`single${f}`, single[f]])), contextNFC: context.NFC, contextNFD: context.NFD, ranks, random });
 }
 
-const sections = { tables, strings, normalize, numbers, bigints };
+// Sort inputs and comparators. tests/sort.rs mirrors SORT_MODES and
+// SORT_KINDS exactly, with the same PRNG, so the fixture stores only seeds and
+// fingerprints of V8's comparator calls.
+const SORT_MODES = {
+    random2: (r, n) => Array.from({ length: n }, () => r.int(2)),
+    random10: (r, n) => Array.from({ length: n }, () => r.int(10)),
+    randomN: (r, n) => Array.from({ length: n }, () => r.int(n)),
+    randomBig: (r, n) => Array.from({ length: n }, () => r()),
+    sorted: (r, n) => Array.from({ length: n }, (_, i) => i),
+    reversed: (r, n) => Array.from({ length: n }, (_, i) => n - i),
+    runs: (r, n) => {
+        const out = [];
+        while (out.length < n) {
+            const len = 1 + r.int(200);
+            const start = r.int(1000);
+            const desc = r.int(2) === 1;
+            for (let i = 0; i < len && out.length < n; i++) out.push(desc ? start - i : start + i);
+        }
+        return out;
+    },
+    sawtooth: (r, n) => {
+        const k = 1 + r.int(50);
+        return Array.from({ length: n }, (_, i) => i % k);
+    },
+};
+
+const SORT_KINDS = {
+    consistent: (a, b) => a - b,
+    descending: (a, b) => b - a,
+    random: (a, b, rc) => (rc() % 3) - 1,
+    rockPaperScissors: (a, b) => [0, 1, -1][(((a - b) % 3) + 3) % 3],
+    // types.ts sortTypes-like: two "literals" (odd values) always return 1.
+    literalsReturnOne: (a, b) => (a & 1 && b & 1 ? 1 : a - b),
+    fractionOrNaN: (a, b) => (a % 7 === b % 7 ? NaN : (a - b) / 3),
+    alwaysOne: () => 1,
+    alwaysMinusOne: () => -1,
+    alwaysZero: () => 0,
+};
+
+const FNV_OFFSET = 2166136261;
+const fnv = (h, x) => Math.imul(h ^ x, 16777619) >>> 0;
+
+function sortFixtures() {
+    const sizes = [0, 1, 2, 3, 5, 7, 8, 9, 16, 31, 32, 33, 63, 64, 65, 100, 128, 129, 255, 256, 257, 600, 1000, 1500, 2048, 3001];
+    const cases = [];
+    let seed = 1;
+    for (const mode of Object.keys(SORT_MODES)) {
+        for (const kind of Object.keys(SORT_KINDS)) {
+            for (const n of sizes) {
+                seed++;
+                const values = SORT_MODES[mode](rng(seed), n);
+                const rc = rng(seed ^ 0x5bd1e995);
+                const ids = values.map((_, i) => i);
+                let count = 0;
+                let callHash = FNV_OFFSET;
+                ids.sort((a, b) => {
+                    count++;
+                    callHash = fnv(fnv(callHash, a), b);
+                    return SORT_KINDS[kind](values[a], values[b], rc);
+                });
+                const resultHash = ids.reduce(fnv, FNV_OFFSET);
+                cases.push([seed, mode, kind, n, count, callHash, resultHash, n <= 33 ? ids : null]);
+            }
+        }
+    }
+
+    const r = rng(5);
+    const strings = [];
+    for (let i = 0; i < 300; i++) {
+        const arr = Array.from({ length: r.int(40) }, () => randomString(r, 4, ['a', 'b', 'B', 'é', '～', '\u{1f600}', '\u{10400}', ' ', '1', '10', '9']));
+        strings.push([arr, [...arr].sort()]);
+    }
+
+    dump('sort.json', { cases, strings });
+}
+
+const sections = { tables, strings, normalize, numbers, bigints, sort: sortFixtures };
 // Doubles travel as 16 hex digits of their bits: printing them in decimal
 // would test JS against itself.
 const bitsView = new DataView(new ArrayBuffer(8));

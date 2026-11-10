@@ -6,6 +6,7 @@ pub mod arena;
 pub mod collections;
 pub mod node_path;
 pub mod number;
+pub mod sort;
 pub mod string;
 pub mod vscode_uri;
 

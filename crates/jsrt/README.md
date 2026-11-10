@@ -57,3 +57,12 @@ On `str`, `js_slice`, `js_substring`, `js_substr` and `js_split` return `Cow<str
 | `a < b` between a bigint and a number | `JsBigInt: PartialOrd<f64>`, `PartialEq<f64>` |
 
 An integer below 1e21 prints the same through Rust's `Display` as through `number_to_string`.
+
+## sorting
+
+| JavaScript | Rust |
+|---|---|
+| `array.sort(compare)` | `sort::sort_by(&mut v, compare)` |
+| `strings.sort()` | `sort::sort_strings(&mut v)` |
+
+`sort_by` ports V8's TimSort and makes the same comparator calls in the same order, so a comparator that is not a total order, or has side effects, behaves as in pyright. The comparator may return `f64` (NaN counts as 0), `i32`, `i64` or `Ordering`. Never replace a ported `sort` with `slice::sort_by`: the result differs for inconsistent comparators.
