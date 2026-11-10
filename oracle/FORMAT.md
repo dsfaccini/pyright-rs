@@ -113,7 +113,7 @@ These objects print on one line, `<key>: <form>`, checked in this order:
 1. stage-specific forms: scope references in bind (`#3`, `external`), flow node references in flow (`F12`).
 2. A parse node not printed as a tree child: `<NodeTypeName>@<start>+<length>`, for example `Name@120+3`.
 3. A `Uri`: `Uri("<text>")`. For a `file` URI the text is the mapped path; for any other URI it is `toString()` (`""` for the empty URI, `*** unresolved module ***` for the unresolved-module marker).
-4. A pyright type object: `<type>`. Types print only in the types stage, as described there.
+4. A pyright type object: `<type>`. The only one reachable is a symbol's `_synthesizedTypeInfo.type` in the bind stage; the types stage prints types its own way.
 5. An object whose printed fields are exactly `start` and `length` (a `TextRange`): `<start>+<length>`.
 6. An object whose printed fields are exactly `start` and `end`, each with exactly `line` and `character` (a `Range`): `<start.line>:<start.character>-<end.line>:<end.character>`.
 
@@ -246,7 +246,7 @@ Each `d` field prints by these rules:
 
 After the `d` fields, two more kinds of line can follow:
 
-- `+<name>: <value>` for each own property of the node object outside `nodeType`, `start`, `length`, `id`, `parent`, `a` and `d`, sorted, except the `stringAnnotations` property that the parser attaches to the module node. None appear at the pinned commit; the Rust side prints none.
+- `+<name>: <value>` for each own property of the node object outside `nodeType`, `start`, `length`, `id`, `parent`, `a` and `d`, sorted, except the `stringAnnotations` property that the parser attaches to the module node. None appear on the oracle corpora; the Rust side prints none.
 - `(annotation): <node>` for a `StringList` node that has a parser string annotation (`getParserStringAnnotation`). It prints as a child of the `StringList`, including the parent check.
 
 Example (`x: "List[int]" = [1, 2]`):
