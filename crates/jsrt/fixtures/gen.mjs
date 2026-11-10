@@ -3,7 +3,7 @@
 //
 //   node crates/jsrt/fixtures/gen.mjs [section...]
 //
-// Sections: tables, strings, normalize, numbers, sort. No argument runs all.
+// Sections: tables, strings, normalize, numbers, bigints, sort. No argument runs all.
 // Every random input comes from a seeded PRNG, so a rerun gives the same files.
 
 import { writeFileSync } from 'node:fs';
@@ -296,7 +296,238 @@ function normalize() {
     dump('normalize.json', { ...Object.fromEntries(FORMS.map((f) => [`single${f}`, single[f]])), contextNFC: context.NFC, contextNFD: context.NFD, ranks, random });
 }
 
-const sections = { tables, strings, normalize };
+const sections = { tables, strings, normalize, numbers, bigints };
+// Doubles travel as 16 hex digits of their bits: printing them in decimal
+// would test JS against itself.
+const bitsView = new DataView(new ArrayBuffer(8));
+function bits(x) {
+    bitsView.setFloat64(0, x);
+    return bitsView.getBigUint64(0).toString(16).padStart(16, '0');
+}
+function fromBits(hi, lo) {
+    bitsView.setUint32(0, hi);
+    bitsView.setUint32(4, lo);
+    return bitsView.getFloat64(0);
+}
+
+function interestingDoubles(r) {
+    const xs = [0, -0, NaN, Infinity, -Infinity, Number.MIN_VALUE, -Number.MIN_VALUE, Number.MAX_VALUE, Number.EPSILON,
+        1e21, 1e21 - 65536, 999999999999999900000, 1e-7, 1e-6, 0.000001, 9.999999999999999e-7, 1.5e-7, 123e-20, 0.1, 0.2, 0.3,
+        2 ** 53, 2 ** 53 + 2, 2 ** 53 - 1, -(2 ** 31), 2 ** 31, 2 ** 32, 5e-324, 2.2250738585072014e-308, 2.225073858507201e-308,
+        1.7976931348623157e308, 4.35, 0.5, -0.5, 1.5, 2.5, -2.5, 123456789012345680000, 1e100, 1.2e-100];
+    for (let e = -1074; e <= 1023; e++) xs.push(2 ** e, -(2 ** e) * 3);
+    for (let i = 0; i < 12000; i++) xs.push(fromBits(r(), r()));
+    for (let i = 0; i < 12000; i++) {
+        const digits = 1 + r.int(17);
+        let m = 0;
+        for (let d = 0; d < digits; d++) m = m * 10 + r.int(10);
+        xs.push(Number(`${r.int(2) ? '-' : ''}${m}e${r.int(60) - 30}`));
+    }
+    for (let i = 0; i < 2000; i++) xs.push(r.int(2 ** 31) * 2 ** (r.int(60) - 30));
+    return xs;
+}
+
+// A decimal string for a double's exact midpoint to its successor, to test
+// ties-to-even.
+function midpointString(x) {
+    bitsView.setFloat64(0, x);
+    const b = bitsView.getBigUint64(0);
+    const exp = Number((b >> 52n) & 0x7ffn);
+    const frac = b & ((1n << 52n) - 1n);
+    const mant = exp === 0 ? frac : frac | (1n << 52n);
+    const e2 = (exp === 0 ? -1074 : exp - 1075) - 1;
+    const twice = 2n * mant + 1n;
+    if (e2 >= 0) return (twice << BigInt(e2)).toString();
+    // twice / 2^-e2 = twice * 5^-e2 / 10^-e2
+    const scaled = (twice * 5n ** BigInt(-e2)).toString().padStart(-e2 + 1, '0');
+    return `${scaled.slice(0, scaled.length + e2)}.${scaled.slice(scaled.length + e2)}`;
+}
+
+function numbers() {
+    const r = rng(3);
+    const doubles = interestingDoubles(r);
+    const toString = doubles.map((x) => [bits(x), String(x)]);
+
+    const toStringRadix = [];
+    for (let i = 0; i < 6000; i++) {
+        const radix = 2 + r.int(35);
+        let x;
+        switch (r.int(4)) {
+            case 0: x = r.int(0x110000); break;
+            case 1: x = (r.int(2) ? -1 : 1) * r() / (1 + r.int(1000)); break;
+            case 2: x = fromBits(r(), r()); break;
+            default: x = (r.int(2) ? -1 : 1) * r() * 2 ** (r.int(80) - 10); break;
+        }
+        toStringRadix.push([bits(x), radix, x.toString(radix)]);
+    }
+
+    const intPool = ['0', '0', '1', '7', '9', 'a', 'f', 'F', 'z', 'Z', 'x', 'X', 'o', 'b', '+', '-', ' ', '\t', ' ', '﻿', ' ', '.', 'e', '_', '0x', '0X', 'g', '١'];
+    const parseInt_ = [];
+    for (let i = 0; i < 6000; i++) {
+        const s = randomString(r, 8, intPool);
+        const radix = r.pick([0, 0, 10, 16, 2, 8, 36, 7, 3, 1, 37, -1, 5, 32, 4, 20]);
+        parseInt_.push([s, radix, bits(parseInt(s, radix))]);
+    }
+    for (let i = 0; i < 1500; i++) {
+        const radix = r.pick([10, 10, 16, 2, 8, 32, 4, 36, 7, 3, 12, 0]);
+        const alphabet = '0123456789abcdefghijklmnopqrstuvwxyz'.slice(0, radix || 10);
+        let s = r.int(3) === 0 ? '-' : '';
+        const len = 1 + r.int(r.int(4) === 0 ? 400 : 40);
+        for (let d = 0; d < len; d++) s += r.pick([...alphabet]);
+        parseInt_.push([s, radix, bits(parseInt(s, radix))]);
+    }
+
+    const floatPool = ['0', '1', '5', '9', '9', '.', '.', 'e', 'E', '+', '-', ' ', ' ', '　', 'Infinity', 'infinity', 'x', 'n', '_', '0x', '0b', '1e400', '1e-400'];
+    const parseFloat_ = [];
+    const number_ = [];
+    for (let i = 0; i < 6000; i++) {
+        const s = randomString(r, 7, floatPool);
+        parseFloat_.push([s, bits(parseFloat(s))]);
+        const t = r.int(4) === 0 ? ` ${s}\n` : s;
+        number_.push([t, bits(Number(t))]);
+    }
+    for (const s of ['', ' ', '0x', '0x1F', '0X1f', '0o17', '0b101', '-0x10', '+0x10', '0x1g', '0b', '0b2', '1_000', '.', '+.5', '5.', '-0',
+        '0x' + 'f'.repeat(20), '0b' + '1'.repeat(60), '0o' + '7'.repeat(30), 'Infinity', '-Infinity', '+Infinity', 'Infinityx', ' \n12\t ']) {
+        parseFloat_.push([s, bits(parseFloat(s))]);
+        number_.push([s, bits(Number(s))]);
+    }
+    for (let i = 0; i < 1200; i++) {
+        const x = Math.abs(doubles[r.int(doubles.length)]);
+        if (!Number.isFinite(x) || x === Number.MAX_VALUE) continue;
+        const s = midpointString(x);
+        parseFloat_.push([s, bits(parseFloat(s))]);
+        number_.push([s, bits(Number(s))]);
+        const digits = 18 + r.int(30);
+        let m = String(1 + r.int(9));
+        for (let d = 1; d < digits; d++) m += r.int(10);
+        const e = `${m}e${r.int(660) - 340}`;
+        parseFloat_.push([e, bits(parseFloat(e))]);
+    }
+
+    const mathRound = [];
+    for (const x of doubles.slice(0, 3000)) mathRound.push([bits(x), bits(Math.round(x))]);
+    for (let i = 0; i < 3000; i++) {
+        const x = (r.int(2000) - 1000) / 2 + (r.int(3) - 1) * r.int(3) * Number.EPSILON;
+        mathRound.push([bits(x), bits(Math.round(x))]);
+    }
+    for (const x of [0.49999999999999994, -0.49999999999999994, 0.5000000000000001, -0.5000000000000001, 2 ** 52 + 0.5, 2 ** 52 + 1, -(2 ** 52) - 1, 4503599627370495.5, -4503599627370495.5]) {
+        mathRound.push([bits(x), bits(Math.round(x))]);
+    }
+
+    dump('numbers.json', { toString, toStringRadix, parseInt: parseInt_, parseFloat: parseFloat_, number: number_, mathRound });
+}
+
+function randomBigInt(r) {
+    const kind = r.int(6);
+    let digits;
+    if (kind === 0) digits = r.int(3);
+    else if (kind === 1) digits = r.int(1 << 20);
+    else if (kind === 2) digits = BigInt(r()) * 4294967296n + BigInt(r());
+    else {
+        digits = 0n;
+        const words = 1 + r.int(kind === 5 && r.int(4) === 0 ? 40 : 6);
+        for (let i = 0; i < words; i++) digits = (digits << 32n) | BigInt(r());
+    }
+    const value = BigInt(digits);
+    return r.int(2) ? -value : value;
+}
+
+function tryOp(f) {
+    try {
+        const v = f();
+        return typeof v === 'bigint' ? v.toString() : v;
+    } catch (e) {
+        if (!(e instanceof RangeError) && !(e instanceof SyntaxError)) throw e;
+        return null;
+    }
+}
+
+function bigints() {
+    const r = rng(4);
+    const ops = [];
+    for (let i = 0; i < 2500; i++) {
+        const a = randomBigInt(r);
+        const b = randomBigInt(r);
+        const small = BigInt(r.int(a >= -(1n << 32n) && a <= 1n << 32n ? 70 : 6));
+        const shift = BigInt(r.int(400) - 200);
+        const radix = 2 + r.int(35);
+        ops.push({
+            a: a.toString(), b: b.toString(), small: small.toString(), shift: shift.toString(), radix,
+            add: tryOp(() => a + b), sub: tryOp(() => a - b), mul: tryOp(() => a * b), div: tryOp(() => a / b), rem: tryOp(() => a % b),
+            pow: tryOp(() => a ** small), negPow: tryOp(() => a ** -small), shl: tryOp(() => a << shift), shr: tryOp(() => a >> shift),
+            and: (a & b).toString(), or: (a | b).toString(), xor: (a ^ b).toString(), not: (~a).toString(), neg: (-a).toString(),
+            cmp: a < b ? -1 : a > b ? 1 : 0, number: bits(Number(a)), str: a.toString(radix),
+        });
+    }
+
+    const mixed = [];
+    for (let i = 0; i < 4000; i++) {
+        const a = r.int(3) === 0 ? BigInt(r.int(200) - 100) : randomBigInt(r);
+        const x = r.pick([
+            () => Number(a), () => Number(a) + 0.5, () => Number(a) - 0.25, () => fromBits(r(), r()), () => r.int(200) - 100, () => NaN,
+            () => Infinity, () => -Infinity, () => -0, () => Number(a + 1n), () => Number(a - 1n),
+        ])();
+        mixed.push([a.toString(), bits(x), a < x, a > x, a == x, a <= x, a >= x]);
+    }
+
+    const fromNumber = [];
+    for (const x of interestingDoubles(r).slice(0, 2500)) fromNumber.push([bits(x), tryOp(() => BigInt(x))]);
+
+    const parse = [];
+    const pool = ['0', '1', '9', 'a', 'f', 'F', 'g', 'x', 'X', 'o', 'O', 'b', 'B', '+', '-', ' ', '\n', ' ', '﻿', '_', '.', 'e', 'n', '0x', '0o', '0b', '12345678901234567890'];
+    for (let i = 0; i < 6000; i++) {
+        const s = randomString(r, 6, pool);
+        parse.push([s, tryOp(() => BigInt(s))]);
+    }
+
+    // V8's 2^30-bit limit at its edges. tests/bigint.rs builds the same
+    // operands by name; the value is the result's bit length and sign, or null
+    // where V8 throws.
+    const K = 1n << 30n;
+    const big = (1n << (K - 1n)) - 1n;
+    const limitCases = {
+        pow_2_k_minus_1: () => 2n ** (K - 1n),
+        pow_2_k: () => 2n ** K,
+        pow_minus_2_k_minus_1: () => (-2n) ** (K - 1n),
+        pow_minus_1_huge: () => (-1n) ** (K * K),
+        pow_1_huge: () => 1n ** (K * K),
+        pow_0_huge: () => 0n ** (K * K),
+        pow_3_k: () => 3n ** K,
+        pow_2_huge: () => 2n ** (K * K),
+        shl_1_k_minus_1: () => 1n << (K - 1n),
+        shl_1_k: () => 1n << K,
+        shl_1_k_plus_1: () => 1n << (K + 1n),
+        shl_3_k_minus_2: () => 3n << (K - 2n),
+        shl_3_k_minus_1: () => 3n << (K - 1n),
+        shl_0_huge: () => 0n << (K * K),
+        shl_minus_1_by_minus_huge: () => -1n << -(K * K),
+        shr_5_by_minus_k: () => 5n >> -K,
+        add_big_big: () => big + big,
+        sub_big_minus_big: () => big - -big,
+        sub_big_big: () => big - big,
+        mul_half_half: () => (1n << (K / 2n)) * (1n << (K / 2n - 1n)),
+    };
+    const limits = Object.entries(limitCases).map(([name, f]) => {
+        try {
+            const v = f();
+            const abs = v < 0n ? -v : v;
+            let lo = 0;
+            let hi = 2 ** 31;
+            while (lo < hi) {
+                const mid = Math.floor((lo + hi) / 2);
+                if (abs >> BigInt(mid) === 0n) hi = mid;
+                else lo = mid + 1;
+            }
+            return [name, lo, v < 0n];
+        } catch (e) {
+            if (!(e instanceof RangeError)) throw e;
+            return [name, null, false];
+        }
+    });
+
+    dump('bigint.json', { ops, mixed, fromNumber, parse, limits });
+}
+
 const wanted = process.argv.slice(2);
 for (const [name, fn] of Object.entries(sections)) {
     if (wanted.length === 0 || wanted.includes(name)) fn();
