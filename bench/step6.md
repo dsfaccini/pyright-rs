@@ -43,8 +43,13 @@ Dumps off, median of three runs, peak RSS the maximum. pyright: the fork, `node 
 | 27af4b8 | none | 584 bytes | killed after about 40 s | about 0.73 GB/s |
 | 897d847 | `Type` shrunk (`shrink` agent) | 144 bytes | killed after 58 s | about 0.53 GB/s |
 | 69f39c5 | also `TypeResult` 104 bytes, constraint sets and `DiagnosticAddendum` 16–32 bytes | 144 bytes | completes: 1:02 wall, 27.8 GB peak; pyright 2:32, 9.1 GB | about 0.45 GB/s |
+| a687113 | all of `shrink` (sizes below) | 128 bytes | completes: 0:55 wall, 25.6 GB peak, output identical | about 0.47 GB/s |
 
 At 897d847, 12 GiB into the evaluator heap: `TypeResult` 4.5 GB (17.0M × 264 bytes), `Type` 2.9 GB (20.1M × 144), `ConstraintSet` 1.6 GB, `ConstraintSolutionSet` 1.2 GB, `DiagnosticAddendum` 1.0 GB.
 
 At 69f39c5 the `--outputjson` output on pydantic-ai is identical (0 diagnostics, `filesAnalyzed` 2,046 on both sides).
 A run with the types and diag dumps on was killed at 30 GB after 1:49, 965 of 6,696 files dumped. In those files the diag stage matches, and the types stage differs in 2 files: a string literal with a lone surrogate prints as U+FFFD where pyright prints `\ud800` (`LiteralValue::String` holds a `String`, not a `JsString`).
+
+`shrink` agent, final `size_of` in bytes, each locked by a compile-time assert: `Type` 584 → 128, `TypeResult` 264 → 40, `ConstraintSet` 128 → 32, `ConstraintSolutionSet` 64 → 16, `DiagnosticAddendum` 88 → 24, `VirtualParamDetails` 88 → 80, `FunctionDetailsShared` 280 → 192, `ConstraintTracker` 32 → 24, `FunctionParam` 56 → 48.
+
+At a687113 the arena stats count about 7 GB of evaluator objects at the end of the run, but RSS peaks at 25.6 GB. Most of the rest is buffers those objects own on the system heap (`Vec`, `Box`, maps), which the stats do not count. The collector frees them when it drops dead objects.
