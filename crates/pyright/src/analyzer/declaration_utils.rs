@@ -10,14 +10,26 @@
 )]
 
 use crate::analyzer::analyzer_file_info::ImportLookup;
+use crate::analyzer::analyzer_file_info::{
+    ImportLookupKey, ImportLookupResult, LookupImportOptions,
+};
 use crate::analyzer::analyzer_node_info::AnalyzerNodeInfoReader;
 use crate::analyzer::declaration::Declaration;
 use crate::analyzer::declaration::DeclarationType;
+use crate::analyzer::declaration::{
+    AliasDeclarationDetails, DeclarationDetails, is_alias_declaration,
+};
+use crate::analyzer::parse_tree_utils::get_file_info_from_node;
 use crate::common::uri::uri::Uri;
 use crate::parser::parse_nodes::FunctionNode;
 use crate::parser::parse_nodes::NameNode;
 use crate::parser::parse_nodes::ParameterNode;
+use crate::parser::parse_nodes::{
+    ClassNode, ImportAsNode, ImportFromAsNode, ImportFromNode, TypeAliasNode, TypeAnnotationNode,
+    TypeParameterNode,
+};
 use jsrt::P;
+use std::cell::{Cell, RefCell};
 
 // analyzer/declarationUtils.ts:20
 #[derive(Clone)]
@@ -134,12 +146,115 @@ pub fn are_declarations_same(
 
 // analyzer/declarationUtils.ts:120
 pub fn get_name_from_declaration(declaration: P<Declaration>) -> Option<String> {
-    todo!()
+    let node = declaration.node.get();
+    match declaration.type_ {
+        DeclarationType::Alias => declaration.alias().unwrap().symbol_name.borrow().clone(),
+
+        DeclarationType::Class => Some(
+            ClassNode::cast(node)
+                .unwrap()
+                .d()
+                .name
+                .get()
+                .d()
+                .value
+                .clone(),
+        ),
+        DeclarationType::Function => Some(
+            FunctionNode::cast(node)
+                .unwrap()
+                .d()
+                .name
+                .get()
+                .d()
+                .value
+                .clone(),
+        ),
+        DeclarationType::TypeParam => Some(
+            TypeParameterNode::cast(node)
+                .unwrap()
+                .d()
+                .name
+                .get()
+                .d()
+                .value
+                .clone(),
+        ),
+        DeclarationType::TypeAlias => Some(
+            TypeAliasNode::cast(node)
+                .unwrap()
+                .d()
+                .name
+                .get()
+                .d()
+                .value
+                .clone(),
+        ),
+
+        DeclarationType::Param => ParameterNode::cast(node)
+            .unwrap()
+            .d()
+            .name
+            .get()
+            .map(|name| name.d().value.clone()),
+
+        DeclarationType::Variable => NameNode::cast(node).map(|name| name.d().value.clone()),
+
+        DeclarationType::Intrinsic | DeclarationType::SpecialBuiltInClass => {
+            TypeAnnotationNode::cast(node)
+                .and_then(|annotation| NameNode::cast(annotation.d().value_expr.get()))
+                .map(|name| name.d().value.clone())
+        }
+    }
 }
 
 // analyzer/declarationUtils.ts:152
 pub fn get_name_node_for_declaration(declaration: P<Declaration>) -> Option<NameNode> {
-    todo!()
+    // `declaration.node === undefined` holds only for a synthesized alias declaration, whose
+    // node the Rust Declaration cannot leave out; every node read below exists in TypeScript.
+    let node = declaration.node.get();
+    match declaration.type_ {
+        DeclarationType::Alias => {
+            if let Some(import_as) = ImportAsNode::cast(node) {
+                Some(
+                    import_as
+                        .d()
+                        .alias
+                        .get()
+                        .unwrap_or_else(|| import_as.d().module.get().d().name_parts.borrow()[0]),
+                )
+            } else if let Some(import_from_as) = ImportFromAsNode::cast(node) {
+                Some(
+                    import_from_as
+                        .d()
+                        .alias
+                        .get()
+                        .unwrap_or_else(|| import_from_as.d().name.get()),
+                )
+            } else {
+                Some(
+                    ImportFromNode::cast(node)
+                        .unwrap()
+                        .d()
+                        .module
+                        .get()
+                        .d()
+                        .name_parts
+                        .borrow()[0],
+                )
+            }
+        }
+
+        DeclarationType::Class => Some(ClassNode::cast(node).unwrap().d().name.get()),
+        DeclarationType::Function => Some(FunctionNode::cast(node).unwrap().d().name.get()),
+        DeclarationType::TypeParam => Some(TypeParameterNode::cast(node).unwrap().d().name.get()),
+        DeclarationType::Param => ParameterNode::cast(node).unwrap().d().name.get(),
+        DeclarationType::TypeAlias => Some(TypeAliasNode::cast(node).unwrap().d().name.get()),
+
+        DeclarationType::Variable => NameNode::cast(node),
+
+        DeclarationType::Intrinsic | DeclarationType::SpecialBuiltInClass => None,
+    }
 }
 
 // analyzer/declarationUtils.ts:189
@@ -148,14 +263,60 @@ pub fn is_defined_in_file(
     file_uri: &Uri,
     node_info: &dyn AnalyzerNodeInfoReader,
 ) -> Option<bool> {
-    todo!()
+    if is_alias_declaration(&decl) {
+        // Alias decl's path points to the original symbol
+        // the alias is pointing to. So, we need to get the
+        // filepath in that the alias is defined from the node.
+        return get_file_info_from_node(decl.node.get(), node_info)
+            .map(|file_info| file_info.file_uri.equals(Some(*file_uri)));
+    }
+
+    // Other decls, the path points to the file the symbol is defined in.
+    Some(decl.uri.get().equals(Some(*file_uri)))
 }
 
 // analyzer/declarationUtils.ts:201
 pub fn get_declarations_with_uses_local_name_removed(
     decls: &[P<Declaration>],
 ) -> Vec<P<Declaration>> {
-    todo!()
+    // `{ ...decl }` of an alias declaration: a new object with the same field values.
+    fn copy_alias_declaration(decl: &Declaration) -> Declaration {
+        let alias = decl.alias().unwrap();
+        Declaration {
+            type_: decl.type_,
+            node: Cell::new(decl.node.get()),
+            uri: Cell::new(decl.uri.get()),
+            range: Cell::new(decl.range.get()),
+            module_name: RefCell::new(decl.module_name.borrow().clone()),
+            is_in_except_suite: Cell::new(decl.is_in_except_suite.get()),
+            is_in_inlined_typed_dict: Cell::new(decl.is_in_inlined_typed_dict.get()),
+            d: DeclarationDetails::Alias(AliasDeclarationDetails {
+                uses_local_name: Cell::new(alias.uses_local_name.get()),
+                load_symbols_from_path: Cell::new(alias.load_symbols_from_path.get()),
+                symbol_name: RefCell::new(alias.symbol_name.borrow().clone()),
+                submodule_fallback: Cell::new(alias.submodule_fallback.get()),
+                first_name_part: RefCell::new(alias.first_name_part.borrow().clone()),
+                implicit_imports: Cell::new(alias.implicit_imports.get()),
+                is_unresolved: Cell::new(alias.is_unresolved.get()),
+                is_native_lib: Cell::new(alias.is_native_lib.get()),
+                is_lazy: Cell::new(alias.is_lazy.get()),
+            }),
+        }
+    }
+
+    // Make a shallow copy and clear the "usesLocalName" field.
+    decls
+        .iter()
+        .map(|&local_decl| {
+            if local_decl.type_ != DeclarationType::Alias {
+                return local_decl;
+            }
+
+            let non_local_decl = P::new_eval(copy_alias_declaration(&local_decl));
+            non_local_decl.alias().unwrap().uses_local_name.set(false);
+            non_local_decl
+        })
+        .collect()
 }
 
 // analyzer/declarationUtils.ts:214
@@ -177,5 +338,223 @@ pub fn resolve_alias_declaration(
     declaration: P<Declaration>,
     options: &ResolveAliasOptions,
 ) -> Option<ResolvedAliasInfo> {
-    todo!()
+    // `{ ...decl }` of an alias declaration: a new object with the same field values.
+    fn copy_alias_declaration(decl: &Declaration) -> Declaration {
+        let alias = decl.alias().unwrap();
+        Declaration {
+            type_: decl.type_,
+            node: Cell::new(decl.node.get()),
+            uri: Cell::new(decl.uri.get()),
+            range: Cell::new(decl.range.get()),
+            module_name: RefCell::new(decl.module_name.borrow().clone()),
+            is_in_except_suite: Cell::new(decl.is_in_except_suite.get()),
+            is_in_inlined_typed_dict: Cell::new(decl.is_in_inlined_typed_dict.get()),
+            d: DeclarationDetails::Alias(AliasDeclarationDetails {
+                uses_local_name: Cell::new(alias.uses_local_name.get()),
+                load_symbols_from_path: Cell::new(alias.load_symbols_from_path.get()),
+                symbol_name: RefCell::new(alias.symbol_name.borrow().clone()),
+                submodule_fallback: Cell::new(alias.submodule_fallback.get()),
+                first_name_part: RefCell::new(alias.first_name_part.borrow().clone()),
+                implicit_imports: Cell::new(alias.implicit_imports.get()),
+                is_unresolved: Cell::new(alias.is_unresolved.get()),
+                is_native_lib: Cell::new(alias.is_native_lib.get()),
+                is_lazy: Cell::new(alias.is_lazy.get()),
+            }),
+        }
+    }
+
+    let mut cur_declaration: P<Declaration> = declaration;
+    let mut already_visited: Vec<P<Declaration>> = Vec::new();
+    let mut is_private = false;
+
+    // These variables are used to find a transition from a non-py.typed to
+    // a py.typed resolution chain. In this case, if the imported symbol
+    // is a private symbol (i.e. not intended to be re-exported), we store
+    // the name of the importer and imported modules so the caller can
+    // report an error.
+    let mut saw_py_typed_transition = false;
+    let mut private_py_typed_imported: Option<String> = None;
+    let mut private_py_typed_importer: Option<String> = None;
+
+    loop {
+        let symbol_name = cur_declaration
+            .alias()
+            .and_then(|alias| alias.symbol_name.borrow().clone());
+        let Some(symbol_name) = symbol_name.filter(|name| !name.is_empty()) else {
+            return Some(ResolvedAliasInfo {
+                declaration: Some(cur_declaration),
+                is_private,
+                private_py_typed_imported,
+                private_py_typed_importer,
+            });
+        };
+        let cur_alias = cur_declaration.alias().unwrap();
+
+        // If we are not supposed to follow local alias names and this
+        // is a local name, don't continue to follow the alias.
+        if !options.resolve_local_names && cur_alias.uses_local_name.get() {
+            return Some(ResolvedAliasInfo {
+                declaration: Some(cur_declaration),
+                is_private,
+                private_py_typed_imported,
+                private_py_typed_importer,
+            });
+        }
+
+        let mut lookup_result: Option<ImportLookupResult> = None;
+        if !cur_declaration.uri.get().is_empty() && cur_alias.load_symbols_from_path.get() {
+            lookup_result = import_lookup(
+                ImportLookupKey::Uri(cur_declaration.uri.get()),
+                Some(LookupImportOptions {
+                    skip_file_needed_check: options.skip_file_needed_check,
+                    skip_parsing: None,
+                }),
+            );
+        }
+
+        let symbol = lookup_result
+            .as_ref()
+            .and_then(|lookup_result| lookup_result.symbol_table.get(&symbol_name));
+        let Some(symbol) = symbol else {
+            if let Some(submodule_fallback) = cur_alias.submodule_fallback.get() {
+                // `curDeclaration.symbolName` is set on this path.
+
+                // See if we are resolving a specific imported symbol name and the submodule
+                // fallback cannot be resolved. For example, `from a import b`. If b is both
+                // a symbol in `a/__init__.py` and a submodule `a/b.py` and we are not using
+                // type information from this library (e.g. a non-py.typed library source file
+                // when useLibraryCodeForTypes is disabled), b should be evaluated as Unknown,
+                // not as a module.
+                if !cur_declaration.uri.get().is_empty()
+                    && submodule_fallback.type_ == DeclarationType::Alias
+                    && !submodule_fallback.uri.get().is_empty()
+                {
+                    let lookup_result = import_lookup(
+                        ImportLookupKey::Uri(submodule_fallback.uri.get()),
+                        Some(LookupImportOptions {
+                            skip_file_needed_check: options.skip_file_needed_check,
+                            skip_parsing: Some(true),
+                        }),
+                    );
+                    if lookup_result.is_none() {
+                        return None;
+                    }
+                }
+
+                let submodule_fallback = P::new_eval(copy_alias_declaration(&submodule_fallback));
+                let mut base_module_name = submodule_fallback.module_name.borrow().clone();
+
+                if !base_module_name.is_empty() {
+                    base_module_name = format!("{base_module_name}.");
+                }
+
+                *submodule_fallback.module_name.borrow_mut() =
+                    format!("{base_module_name}{symbol_name}");
+
+                return resolve_alias_declaration(import_lookup, submodule_fallback, options);
+            }
+
+            // If the symbol comes from a native library, we won't
+            // be able to resolve its type directly.
+            if cur_alias.is_native_lib.get().unwrap_or(false) {
+                return Some(ResolvedAliasInfo {
+                    declaration: None,
+                    is_private,
+                    private_py_typed_imported: None,
+                    private_py_typed_importer: None,
+                });
+            }
+
+            return None;
+        };
+
+        if symbol.is_private_member() && !saw_py_typed_transition {
+            is_private = true;
+        }
+
+        if symbol.is_externally_hidden() && !options.allow_externally_hidden_access {
+            return None;
+        }
+
+        // Prefer declarations with specified types. If we don't have any of those,
+        // fall back on declarations with inferred types.
+        let mut declarations: Vec<P<Declaration>> = symbol.get_typed_declarations();
+
+        // Try not to use declarations within an except suite even if it's a typed
+        // declaration. These are typically used for fallback exception handling.
+        declarations.retain(|decl| !decl.is_in_except_suite.get());
+
+        if declarations.is_empty() {
+            declarations = symbol.get_declarations();
+            declarations.retain(|decl| !decl.is_in_except_suite.get());
+        }
+
+        if declarations.is_empty() {
+            // Use declarations within except clauses if there are no alternatives.
+            declarations = symbol.get_declarations();
+        }
+
+        if declarations.is_empty() {
+            return None;
+        }
+
+        let prev_declaration = cur_declaration;
+
+        // Prefer the last unvisited declaration in the list. This ensures that
+        // we use all of the overloads if it's an overloaded function.
+        let unvisited_decls: Vec<P<Declaration>> = declarations
+            .iter()
+            .copied()
+            .filter(|decl| !already_visited.contains(decl))
+            .collect();
+        if let Some(&last) = unvisited_decls.last() {
+            cur_declaration = last;
+        } else {
+            cur_declaration = declarations[declarations.len() - 1];
+        }
+
+        if lookup_result
+            .as_ref()
+            .is_some_and(|lookup_result| lookup_result.is_in_py_typed_package)
+        {
+            if !saw_py_typed_transition {
+                if symbol.is_private_py_typed_import() {
+                    private_py_typed_importer = Some(prev_declaration.module_name.borrow().clone());
+                }
+
+                // Note that we've seen a transition from a non-py.typed to a py.typed
+                // import. No further check is needed.
+                saw_py_typed_transition = true;
+            } else {
+                // If we've already seen a transition, look for the first non-private
+                // symbol that is resolved so we can tell the user to import from this
+                // location instead.
+                if !symbol.is_private_py_typed_import() && private_py_typed_imported.is_none() {
+                    private_py_typed_imported = Some(cur_declaration.module_name.borrow().clone());
+                }
+            }
+        }
+
+        // Make sure we don't follow a circular list indefinitely.
+        if already_visited.contains(&cur_declaration) {
+            // If the path path of the alias points back to the original path, use the submodule
+            // fallback instead. This happens in the case where a module's __init__.py file
+            // imports a submodule using itself as the import target. For example, if
+            // the module is foo, and the foo.__init__.py file contains the statement
+            // "from foo import bar", we want to import the foo/bar.py submodule.
+            if let Some(submodule_fallback) = cur_declaration
+                .alias()
+                .and_then(|alias| alias.submodule_fallback.get())
+            {
+                return resolve_alias_declaration(import_lookup, submodule_fallback, options);
+            }
+            return Some(ResolvedAliasInfo {
+                declaration: Some(declaration),
+                is_private,
+                private_py_typed_imported,
+                private_py_typed_importer,
+            });
+        }
+        already_visited.push(cur_declaration);
+    }
 }
