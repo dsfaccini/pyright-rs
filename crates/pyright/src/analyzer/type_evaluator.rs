@@ -4078,7 +4078,41 @@ impl TypeEvaluator {
         type_: FunctionType,
         param_name: &str,
     ) -> Option<P<Declaration>> {
-        todo!()
+        if analyzer::types::is_function(type_.0) {
+            if let Some(function_decl) = type_.d().shared.get().declaration.get() {
+                if function_decl.type_ == analyzer::declaration::DeclarationType::Function {
+                    let function_node = function_decl.node.get();
+                    let function_scope = self.node_info.get_scope(function_node);
+                    if let Some(function_scope) = function_scope {
+                        let param_symbol = function_scope.look_up_symbol(param_name);
+                        if let Some(param_symbol) = param_symbol {
+                            return param_symbol.get_declarations().into_iter().find(|decl| {
+                                decl.type_ == analyzer::declaration::DeclarationType::Param
+                            });
+                        }
+
+                        let parameter_details = analyzer::parameter_utils::get_param_list_details(type_, None);
+                        if let Some(unpacked_kwargs_typed_dict_type) =
+                            parameter_details.unpacked_kwargs_typed_dict_type
+                        {
+                            let lookup_results = analyzer::type_utils::look_up_class_member(
+                                unpacked_kwargs_typed_dict_type,
+                                param_name,
+                                MemberAccessFlags::Default,
+                                None,
+                            );
+                            if let Some(lookup_results) = lookup_results {
+                                return lookup_results.symbol.get_declarations().into_iter().find(|decl| {
+                                    decl.type_ == analyzer::declaration::DeclarationType::Variable
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        None
     }
 
     // analyzer/typeEvaluator.ts:23548
@@ -4089,7 +4123,59 @@ impl TypeEvaluator {
         param_name: &str,
         decls: &mut Vec<P<Declaration>>,
     ) -> bool {
-        todo!()
+        if !analyzer::types::is_instantiable_class(base_type)
+            || ClassType::cast(base_type).unwrap().d().shared.get().full_name != "functools.partial"
+        {
+            return false;
+        }
+
+        let wrapped_arg = call_node.d().args.borrow().iter().copied().find(|arg| {
+            arg.d().arg_category.get() == parser::parse_nodes::ArgCategory::Simple && arg.d().name.get().is_none()
+        });
+        let Some(wrapped_arg) = wrapped_arg else {
+            return true;
+        };
+
+        let wrapped_type = self.get_type(wrapped_arg.d().value_expr.get());
+        let Some(wrapped_type) = wrapped_type else {
+            return true;
+        };
+
+        if analyzer::types::is_function(wrapped_type) {
+            let param_decl = self.get_declaration_from_keyword_param(FunctionType::cast(wrapped_type).unwrap(), param_name);
+            if let Some(param_decl) = param_decl {
+                decls.push(param_decl);
+            }
+        } else if analyzer::types::is_overloaded(wrapped_type) {
+            for f in OverloadedType::get_overloads(OverloadedType::cast(wrapped_type).unwrap()) {
+                let param_decl = self.get_declaration_from_keyword_param(f, param_name);
+                if let Some(param_decl) = param_decl {
+                    decls.push(param_decl);
+                }
+            }
+        } else if analyzer::types::is_instantiable_class(wrapped_type) {
+            let init_method_type = analyzer::constructors::get_bound_init_method(
+                self,
+                wrapped_arg.d().value_expr.get(),
+                ClassType::clone_as_instance(ClassType::cast(wrapped_type).unwrap(), true),
+                None,
+                analyzer::type_utils::MemberAccessFlags::Default,
+            )
+            .map(|result| result.type_.get());
+            if let Some(init_method_type) = init_method_type {
+                if analyzer::types::is_function(init_method_type) {
+                    let param_decl = self.get_declaration_from_keyword_param(
+                        FunctionType::cast(init_method_type).unwrap(),
+                        param_name,
+                    );
+                    if let Some(param_decl) = param_decl {
+                        decls.push(param_decl);
+                    }
+                }
+            }
+        }
+
+        true
     }
 
     // analyzer/typeEvaluator.ts:23597
@@ -4098,7 +4184,9 @@ impl TypeEvaluator {
         base_type: ClassType,
         param_name: &str,
     ) -> bool {
-        todo!()
+        ClassType::is_data_class(base_type)
+            || ClassType::is_typed_dict_class(base_type)
+            || ClassType::has_named_tuple_entry(base_type, param_name)
     }
 
     // analyzer/typeEvaluator.ts:23605
@@ -4110,7 +4198,37 @@ impl TypeEvaluator {
         synthesized_types: &mut Vec<SynthesizedTypeInfo>,
         prefer_typed_declarations: bool,
     ) {
-        todo!()
+        let decl_count_before_add = decls.len();
+        let typed_decls = if prefer_typed_declarations {
+            Some(symbol.get_typed_declarations())
+        } else {
+            None
+        };
+        match typed_decls {
+            Some(typed_decls) if !typed_decls.is_empty() => decls.extend(typed_decls),
+            _ => decls.extend(symbol.get_declarations()),
+        }
+
+        let synth_type_info = symbol.get_synthesized_type();
+        if let Some(synth_type_info) = synth_type_info {
+            synthesized_types.push(synth_type_info.clone());
+
+            // Some module members are represented only by a synthesized module type,
+            // with no concrete declaration node to navigate to. Synthesize a matching
+            // alias declaration so definition/declaration/reference features can still
+            // bind to the submodule's file.
+            if decls.len() == decl_count_before_add && analyzer::types::is_module(synth_type_info.type_) {
+                let file_uri = analyzer::types::ModuleType::cast(synth_type_info.type_)
+                    .unwrap()
+                    .d()
+                    .priv_
+                    .borrow()
+                    .file_uri;
+                if !file_uri.is_empty() {
+                    decls.push(analyzer::declaration_utils::synthesize_alias_declaration(&file_uri));
+                }
+            }
+        }
     }
 
     // analyzer/typeEvaluator.ts:23633
@@ -4121,17 +4239,83 @@ impl TypeEvaluator {
         decls: &mut Vec<P<Declaration>>,
         synthesized_types: &mut Vec<SynthesizedTypeInfo>,
     ) {
-        todo!()
+        let lookup_results = analyzer::type_utils::look_up_class_member(
+            base_type,
+            param_name,
+            MemberAccessFlags::Default,
+            None,
+        );
+        let Some(lookup_results) = lookup_results else {
+            return;
+        };
+
+        self._add_symbol_decl_info(lookup_results.symbol, decls, synthesized_types, false);
     }
 
     // analyzer/typeEvaluator.ts:23650
     pub fn get_decl_info_for_string_node(&self, node: StringNode) -> Option<SymbolDeclInfo> {
-        todo!()
+        let mut decls: Vec<P<Declaration>> = Vec::new();
+        let mut synthesized_types: Vec<SynthesizedTypeInfo> = Vec::new();
+        let expected_type = self.get_expected_type(node.0).map(|result| result.type_);
+
+        if let Some(expected_type) = expected_type {
+            analyzer::type_utils::do_for_each_subtype(
+                expected_type,
+                &mut |subtype, _, _| {
+                    // If the expected type is a TypedDict then the node is either a key expression
+                    // or a single entry in a set. We then need to check that the value of the node
+                    // is a valid entry in the TypedDict to avoid resolving declarations for
+                    // synthesized symbols such as 'get'.
+                    if analyzer::types::is_class_instance(subtype)
+                        && ClassType::is_typed_dict_class(ClassType::cast(subtype).unwrap())
+                    {
+                        let subtype = ClassType::cast(subtype).unwrap();
+                        let value = node.d().value.to_string_lossy();
+                        let has_entry = subtype
+                            .d()
+                            .shared
+                            .get()
+                            .typed_dict_entries
+                            .get()
+                            .is_some_and(|entries| entries.known_items.borrow().get(&value).is_some());
+                        if has_entry {
+                            let symbol = analyzer::type_utils::look_up_object_member(
+                                subtype,
+                                &value,
+                                MemberAccessFlags::Default,
+                                None,
+                            )
+                            .map(|member| member.symbol);
+
+                            if let Some(symbol) = symbol {
+                                self._add_symbol_decl_info(symbol, &mut decls, &mut synthesized_types, false);
+                            }
+                        }
+                    }
+                },
+                false,
+            );
+        }
+
+        if decls.is_empty() {
+            None
+        } else {
+            Some(SymbolDeclInfo { decls, synthesized_types })
+        }
     }
 
     // analyzer/typeEvaluator.ts:23677
     pub(crate) fn get_alias_from_import(&self, node: NameNode) -> Option<NameNode> {
-        todo!()
+        if let Some(parent) = node.parent.get() {
+            if let Some(import_from_as) = ImportFromAsNode::cast(parent) {
+                if let Some(alias) = import_from_as.d().alias.get() {
+                    if node == import_from_as.d().name.get() {
+                        return Some(alias);
+                    }
+                }
+            }
+        }
+        None
     }
 
     // analyzer/typeEvaluator.ts:23689
@@ -4141,12 +4325,606 @@ impl TypeEvaluator {
         node: NameNode,
         skip_unreachable_code: bool,
     ) -> Option<SymbolDeclInfo> {
-        todo!()
+        if skip_unreachable_code && self.node_info.is_code_unreachable(node) {
+            return None;
+        }
+
+        let mut decls: Vec<P<Declaration>> = Vec::new();
+        let mut synthesized_types: Vec<SynthesizedTypeInfo> = Vec::new();
+
+        // If the node is part of a "from X import Y as Z" statement and the node
+        // is the "Y" (non-aliased) name, we need to look up the alias symbol
+        // since the non-aliased name is not in the symbol table.
+        let alias = self.get_alias_from_import(node);
+        let parent = node.parent.get();
+        if let Some(alias) = alias {
+            let scope = self.get_scope_for_node(node.0);
+            if let Some(scope) = scope {
+                // Look up the alias symbol.
+                let symbol_in_scope = scope.look_up_symbol_recursive(&alias.d().value, None);
+                if let Some(symbol_in_scope) = symbol_in_scope {
+                    // The alias could have more decls that don't refer to this import. Filter
+                    // out the one(s) that specifically associated with this import statement.
+                    let decls_for_this_import: Vec<P<Declaration>> = symbol_in_scope
+                        .symbol
+                        .get_declarations()
+                        .into_iter()
+                        .filter(|decl| {
+                            decl.type_ == analyzer::declaration::DeclarationType::Alias
+                                && Some(decl.node.get()) == node.parent.get()
+                        })
+                        .collect();
+
+                    decls.extend(analyzer::declaration_utils::get_declarations_with_uses_local_name_removed(
+                        &decls_for_this_import,
+                    ));
+                }
+            }
+        } else if let Some(member_access) = parent
+            .and_then(MemberAccessNode::cast)
+            .filter(|member_access| node == member_access.d().member.get())
+        {
+            let base_type = self.get_type(member_access.d().left_expr.get());
+            if let Some(base_type) = base_type {
+                let base_type = self.make_top_level_type_vars_concrete(base_type, false, None);
+                let member_name = member_access.d().member.get().d().value.clone();
+                analyzer::type_utils::do_for_each_subtype(
+                    base_type,
+                    &mut |subtype, _, _| {
+                        let mut symbol: Option<P<Symbol>> = None;
+
+                        let subtype = self.make_top_level_type_vars_concrete(subtype, false, None);
+
+                        if analyzer::types::is_instantiable_class(subtype) {
+                            let subtype = ClassType::cast(subtype).unwrap();
+                            // Try to find a member that has a declared type. If so, that
+                            // overrides any inferred types.
+                            let mut member = analyzer::type_utils::look_up_class_member(
+                                subtype,
+                                &member_name,
+                                MemberAccessFlags::DeclaredTypesOnly,
+                                None,
+                            );
+                            if member.is_none() {
+                                member = analyzer::type_utils::look_up_class_member(
+                                    subtype,
+                                    &member_name,
+                                    MemberAccessFlags::Default,
+                                    None,
+                                );
+                            }
+
+                            if member.is_none() {
+                                let metaclass = subtype.d().shared.get().effective_metaclass.get();
+                                if let Some(metaclass) = metaclass {
+                                    if analyzer::types::is_instantiable_class(metaclass) {
+                                        member = analyzer::type_utils::look_up_class_member(
+                                            ClassType::cast(metaclass).unwrap(),
+                                            &member_name,
+                                            MemberAccessFlags::Default,
+                                            None,
+                                        );
+                                    }
+                                }
+                            }
+
+                            if let Some(member) = member {
+                                symbol = Some(member.symbol);
+                            }
+                        } else if analyzer::types::is_class_instance(subtype) {
+                            let subtype = ClassType::cast(subtype).unwrap();
+                            // Try to find a member that has a declared type. If so, that
+                            // overrides any inferred types.
+                            let mut member = analyzer::type_utils::look_up_object_member(
+                                subtype,
+                                &member_name,
+                                MemberAccessFlags::DeclaredTypesOnly,
+                                None,
+                            );
+                            if member.is_none() {
+                                member = analyzer::type_utils::look_up_object_member(
+                                    subtype,
+                                    &member_name,
+                                    MemberAccessFlags::Default,
+                                    None,
+                                );
+                            }
+                            if let Some(member) = member {
+                                symbol = Some(member.symbol);
+                            }
+                        } else if analyzer::types::is_module(subtype) {
+                            symbol = analyzer::types::ModuleType::get_field(
+                                analyzer::types::ModuleType::cast(subtype).unwrap(),
+                                &member_name,
+                            );
+                        }
+
+                        if let Some(symbol) = symbol {
+                            // By default, report only the declarations that have type annotations.
+                            // If there are none, then report all of the unannotated declarations,
+                            // which includes every assignment of that symbol.
+                            self._add_symbol_decl_info(
+                                symbol,
+                                &mut decls,
+                                &mut synthesized_types,
+                                /* prefer_typed_declarations */ true,
+                            );
+                        }
+                    },
+                    false,
+                );
+            }
+        } else if let Some(module_name) = parent.and_then(parser::parse_nodes::ModuleNameNode::cast) {
+            let name_part_index = module_name
+                .d()
+                .name_parts
+                .borrow()
+                .iter()
+                .position(|&part| part == node)
+                .map_or(-1, |index| index as i32);
+            let import_info = self.node_info.get_import_info(module_name.0);
+            if let Some(import_info) = import_info {
+                if name_part_index >= 0
+                    && !import_info.is_native_lib
+                    && (name_part_index as usize) < import_info.resolved_uris.len()
+                {
+                    // A Uri object is always truthy, so the TS `if (resolvedUris[i])` always holds here.
+                    let resolved_uri = import_info.resolved_uris[name_part_index as usize];
+                    self.evaluate_types_for_statement(node.0);
+
+                    // Synthesize an alias declaration for this name part. The only
+                    // time this case is used is for IDE services such as
+                    // the find all references, hover provider and etc.
+                    decls.push(analyzer::declaration_utils::synthesize_alias_declaration(&resolved_uri));
+                }
+            }
+        } else if let Some(arg_node) = parent
+            .and_then(ArgumentNode::cast)
+            .filter(|arg_node| Some(node) == arg_node.d().name.get())
+        {
+            // The target node is the name in a keyword argument. We need to determine whether
+            // the corresponding keyword parameter can be determined from the context.
+            let param_name = node.d().value.clone();
+            let arg_parent = arg_node.parent.get();
+            if let Some(call_node) = arg_parent.and_then(CallNode::cast) {
+                let base_type = self.get_type(call_node.d().left_expr.get());
+
+                if let Some(base_type) = base_type {
+                    if self._try_add_partial_keyword_param_decls(base_type, call_node, &param_name, &mut decls) {
+                        // functools.partial keyword args are resolved against the wrapped callable.
+                    } else if analyzer::types::is_function(base_type)
+                        && FunctionType::cast(base_type).unwrap().d().shared.get().declaration.get().is_some()
+                    {
+                        let param_decl = self
+                            .get_declaration_from_keyword_param(FunctionType::cast(base_type).unwrap(), &param_name);
+                        if let Some(param_decl) = param_decl {
+                            decls.push(param_decl);
+                        }
+                    } else if analyzer::types::is_overloaded(base_type) {
+                        for f in OverloadedType::get_overloads(OverloadedType::cast(base_type).unwrap()) {
+                            let param_decl = self.get_declaration_from_keyword_param(f, &param_name);
+                            if let Some(param_decl) = param_decl {
+                                decls.push(param_decl);
+                            }
+                        }
+                    } else if analyzer::types::is_instantiable_class(base_type) {
+                        let base_class = ClassType::cast(base_type).unwrap();
+                        let init_method_type = analyzer::constructors::get_bound_init_method(
+                            self,
+                            call_node.d().left_expr.get(),
+                            ClassType::clone_as_instance(base_class, true),
+                            None,
+                            MemberAccessFlags::Default,
+                        )
+                        .map(|result| result.type_.get());
+
+                        if let Some(init_method_type) =
+                            init_method_type.filter(|&init_method_type| analyzer::types::is_function(init_method_type))
+                        {
+                            let param_decl = self.get_declaration_from_keyword_param(
+                                FunctionType::cast(init_method_type).unwrap(),
+                                &param_name,
+                            );
+                            if let Some(param_decl) = param_decl {
+                                decls.push(param_decl);
+                            } else if self._should_fall_back_to_class_entry_for_keyword_arg(base_class, &param_name) {
+                                self._add_class_entry_decls_for_keyword_arg_if_present(
+                                    base_class,
+                                    &param_name,
+                                    &mut decls,
+                                    &mut synthesized_types,
+                                );
+                            }
+                        } else if self._should_fall_back_to_class_entry_for_keyword_arg(base_class, &param_name) {
+                            // Some synthesized callables (notably TypedDict "constructors") don't have a
+                            // meaningful __init__ signature we can map keyword arguments to. In these cases,
+                            // treat the keyword as referring to the class entry so IDE features like
+                            // go-to-definition and rename can bind to the field declaration.
+                            self._add_class_entry_decls_for_keyword_arg_if_present(
+                                base_class,
+                                &param_name,
+                                &mut decls,
+                                &mut synthesized_types,
+                            );
+                        }
+                    }
+                }
+            } else if let Some(class_node) = arg_parent.and_then(ClassNode::cast) {
+                let class_type_result = self.get_type_of_class(class_node);
+
+                // Validate the init subclass args for this class so we can properly
+                // evaluate its custom keyword parameters.
+                if let Some(class_type_result) = class_type_result {
+                    self.validate_init_subclass_args(class_node, class_type_result.class_type);
+                }
+            }
+        } else if let Some(pattern_class) = parent
+            .and_then(parser::parse_nodes::PatternClassArgumentNode::cast)
+            .filter(|class_arg| Some(node) == class_arg.d().name.get())
+            .and_then(|class_arg| class_arg.parent.get())
+            .and_then(parser::parse_nodes::PatternClassNode::cast)
+        {
+            // The target node is the keyword name in a class pattern argument
+            // (e.g. `case Foo(prop=...)`). Map it to the corresponding class member
+            // declaration so that find-all-references and rename bind to the attribute.
+            // Only the keyword (left of `=`) is handled here; the capture target on the
+            // right (e.g. the second `prop` in `case Foo(prop=prop)`) is a separate local
+            // binding that is resolved through the normal name-lookup path.
+            let member_name = node.d().value.clone();
+            let class_type = self.get_type(pattern_class.d().class_name.get());
+            if let Some(class_type) = class_type {
+                let class_type = self.make_top_level_type_vars_concrete(class_type, false, None);
+                analyzer::type_utils::do_for_each_subtype(
+                    class_type,
+                    &mut |subtype, _, _| {
+                        let subtype = self.make_top_level_type_vars_concrete(subtype, false, None);
+
+                        // The class name in a class pattern usually evaluates to an instantiable class,
+                        // but analysis can still yield Unknown/Any (e.g. an unresolved class name), so
+                        // the isInstantiableClass gate skips those subtypes rather than assuming
+                        // every subtype is a class.
+                        if analyzer::types::is_instantiable_class(subtype) {
+                            let subtype = ClassType::cast(subtype).unwrap();
+                            // Try to find a member that has a declared type. If so, that
+                            // overrides any inferred types.
+                            let mut member = analyzer::type_utils::look_up_class_member(
+                                subtype,
+                                &member_name,
+                                MemberAccessFlags::DeclaredTypesOnly,
+                                None,
+                            );
+                            if member.is_none() {
+                                member = analyzer::type_utils::look_up_class_member(
+                                    subtype,
+                                    &member_name,
+                                    MemberAccessFlags::Default,
+                                    None,
+                                );
+                            }
+
+                            if let Some(member) = member {
+                                self._add_symbol_decl_info(
+                                    member.symbol,
+                                    &mut decls,
+                                    &mut synthesized_types,
+                                    /* prefer_typed_declarations */ true,
+                                );
+                            }
+                        }
+                    },
+                    false,
+                );
+            }
+        } else {
+            let file_info = self.node_info.get_file_info(node.0);
+
+            // Determine if this node is within a quoted type annotation.
+            let is_within_type_annotation = analyzer::parse_tree_utils::is_within_type_annotation(
+                node.0,
+                !analyzer::analyzer_file_info::is_annotation_evaluation_postponed(
+                    &self.node_info.get_file_info(node.0),
+                ),
+                Some(self.node_info.reader()),
+            );
+
+            // Determine if this is part of a "type" statement.
+            let is_within_type_alias_statement = analyzer::parse_tree_utils::get_parent_node_of_type(
+                node.0,
+                parser::parse_nodes::ParseNodeType::TypeAlias,
+            )
+            .is_some();
+            let allow_forward_references =
+                is_within_type_annotation || is_within_type_alias_statement || file_info.is_stub_file;
+
+            let symbol_with_scope = self.look_up_symbol_recursive(
+                node.0,
+                &node.d().value,
+                !allow_forward_references,
+                is_within_type_annotation,
+            );
+
+            if let Some(symbol_with_scope) = symbol_with_scope {
+                self._add_symbol_decl_info(symbol_with_scope.symbol, &mut decls, &mut synthesized_types, false);
+            }
+        }
+
+        Some(SymbolDeclInfo { decls, synthesized_types })
     }
 
     // analyzer/typeEvaluator.ts:23914
     pub fn get_type_for_declaration(&self, declaration: P<Declaration>) -> DeclaredSymbolTypeInfo {
-        todo!()
+        let declared = |type_: Option<P<Type>>| DeclaredSymbolTypeInfo {
+            type_,
+            is_type_alias: None,
+            exceeds_max_decls: None,
+        };
+        let empty_options = || ExpectedTypeOptions {
+            allow_final: None,
+            allow_required: None,
+            allow_read_only: None,
+            allow_unpacked_tuple: None,
+            allow_unpacked_typed_dict: None,
+            allow_param_spec: None,
+            allow_class_var: None,
+            var_type_annotation: None,
+            type_var_gets_cur_scope: None,
+            allow_type_vars_without_scope_id: None,
+            enforce_class_type_var_scope: None,
+            parses_string_literal: None,
+            not_parsed: None,
+            no_non_type_special_forms: None,
+            type_form_arg: None,
+            forward_refs: None,
+            type_expression: None,
+            runtime_type_expression: None,
+            convert_ellipsis_to_any: None,
+            allow_ellipsis: None,
+        };
+
+        match declaration.type_ {
+            analyzer::declaration::DeclarationType::Intrinsic => {
+                let intrinsic_type = declaration.intrinsic().unwrap().intrinsic_type;
+                if intrinsic_type == "Any" {
+                    return declared(Some(analyzer::types::AnyType::create(false).0));
+                }
+
+                if intrinsic_type == "__class__" {
+                    let class_node =
+                        analyzer::parse_tree_utils::get_enclosing_class(declaration.node.get(), false).unwrap();
+                    let class_type_info = self.get_type_of_class(class_node);
+                    return declared(Some(match class_type_info {
+                        Some(class_type_info) => analyzer::type_utils::specialize_with_unknown_type_args(
+                            class_type_info.class_type,
+                            self.get_tuple_class_type(),
+                        )
+                        .0,
+                        None => analyzer::types::UnknownType::create(false).0,
+                    }));
+                }
+
+                let str_type = self.get_built_in_object(declaration.node.get(), "str", None);
+                let int_type = self.get_built_in_object(declaration.node.get(), "int", None);
+                if analyzer::types::is_class_instance(int_type) && analyzer::types::is_class_instance(str_type) {
+                    if intrinsic_type == "str" {
+                        return declared(Some(str_type));
+                    }
+
+                    if intrinsic_type == "str | None" {
+                        return declared(Some(analyzer::types::combine_types(
+                            &[str_type, self.get_none_type()],
+                            None,
+                        )));
+                    }
+
+                    if intrinsic_type == "int" {
+                        return declared(Some(int_type));
+                    }
+
+                    if intrinsic_type == "MutableSequence[str]" {
+                        let sequence_type = self.get_built_in_type(declaration.node.get(), "MutableSequence");
+                        if analyzer::types::is_instantiable_class(sequence_type) {
+                            return declared(Some(
+                                ClassType::clone_as_instance(
+                                    ClassType::specialize(
+                                        ClassType::cast(sequence_type).unwrap(),
+                                        Some(&[str_type]),
+                                        None,
+                                        false,
+                                        None,
+                                        None,
+                                    ),
+                                    true,
+                                )
+                                .0,
+                            ));
+                        }
+                    }
+
+                    if intrinsic_type == "dict[str, Any]" {
+                        let dict_type = self.get_built_in_type(declaration.node.get(), "dict");
+                        if analyzer::types::is_instantiable_class(dict_type) {
+                            return declared(Some(
+                                ClassType::clone_as_instance(
+                                    ClassType::specialize(
+                                        ClassType::cast(dict_type).unwrap(),
+                                        Some(&[str_type, analyzer::types::AnyType::create(false).0]),
+                                        None,
+                                        false,
+                                        None,
+                                        None,
+                                    ),
+                                    true,
+                                )
+                                .0,
+                            ));
+                        }
+                    }
+                }
+
+                declared(Some(analyzer::types::UnknownType::create(false).0))
+            }
+
+            analyzer::declaration::DeclarationType::Class => {
+                let class_type_info = self.get_type_of_class(ClassNode::cast(declaration.node.get()).unwrap());
+                declared(class_type_info.map(|info| info.decorated_type))
+            }
+
+            analyzer::declaration::DeclarationType::SpecialBuiltInClass => {
+                let annotation = TypeAnnotationNode::cast(declaration.node.get()).unwrap().d().annotation.get();
+                declared(Some(self.get_type_of_annotation(annotation, None)))
+            }
+
+            analyzer::declaration::DeclarationType::Function => {
+                let function_type_info = self.get_type_of_function(FunctionNode::cast(declaration.node.get()).unwrap());
+                declared(function_type_info.map(|info| info.decorated_type))
+            }
+
+            analyzer::declaration::DeclarationType::TypeAlias => declared(Some(
+                self.get_type_of_type_alias(TypeAliasNode::cast(declaration.node.get()).unwrap()),
+            )),
+
+            analyzer::declaration::DeclarationType::Param => {
+                let param_node = ParameterNode::cast(declaration.node.get()).unwrap();
+                let mut type_annotation_node =
+                    param_node.d().annotation.get().or_else(|| param_node.d().annotation_comment.get());
+
+                // If there wasn't an annotation, see if the parent function
+                // has a function-level annotation comment that provides
+                // this parameter's annotation type.
+                if type_annotation_node.is_none() {
+                    if let Some(function_node) = param_node.parent.get().and_then(FunctionNode::cast) {
+                        if function_node
+                            .d()
+                            .func_annotation_comment
+                            .get()
+                            .is_some_and(|comment| !comment.d().is_ellipsis.get())
+                        {
+                            let param_index = function_node
+                                .d()
+                                .params
+                                .borrow()
+                                .iter()
+                                .position(|&param| param == param_node)
+                                .map_or(-1, |index| index as i32);
+                            type_annotation_node =
+                                analyzer::parse_tree_utils::get_type_annotation_for_param(function_node, param_index);
+                        }
+                    }
+                }
+
+                if let Some(type_annotation_node) = type_annotation_node {
+                    let mut declared_type =
+                        self.get_type_of_param_annotation(type_annotation_node, param_node.d().category.get());
+
+                    let live_type_var_scopes = self.get_type_var_scopes_for_node(param_node.0);
+                    declared_type = analyzer::type_utils::make_type_vars_bound(declared_type, Some(&live_type_var_scopes));
+
+                    return declared(Some(self.transform_variadic_param_type(
+                        param_node.0,
+                        param_node.d().category.get(),
+                        self.adjust_param_annotated_type(param_node, declared_type),
+                    )));
+                }
+
+                declared(None)
+            }
+
+            analyzer::declaration::DeclarationType::TypeParam => declared(Some(
+                self.get_type_of_type_param(TypeParameterNode::cast(declaration.node.get()).unwrap()).0,
+            )),
+
+            analyzer::declaration::DeclarationType::Variable => {
+                let variable = declaration.variable().unwrap();
+                let type_annotation_node = variable.type_annotation_node.get();
+
+                if let Some(type_annotation_node) = type_annotation_node {
+                    let mut declared_type: P<Type>;
+
+                    if variable.is_runtime_type_expression.get().unwrap_or(false) {
+                        declared_type = analyzer::type_utils::convert_to_instance(
+                            self.get_type_of_expression_expecting_type(
+                                type_annotation_node,
+                                Some(&ExpectedTypeOptions {
+                                    allow_final: Some(true),
+                                    allow_required: Some(true),
+                                    allow_read_only: Some(true),
+                                    runtime_type_expression: Some(true),
+                                    ..empty_options()
+                                }),
+                            )
+                            .type_
+                            .get(),
+                            true,
+                        );
+                    } else {
+                        let decl_node = if variable.is_defined_by_member_access.get().unwrap_or(false)
+                            && declaration
+                                .node
+                                .get()
+                                .parent
+                                .get()
+                                .is_some_and(|parent| parent.node_type == parser::parse_nodes::ParseNodeType::MemberAccess)
+                        {
+                            declaration.node.get().parent.get().unwrap()
+                        } else {
+                            declaration.node.get()
+                        };
+                        let allow_class_var = self.is_class_var_allowed_for_assignment_target(decl_node);
+                        let allow_final = self.is_final_allowed_for_assignment_target(decl_node);
+                        let allow_required = analyzer::parse_tree_utils::is_required_allowed_for_assignment_target(
+                            decl_node,
+                        ) || declaration.is_in_inlined_typed_dict.get().unwrap_or(false);
+
+                        declared_type = self.get_type_of_annotation(
+                            type_annotation_node,
+                            Some(&ExpectedTypeOptions {
+                                var_type_annotation: Some(true),
+                                allow_class_var: Some(allow_class_var),
+                                allow_final: Some(allow_final),
+                                allow_required: Some(allow_required),
+                                allow_read_only: Some(allow_required),
+                                enforce_class_type_var_scope: variable.is_defined_by_member_access.get(),
+                                ..empty_options()
+                            }),
+                        );
+                    }
+
+                    // If this is a declaration for a member variable within a method,
+                    // we need to convert any bound TypeVars associated with the
+                    // class to their free counterparts.
+                    if variable.is_defined_by_member_access.get().unwrap_or(false) {
+                        let enclosing_class =
+                            analyzer::parse_tree_utils::get_enclosing_class(declaration.node.get(), false);
+
+                        if let Some(enclosing_class) = enclosing_class {
+                            declared_type = analyzer::type_utils::make_type_vars_free(
+                                declared_type,
+                                &[self.get_scope_id_for_node(enclosing_class.0)],
+                            );
+                        }
+                    }
+
+                    if analyzer::types::is_class_instance(declared_type)
+                        && ClassType::is_built_in(
+                            ClassType::cast(declared_type).unwrap(),
+                            Some(&["TypeAlias".to_owned()]),
+                        )
+                    {
+                        return DeclaredSymbolTypeInfo {
+                            type_: None,
+                            is_type_alias: Some(true),
+                            exceeds_max_decls: None,
+                        };
+                    }
+
+                    return declared(Some(declared_type));
+                }
+
+                declared(None)
+            }
+
+            analyzer::declaration::DeclarationType::Alias => declared(None),
+        }
     }
 
     // analyzer/typeEvaluator.ts:24095
