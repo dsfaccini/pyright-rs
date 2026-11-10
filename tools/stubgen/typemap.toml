@@ -236,6 +236,12 @@ interface = "analyzer/codeFlowEngine.ts:CodeFlowAnalyzer"
 "analyzer/types.ts:LiteralTypes.literalEnumMap" = "Option<Box<jsrt::JsMap<String, crate::analyzer::types::UnionableType>>>"
 "analyzer/types.ts:UnionDetailsPriv.typeAliasSources" = "Option<Box<jsrt::JsSet<crate::analyzer::types::UnionType>>>"
 "analyzer/types.ts:FunctionDetailsPriv.callSiteReturnTypeCache" = "Box<Vec<crate::analyzer::types::CallSiteInferenceTypeCacheEntry>>"
+# Fields of a TypeResult that few results set (python-chess and samples corpora, 2026-11-10): boxed,
+# so the millions of results that never set one pay a pointer.
+"analyzer/typeEvaluatorTypes.ts:TypeResult.typeList" = "Box<Vec<crate::analyzer::type_evaluator_types::TypeResultWithNode>>"
+"analyzer/typeEvaluatorTypes.ts:TypeResult.overloadsUsedForCall" = "Box<Vec<crate::analyzer::types::FunctionType>>"
+"analyzer/typeEvaluatorTypes.ts:TypeResult.memberAccessDeprecationInfo" = "Box<crate::analyzer::type_evaluator_types::MemberAccessDeprecationInfo>"
+"analyzer/typeEvaluatorTypes.ts:TypeResult.magicMethodDeprecationInfo" = "Box<crate::analyzer::type_evaluator_types::MagicMethodDeprecationInfo>"
 # Strings copied with every clone of a type variable: an immutable shared string, as a JS string is.
 "analyzer/types.ts:TypeVarDetailsPriv.scopeId" = "std::rc::Rc<str>"
 "analyzer/types.ts:TypeVarDetailsPriv.scopeName" = "std::rc::Rc<str>"
@@ -427,7 +433,7 @@ impl TypeResultWithNode {
             is_incomplete: type_result.is_incomplete.get(),
             bind_to_self_type: type_result.bind_to_self_type,
             unpacked_type: type_result.unpacked_type,
-            type_list: type_result.type_list.clone(),
+            type_list: type_result.type_list.as_deref().cloned(),
             type_errors: type_result.type_errors.get(),
             inlined_type_dict: type_result.inlined_type_dict,
             class_type: type_result.class_type,
@@ -438,9 +444,9 @@ impl TypeResultWithNode {
             is_required: type_result.is_required,
             is_not_required: type_result.is_not_required,
             is_read_only: type_result.is_read_only,
-            overloads_used_for_call: type_result.overloads_used_for_call.borrow().clone(),
-            member_access_deprecation_info: type_result.member_access_deprecation_info.clone(),
-            magic_method_deprecation_info: type_result.magic_method_deprecation_info.clone(),
+            overloads_used_for_call: type_result.overloads_used_for_call.borrow().as_deref().cloned(),
+            member_access_deprecation_info: type_result.member_access_deprecation_info.as_deref().cloned(),
+            magic_method_deprecation_info: type_result.magic_method_deprecation_info.as_deref().cloned(),
             node,
         }
     }

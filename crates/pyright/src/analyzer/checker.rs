@@ -5344,7 +5344,7 @@ impl Checker {
                 return;
             }
 
-            for overload in overloads_used_for_call {
+            for overload in overloads_used_for_call.iter().copied() {
                 let shared = overload.d().shared.get();
                 let overload_deprecated_message = shared.deprecated_message.borrow().clone();
                 if overload_deprecated_message.is_some() {
