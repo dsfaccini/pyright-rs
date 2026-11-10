@@ -18379,7 +18379,950 @@ impl TypeEvaluator {
         flags: AssignTypeFlags,
         recursion_count: u32,
     ) -> bool {
-        todo!()
+        // JS truthiness of an optional string: undefined and '' are falsy.
+        fn is_truthy_name(name: &Option<String>) -> bool {
+            name.as_deref().is_some_and(|name| !name.is_empty())
+        }
+
+        let mut dest_type = dest_type;
+        let mut src_type = src_type;
+        let mut flags = flags;
+
+        let mut can_assign = true;
+        let check_return_type = !flags.any(AssignTypeFlags::SkipReturnTypeCheck);
+        let is_contra = flags.any(AssignTypeFlags::Contravariant);
+        flags &= !AssignTypeFlags::SkipReturnTypeCheck;
+
+        let dest_param_spec = FunctionType::get_param_spec_from_args_kwargs(dest_type);
+        if dest_param_spec.is_some() {
+            dest_type = FunctionType::clone_remove_param_spec_args_kwargs(dest_type, false);
+        }
+
+        let src_param_spec = FunctionType::get_param_spec_from_args_kwargs(src_type);
+        if src_param_spec.is_some() {
+            src_type = FunctionType::clone_remove_param_spec_args_kwargs(src_type, false);
+        }
+
+        let mut dest_param_details = analyzer::parameter_utils::get_param_list_details(
+            dest_type,
+            Some(&analyzer::parameter_utils::ParamListDetailsOptions {
+                disallow_extra_kwargs_for_td: Some(flags.any(AssignTypeFlags::DisallowExtraKwargsForTd)),
+            }),
+        );
+        let mut src_param_details = analyzer::parameter_utils::get_param_list_details(
+            src_type,
+            Some(&analyzer::parameter_utils::ParamListDetailsOptions {
+                disallow_extra_kwargs_for_td: Some(flags.any(AssignTypeFlags::DisallowExtraKwargsForTd)),
+            }),
+        );
+
+        if is_contra {
+            self.adjust_source_param_details_for_dest_variadic(&mut dest_param_details, &src_param_details);
+        } else {
+            self.adjust_source_param_details_for_dest_variadic(&mut src_param_details, &dest_param_details);
+        }
+
+        let target_includes_param_spec = if is_contra {
+            src_param_spec.is_some()
+        } else {
+            dest_param_spec.is_some()
+        };
+
+        let dest_positional_count = dest_param_details
+            .first_keyword_only_index
+            .unwrap_or(dest_param_details.params.len() as i32);
+        let src_positional_count = src_param_details
+            .first_keyword_only_index
+            .unwrap_or(src_param_details.params.len() as i32);
+        let positionals_to_match = std::cmp::min(dest_positional_count, src_positional_count);
+        let mut skipped_pos_param_indices: Vec<i32> = Vec::new();
+
+        // Match positional parameters.
+        for param_index in 0..positionals_to_match {
+            if param_index == 0
+                && dest_type.d().shared.get().method_class.get().is_some()
+                && flags.any(AssignTypeFlags::SkipSelfClsParamCheck)
+            {
+                if FunctionType::is_instance_method(dest_type) || FunctionType::is_class_method(dest_type) {
+                    continue;
+                }
+            }
+
+            // Skip over the *args parameter since it's handled separately below.
+            if Some(param_index) == dest_param_details.args_index {
+                let dest_args_index = dest_param_details.args_index.unwrap();
+                if !analyzer::types::is_unpacked_type_var_tuple(
+                    dest_param_details.params[dest_args_index as usize].type_,
+                ) {
+                    skipped_pos_param_indices.push(param_index);
+                }
+                continue;
+            }
+
+            let dest_param = dest_param_details.params[param_index as usize];
+            let src_param = src_param_details.params[param_index as usize];
+
+            // Find the original index of this source param. If we synthesized it above (for
+            // a variadic parameter), it may not be found.
+            let src_param_type = src_param.type_;
+            let dest_param_type = dest_param.type_;
+
+            let dest_param_name = dest_param.param.name.clone().unwrap_or_default();
+            let src_param_name = src_param.param.name.clone().unwrap_or_default();
+            if !dest_param_name.is_empty() {
+                let is_dest_positional_only =
+                    dest_param.kind == analyzer::parameter_utils::ParamKind::Positional || dest_param.kind == analyzer::parameter_utils::ParamKind::ExpandedArgs;
+                if !is_dest_positional_only
+                    && dest_param.param.category != ParamCategory::ArgsList
+                    && src_param.param.category != ParamCategory::ArgsList
+                {
+                    if src_param.kind == analyzer::parameter_utils::ParamKind::Positional || src_param.kind == analyzer::parameter_utils::ParamKind::ExpandedArgs {
+                        if let Some(diag) = diag {
+                            diag.create_addendum().add_message(
+                                crate::localization::localize::LocAddendum::function_param_position_only()
+                                    .format(&[("name", dest_param_name.as_str())]),
+                            );
+                        }
+                        can_assign = false;
+                    } else if dest_param_name != src_param_name {
+                        if let Some(diag) = diag {
+                            diag.create_addendum().add_message(crate::localization::localize::LocAddendum::function_param_name().format(&[
+                                ("srcName", src_param_name.as_str()),
+                                ("destName", dest_param_name.as_str()),
+                            ]));
+                        }
+                        can_assign = false;
+                    }
+                }
+            }
+
+            if dest_param.default_type.is_some() {
+                if src_param.default_type.is_none() && Some(param_index) != src_param_details.args_index {
+                    if let Some(diag) = diag {
+                        diag.create_addendum().add_message(
+                            crate::localization::localize::LocAddendum::function_param_default_missing()
+                                .format(&[("name", src_param_name.as_str())]),
+                        );
+                    }
+                    can_assign = false;
+                }
+
+                // If we're performing a partial overload match and both the source
+                // and dest parameters provide defaults, assume that there could
+                // be a match.
+                if flags.any(AssignTypeFlags::PartialOverloadOverlap) {
+                    if src_param.default_type.is_some() {
+                        continue;
+                    }
+                }
+            }
+
+            // Handle the special case of an overloaded __init__ method whose self
+            // parameter is annotated.
+            if param_index == 0
+                && src_type.d().shared.get().name == "__init__"
+                && FunctionType::is_instance_method(src_type)
+                && dest_type.d().shared.get().name == "__init__"
+                && FunctionType::is_instance_method(dest_type)
+                && FunctionType::is_overloaded(dest_type)
+                && FunctionParam::is_type_declared(&dest_param.param)
+            {
+                continue;
+            }
+
+            if analyzer::types::is_unpacked(src_param_type) {
+                can_assign = false;
+            } else if !self.assign_param(
+                dest_param_type,
+                src_param_type,
+                Some(param_index),
+                diag.map(|diag| diag.create_addendum()),
+                constraints,
+                flags,
+                recursion_count,
+            ) {
+                // Handle the special case where the source parameter is a synthesized
+                // TypeVar for "self" or "cls".
+                if !flags.any(AssignTypeFlags::SkipSelfClsTypeCheck)
+                    || !analyzer::types::is_type_var(src_param_type)
+                    || !TypeVarType::cast(src_param_type)
+                        .unwrap()
+                        .d()
+                        .shared
+                        .get()
+                        .is_synthesized
+                        .get()
+                {
+                    can_assign = false;
+                }
+            } else if dest_param.kind != analyzer::parameter_utils::ParamKind::Positional
+                && dest_param.kind != analyzer::parameter_utils::ParamKind::ExpandedArgs
+                && src_param.kind == analyzer::parameter_utils::ParamKind::Positional
+                && !src_param_details.params.iter().any(|p| {
+                    p.kind == analyzer::parameter_utils::ParamKind::Keyword
+                        && p.param.category == ParamCategory::Simple
+                        && p.param.name == dest_param.param.name
+                })
+            {
+                if !self.assign_named_param(
+                    &dest_param_details,
+                    &src_param_details,
+                    param_index,
+                    diag,
+                    constraints,
+                    flags,
+                    recursion_count,
+                ) {
+                    can_assign = false;
+                }
+            }
+        }
+
+        if !FunctionType::is_gradual_callable_form(dest_type)
+            && i64::from(dest_param_details.first_position_or_keyword_index)
+                < i64::from(src_param_details.position_only_param_count)
+            && !target_includes_param_spec
+        {
+            if let Some(diag) = diag {
+                diag.create_addendum().add_message(crate::localization::localize::LocAddendum::args_position_only().format(&[
+                    (
+                        "expected",
+                        jsrt::number::number_to_string(f64::from(src_param_details.position_only_param_count)).as_str(),
+                    ),
+                    (
+                        "received",
+                        jsrt::number::number_to_string(f64::from(dest_param_details.first_position_or_keyword_index)).as_str(),
+                    ),
+                ]));
+            }
+            can_assign = false;
+        }
+
+        if dest_positional_count < src_positional_count && !target_includes_param_spec {
+            // Add any remaining positional parameter indices to the list that
+            // need to be validated.
+            for i in dest_positional_count..src_positional_count {
+                skipped_pos_param_indices.push(i);
+            }
+
+            for &i in &skipped_pos_param_indices {
+                // If the dest has an *args parameter, make sure it can accept the remaining
+                // positional arguments in the source.
+                if let Some(dest_args_index) = dest_param_details.args_index {
+                    let dest_args_type = dest_param_details.params[dest_args_index as usize].type_;
+                    let src_param_type = src_param_details.params[i as usize].type_;
+                    if !self.assign_param(
+                        dest_args_type,
+                        src_param_type,
+                        Some(i),
+                        diag.map(|diag| diag.create_addendum()),
+                        constraints,
+                        flags,
+                        recursion_count,
+                    ) {
+                        can_assign = false;
+                    }
+
+                    continue;
+                }
+
+                // If The source parameter has a default value, it is OK for the
+                // corresponding dest parameter to be missing.
+                let src_param = src_param_details.params[i as usize];
+
+                if src_param.default_type.is_some() {
+                    // Assign default arg value in case it is needed for
+                    // populating TypeVar constraints.
+                    let param_info = src_param_details.params[i as usize];
+                    let default_arg_type = param_info.default_type.or(param_info.default_type);
+
+                    // Enforce invariance below because the default arg value
+                    // is constructed prior to the call, so its type is already
+                    // fixed.
+                    if let Some(default_arg_type) = default_arg_type {
+                        if !self.assign_type(
+                            param_info.type_,
+                            default_arg_type,
+                            diag.map(|diag| diag.create_addendum()),
+                            Some(constraints),
+                            flags,
+                            recursion_count,
+                        ) {
+                            if !flags.any(AssignTypeFlags::PartialOverloadOverlap) {
+                                can_assign = false;
+                            }
+                        }
+                    }
+
+                    continue;
+                }
+
+                // If the source parameter is also addressable by keyword, it is OK
+                // that there is no matching positional parameter in the dest.
+                if src_param.kind == analyzer::parameter_utils::ParamKind::Standard {
+                    continue;
+                }
+
+                // If the source parameter is a variadic, it is OK that there is no
+                // matching positional parameter in the dest.
+                if src_param.param.category == ParamCategory::ArgsList {
+                    continue;
+                }
+
+                let non_default_src_param_count = src_param_details
+                    .params
+                    .iter()
+                    .filter(|p| {
+                        is_truthy_name(&p.param.name)
+                            && p.default_type.is_none()
+                            && p.param.category == ParamCategory::Simple
+                    })
+                    .count();
+
+                if let Some(diag) = diag {
+                    diag.create_addendum().add_message(crate::localization::localize::LocAddendum::function_too_many_params().format(&[
+                        ("expected", jsrt::number::number_to_string(f64::from(dest_positional_count)).as_str()),
+                        ("received", jsrt::number::number_to_string(non_default_src_param_count as f64).as_str()),
+                    ]));
+                }
+                can_assign = false;
+                break;
+            }
+        } else if src_positional_count < dest_positional_count {
+            if let Some(src_args_index) = src_param_details.args_index {
+                // Make sure the remaining dest parameters can be assigned to the source
+                // *args parameter type.
+                let src_args_type = src_param_details.params[src_args_index as usize].type_;
+                for param_index in src_positional_count..dest_positional_count {
+                    if param_index == src_args_index {
+                        continue;
+                    }
+
+                    let dest_param_type = dest_param_details.params[param_index as usize].type_;
+                    if analyzer::types::is_type_var_tuple(dest_param_type)
+                        && !analyzer::types::is_type_var_tuple(src_args_type)
+                    {
+                        if let Some(diag) = diag {
+                            diag.add_message(crate::localization::localize::LocAddendum::type_var_tuple_requires_known_length());
+                        }
+                        can_assign = false;
+                    } else {
+                        if !self.assign_param(
+                            dest_param_type,
+                            src_args_type,
+                            Some(param_index),
+                            diag.map(|diag| diag.create_addendum()),
+                            constraints,
+                            flags,
+                            recursion_count,
+                        ) {
+                            can_assign = false;
+                        }
+
+                        let dest_param_kind = dest_param_details.params[param_index as usize].kind;
+                        if dest_param_kind != analyzer::parameter_utils::ParamKind::Positional && dest_param_kind != analyzer::parameter_utils::ParamKind::ExpandedArgs {
+                            if !self.assign_named_param(
+                                &dest_param_details,
+                                &src_param_details,
+                                param_index,
+                                diag,
+                                constraints,
+                                flags,
+                                recursion_count,
+                            ) {
+                                can_assign = false;
+                            }
+                        }
+                    }
+                }
+            } else if src_param_details.param_spec.is_none() {
+                // If the dest contains a *args, remove it from the positional count
+                // because it's OK for zero source args to match it.
+                let mut adj_dest_positional_count = dest_positional_count;
+                if dest_param_details
+                    .args_index
+                    .is_some_and(|args_index| args_index < dest_positional_count)
+                {
+                    adj_dest_positional_count -= 1;
+                }
+
+                // If we're doing a partial overload overlap check, ignore dest positional
+                // params with default values.
+                if flags.any(AssignTypeFlags::PartialOverloadOverlap) {
+                    while adj_dest_positional_count > 0
+                        && dest_param_details.params[(adj_dest_positional_count - 1) as usize]
+                            .default_type
+                            .is_some()
+                    {
+                        adj_dest_positional_count -= 1;
+                    }
+                }
+
+                if src_positional_count < adj_dest_positional_count {
+                    if let Some(diag) = diag {
+                        diag.add_message(crate::localization::localize::LocAddendum::function_too_few_params().format(&[
+                            ("expected", jsrt::number::number_to_string(f64::from(adj_dest_positional_count)).as_str()),
+                            ("received", jsrt::number::number_to_string(f64::from(src_positional_count)).as_str()),
+                        ]));
+                    }
+                    can_assign = false;
+                }
+            }
+        }
+
+        // If both src and dest have an "*args" parameter, make sure
+        // their types are compatible.
+        if src_param_details.args_index.is_some()
+            && dest_param_details.args_index.is_some()
+            && !FunctionType::is_gradual_callable_form(dest_type)
+        {
+            let dest_args_index = dest_param_details.args_index.unwrap() as usize;
+            let src_args_index = src_param_details.args_index.unwrap() as usize;
+            let mut dest_args_type = dest_param_details.params[dest_args_index].type_;
+            let mut src_args_type = src_param_details.params[src_args_index].type_;
+
+            if !analyzer::types::is_unpacked(dest_args_type) {
+                dest_args_type = analyzer::tuples::make_tuple_object(
+                    self,
+                    &[TupleTypeArg {
+                        type_: dest_args_type,
+                        is_unbounded: true,
+                        is_optional: None,
+                    }],
+                    /* is_unpacked */ true,
+                );
+            }
+
+            if !analyzer::types::is_unpacked(src_args_type) {
+                src_args_type = analyzer::tuples::make_tuple_object(
+                    self,
+                    &[TupleTypeArg {
+                        type_: src_args_type,
+                        is_unbounded: true,
+                        is_optional: None,
+                    }],
+                    /* is_unpacked */ true,
+                );
+            }
+
+            if !self.assign_param(
+                dest_args_type,
+                src_args_type,
+                Some(dest_param_details.params[dest_args_index].index),
+                diag.map(|diag| diag.create_addendum()),
+                constraints,
+                flags,
+                recursion_count,
+            ) {
+                can_assign = false;
+            }
+        }
+
+        // If the dest has an "*args" but the source doesn't, report the incompatibility.
+        // The converse situation is OK.
+        if !FunctionType::is_gradual_callable_form(dest_type)
+            && src_param_details.args_index.is_none()
+            && src_param_spec.is_none()
+            && dest_param_details.args_index.is_some()
+            && !dest_param_details.has_unpacked_type_var_tuple
+        {
+            if let Some(diag) = diag {
+                let dest_args_index = dest_param_details.args_index.unwrap() as usize;
+                diag.create_addendum().add_message(crate::localization::localize::LocAddendum::args_param_missing().format(&[(
+                    "paramName",
+                    dest_param_details.params[dest_args_index]
+                        .param
+                        .name
+                        .as_deref()
+                        .unwrap_or(""),
+                )]));
+            }
+            can_assign = false;
+        }
+
+        // Handle matching of named (keyword) parameters.
+        if !target_includes_param_spec {
+            // Build a dictionary of named parameters in the dest.
+            let mut dest_param_map: JsMap<String, P<analyzer::parameter_utils::VirtualParamDetails>> = JsMap::default();
+
+            if let Some(first_keyword_only_index) = dest_param_details.first_keyword_only_index {
+                for (index, param) in dest_param_details.params.iter().enumerate() {
+                    if index as i32 >= first_keyword_only_index {
+                        if is_truthy_name(&param.param.name)
+                            && param.param.category == ParamCategory::Simple
+                            && param.kind != analyzer::parameter_utils::ParamKind::Positional
+                            && param.kind != analyzer::parameter_utils::ParamKind::ExpandedArgs
+                        {
+                            dest_param_map.insert(param.param.name.clone().unwrap(), *param);
+                        }
+                    }
+                }
+            }
+
+            // If the dest has fewer positional arguments than the source, the remaining
+            // positional arguments in the source can be treated as named arguments.
+            let mut src_start_of_named = match src_param_details.first_keyword_only_index {
+                Some(first_keyword_only_index) => first_keyword_only_index,
+                None => src_param_details.params.len() as i32,
+            };
+            if dest_positional_count < src_positional_count && dest_param_details.args_index.is_none() {
+                src_start_of_named = dest_positional_count;
+            }
+
+            if src_start_of_named >= 0 {
+                for (index, src_param_info) in src_param_details.params.iter().enumerate() {
+                    let src_param_info = *src_param_info;
+                    if (index as i32) < src_start_of_named {
+                        continue;
+                    }
+
+                    if !is_truthy_name(&src_param_info.param.name)
+                        || src_param_info.param.category != ParamCategory::Simple
+                        || src_param_info.kind == analyzer::parameter_utils::ParamKind::Positional
+                    {
+                        continue;
+                    }
+
+                    let src_param_name = src_param_info.param.name.clone().unwrap();
+                    let dest_param_info = dest_param_map.get(&src_param_name).copied().or_else(|| {
+                        dest_param_details
+                            .params
+                            .iter()
+                            .find(|param_info| {
+                                param_info.param.name == src_param_info.param.name
+                                    && param_info.kind == analyzer::parameter_utils::ParamKind::Standard
+                                    && param_info.param.category == ParamCategory::Simple
+                            })
+                            .copied()
+                    });
+                    let param_diag = diag.map(|diag| diag.create_addendum());
+                    let src_param_type = src_param_info.type_;
+
+                    let Some(dest_param_info) = dest_param_info else {
+                        if dest_param_details.kwargs_index.is_none() && src_param_info.default_type.is_none() {
+                            if let Some(param_diag) = param_diag {
+                                param_diag.add_message(
+                                    crate::localization::localize::LocAddendum::named_param_missing_in_dest()
+                                        .format(&[("name", src_param_name.as_str())]),
+                                );
+                            }
+                            can_assign = false;
+                        } else if let Some(dest_kwargs_index) = dest_param_details.kwargs_index {
+                            // Make sure we can assign the type to the Kwargs.
+                            if !self.assign_param(
+                                dest_param_details.params[dest_kwargs_index as usize].type_,
+                                src_param_type,
+                                Some(dest_param_details.params[dest_kwargs_index as usize].index),
+                                diag.map(|diag| diag.create_addendum()),
+                                constraints,
+                                flags,
+                                recursion_count,
+                            ) {
+                                can_assign = false;
+                            }
+                        } else if src_param_info.default_type.is_some() {
+                            // Assign default arg values in case they are needed for
+                            // populating TypeVar constraints.
+                            let default_arg_type = src_param_info.default_type.or(src_param_info.default_type);
+
+                            if let Some(default_arg_type) = default_arg_type {
+                                if !self.assign_type(
+                                    src_param_info.type_,
+                                    default_arg_type,
+                                    diag.map(|diag| diag.create_addendum()),
+                                    Some(constraints),
+                                    flags,
+                                    recursion_count,
+                                ) {
+                                    if !flags.any(AssignTypeFlags::PartialOverloadOverlap) {
+                                        can_assign = false;
+                                    }
+                                }
+                            }
+                        }
+                        continue;
+                    };
+
+                    // A keyword-only source parameter was matched to a positional-or-keyword
+                    // dest parameter. The dest parameter can be called positionally, but a
+                    // keyword-only source parameter with no default would be left unsatisfied.
+                    if dest_param_info.kind == analyzer::parameter_utils::ParamKind::Standard
+                        && src_param_info.kind == analyzer::parameter_utils::ParamKind::Keyword
+                        && src_param_info.default_type.is_none()
+                    {
+                        if !flags.any(AssignTypeFlags::PartialOverloadOverlap) {
+                            if let Some(param_diag) = param_diag {
+                                param_diag.add_message(
+                                    crate::localization::localize::LocAddendum::function_param_default_missing()
+                                        .format(&[("name", src_param_name.as_str())]),
+                                );
+                            }
+                            can_assign = false;
+                            continue;
+                        }
+                    }
+
+                    // If we're performing a partial overload match and both the source
+                    // and dest parameters provide defaults, assume that there could
+                    // be a match.
+                    if src_param_info.default_type.is_some() && dest_param_info.default_type.is_some() {
+                        if flags.any(AssignTypeFlags::PartialOverloadOverlap) {
+                            dest_param_map.shift_remove(&src_param_name);
+                            continue;
+                        }
+                    }
+
+                    let dest_param_type = dest_param_info.type_;
+                    let specialized_dest_param_type =
+                        self.solve_and_apply_constraints(dest_param_type, constraints, None, None);
+
+                    if !self.assign_param(
+                        dest_param_info.type_,
+                        src_param_type,
+                        /* param_index */ None,
+                        param_diag.map(|param_diag| param_diag.create_addendum()),
+                        constraints,
+                        flags,
+                        recursion_count,
+                    ) {
+                        if let Some(param_diag) = param_diag {
+                            param_diag.add_message(crate::localization::localize::LocAddendum::named_param_type_mismatch().format(&[
+                                ("name", src_param_name.as_str()),
+                                ("sourceType", self.print_type(specialized_dest_param_type, None).as_str()),
+                                ("destType", self.print_type(src_param_type, None).as_str()),
+                            ]));
+                        }
+                        if dest_param_info.kind != analyzer::parameter_utils::ParamKind::Standard
+                            || !flags.any(AssignTypeFlags::PartialOverloadOverlap)
+                        {
+                            can_assign = false;
+                        }
+                    }
+
+                    if dest_param_info.default_type.is_some() && src_param_info.default_type.is_none() {
+                        if let Some(diag) = diag {
+                            diag.create_addendum().add_message(
+                                crate::localization::localize::LocAddendum::function_param_default_missing()
+                                    .format(&[("name", src_param_name.as_str())]),
+                            );
+                        }
+                        can_assign = false;
+                    }
+
+                    dest_param_map.shift_remove(&src_param_name);
+                }
+            }
+
+            // See if there are any unmatched named parameters.
+            // JS Map.forEach that deletes only the visited entry visits the same entries
+            // as this snapshot.
+            let dest_param_entries: Vec<(String, P<analyzer::parameter_utils::VirtualParamDetails>)> = dest_param_map
+                .iter()
+                .map(|(param_name, dest_param_info)| (param_name.clone(), *dest_param_info))
+                .collect();
+            for (param_name, dest_param_info) in dest_param_entries {
+                if src_param_details.kwargs_index.is_some() && is_truthy_name(&dest_param_info.param.name) {
+                    // Make sure the src kwargs type is compatible.
+                    let src_kwargs_index = src_param_details.kwargs_index.unwrap() as usize;
+                    if !self.assign_param(
+                        dest_param_info.type_,
+                        src_param_details.params[src_kwargs_index].type_,
+                        Some(dest_param_info.index),
+                        diag.map(|diag| diag.create_addendum()),
+                        constraints,
+                        flags,
+                        recursion_count,
+                    ) {
+                        can_assign = false;
+                    }
+                    dest_param_map.shift_remove(&param_name);
+                } else {
+                    if let Some(diag) = diag {
+                        diag.create_addendum().add_message(
+                            crate::localization::localize::LocAddendum::named_param_missing_in_source().format(&[("name", param_name.as_str())]),
+                        );
+                    }
+                    can_assign = false;
+                }
+            }
+
+            // If both src and dest have a "**kwargs" parameter, make sure their types are compatible.
+            if let (Some(src_kwargs_index), Some(dest_kwargs_index)) =
+                (src_param_details.kwargs_index, dest_param_details.kwargs_index)
+            {
+                if !self.assign_param(
+                    dest_param_details.params[dest_kwargs_index as usize].type_,
+                    src_param_details.params[src_kwargs_index as usize].type_,
+                    Some(dest_param_details.params[dest_kwargs_index as usize].index),
+                    diag.map(|diag| diag.create_addendum()),
+                    constraints,
+                    flags,
+                    recursion_count,
+                ) {
+                    can_assign = false;
+                }
+            }
+
+            // If the dest has a "**kwargs" but the source doesn't, report the incompatibility.
+            // The converse situation is OK.
+            if !FunctionType::is_gradual_callable_form(dest_type)
+                && src_param_details.kwargs_index.is_none()
+                && src_param_spec.is_none()
+                && dest_param_details.kwargs_index.is_some()
+            {
+                if let Some(diag) = diag {
+                    let dest_kwargs_index = dest_param_details.kwargs_index.unwrap() as usize;
+                    diag.create_addendum().add_message(crate::localization::localize::LocAddendum::kwargs_param_missing().format(&[(
+                        "paramName",
+                        dest_param_details.params[dest_kwargs_index]
+                            .param
+                            .name
+                            .as_deref()
+                            .unwrap(),
+                    )]));
+                }
+                can_assign = false;
+            }
+        }
+
+        if flags.any(AssignTypeFlags::OverloadOverlap) {
+            // If we're checking for full overlapping overloads and the source is
+            // a gradual form, the dest must also be a gradual form.
+            if FunctionType::is_gradual_callable_form(src_type) && !FunctionType::is_gradual_callable_form(dest_type) {
+                can_assign = false;
+            }
+
+            // If the src contains a ParamSpec the dest must also.
+            if src_param_spec.is_some() && dest_param_spec.is_none() {
+                can_assign = false;
+            }
+        }
+
+        // If the source and the dest are using the same ParamSpec, any additional
+        // concatenated parameters must match.
+        if target_includes_param_spec
+            && src_param_spec.and_then(|param_spec| param_spec.d().priv_.borrow().name_with_scope.clone())
+                == dest_param_spec.and_then(|param_spec| param_spec.d().priv_.borrow().name_with_scope.clone())
+        {
+            if src_param_details.params.len() != dest_param_details.params.len() {
+                can_assign = false;
+            }
+        }
+
+        // Are we assigning to a function with a ParamSpec?
+        if target_includes_param_spec {
+            let effective_src_type = if is_contra { dest_type } else { src_type };
+            let effective_dest_type = if is_contra { src_type } else { dest_type };
+
+            let effective_src_param_spec = if is_contra { dest_param_spec } else { src_param_spec };
+            let effective_dest_param_spec = if is_contra { src_param_spec } else { dest_param_spec };
+
+            if let Some(effective_dest_param_spec) = effective_dest_param_spec {
+                let effective_dest_params = effective_dest_type.d().shared.get().parameters.get().borrow().clone();
+                let required_match_param_count = effective_dest_params
+                    .iter()
+                    .enumerate()
+                    .filter(|(i, p)| {
+                        if !is_truthy_name(&p.name) {
+                            return false;
+                        }
+
+                        let param_type = FunctionType::get_param_type(effective_dest_type, *i as i32);
+                        if p.category == ParamCategory::Simple && analyzer::types::is_param_spec(param_type) {
+                            return false;
+                        }
+                        true
+                    })
+                    .count();
+                let mut matched_param_count = 0;
+                let mut remaining_params: Vec<FunctionParam> = Vec::new();
+
+                // If there are parameters in the source that are not matched
+                // to parameters in the dest, assume these are concatenated on
+                // to the ParamSpec.
+                let effective_src_params = effective_src_type.d().shared.get().parameters.get().borrow().clone();
+                for (index, p) in effective_src_params.iter().enumerate() {
+                    if matched_param_count < required_match_param_count {
+                        if is_truthy_name(&p.name) {
+                            matched_param_count += 1;
+                        }
+
+                        // If this is a *args parameter, assume that it provides
+                        // the remaining positional parameters, but also assume
+                        // that it is not exhausted and can provide additional
+                        // parameters.
+                        if p.category != ParamCategory::ArgsList {
+                            continue;
+                        }
+                    }
+
+                    if analyzer::types::is_position_only_separator(p) && remaining_params.is_empty() {
+                        // Don't bother pushing a position-only separator if it
+                        // is the first remaining param.
+                        continue;
+                    }
+
+                    remaining_params.push(FunctionParam::create(
+                        p.category,
+                        FunctionType::get_param_type(effective_src_type, index as i32),
+                        p.flags,
+                        p.name.as_deref(),
+                        FunctionType::get_param_default_type(effective_src_type, index as i32),
+                        p.default_expr,
+                    ));
+                }
+
+                // If there are remaining parameters and the source and dest do not contain
+                // the same ParamSpec, synthesize a function for the remaining parameters.
+                if !remaining_params.is_empty()
+                    || effective_src_param_spec.is_none()
+                    || !analyzer::types::is_type_same(
+                        effective_src_param_spec.unwrap().0,
+                        effective_dest_param_spec.0,
+                        &analyzer::types::TypeSameOptions {
+                            ignore_type_flags: Some(true),
+                            ..Default::default()
+                        },
+                        0,
+                    )
+                {
+                    let effective_src_pos_count = if is_contra { dest_positional_count } else { src_positional_count };
+                    let effective_dest_pos_count = if is_contra { src_positional_count } else { dest_positional_count };
+
+                    // If the src and dest both have ParamSpecs but the src has additional positional
+                    // parameters that have not been matched to dest positional parameters (probably due
+                    // to a Concatenate), don't attempt to assign the remaining parameters to the ParamSpec.
+                    if effective_src_param_spec.is_none() || effective_src_pos_count >= effective_dest_pos_count {
+                        let effective_src_shared = effective_src_type.d().shared.get();
+                        let doc_string = effective_src_shared.doc_string.borrow().clone();
+                        let remaining_function = FunctionType::create_instance(
+                            "",
+                            "",
+                            "",
+                            effective_src_shared.flags.get() | FunctionTypeFlags::SynthesizedMethod,
+                            doc_string.as_deref(),
+                        );
+                        let remaining_shared = remaining_function.d().shared.get();
+                        let deprecated_message = effective_src_shared.deprecated_message.borrow().clone();
+                        *remaining_shared.deprecated_message.borrow_mut() = deprecated_message;
+                        let type_var_scope_id = effective_src_shared.type_var_scope_id.borrow().clone();
+                        *remaining_shared.type_var_scope_id.borrow_mut() = type_var_scope_id;
+                        let constructor_type_var_scope_id =
+                            effective_src_type.d().priv_.borrow().constructor_type_var_scope_id.clone();
+                        remaining_function.d().priv_.borrow_mut().constructor_type_var_scope_id =
+                            constructor_type_var_scope_id;
+                        remaining_shared.method_class.set(effective_src_shared.method_class.get());
+                        for param in &remaining_params {
+                            FunctionType::add_param(remaining_function, param);
+                        }
+                        if let Some(effective_src_param_spec) = effective_src_param_spec {
+                            FunctionType::add_param_spec_variadics(
+                                remaining_function,
+                                ParamSpecType(analyzer::type_utils::convert_to_instance(
+                                    effective_src_param_spec.0,
+                                    true,
+                                )),
+                            );
+                        }
+
+                        if !self.assign_type(
+                            effective_dest_param_spec.0,
+                            remaining_function.0,
+                            /* diag */ None,
+                            Some(constraints),
+                            flags,
+                            0,
+                        ) {
+                            // If we couldn't assign the function to the ParamSpec, see if we can
+                            // assign only the ParamSpec. This is possible if there were no
+                            // remaining parameters.
+                            if !remaining_params.is_empty()
+                                || effective_src_param_spec.is_none()
+                                || !self.assign_type(
+                                    analyzer::type_utils::convert_to_instance(effective_dest_param_spec.0, true),
+                                    analyzer::type_utils::convert_to_instance(effective_src_param_spec.unwrap().0, true),
+                                    /* diag */ None,
+                                    Some(constraints),
+                                    flags,
+                                    0,
+                                )
+                            {
+                                can_assign = false;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Match the return parameter.
+        if check_return_type {
+            let dest_return_type = self.get_effective_return_type(dest_type);
+            if !analyzer::types::is_any_or_unknown(dest_return_type) {
+                let src_return_type =
+                    self.solve_and_apply_constraints(self.get_effective_return_type(src_type), constraints, None, None);
+                let return_diag = diag.map(|diag| diag.create_addendum());
+
+                let mut is_return_type_compatible = false;
+
+                let mut effective_flags = flags;
+
+                // If the source has a declared return type that includes a literal
+                // in its annotation, assume that we will want the constraint
+                // solver to retain literals.
+                if let Some(declared_return_type) = src_type.d().shared.get().declared_return_type.get() {
+                    if analyzer::type_utils::contains_literal_type(declared_return_type, /* include_type_args */ true) {
+                        effective_flags |= AssignTypeFlags::RetainLiteralsForTypeVar;
+                    }
+                }
+
+                if self.assign_type(
+                    dest_return_type,
+                    src_return_type,
+                    return_diag.map(|return_diag| return_diag.create_addendum()),
+                    Some(constraints),
+                    effective_flags,
+                    recursion_count,
+                ) {
+                    is_return_type_compatible = true;
+                } else {
+                    // Handle the special case where the return type is a TypeGuard[T]
+                    // or TypeIs[T]. This should also act as a bool, since that's its
+                    // type at runtime.
+                    let bool_class = self.prefetched.borrow().as_ref().and_then(|prefetched| prefetched.bool_class);
+                    if analyzer::types::is_class_instance(src_return_type)
+                        && ClassType::is_built_in(
+                            ClassType::cast(src_return_type).unwrap(),
+                            Some(&["TypeGuard".to_owned(), "TypeIs".to_owned()]),
+                        )
+                        && bool_class.is_some_and(|bool_class| analyzer::types::is_instantiable_class(bool_class))
+                    {
+                        if self.assign_type(
+                            dest_return_type,
+                            ClassType::clone_as_instance(ClassType::cast(bool_class.unwrap()).unwrap(), true).0,
+                            return_diag.map(|return_diag| return_diag.create_addendum()),
+                            Some(constraints),
+                            flags,
+                            recursion_count,
+                        ) {
+                            is_return_type_compatible = true;
+                        }
+                    }
+                }
+
+                if !is_return_type_compatible {
+                    if let Some(return_diag) = return_diag {
+                        return_diag.add_message(crate::localization::localize::LocAddendum::function_return_type_mismatch().format(&[
+                            ("sourceType", self.print_type(src_return_type, None).as_str()),
+                            ("destType", self.print_type(dest_return_type, None).as_str()),
+                        ]));
+                    }
+                    can_assign = false;
+                }
+            }
+        }
+
+        can_assign
     }
 
     // analyzer/typeEvaluator.ts:29106
@@ -18388,7 +19331,144 @@ impl TypeEvaluator {
         declared_type: P<Type>,
         assigned_type_result: P<TypeResult>,
     ) -> P<TypeResult> {
-        todo!()
+        // TODO: The rules for narrowing types on assignment are not defined in
+        // the typing spec. Pyright's current logic is currently not even internally
+        // consistent and probably not sound from a type theory perspective. It
+        // should be completely reworked once there has been a public discussion
+        // about the correct behavior.
+
+        let narrowed_type = analyzer::type_utils::map_subtypes(
+            assigned_type_result.type_.get(),
+            &mut |assigned_subtype| {
+                // Handle the special case where the assigned type is a literal type.
+                // Some types include very large unions of literal types, and we don't
+                // want to use an n^2 loop to compare them.
+                if analyzer::types::is_class(assigned_subtype)
+                    && analyzer::type_utils::is_literal_type(ClassType::cast(assigned_subtype).unwrap())
+                {
+                    if analyzer::types::is_union(declared_type)
+                        && UnionType::contains_type(
+                            UnionType::cast(declared_type).unwrap(),
+                            assigned_subtype,
+                            &analyzer::types::TypeSameOptions::default(),
+                            None,
+                            0,
+                        )
+                    {
+                        return Some(assigned_subtype);
+                    }
+                }
+
+                let narrowed_subtype = analyzer::type_utils::map_subtypes(
+                    declared_type,
+                    &mut |declared_subtype| {
+                        if !self.assign_type(declared_subtype, assigned_subtype, None, None, AssignTypeFlags::Default, 0) {
+                            return None;
+                        }
+
+                        // Retain unknowns for code flow analysis convergence and for
+                        // unknown type reporting in strict mode.
+                        if analyzer::types::is_unknown(assigned_subtype) {
+                            return Some(assigned_subtype);
+                        }
+
+                        // Preserve assignment narrowing when an enum literal is assigned
+                        // to its non-literal enum class. A single-member enum is equivalent
+                        // to its only literal, but the assigned value is still more precise.
+                        if analyzer::types::is_class_instance(assigned_subtype)
+                            && matches!(
+                                ClassType::cast(assigned_subtype).unwrap().d().priv_.borrow().literal_value,
+                                Some(LiteralValue::EnumLiteral(_))
+                            )
+                            && analyzer::types::is_class_instance(declared_subtype)
+                            && ClassType::cast(declared_subtype).unwrap().d().priv_.borrow().literal_value.is_none()
+                            && ClassType::is_same_generic_class(
+                                ClassType::cast(assigned_subtype).unwrap(),
+                                ClassType::cast(declared_subtype).unwrap(),
+                                0,
+                            )
+                        {
+                            return Some(assigned_subtype);
+                        }
+
+                        // If the two types are bidirectionally assignable, they are
+                        // either equivalent (in which case it doesn't matter which
+                        // one we choose) or one or both include gradual types (Any, etc.),
+                        // in which case we'll want to stick with the declared subtype.
+                        if self.assign_type(assigned_subtype, declared_subtype, None, None, AssignTypeFlags::Default, 0) {
+                            // We need to be careful with TypedDict types that have
+                            // narrowed fields. In this case, we want to return the
+                            // assigned type.
+                            if analyzer::types::is_class(assigned_subtype)
+                                && ClassType::cast(assigned_subtype)
+                                    .unwrap()
+                                    .d()
+                                    .priv_
+                                    .borrow()
+                                    .typed_dict_narrowed_entries
+                                    .is_some()
+                                && analyzer::types::is_type_same(
+                                    assigned_subtype,
+                                    declared_subtype,
+                                    &analyzer::types::TypeSameOptions {
+                                        ignore_typed_dict_narrow_entries: Some(true),
+                                        ..Default::default()
+                                    },
+                                    0,
+                                )
+                            {
+                                return Some(assigned_subtype);
+                            }
+
+                            // We also need to be careful with callback protocols.
+                            if analyzer::types::is_class_instance(declared_subtype)
+                                && ClassType::is_protocol_class(ClassType::cast(declared_subtype).unwrap())
+                            {
+                                if analyzer::types::is_function_or_overloaded(assigned_subtype) {
+                                    return Some(assigned_subtype);
+                                }
+                            }
+
+                            return Some(declared_subtype);
+                        }
+
+                        Some(assigned_subtype)
+                    },
+                    None,
+                );
+
+                // If we couldn't assign the assigned subtype any of the declared
+                // subtypes, the types are incompatible. Return the unnarrowed form.
+                if analyzer::types::is_never(narrowed_subtype) {
+                    return Some(assigned_subtype);
+                }
+
+                Some(narrowed_subtype)
+            },
+            None,
+        );
+
+        // If the result of narrowing is an Unknown that is incomplete, propagate the
+        // incomplete type for the benefit of code flow analysis.
+        // If the result of narrowing is a complete Unknown, combine the Unknown type
+        // with the declared type. In strict mode, this will retain the "unknown type"
+        // diagnostics while still providing reasonable completion suggestions.
+        if analyzer::type_utils::is_incomplete_unknown(narrowed_type) {
+            return P::new_eval(TypeResult {
+                is_incomplete: Cell::new(assigned_type_result.is_incomplete.get()),
+                ..TypeResult::new(narrowed_type)
+            });
+        } else if analyzer::types::is_unknown(narrowed_type) {
+            return P::new_eval(TypeResult {
+                is_incomplete: Cell::new(assigned_type_result.is_incomplete.get()),
+                ..TypeResult::new(analyzer::types::combine_types(&[narrowed_type, declared_type], None))
+            });
+        }
+
+        P::new_eval(TypeResult {
+            is_incomplete: Cell::new(assigned_type_result.is_incomplete.get()),
+            ..TypeResult::new(narrowed_type)
+        })
     }
 
     // analyzer/typeEvaluator.ts:29199
@@ -18401,7 +19481,154 @@ impl TypeEvaluator {
         diag: P<DiagnosticAddendum>,
         enforce_param_names: bool,
     ) -> bool {
-        todo!()
+        // If we're overriding a non-method with a method, report it as an error.
+        // This occurs when a non-property overrides a property.
+        if !analyzer::types::is_function_or_overloaded(base_method) {
+            diag.add_message(
+                crate::localization::localize::LocAddendum::override_type()
+                    .format(&[("type", &self.print_type(base_method, None))]),
+            );
+            return false;
+        }
+
+        if analyzer::types::is_function(base_method) {
+            let base_method = FunctionType::cast(base_method).unwrap();
+
+            // Handle the easy case - a simple function overriding another simple function.
+            if analyzer::types::is_function(override_method) {
+                return self.validate_override_method_internal(
+                    base_method,
+                    FunctionType::cast(override_method).unwrap(),
+                    Some(diag),
+                    enforce_param_names,
+                );
+            }
+
+            let override_method = OverloadedType::cast(override_method).unwrap();
+            let mut overloads_and_impl = OverloadedType::get_overloads(override_method);
+            let impl_ = OverloadedType::get_implementation(override_method);
+            if let Some(impl_) = impl_ {
+                if analyzer::types::is_function(impl_) {
+                    overloads_and_impl.push(FunctionType::cast(impl_).unwrap());
+                }
+            }
+
+            // For an overload overriding a base method, at least one overload
+            // or the implementation must be compatible with the base method.
+            if overloads_and_impl.iter().any(|&override_overload| {
+                self.validate_override_method_internal(
+                    base_method,
+                    override_overload,
+                    /* diag */ None,
+                    enforce_param_names,
+                )
+            }) {
+                return true;
+            }
+
+            diag.add_message(crate::localization::localize::LocAddendum::override_no_overload_matches());
+            return false;
+        }
+
+        let base_method = OverloadedType::cast(base_method).unwrap();
+
+        // For a non-overloaded method overriding an overloaded method, the
+        // override must match all of the overloads.
+        if analyzer::types::is_function(override_method) {
+            let override_method = FunctionType::cast(override_method).unwrap();
+            return OverloadedType::get_overloads(base_method).iter().all(|&overload| {
+                // If the override isn't applicable for this base class, skip the check.
+                if let Some(base_class) = base_class {
+                    if !self.is_override_method_applicable(overload, base_class) {
+                        return true;
+                    }
+                }
+
+                self.validate_override_method_internal(
+                    overload,
+                    override_method,
+                    Some(diag.create_addendum()),
+                    enforce_param_names,
+                )
+            });
+        }
+
+        // For an overloaded method overriding an overloaded method, the overrides
+        // must all match and be in the correct order. It is OK if the base method
+        // has additional overloads that are not present in the override.
+
+        let mut previous_match_index: i32 = -1;
+        let base_overloads = OverloadedType::get_overloads(base_method);
+
+        for override_overload in OverloadedType::get_overloads(OverloadedType::cast(override_method).unwrap()) {
+            let mut possible_match_index: Option<i32> = None;
+
+            let mut match_index: i32 = base_overloads
+                .iter()
+                .enumerate()
+                .position(|(index, &base_overload)| {
+                    let index = index as i32;
+
+                    // If the override isn't applicable for this base class, skip the check.
+                    if let Some(base_class) = base_class {
+                        if !self.is_override_method_applicable(base_overload, base_class) {
+                            return false;
+                        }
+                    }
+
+                    let is_compatible = self.validate_override_method_internal(
+                        base_overload,
+                        override_overload,
+                        /* diag */ None,
+                        enforce_param_names,
+                    );
+
+                    // If the override is compatible but the match is one that is below the previous
+                    // matched index, keep looking for additional matches. Record the fact that
+                    // we found at least one match.
+                    if is_compatible && index <= previous_match_index && possible_match_index.is_none() {
+                        possible_match_index = Some(index);
+                        return false;
+                    }
+
+                    is_compatible
+                })
+                .map_or(-1, |index| index as i32);
+
+            if match_index < 0 {
+                if let Some(possible_match_index) = possible_match_index {
+                    match_index = possible_match_index;
+                }
+            }
+
+            if match_index < 0 {
+                break;
+            }
+
+            if match_index < previous_match_index {
+                diag.add_message(crate::localization::localize::LocAddendum::override_overload_order());
+                return false;
+            }
+
+            previous_match_index = match_index;
+        }
+
+        if previous_match_index < base_overloads.len() as i32 - 1 {
+            let unmatched_overloads = &base_overloads[(previous_match_index + 1) as usize..];
+
+            // See if all of the remaining overrides are nonapplicable.
+            if base_class.is_none()
+                || unmatched_overloads
+                    .iter()
+                    .any(|&overload| self.is_override_method_applicable(overload, base_class.unwrap()))
+            {
+                // We didn't find matches for all of the base overloads.
+                diag.add_message(crate::localization::localize::LocAddendum::override_overload_no_match());
+                return false;
+            }
+        }
+
+        true
     }
 
     // analyzer/typeEvaluator.ts:29336
@@ -18410,7 +19637,43 @@ impl TypeEvaluator {
         base_method: FunctionType,
         child_class: ClassType,
     ) -> bool {
-        todo!()
+        if !FunctionType::is_instance_method(base_method)
+            && !FunctionType::is_class_method(base_method)
+            && !FunctionType::is_constructor_method(base_method)
+        {
+            return true;
+        }
+
+        let base_param_details = analyzer::parameter_utils::get_param_list_details(base_method, None);
+        if base_param_details.params.is_empty() {
+            return true;
+        }
+
+        let base_param_type = &base_param_details.params[0].param;
+
+        if base_param_type.category != ParamCategory::Simple || !FunctionParam::is_type_declared(base_param_type) {
+            return true;
+        }
+
+        // If this is a self or cls parameter, determine whether the override
+        // class can be assigned to the base parameter type. If not, then this
+        // override doesn't apply. This is important for overloads where the
+        // base class contains some overload signatures that are not applicable
+        // to the child class.
+        let child_self_or_cls_type = if FunctionType::is_instance_method(base_method) {
+            ClassType::clone_as_instance(child_class, true).0
+        } else {
+            child_class.0
+        };
+
+        self.assign_type(
+            base_param_details.params[0].type_,
+            child_self_or_cls_type,
+            /* diag */ None,
+            /* constraints */ None,
+            AssignTypeFlags::Default,
+            0,
+        )
     }
 
     // analyzer/typeEvaluator.ts:29378
@@ -18421,7 +19684,480 @@ impl TypeEvaluator {
         diag: Option<P<DiagnosticAddendum>>,
         enforce_param_names: bool,
     ) -> bool {
-        todo!()
+        let base_param_details = analyzer::parameter_utils::get_param_list_details(base_method, None);
+        let override_param_details = analyzer::parameter_utils::get_param_list_details(override_method, None);
+        let constraints = ConstraintTracker::new();
+
+        let mut can_override = true;
+
+        if !FunctionType::is_gradual_callable_form(base_method) && !FunctionType::is_gradual_callable_form(override_method) {
+            // Verify that we're not overriding a static, class or instance method with
+            // an incompatible type.
+            if FunctionType::is_static_method(base_method) {
+                if !FunctionType::is_static_method(override_method) {
+                    if let Some(diag) = diag {
+                        diag.add_message(crate::localization::localize::LocAddendum::override_not_static_method());
+                    }
+                    can_override = false;
+                }
+            } else if FunctionType::is_class_method(base_method) {
+                if !FunctionType::is_class_method(override_method) {
+                    if let Some(diag) = diag {
+                        diag.add_message(crate::localization::localize::LocAddendum::override_not_class_method());
+                    }
+                    can_override = false;
+                }
+            } else if FunctionType::is_instance_method(base_method) {
+                if !FunctionType::is_instance_method(override_method) {
+                    if let Some(diag) = diag {
+                        diag.add_message(crate::localization::localize::LocAddendum::override_not_instance_method());
+                    }
+                    can_override = false;
+                }
+            }
+
+            // Verify that the positional param count matches exactly or that the override
+            // adds only params that preserve the original signature.
+            let mut found_param_count_mismatch = false;
+            if override_param_details.position_param_count < base_param_details.position_param_count {
+                if override_param_details.args_index.is_none() {
+                    found_param_count_mismatch = true;
+                } else {
+                    let override_args_type =
+                        override_param_details.params[override_param_details.args_index.unwrap() as usize].type_;
+                    for i in override_param_details.position_param_count..base_param_details.position_param_count {
+                        if !self.assign_type(
+                            override_args_type,
+                            base_param_details.params[i as usize].type_,
+                            diag.map(|diag| diag.create_addendum()),
+                            Some(constraints),
+                            AssignTypeFlags::Default,
+                            0,
+                        ) {
+                            // The TS formats this message and discards it.
+                            let _ = crate::localization::localize::LocAddendum::override_param_type().format(&[
+                                ("index", &jsrt::number::number_to_string((i + 1) as f64)),
+                                ("baseType", &self.print_type(base_param_details.params[i as usize].type_, None)),
+                                ("overrideType", &self.print_type(override_args_type, None)),
+                            ]);
+                            can_override = false;
+                        }
+                    }
+                }
+            } else if override_param_details.position_param_count > base_param_details.position_param_count {
+                let is_callable_attr_overridden_by_instance_method = base_param_details.position_param_count == 0
+                    && override_param_details.position_param_count == 1
+                    && FunctionType::is_instance_method(override_method)
+                    && !FunctionType::is_static_method(base_method)
+                    && !FunctionType::is_class_method(base_method);
+
+                if !is_callable_attr_overridden_by_instance_method {
+                    // Verify that all of the override parameters that extend the
+                    // signature are either *args, **kwargs or parameters with
+                    // default values.
+
+                    for i in base_param_details.position_param_count..override_param_details.position_param_count {
+                        let override_param = &override_param_details.params[i as usize].param;
+
+                        if override_param.category == ParamCategory::Simple
+                            && override_param.name.as_deref().is_some_and(|name| !name.is_empty())
+                            && override_param_details.params[i as usize].default_type.is_none()
+                        {
+                            found_param_count_mismatch = true;
+                        }
+                    }
+                }
+            }
+
+            if found_param_count_mismatch {
+                if let Some(diag) = diag {
+                    diag.add_message(crate::localization::localize::LocAddendum::override_positional_param_count().format(&[
+                        (
+                            "baseCount",
+                            &jsrt::number::number_to_string(base_param_details.params.len() as f64),
+                        ),
+                        (
+                            "overrideCount",
+                            &jsrt::number::number_to_string(override_param_details.params.len() as f64),
+                        ),
+                    ]));
+                }
+                can_override = false;
+            }
+
+            let positional_param_count = std::cmp::min(
+                base_param_details.position_param_count,
+                override_param_details.position_param_count,
+            );
+
+            for i in 0..positional_param_count {
+                // If the first parameter is a "self" or "cls" parameter, skip the
+                // test because these are allowed to violate the Liskov substitution
+                // principle.
+                //
+                // Note: the checker deliberately defeats this skip for the
+                // "callable variable overridden by a method" case by marking both
+                // sides static before calling this routine (see
+                // `_getCallableVariableOverrideComparison` in checker.ts). Keep the
+                // two in sync if this skip logic changes.
+                if i == 0 {
+                    if FunctionType::is_instance_method(override_method)
+                        || FunctionType::is_class_method(override_method)
+                        || FunctionType::is_constructor_method(override_method)
+                    {
+                        continue;
+                    }
+                }
+
+                let base_param = &base_param_details.params[i as usize].param;
+                let override_param = &override_param_details.params[i as usize].param;
+
+                if i >= base_param_details.position_only_param_count
+                    && !analyzer::symbol_name_utils::is_private_or_protected_name(
+                        base_param.name.as_deref().unwrap_or(""),
+                    )
+                    && base_param_details.params[i as usize].kind != analyzer::parameter_utils::ParamKind::Positional
+                    && base_param.category == ParamCategory::Simple
+                    && enforce_param_names
+                    && base_param.name != override_param.name
+                {
+                    if override_param.category == ParamCategory::Simple {
+                        if !FunctionParam::is_name_synthesized(base_param) {
+                            if override_param_details.params[i as usize].kind == analyzer::parameter_utils::ParamKind::Positional {
+                                if let Some(diag) = diag {
+                                    diag.add_message(crate::localization::localize::LocAddendum::override_param_name_position_only().format(&[
+                                        ("index", &jsrt::number::number_to_string((i + 1) as f64)),
+                                        (
+                                            "baseName",
+                                            base_param.name.as_deref().filter(|name| !name.is_empty()).unwrap_or("*"),
+                                        ),
+                                    ]));
+                                }
+                            } else {
+                                if let Some(diag) = diag {
+                                    diag.add_message(crate::localization::localize::LocAddendum::override_param_name().format(&[
+                                        ("index", &jsrt::number::number_to_string((i + 1) as f64)),
+                                        (
+                                            "baseName",
+                                            base_param.name.as_deref().filter(|name| !name.is_empty()).unwrap_or("*"),
+                                        ),
+                                        (
+                                            "overrideName",
+                                            override_param
+                                                .name
+                                                .as_deref()
+                                                .filter(|name| !name.is_empty())
+                                                .unwrap_or("*"),
+                                        ),
+                                    ]));
+                                }
+                            }
+                            can_override = false;
+                        }
+                    }
+                } else if i < override_param_details.position_only_param_count
+                    && i >= base_param_details.position_only_param_count
+                {
+                    if !FunctionParam::is_name_synthesized(base_param)
+                        && base_param_details.params[i as usize].kind != analyzer::parameter_utils::ParamKind::Positional
+                        && base_param_details.params[i as usize].kind != analyzer::parameter_utils::ParamKind::ExpandedArgs
+                    {
+                        if let Some(diag) = diag {
+                            diag.add_message(crate::localization::localize::LocAddendum::override_param_name_position_only().format(&[
+                                ("index", &jsrt::number::number_to_string((i + 1) as f64)),
+                                (
+                                    "baseName",
+                                    base_param.name.as_deref().filter(|name| !name.is_empty()).unwrap_or("*"),
+                                ),
+                            ]));
+                        }
+                        can_override = false;
+                    }
+                } else {
+                    let base_param_type = base_param_details.params[i as usize].type_;
+                    let override_param_type = override_param_details.params[i as usize].type_;
+
+                    let base_is_synthesized_type_var = analyzer::types::is_type_var(base_param_type)
+                        && TypeVarType::cast(base_param_type).unwrap().d().shared.get().is_synthesized.get();
+                    let override_is_synthesized_type_var = analyzer::types::is_type_var(override_param_type)
+                        && TypeVarType::cast(override_param_type).unwrap().d().shared.get().is_synthesized.get();
+
+                    if !base_is_synthesized_type_var && !override_is_synthesized_type_var {
+                        if base_param.category != override_param.category
+                            || !self.assign_type(
+                                override_param_type,
+                                base_param_type,
+                                diag.map(|diag| diag.create_addendum()),
+                                Some(constraints),
+                                AssignTypeFlags::Default,
+                                0,
+                            )
+                        {
+                            if let Some(diag) = diag {
+                                diag.add_message(crate::localization::localize::LocAddendum::override_param_type().format(&[
+                                    ("index", &jsrt::number::number_to_string((i + 1) as f64)),
+                                    ("baseType", &self.print_type(base_param_type, None)),
+                                    ("overrideType", &self.print_type(override_param_type, None)),
+                                ]));
+                            }
+                            can_override = false;
+                        }
+                    }
+
+                    if base_param_details.params[i as usize].default_type.is_some()
+                        && override_param_details.params[i as usize].default_type.is_none()
+                    {
+                        if let Some(diag) = diag {
+                            diag.add_message(crate::localization::localize::LocAddendum::override_param_no_default().format(&[(
+                                "index",
+                                &jsrt::number::number_to_string((i + 1) as f64),
+                            )]));
+                        }
+                        can_override = false;
+                    }
+                }
+            }
+
+            // Check for positional (named) parameters in the base method that
+            // do not exist in the override.
+            if enforce_param_names && override_param_details.kwargs_index.is_none() {
+                for i in positional_param_count..base_param_details.position_param_count {
+                    let base_param = base_param_details.params[i as usize];
+
+                    if base_param.kind == analyzer::parameter_utils::ParamKind::Standard && base_param.param.category == ParamCategory::Simple {
+                        if let Some(diag) = diag {
+                            diag.add_message(crate::localization::localize::LocAddendum::override_param_name_position_only().format(&[
+                                ("index", &jsrt::number::number_to_string((i + 1) as f64)),
+                                (
+                                    "baseName",
+                                    base_param.param.name.as_deref().filter(|name| !name.is_empty()).unwrap_or("*"),
+                                ),
+                            ]));
+                        }
+                        can_override = false;
+                    }
+                }
+            }
+
+            // Check for a *args match.
+            if let Some(base_args_index) = base_param_details.args_index {
+                if override_param_details.args_index.is_none() {
+                    if let Some(diag) = diag {
+                        diag.add_message(crate::localization::localize::LocAddendum::override_param_name_missing().format(&[(
+                            "name",
+                            base_param_details.params[base_args_index as usize].param.name.as_deref().unwrap_or("?"),
+                        )]));
+                    }
+                    can_override = false;
+                } else {
+                    let override_args_index = override_param_details.args_index.unwrap();
+                    let override_param_type = override_param_details.params[override_args_index as usize].type_;
+                    let base_param_type = base_param_details.params[base_args_index as usize].type_;
+
+                    if !self.assign_type(
+                        override_param_type,
+                        base_param_type,
+                        diag.map(|diag| diag.create_addendum()),
+                        Some(constraints),
+                        AssignTypeFlags::Default,
+                        0,
+                    ) {
+                        if let Some(diag) = diag {
+                            diag.add_message(crate::localization::localize::LocAddendum::override_param_keyword_type().format(&[
+                                (
+                                    "name",
+                                    override_param_details.params[override_args_index as usize]
+                                        .param
+                                        .name
+                                        .as_deref()
+                                        .unwrap_or("?"),
+                                ),
+                                ("baseType", &self.print_type(base_param_type, None)),
+                                ("overrideType", &self.print_type(override_param_type, None)),
+                            ]));
+                        }
+                        can_override = false;
+                    }
+                }
+            }
+
+            // Now check any keyword-only parameters.
+            let base_kw_only_params: Vec<P<analyzer::parameter_utils::VirtualParamDetails>> = base_param_details
+                .params
+                .iter()
+                .filter(|param_info| {
+                    param_info.kind == analyzer::parameter_utils::ParamKind::Keyword && param_info.param.category == ParamCategory::Simple
+                })
+                .copied()
+                .collect();
+            let override_kw_only_params: Vec<P<analyzer::parameter_utils::VirtualParamDetails>> =
+                override_param_details
+                    .params
+                    .iter()
+                    .filter(|param_info| {
+                        param_info.kind == analyzer::parameter_utils::ParamKind::Keyword && param_info.param.category == ParamCategory::Simple
+                    })
+                    .copied()
+                    .collect();
+
+            for &param_info in &base_kw_only_params {
+                let override_param_info = override_kw_only_params
+                    .iter()
+                    .find(|pi| param_info.param.name == pi.param.name)
+                    .copied();
+
+                if override_param_info.is_none() && override_param_details.kwargs_index.is_none() {
+                    if let Some(diag) = diag {
+                        diag.add_message(crate::localization::localize::LocAddendum::override_param_name_missing().format(&[(
+                            "name",
+                            param_info.param.name.as_deref().unwrap_or("?"),
+                        )]));
+                    }
+                    can_override = false;
+                } else {
+                    let mut target_param_type = override_param_info.map(|pi| pi.type_);
+                    if target_param_type.is_none() {
+                        target_param_type = Some(
+                            override_param_details.params[override_param_details.kwargs_index.unwrap() as usize].type_,
+                        );
+                    }
+                    let target_param_type = target_param_type.unwrap();
+
+                    if !self.assign_type(
+                        target_param_type,
+                        param_info.type_,
+                        diag.map(|diag| diag.create_addendum()),
+                        Some(constraints),
+                        AssignTypeFlags::Default,
+                        0,
+                    ) {
+                        if let Some(diag) = diag {
+                            diag.add_message(crate::localization::localize::LocAddendum::override_param_keyword_type().format(&[
+                                ("name", param_info.param.name.as_deref().unwrap_or("?")),
+                                ("baseType", &self.print_type(param_info.type_, None)),
+                                ("overrideType", &self.print_type(target_param_type, None)),
+                            ]));
+                        }
+                        can_override = false;
+                    }
+
+                    if let Some(override_param_info) = override_param_info {
+                        if param_info.default_type.is_some() && override_param_info.default_type.is_none() {
+                            if let Some(diag) = diag {
+                                diag.add_message(crate::localization::localize::LocAddendum::override_param_keyword_no_default().format(&[(
+                                    "name",
+                                    override_param_info.param.name.as_deref().unwrap_or("?"),
+                                )]));
+                            }
+                            can_override = false;
+                        }
+                    }
+                }
+            }
+
+            // Verify that any keyword-only parameters added by the overload are compatible
+            // with the **kwargs in the base.
+            for &param_info in &override_kw_only_params {
+                let base_param_info = base_kw_only_params.iter().find(|pi| param_info.param.name == pi.param.name);
+
+                if base_param_info.is_none() {
+                    if base_param_details.kwargs_index.is_none() {
+                        if param_info.default_type.is_none() {
+                            if let Some(diag) = diag {
+                                diag.add_message(crate::localization::localize::LocAddendum::override_param_name_extra().format(&[(
+                                    "name",
+                                    param_info.param.name.as_deref().unwrap_or("?"),
+                                )]));
+                            }
+                            can_override = false;
+                        }
+                    } else {
+                        // Base has a **kwargs; ensure the added keyword-only parameter's
+                        // type is compatible with the base's **kwargs value type.
+                        let base_kwargs_type =
+                            base_param_details.params[base_param_details.kwargs_index.unwrap() as usize].type_;
+                        if !self.assign_type(
+                            param_info.type_,
+                            base_kwargs_type,
+                            diag.map(|diag| diag.create_addendum()),
+                            Some(constraints),
+                            AssignTypeFlags::Default,
+                            0,
+                        ) {
+                            if let Some(diag) = diag {
+                                diag.add_message(crate::localization::localize::LocAddendum::override_param_keyword_type().format(&[
+                                    ("name", param_info.param.name.as_deref().unwrap_or("?")),
+                                    ("baseType", &self.print_type(base_kwargs_type, None)),
+                                    ("overrideType", &self.print_type(param_info.type_, None)),
+                                ]));
+                            }
+                            can_override = false;
+                        }
+                    }
+                }
+            }
+
+            // Verify that if the base method has a **kwargs parameter, the override does too.
+            if base_param_details.kwargs_index.is_some() && override_param_details.kwargs_index.is_none() {
+                if let Some(diag) = diag {
+                    diag.add_message(crate::localization::localize::LocAddendum::kwargs_param_missing().format(&[(
+                        "paramName",
+                        base_param_details.params[base_param_details.kwargs_index.unwrap() as usize]
+                            .param
+                            .name
+                            .as_deref()
+                            .unwrap(),
+                    )]));
+                }
+                can_override = false;
+            }
+        }
+
+        // Verify that one or the other method doesn't contain a ParamSpec.
+        if base_param_details.param_spec.is_some() && override_param_details.param_spec.is_none() {
+            // If the override uses an `*args: Any, **kwargs: Any` signature, we
+            // will allow this as an acceptable overload for a `*args: P.args, **kwargs: P.kwargs`.
+            let override_has_args_kwargs = override_param_details.args_index.is_some()
+                && analyzer::types::is_any_or_unknown(
+                    override_param_details.params[override_param_details.args_index.unwrap() as usize].type_,
+                )
+                && override_param_details.kwargs_index.is_some()
+                && analyzer::types::is_any_or_unknown(
+                    override_param_details.params[override_param_details.kwargs_index.unwrap() as usize].type_,
+                );
+
+            if !override_has_args_kwargs {
+                if let Some(diag) = diag {
+                    diag.add_message(crate::localization::localize::LocAddendum::param_spec_missing_in_override());
+                }
+                can_override = false;
+            }
+        }
+
+        // Now check the return type.
+        let base_return_type = self.get_effective_return_type(base_method);
+        let override_return_type =
+            self.solve_and_apply_constraints(self.get_effective_return_type(override_method), constraints, None, None);
+
+        if !self.assign_type(
+            base_return_type,
+            override_return_type,
+            diag.map(|diag| diag.create_addendum()),
+            Some(constraints),
+            AssignTypeFlags::Default,
+            0,
+        ) {
+            if let Some(diag) = diag {
+                diag.add_message(crate::localization::localize::LocAddendum::override_return_type().format(&[
+                    ("baseType", &self.print_type(base_return_type, None)),
+                    ("overrideType", &self.print_type(override_return_type, None)),
+                ]));
+            }
+
+            can_override = false;
+        }
+
+        can_override
     }
 
     // analyzer/typeEvaluator.ts:29802
@@ -18431,12 +20167,180 @@ impl TypeEvaluator {
         src_type: P<Type>,
         diag: P<DiagnosticAddendum>,
     ) -> Option<P<Type>> {
-        todo!()
+        if analyzer::types::is_any_or_unknown(src_type) {
+            return Some(src_type);
+        }
+
+        let mut effective_src_type: P<Type> =
+            analyzer::type_utils::transform_possible_recursive_type_alias(Some(src_type), 0).unwrap();
+
+        if analyzer::types::is_type_var(src_type) {
+            if analyzer::types::is_type_same(
+                src_type,
+                dest_type.0,
+                &analyzer::types::TypeSameOptions::default(),
+                0,
+            ) {
+                return Some(src_type);
+            }
+
+            effective_src_type = self.make_top_level_type_vars_concrete(src_type, false, None);
+        }
+
+        // If this is a partially-evaluated class, don't perform any further
+        // checks. Assume in this case that the type is compatible with the
+        // bound or constraint.
+        if analyzer::types::is_class(effective_src_type)
+            && ClassType::is_partially_evaluated(ClassType::cast(effective_src_type).unwrap())
+        {
+            return Some(src_type);
+        }
+
+        // If there's a bound type, make sure the source is derived from it.
+        if let Some(bound_type) = dest_type.d().shared.get().bound_type.get() {
+            if !analyzer::type_utils::is_type_alias_placeholder(effective_src_type) {
+                if !self.assign_type(
+                    bound_type,
+                    effective_src_type,
+                    Some(diag.create_addendum()),
+                    /* constraints */ None,
+                    AssignTypeFlags::Default,
+                    0,
+                ) {
+                    // Avoid adding a message that will confuse users if the TypeVar was
+                    // synthesized for internal purposes.
+                    if !dest_type.d().shared.get().is_synthesized.get() {
+                        diag.add_message(crate::localization::localize::LocAddendum::type_bound().format(&[
+                            ("sourceType", &self.print_type(effective_src_type, None)),
+                            (
+                                "destType",
+                                &self.print_type(dest_type.d().shared.get().bound_type.get().unwrap(), None),
+                            ),
+                            ("name", &TypeVarType::get_readable_name(dest_type, true)),
+                        ]));
+                    }
+                    return None;
+                }
+            }
+        }
+
+        if analyzer::types::is_param_spec(dest_type.0) {
+            if analyzer::types::is_param_spec(src_type) {
+                return Some(src_type);
+            }
+
+            if analyzer::types::is_function(src_type)
+                && FunctionType::is_param_spec_value(FunctionType::cast(src_type).unwrap())
+            {
+                return Some(src_type);
+            }
+
+            if analyzer::types::is_class_instance(src_type)
+                && ClassType::is_built_in(ClassType::cast(src_type).unwrap(), Some(&["Concatenate".to_owned()]))
+            {
+                return Some(src_type);
+            }
+
+            diag.add_message(crate::localization::localize::LocAddendum::type_param_spec().format(&[
+                ("type", &self.print_type(src_type, None)),
+                ("name", &TypeVarType::get_readable_name(dest_type, true)),
+            ]));
+
+            return None;
+        }
+
+        if analyzer::types::is_param_spec(src_type) {
+            diag.add_message(crate::localization::localize::LocMessage::param_spec_context());
+            return None;
+        }
+
+        // If there are no constraints, we're done.
+        let constraints = dest_type.d().shared.get().constraints.borrow().clone();
+        if constraints.is_empty() {
+            return Some(src_type);
+        }
+
+        if analyzer::type_utils::is_type_alias_placeholder(src_type) {
+            return Some(src_type);
+        }
+
+        if analyzer::types::is_type_var(src_type) && TypeVarType::has_constraints(TypeVarType::cast(src_type).unwrap()) {
+            // Make sure all the source constraint types map to constraint types in the dest.
+            let src_constraints = TypeVarType::cast(src_type).unwrap().d().shared.get().constraints.borrow().clone();
+            if src_constraints.iter().all(|&source_constraint| {
+                constraints.iter().any(|&dest_constraint| {
+                    self.assign_type(dest_constraint, source_constraint, None, None, AssignTypeFlags::Default, 0)
+                })
+            }) {
+                return Some(src_type);
+            }
+        } else {
+            let mut best_constraint_so_far: Option<P<Type>> = None;
+
+            // Try to find the best (narrowest) match among the constraints.
+            for &constraint in &constraints {
+                if self.assign_type(constraint, effective_src_type, None, None, AssignTypeFlags::Default, 0) {
+                    // Don't allow Never to match unless the constraint is also explicitly Never.
+                    if !analyzer::types::is_never(effective_src_type) || analyzer::types::is_never(constraint) {
+                        if best_constraint_so_far.is_none()
+                            || self.assign_type(
+                                best_constraint_so_far.unwrap(),
+                                constraint,
+                                None,
+                                None,
+                                AssignTypeFlags::Default,
+                                0,
+                            )
+                        {
+                            best_constraint_so_far = Some(constraint);
+                        }
+                    }
+                }
+            }
+
+            if let Some(best_constraint_so_far) = best_constraint_so_far {
+                return Some(best_constraint_so_far);
+            }
+        }
+
+        diag.add_message(crate::localization::localize::LocAddendum::type_constrained_type_var().format(&[
+            ("type", &self.print_type(src_type, None)),
+            ("name", &TypeVarType::get_readable_name(dest_type, true)),
+        ]));
+
+        None
     }
 
     // analyzer/typeEvaluator.ts:29928
     pub fn get_abstract_symbols(&self, class_type: ClassType) -> Vec<AbstractSymbol> {
-        todo!()
+        let mut symbol_table: JsMap<String, AbstractSymbol> = JsMap::default();
+
+        for mro_class in ClassType::get_reverse_mro(class_type) {
+            if analyzer::types::is_instantiable_class(mro_class) {
+                let mro_class = ClassType::cast(mro_class).unwrap();
+
+                // See if this class is introducing a new abstract symbol that has not been
+                // introduced previously or if it is overriding an abstract symbol with
+                // a non-abstract one.
+                ClassType::get_symbol_table(mro_class).for_each(|_symbol, symbol_name| {
+                    let abstract_symbol_info = self.get_abstract_symbol_info(mro_class, symbol_name);
+
+                    if let Some(abstract_symbol_info) = abstract_symbol_info {
+                        symbol_table.insert(symbol_name.to_string(), abstract_symbol_info);
+                    } else {
+                        symbol_table.shift_remove(symbol_name);
+                    }
+                });
+            }
+        }
+
+        // Create a final list of symbols that are abstract.
+        let mut symbol_list: Vec<AbstractSymbol> = Vec::new();
+        for method in symbol_table.values() {
+            symbol_list.push(method.clone());
+        }
+
+        symbol_list
     }
 
     // analyzer/typeEvaluator.ts:29963
@@ -18451,7 +20355,87 @@ impl TypeEvaluator {
         diag: Option<P<DiagnosticAddendum>>,
         recursion_count: u32,
     ) -> Option<P<Type>> {
-        todo!()
+        analyzer::type_utils::map_signatures(member_type, &mut |function_type: FunctionType| {
+            // If the caller specified no base type, always strip the
+            // first parameter. This is used in cases like constructors.
+            let Some(base_type) = base_type else {
+                return Some(FunctionType::clone(function_type, /* strip_first_param */ true, None));
+            };
+
+            // If the first parameter was already stripped, it has already been
+            // bound. Don't attempt to rebind.
+            if function_type.d().priv_.borrow().stripped_first_param_type.is_some() {
+                return Some(function_type);
+            }
+
+            if FunctionType::is_instance_method(function_type) {
+                // If the baseType is a metaclass, don't specialize the function.
+                if analyzer::type_utils::is_instantiable_metaclass(base_type.0) {
+                    return Some(function_type);
+                }
+
+                let base_obj: ClassType = if analyzer::types::is_class_instance(base_type.0) {
+                    base_type
+                } else {
+                    ClassType::clone_as_instance(analyzer::type_utils::specialize_with_default_type_args(base_type), true)
+                };
+
+                let mut strip_first_param = false;
+                if analyzer::types::is_class_instance(base_type.0) {
+                    strip_first_param = true;
+                } else if member_class.is_some_and(|member_class| analyzer::type_utils::is_instantiable_metaclass(member_class.0)) {
+                    strip_first_param = true;
+                }
+
+                return self.partially_specialize_bound_method(
+                    base_type,
+                    function_type,
+                    diag,
+                    recursion_count,
+                    Some(self_type.unwrap_or(base_obj.0)),
+                    strip_first_param,
+                );
+            }
+
+            if FunctionType::is_class_method(function_type)
+                || (treat_constructor_as_class_method && FunctionType::is_constructor_method(function_type))
+            {
+                let base_class = if analyzer::types::is_instantiable_class(base_type.0) {
+                    base_type
+                } else {
+                    ClassType::clone_as_instantiable(base_type, true)
+                };
+                let cls_type = self_type.map(|self_type| analyzer::type_utils::convert_to_instantiable(self_type, true));
+
+                return self.partially_specialize_bound_method(
+                    base_class,
+                    function_type,
+                    diag,
+                    recursion_count,
+                    Some(cls_type.unwrap_or(base_class.0)),
+                    /* strip_first_param */ true,
+                );
+            }
+
+            if FunctionType::is_static_method(function_type) {
+                let base_class = if analyzer::types::is_instantiable_class(base_type.0) {
+                    base_type
+                } else {
+                    ClassType::clone_as_instantiable(base_type, true)
+                };
+
+                return self.partially_specialize_bound_method(
+                    base_class,
+                    function_type,
+                    diag,
+                    recursion_count,
+                    /* first_param_type */ None,
+                    /* strip_first_param */ false,
+                );
+            }
+
+            Some(function_type)
+        })
     }
 
     // analyzer/typeEvaluator.ts:30050
@@ -18465,7 +20449,138 @@ impl TypeEvaluator {
         first_param_type: Option<P<Type>>,
         strip_first_param: bool,
     ) -> Option<FunctionType> {
-        todo!()
+        let constraints = ConstraintTracker::new();
+
+        if let Some(first_param_type) = first_param_type {
+            let parameters_len = member_type.d().shared.get().parameters.get().borrow().len();
+            if parameters_len > 0 {
+                let member_type_first_param = member_type.d().shared.get().parameters.get().borrow()[0].clone();
+                let member_type_first_param_type = FunctionType::get_param_type(member_type, 0);
+
+                if analyzer::types::is_type_var(member_type_first_param_type)
+                    && TypeVarType::cast(member_type_first_param_type)
+                        .unwrap()
+                        .d()
+                        .shared
+                        .get()
+                        .bound_type
+                        .get()
+                        .is_some_and(|bound_type| {
+                            analyzer::types::is_class_instance(bound_type)
+                                && ClassType::is_protocol_class(ClassType::cast(bound_type).unwrap())
+                        })
+                {
+                    // Handle the protocol class specially. Some protocol classes
+                    // contain references to themselves or their subclasses, so if
+                    // we attempt to call assignType, we'll risk infinite recursion.
+                    // Instead, we'll assume it's assignable.
+                    constraints.set_bounds(
+                        TypeVarType::cast(member_type_first_param_type).unwrap(),
+                        Some(if analyzer::types::TypeBase::is_instantiable(member_type_first_param_type) {
+                            analyzer::type_utils::convert_to_instance(first_param_type, true)
+                        } else {
+                            first_param_type
+                        }),
+                        None,
+                        None,
+                    );
+                } else {
+                    let sub_diag = diag.map(|diag| diag.create_addendum());
+
+                    // Protect against the case where a callback protocol is being
+                    // bound to its own __call__ method but the first parameter
+                    // is annotated with its own callable type. This can lead to
+                    // infinite recursion.
+                    if analyzer::types::is_function_or_overloaded(member_type_first_param_type) {
+                        if analyzer::types::is_class_instance(first_param_type)
+                            && ClassType::is_protocol_class(ClassType::cast(first_param_type).unwrap())
+                        {
+                            if let Some(sub_diag) = sub_diag {
+                                let shared = member_type.d().shared.get();
+                                sub_diag.add_message(crate::localization::localize::LocMessage::bind_type_mismatch().format(&[
+                                    ("type", &self.print_type(first_param_type, None)),
+                                    (
+                                        "methodName",
+                                        if shared.name.is_empty() { "<anonymous>" } else { shared.name.as_str() },
+                                    ),
+                                    (
+                                        "paramName",
+                                        member_type_first_param
+                                            .name
+                                            .as_deref()
+                                            .filter(|name| !name.is_empty())
+                                            .unwrap_or("__p0"),
+                                    ),
+                                ]));
+                            }
+                            return None;
+                        }
+                    }
+
+                    if !self.assign_type(
+                        member_type_first_param_type,
+                        first_param_type,
+                        sub_diag.map(|sub_diag| sub_diag.create_addendum()),
+                        Some(constraints),
+                        AssignTypeFlags::AllowUnspecifiedTypeArgs,
+                        recursion_count,
+                    ) {
+                        if member_type_first_param.name.as_deref().is_some_and(|name| !name.is_empty())
+                            && !FunctionParam::is_name_synthesized(&member_type_first_param)
+                            && FunctionParam::is_type_declared(&member_type_first_param)
+                        {
+                            if let Some(sub_diag) = sub_diag {
+                                let shared = member_type.d().shared.get();
+                                sub_diag.add_message(crate::localization::localize::LocMessage::bind_type_mismatch().format(&[
+                                    ("type", &self.print_type(first_param_type, None)),
+                                    (
+                                        "methodName",
+                                        if shared.name.is_empty() { "<anonymous>" } else { shared.name.as_str() },
+                                    ),
+                                    ("paramName", member_type_first_param.name.as_deref().unwrap()),
+                                ]));
+                            }
+                            return None;
+                        }
+                    }
+                }
+            } else {
+                let sub_diag = diag.map(|diag| diag.create_addendum());
+                if let Some(sub_diag) = sub_diag {
+                    let shared = member_type.d().shared.get();
+                    sub_diag.add_message(crate::localization::localize::LocMessage::bind_param_missing().format(&[(
+                        "methodName",
+                        if shared.name.is_empty() { "<anonymous>" } else { shared.name.as_str() },
+                    )]));
+                }
+                return None;
+            }
+        }
+
+        // Get the effective return type, which will have the side effect of lazily
+        // evaluating (and caching) the inferred return type if there is no defined return type.
+        self.get_effective_return_type(member_type);
+
+        let specialized_function = self.solve_and_apply_constraints(member_type.0, constraints, None, None);
+        if analyzer::types::is_function(specialized_function) {
+            return Some(FunctionType::clone(
+                FunctionType::cast(specialized_function).unwrap(),
+                strip_first_param,
+                Some(base_type),
+            ));
+        }
+
+        if analyzer::types::is_overloaded(specialized_function) {
+            // For overloaded functions, use the first overload. This isn't
+            // strictly correct, but this is an extreme edge case.
+            return Some(FunctionType::clone(
+                OverloadedType::get_overloads(OverloadedType::cast(specialized_function).unwrap())[0],
+                strip_first_param,
+                Some(base_type),
+            ));
+        }
+
+        None
     }
 
     // analyzer/typeEvaluator.ts:30162
