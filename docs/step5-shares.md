@@ -26,7 +26,7 @@ Fill the `todo!()` bodies under your markers and leave every other marker alone.
 | F | 7,721 | `codeFlowEngine.ts:1-2082`, `typeGuards.ts:1-2067`, `patternMatching.ts:1-2424`, `typeCacheUtils.ts:1-246`, `typeEvaluatorTypes.ts:1-902` (typeGuards.ts 2068-3024 moved to J) |
 | G | 4,971 | `constraintSolver.ts:1-1508`, `constraintTracker.ts:1-287`, `constraintSolution.ts:1-89`, `operations.ts:1-1408`, `typePrinter.ts:1-1600`, `typePrinterUtils.ts:1-49`, `parameterUtils.ts:1-493`, `functionTransform.ts:1-374`, `declarationUtils.ts:1-421` (sourceMapper, sourceMapperUtils and constructors moved to I) |
 | H | 8,530 | `dataClasses.ts:1-1745`, `typedDicts.ts:1-1709`, `protocols.ts:1-899`, `enums.ts:1-759`, `decorators.ts:1-660`, `properties.ts:1-653`, `tuples.ts:1-648`, `namedTuples.ts:1-514`, `constructorTransform.ts:1-499`, `typeWalker.ts:1-204`, `typeComplexity.ts:1-102`, `sentinel.ts:1-86`, `symbolUtils.ts:1-52` |
-| I | 2,363 | `sourceMapper.ts:1-1155`, `sourceMapperUtils.ts:1-63`, `constructors.ts:1-1145`, and `program.ts:1439-1440` (moved from G on 2026-11-10) |
+| I | 1,208 | `sourceMapperUtils.ts:1-63`, `constructors.ts:1-1145` (moved from G on 2026-11-10; `sourceMapper.ts` is out of scope, below) |
 | J | 957 | `typeGuards.ts:2068-3024` (moved from F on 2026-11-10) |
 | K | 3,686 | `checker.ts:4215-7900` (the checker round, split on 2026-11-10; `checker.ts:1-4214`, `deprecatedSymbols.ts` and the two hooks stay with the checker agent) |
 
@@ -35,7 +35,7 @@ All paths are under `packages/pyright-internal/src/analyzer/`.
 - `typeEvaluator.ts` is cut at the declarations of `validateTypeVarTupleIsUnpacked` (7678), `getTypeOfDictionaryWithContext` (15242) and `transformTypeArgsForParamSpec` (23041), functions declared directly in `createTypeEvaluator`.
 - B owns `create_type_evaluator` (line 663), which builds the `TypeEvaluator` struct from `createTypeEvaluator`'s locals. E owns the members of the returned object (from line 30477).
 - `typeWalker.ts`, `typeComplexity.ts`, `sentinel.ts` and `symbolUtils.ts` moved from A to H to balance line counts.
-- G owns `program.ts:1439-1440`: the `call` bodies of `ShadowFileBinder` and `BoundSourceGetter` in `source_mapper.rs`, the closures `Program._createSourceMapper` stores in a `SourceMapper`.
+- Out of scope: `SourceMapper` (`sourceMapper.ts`, 44 methods) and the `call` bodies of `ShadowFileBinder` and `BoundSourceGetter` (`program.ts:1439-1440`) stay `todo!()`. Only the language server, the type server and `common/extensibility.ts` build a `SourceMapper` (`Program.getSourceMapper`); the CLI check never does, and `AGENTS.md` puts the language server out of scope.
 - Not in a share: `checker.ts` and `deprecatedSymbols.ts`, stubbed for the checker round after these shares, and the two hooks that wire the evaluator in: `run_checker` in `analyzer/source_file.rs` and `dump_types` in `oracle/types.rs`.
 
 ## markers outside their own Rust file
