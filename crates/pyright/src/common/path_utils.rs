@@ -354,7 +354,7 @@ pub fn get_wildcard_regex_pattern(root_path: &str, file_spec: &str) -> String {
             // `component.replace(/[^\w\s<sep>]/g, ...)`: JS `\w` is ASCII only.
             for c in component.chars() {
                 let is_word = c.is_ascii_alphanumeric() || c == '_';
-                if is_word || crate::common::core::is_js_whitespace_char(c) || c == SEP {
+                if is_word || jsrt::string::is_js_whitespace_char(c) || c == SEP {
                     reg_ex_pattern.push(c);
                 } else if c == '*' {
                     reg_ex_pattern.push_str(&format!("[^{escaped_separator}]*"));

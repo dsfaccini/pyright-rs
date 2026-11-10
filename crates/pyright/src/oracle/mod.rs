@@ -2,6 +2,7 @@
 
 pub mod bind;
 pub mod diag;
+pub mod dumper;
 pub mod flow;
 pub mod format;
 pub mod tokens;

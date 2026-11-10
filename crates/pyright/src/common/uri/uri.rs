@@ -284,6 +284,11 @@ impl Uri {
         matches!(self.0.get().kind, UriKind::Constant { is_empty: true })
     }
 
+    /// `a === b`: object identity.
+    pub fn ptr_eq(a: Uri, b: Uri) -> bool {
+        P::ptr_eq(a.0, b.0)
+    }
+
     /// `equals(other)`.
     pub fn equals(&self, other: Option<Uri>) -> bool {
         match other {

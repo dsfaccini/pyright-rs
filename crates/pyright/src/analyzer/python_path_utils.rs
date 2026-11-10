@@ -300,7 +300,7 @@ pub fn read_pth_search_paths(pth_file: Uri, fs: &dyn FileSystem) -> Vec<Uri> {
 fn is_import_line(line: &str) -> bool {
     line.strip_prefix("import")
         .and_then(|rest| rest.chars().next())
-        .is_some_and(crate::common::core::is_js_whitespace_char)
+        .is_some_and(jsrt::string::is_js_whitespace_char)
 }
 
 // analyzer/pythonPathUtils.ts:225

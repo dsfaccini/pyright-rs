@@ -265,7 +265,7 @@ pub fn get_wildcard_segment_regex_fragment(segment: &str) -> String {
     let mut out = String::new();
     for c in segment.chars() {
         let is_word = c.is_ascii_alphanumeric() || c == '_';
-        if is_word || crate::common::core::is_js_whitespace_char(c) || c == '/' {
+        if is_word || jsrt::string::is_js_whitespace_char(c) || c == '/' {
             out.push(c);
         } else if c == '*' {
             out.push_str(&format!("[^{escaped_separator}]*"));

@@ -27,6 +27,14 @@ pub struct Dirent {
     pub is_symbolic_link: bool,
 }
 
+impl Dirent {
+    // common/fileSystem.ts:106
+    /// `new VirtualDirent(name, file, parentPath)`; `parentPath` is not kept.
+    pub fn virtual_dirent(name: &str, file: bool) -> Dirent {
+        Dirent { name: name.to_string(), is_file: file, is_directory: !file, is_symbolic_link: false }
+    }
+}
+
 /// The error a Node `fs` call throws.
 #[derive(Debug)]
 pub struct FsError(pub String);
@@ -60,6 +68,29 @@ pub trait ReadOnlyFileSystem {
     fn is_in_zip(&self, uri: Uri) -> bool;
 }
 
+/// vscode-jsonrpc `Disposable`: `dispose()` runs the cleanup each time it is
+/// called.
+pub struct Disposable {
+    dispose: Box<dyn Fn()>,
+}
+
+impl Disposable {
+    /// `{ dispose: () => ... }`.
+    pub fn create(dispose: impl Fn() + 'static) -> Disposable {
+        Disposable { dispose: Box::new(dispose) }
+    }
+
+    pub fn dispose(&self) {
+        (self.dispose)()
+    }
+}
+
+/// The `filter` argument of `mapDirectory`: `(originalUri: Uri, fs: FileSystem) => boolean`.
+pub type MapDirectoryFilter = Box<dyn Fn(Uri, &dyn FileSystem) -> bool>;
+
 // common/fileSystem.ts:68
 /// The write side is not ported: the check never writes.
-pub trait FileSystem: ReadOnlyFileSystem {}
+pub trait FileSystem: ReadOnlyFileSystem {
+    // common/fileSystem.ts:80
+    fn map_directory(&self, mapped_uri: Uri, original_uri: Uri, filter: Option<MapDirectoryFilter>) -> Disposable;
+}

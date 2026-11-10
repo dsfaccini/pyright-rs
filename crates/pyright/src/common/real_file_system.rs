@@ -10,7 +10,9 @@ use jsrt::JsStr;
 
 use crate::common::case_sensitivity_detector::CaseSensitivityDetector;
 use crate::common::console::ConsoleInterface;
-use crate::common::file_system::{Dirent, FileSystem, FsResult, ReadOnlyFileSystem, Stats};
+use crate::common::file_system::{
+    Dirent, Disposable, FileSystem, FsResult, MapDirectoryFilter, ReadOnlyFileSystem, Stats,
+};
 use crate::common::path_utils::get_root_length;
 use crate::common::uri::Uri;
 
@@ -168,7 +170,15 @@ impl ReadOnlyFileSystem for RealFileSystem {
     }
 }
 
-impl FileSystem for RealFileSystem {}
+impl FileSystem for RealFileSystem {
+    // common/realFileSystem.ts:448
+    fn map_directory(&self, _mapped_uri: Uri, _original_uri: Uri, _filter: Option<MapDirectoryFilter>) -> Disposable {
+        // Not supported at this level.
+        Disposable::create(|| {
+            // Do nothing.
+        })
+    }
+}
 
 // common/realFileSystem.ts:506
 /// Only the case-sensitivity detection: the check creates no temp files.
