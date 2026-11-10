@@ -4,6 +4,11 @@
 
 pub mod arena;
 pub mod collections;
+pub mod infra_shims;
+pub mod node_path;
+pub mod string;
+pub mod vscode_uri;
 
 pub use arena::P;
 pub use collections::{FxHashMap, FxHashSet, JsMap, JsSet};
+pub use string::{JsStr, JsString, NormalizationForm};
