@@ -125,7 +125,7 @@ A getter that returns live state its callers write to returns a reference into i
 | return | `Box<dyn FnMut(A) -> R>` |
 
 - `dyn`, never a generic `impl FnMut`: a generic callback passed down a recursive call instantiates without end.
-- In a class whose methods take `&mut self` (an "owned" class, below), every callback parameter of an inherent method takes the receiver first: `_bindLoopStatement(.., callback: &mut dyn FnMut(&mut Binder))`. The closure cannot capture `self` while the method holds it, so it receives it. tsrs's checker does the same.
+- In a class whose methods take `&mut self` (an "owned" class, below), every callback parameter of an inherent method takes the receiver first: `_bindLoopStatement(.., callback: &mut dyn FnMut(&mut Binder))`. The closure cannot capture `self` while the method holds it, so it receives it. tsrs's checker does the same. In a trait class with a `&mut self` receiver, the trait's methods and their implementations pass `&mut Self`, so the closure reaches the implementor's overrides: `TypeVarTransformer::do_for_each_constraint_set(.., callback: &mut dyn FnMut(&mut Self) -> FunctionType)`.
 
 ### stored callbacks
 
@@ -222,7 +222,7 @@ porting.md "types, classes and unions" and "parse nodes". `[families]` lists the
 `[traits]` lists the classes and interfaces that become traits: those called through an interface or a base class with several implementations.
 
 - A trait interface (`AnalyzerNodeInfoReader`) becomes a trait with one required method per method, and one accessor per data member. Params of its type are `&dyn T`; stored ones, fields, returns and parameters the function stores, are `P<dyn T>` (porting.md "memory": never a `&'static`). `P::to_dyn` makes one from the `P` of the implementing struct.
-- A trait class (`ParseTreeWalker`, `TypeWalker`) becomes a trait whose methods have default `todo!()` bodies. Its fields become required accessors; each implementing struct stores them and returns them. A field the write analysis marks written or mutated also gets `<name>_mut(&mut self) -> &mut T`. Params are `&mut dyn T`, stored ones `Box<dyn T>`.
+- A trait class (`ParseTreeWalker`, `TypeWalker`, `TypeVarTransformer`) becomes a trait whose methods have default `todo!()` bodies. Its fields become required accessors; each implementing struct stores them and returns them. A field the write analysis marks written or mutated also gets `<name>_mut(&mut self) -> &mut T`. Params are `&mut dyn T`, stored ones `Box<dyn T>`.
 - An implementing class gets one `impl Trait for Class` per trait in its ancestry, holding the methods that trait declares, with the trait's signature and the base's type arguments substituted (`_default` is `bool` in `impl ParseTreeVisitor<bool> for Binder`). The marker points at the implementing method. Its other methods go in an inherent `impl`.
 - `accessors` in a `[traits]` entry records how a hand-ported trait reads a trait-class field: a new name (`_default` is `default_visit_result`), by value, or no accessor and no field (`drop`: `_getStringAnnotation` is the method `get_string_annotation`).
 

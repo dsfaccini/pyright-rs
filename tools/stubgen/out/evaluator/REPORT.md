@@ -203,7 +203,6 @@ How each class and interface of the stubbed files is held (docs/porting.md "memo
 - `analyzer/typeUtils.ts:AddConditionOptions`: value; never written after construction; never stored in a second place
 - `analyzer/typeUtils.ts:UniqueSignatureTracker`: handle; written: _trackedSignatures at analyzer/typeUtils.ts:290; stored at analyzer/typeUtils.ts:1578
 - `analyzer/typeUtils.ts:MapSubtypesOptions`: value; never written after construction; never stored in a second place
-- `analyzer/typeUtils.ts:TypeVarTransformer`: owned; written: _pendingTypeVarTransformations at analyzer/typeUtils.ts:3786; never stored in a second place
 - `analyzer/typeUtils.ts:TypeVarDefaultValidator`: owned; written: _invalidTypeVars at analyzer/typeUtils.ts:4271; never stored in a second place
 - `analyzer/typeUtils.ts:UniqueFunctionSignatureTransformer`: owned; written: _signatureTracker at analyzer/typeUtils.ts:4333; never stored in a second place
 - `analyzer/typeUtils.ts:BoundTypeVarTransform`: owned; never written after construction; never stored in a second place

@@ -720,7 +720,9 @@ export class FileEmitter {
         if (!retNode && !decl.type && impl && (ts.isMethodDeclaration(impl) || ts.isGetAccessorDeclaration(impl)) && impl.type) {
             retNode = undefined;
         }
-        const lines = this.fnStub({ name: n, vis: '', receiver, decl, site, outerGenerics: new Set(), body: true, params, retNode, subst, markerNode: impl ?? member }, '    ');
+        // Same callback receiver as the trait class's own declaration (classMember).
+        const ownerArg = receiver === '&mut self' && ts.isMethodDeclaration(member) ? 'Self' : undefined;
+        const lines = this.fnStub({ name: n, vis: '', receiver, decl, site, outerGenerics: new Set(), body: true, params, retNode, subst, markerNode: impl ?? member, ownerArg }, '    ');
         return lines;
     }
 
@@ -852,7 +854,9 @@ export class FileEmitter {
             }
             void traitOf;
             const abstract = !m.body;
-            const ownerArg = recv === '&mut self' && !isStatic && !inTrait ? cls + (outer.size ? `<${[...outer].join(', ')}>` : '') : undefined;
+            // A callback cannot capture the receiver the method holds, so it receives it: the class
+            // itself, or `Self` in a trait class, whose overrides the callback may call.
+            const ownerArg = recv === '&mut self' && !isStatic ? (inTrait ? 'Self' : cls + (outer.size ? `<${[...outer].join(', ')}>` : '')) : undefined;
             return this.fnStub(
                 { name: n, vis: vis(m), receiver: isStatic ? undefined : recv, decl: m, site: `${cls}.${n}`, outerGenerics: outer, body: !(abstract && inTrait), ownerArg },
                 '    '

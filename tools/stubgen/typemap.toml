@@ -97,6 +97,10 @@ Promise = "$0"
 # Subclassed in typeUtils.ts (ContainsLiteralTypeWalker, AnyWalker, AnyOrUnknownWalker), which override
 # its visit methods.
 "analyzer/typeWalker.ts:TypeWalker" = { receiver = "&mut self" }
+# Subclassed in typeUtils.ts (TypeVarDefaultValidator, UniqueFunctionSignatureTransformer,
+# BoundTypeVarTransform, FreeTypeVarTransform, ApplySolvedTypeVarsTransformer,
+# UnificationTypeTransformer); `apply` and the transform methods call the overrides through `this`.
+"analyzer/typeUtils.ts:TypeVarTransformer" = { receiver = "&mut self" }
 # Ported as a trait (crates/pyright/src/common/console.rs).
 "common/console.ts:ConsoleInterface" = {}
 # Read through the interface by `contextualTypeCacheEntryMatches` and `addContextualTypeCacheEntry`;
@@ -256,6 +260,9 @@ interface = "analyzer/codeFlowEngine.ts:CodeFlowAnalyzer"
 "analyzer/typePrinter.ts:printParamSpecValueForPythonSyntax.uniqueNameMap" = "&mut crate::analyzer::type_printer::UniqueNameMap"
 "analyzer/typePrinter.ts:printObjectTypeForClassInternal.uniqueNameMap" = "&mut crate::analyzer::type_printer::UniqueNameMap"
 "analyzer/typePrinter.ts:printFunctionPartsInternal.uniqueNameMap" = "&mut crate::analyzer::type_printer::UniqueNameMap"
+# TypeVarDefaultValidator adds to the caller's set (typeUtils.ts:4271) and the caller reads it back
+# (typeEvaluator.ts:19681). The validator holds it only during `apply`, so the port moves it in and back.
+"analyzer/typeUtils.ts:validateTypeVarDefault.invalidTypeVars" = "&mut jsrt::JsSet<String>"
 
 # Bounds on a function's type parameter, which then stays a Rust generic instead of becoming its
 # constraint: "<file>:<function>.<T>" = "<Rust bounds>".

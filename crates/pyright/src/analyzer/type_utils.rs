@@ -13,7 +13,7 @@ use crate::analyzer::constraint_solution::{ConstraintSolution, ConstraintSolutio
 use crate::analyzer::symbol::{Symbol, SymbolTable};
 use crate::analyzer::types::{
     ClassType, ClassTypeFlags, FunctionType, ModuleType, SignatureWithOffsets, TupleTypeArg, Type,
-    TypeCondition, TypeSameOptions, TypeVarType, UnknownType, Variance,
+    TypeCondition, TypeSameOptions, TypeVarType, Variance,
 };
 use jsrt::{JsMap, JsSet, P, flag_ops};
 use std::cell::{Cell, RefCell};
@@ -123,58 +123,163 @@ pub struct UniqueSignatureTracker {
 impl UniqueSignatureTracker {
     // analyzer/typeUtils.ts:252
     pub fn new() -> P<UniqueSignatureTracker> {
-        todo!()
+        P::new_eval(UniqueSignatureTracker {
+            _tracked_signatures: RefCell::new(Vec::new()),
+        })
     }
 
     // analyzer/typeUtils.ts:256
     pub fn get_tracked_signatures(&self) -> Vec<SignatureWithOffsets> {
-        todo!()
+        self._tracked_signatures.borrow().clone()
     }
 
     // analyzer/typeUtils.ts:260
     pub fn add_tracked_signatures(&self, signatures: &[SignatureWithOffsets]) {
-        todo!()
+        for s in signatures {
+            for offset in &s.expression_offsets {
+                self.add_signature(s.type_, *offset);
+            }
+        }
     }
 
     // analyzer/typeUtils.ts:268
     pub fn find_signature(&self, signature: P<Type>) -> Option<SignatureWithOffsets> {
-        todo!()
+        // Use the associated overload type if this is a function associated with an overload.
+        let mut effective_signature = signature;
+        if crate::analyzer::types::is_function(signature) {
+            if let Some(overloaded) = FunctionType(signature).d().priv_.borrow().overloaded {
+                effective_signature = overloaded.0;
+            }
+        }
+
+        self._tracked_signatures
+            .borrow()
+            .iter()
+            .find(|s| crate::analyzer::types::is_type_same(effective_signature, s.type_, &TypeSameOptions::default(), 0))
+            .cloned()
     }
 
     // analyzer/typeUtils.ts:280
     pub fn add_signature(&self, signature: P<Type>, offset: i32) {
-        todo!()
+        // If this function is part of a broader overload, use the overload instead.
+        let effective_signature = if crate::analyzer::types::is_function(signature) {
+            FunctionType(signature)
+                .d()
+                .priv_
+                .borrow()
+                .overloaded
+                .map_or(signature, |overloaded| overloaded.0)
+        } else {
+            signature
+        };
+
+        // findSignature, inlined to get the position of the entry it returns: TypeScript then
+        // writes that entry in place.
+        let mut find_effective_signature = effective_signature;
+        if crate::analyzer::types::is_function(effective_signature) {
+            if let Some(overloaded) = FunctionType(effective_signature).d().priv_.borrow().overloaded {
+                find_effective_signature = overloaded.0;
+            }
+        }
+        let existing_index = self._tracked_signatures.borrow().iter().position(|s| {
+            crate::analyzer::types::is_type_same(find_effective_signature, s.type_, &TypeSameOptions::default(), 0)
+        });
+        let mut tracked_signatures = self._tracked_signatures.borrow_mut();
+        if let Some(existing_index) = existing_index {
+            let existing_signature = &mut tracked_signatures[existing_index];
+            if !existing_signature.expression_offsets.iter().any(|o| *o == offset) {
+                existing_signature.expression_offsets.push(offset);
+            }
+        } else {
+            tracked_signatures.push(SignatureWithOffsets {
+                type_: effective_signature,
+                expression_offsets: vec![offset],
+            });
+        }
     }
 }
 
 // analyzer/typeUtils.ts:295
 pub fn is_optional_type(type_: P<Type>) -> bool {
-    todo!()
+    if crate::analyzer::types::is_union(type_) {
+        return crate::analyzer::types::find_subtype(type_, &mut |subtype| is_none_instance(subtype)).is_some();
+    }
+
+    false
 }
 
 // analyzer/typeUtils.ts:303
 pub fn is_none_instance(type_: P<Type>) -> bool {
-    todo!()
+    crate::analyzer::types::is_class_instance(type_)
+        && ClassType::is_built_in(ClassType(type_), Some(&["NoneType".to_string()]))
 }
 
 // analyzer/typeUtils.ts:307
 pub fn is_none_type_class(type_: P<Type>) -> bool {
-    todo!()
+    crate::analyzer::types::is_instantiable_class(type_)
+        && ClassType::is_built_in(ClassType(type_), Some(&["NoneType".to_string()]))
 }
 
 // analyzer/typeUtils.ts:313
 pub fn remove_none_from_union(type_: P<Type>) -> P<Type> {
-    todo!()
+    // If the type is a union, remove an "None" type from the union,
+    // returning only the known types.
+    crate::analyzer::types::remove_from_union(type_, &mut |t| is_none_instance(t))
 }
 
 // analyzer/typeUtils.ts:317
 pub fn is_incomplete_unknown(type_: P<Type>) -> bool {
-    todo!()
+    crate::analyzer::types::is_unknown(type_) && crate::analyzer::types::UnknownType(type_).d().priv_.is_incomplete
 }
 
 // analyzer/typeUtils.ts:324
 pub fn is_type_var_same(type1: TypeVarType, type2: P<Type>) -> bool {
-    todo!()
+    // Similar to isTypeSame except that type1 is a TypeVar and type2
+    // can be either a TypeVar of the same type or a union that includes
+    // conditional types associated with that bound TypeVar.
+    if crate::analyzer::types::is_type_same(type1.0, type2, &TypeSameOptions::default(), 0) {
+        return true;
+    }
+
+    // If this isn't a bound TypeVar, return false.
+    if crate::analyzer::types::is_param_spec(type1.0)
+        || crate::analyzer::types::is_type_var_tuple(type1.0)
+        || !TypeVarType::has_bound(type1)
+    {
+        return false;
+    }
+
+    // If the second type isn't a union, return false.
+    if !crate::analyzer::types::is_union(type2) {
+        return false;
+    }
+
+    let mut is_compatible = true;
+    do_for_each_subtype(
+        type2,
+        &mut |subtype, _, _| {
+            if !is_compatible {
+                return;
+            }
+
+            if !crate::analyzer::types::is_type_same(type1.0, subtype, &TypeSameOptions::default(), 0) {
+                let conditions = get_type_condition(subtype);
+
+                let type1_name_with_scope = type1.d().priv_.borrow().name_with_scope.clone();
+                let matches = conditions.as_ref().is_some_and(|conditions| {
+                    conditions
+                        .iter()
+                        .any(|condition| condition.type_var.d().priv_.borrow().name_with_scope == type1_name_with_scope)
+                });
+                if !matches {
+                    is_compatible = false;
+                }
+            }
+        },
+        false,
+    );
+
+    is_compatible
 }
 
 // analyzer/typeUtils.ts:376
@@ -183,7 +288,13 @@ pub fn make_inference_context(
     is_type_incomplete: Option<bool>,
     return_type_override: Option<P<Type>>,
 ) -> Option<P<InferenceContext>> {
-    todo!()
+    let expected_type = expected_type?;
+
+    Some(P::new_eval(InferenceContext {
+        expected_type: Cell::new(expected_type),
+        is_type_incomplete,
+        return_type_override,
+    }))
 }
 
 // analyzer/typeUtils.ts:388
@@ -200,7 +311,78 @@ pub fn map_subtypes(
     callback: &mut dyn FnMut(P<Type>) -> Option<P<Type>>,
     options: Option<&MapSubtypesOptions>,
 ) -> P<Type> {
-    todo!()
+    // Calls a callback for each subtype and combines the results
+    // into a final type. It performs no memory allocations if the
+    // transformed type is the same as the original.
+    if crate::analyzer::types::is_union(type_) {
+        let union_subtypes = crate::analyzer::types::UnionType(type_).d().priv_.borrow().subtypes.clone();
+        let subtypes = if options.is_some_and(|options| options.sort_subtypes.unwrap_or(false)) {
+            sort_types(&union_subtypes)
+        } else {
+            union_subtypes
+        };
+
+        let mut i = 0;
+        while i < subtypes.len() {
+            let subtype = subtypes[i];
+            let transformed_type = callback(subtype);
+
+            // Avoid doing any memory allocations until a change is detected.
+            if Some(subtype) != transformed_type {
+                let mut types_to_combine: Vec<P<Type>> = subtypes[..i].to_vec();
+
+                // Create a helper lambda that accumulates transformed subtypes.
+                let accumulate_subtype = |types_to_combine: &mut Vec<P<Type>>, new_subtype: Option<P<Type>>| {
+                    if let Some(new_subtype) = new_subtype {
+                        types_to_combine.push(add_condition_to_type(new_subtype, get_type_condition(type_).as_deref(), None));
+                    }
+                };
+
+                accumulate_subtype(&mut types_to_combine, transformed_type);
+
+                i += 1;
+                while i < subtypes.len() {
+                    let new_subtype = callback(subtypes[i]);
+                    accumulate_subtype(&mut types_to_combine, new_subtype);
+                    i += 1;
+                }
+
+                let mut new_type = crate::analyzer::types::combine_types(
+                    &types_to_combine,
+                    Some(&crate::analyzer::types::CombineTypesOptions {
+                        skip_elide_redundant_literals: options.and_then(|options| options.skip_elide_redundant_literals),
+                        ..Default::default()
+                    }),
+                );
+
+                if options.is_some_and(|options| options.retain_type_alias.unwrap_or(false)) {
+                    let type_alias_info = type_.props.borrow().as_ref().and_then(|props| props.type_alias_info.clone());
+                    if let Some(type_alias_info) = type_alias_info {
+                        new_type = crate::analyzer::types::TypeBase::clone_for_type_alias(new_type, &type_alias_info);
+                    }
+                } else {
+                    // Do our best to retain type aliases.
+                    if crate::analyzer::types::is_union(new_type) {
+                        crate::analyzer::types::UnionType::add_type_alias_source(
+                            crate::analyzer::types::UnionType(new_type),
+                            type_,
+                        );
+                    }
+                }
+
+                return new_type;
+            }
+            i += 1;
+        }
+
+        return type_;
+    }
+
+    let transformed_subtype = callback(type_);
+    match transformed_subtype {
+        Some(transformed_subtype) => transformed_subtype,
+        None => crate::analyzer::types::NeverType::create_never().0,
+    }
 }
 
 // analyzer/typeUtils.ts:466
@@ -208,24 +390,382 @@ pub fn map_signatures(
     type_: P<Type>,
     callback: &mut dyn FnMut(FunctionType) -> Option<FunctionType>,
 ) -> Option<P<Type>> {
-    todo!()
+    // Iterates over each signature in a function or overload, allowing the
+    // caller to replace one or more signatures with new ones.
+    if crate::analyzer::types::is_function(type_) {
+        return callback(FunctionType(type_)).map(|function_type| function_type.0);
+    }
+
+    let overloaded_type = crate::analyzer::types::OverloadedType(type_);
+    let mut new_signatures: Vec<FunctionType> = Vec::new();
+    let mut change_made = false;
+
+    for overload in crate::analyzer::types::OverloadedType::get_overloads(overloaded_type) {
+        let new_overload = callback(overload);
+        if new_overload != Some(overload) {
+            change_made = true;
+        }
+
+        if let Some(new_overload) = new_overload {
+            new_signatures.push(new_overload);
+        }
+    }
+
+    if new_signatures.is_empty() {
+        return None;
+    }
+
+    // Add the unmodified implementation if it's present.
+    let implementation = crate::analyzer::types::OverloadedType::get_implementation(overloaded_type);
+    let mut new_implementation: Option<P<Type>> = implementation;
+
+    if let Some(implementation) = implementation {
+        if crate::analyzer::types::is_function(implementation) {
+            new_implementation = callback(FunctionType(implementation)).map(|function_type| function_type.0);
+
+            if new_implementation.is_some() {
+                change_made = true;
+            }
+        }
+    }
+
+    if !change_made {
+        return Some(type_);
+    }
+
+    if new_signatures.len() == 1 {
+        return Some(new_signatures[0].0);
+    }
+
+    Some(crate::analyzer::types::OverloadedType::create(&new_signatures, new_implementation).0)
 }
 
 // analyzer/typeUtils.ts:521
 /// TS defaults: recursionCount = 0.
 pub fn clean_incomplete_unknown(type_: P<Type>, recursion_count: u32) -> P<Type> {
-    todo!()
+    // The code flow engine uses a special form of the UnknownType (with the
+    // isIncomplete flag set) to distinguish between an unknown that was generated
+    // in a loop because it was temporarily incomplete versus an unknown that is
+    // permanently incomplete. Once an unknown appears within a loop, it is often
+    // propagated to other types during code flow analysis. We want to remove these
+    // incomplete unknowns if we find that they are union'ed with other types.
+    if recursion_count >= crate::analyzer::types::MAX_TYPE_RECURSION_COUNT {
+        return type_;
+    }
+    let recursion_count = recursion_count + 1;
+
+    let result = map_subtypes(
+        type_,
+        &mut |subtype| {
+            // If it's an incomplete unknown, eliminate it.
+            if crate::analyzer::types::is_unknown(subtype)
+                && crate::analyzer::types::UnknownType(subtype).d().priv_.is_incomplete
+            {
+                return None;
+            }
+
+            if crate::analyzer::types::is_class(subtype) {
+                let class_type = ClassType(subtype);
+                let (type_args, tuple_type_args, is_type_arg_explicit, is_unpacked) = {
+                    let priv_ = class_type.d().priv_.borrow();
+                    (
+                        priv_.type_args.clone(),
+                        priv_.tuple_type_args.clone(),
+                        priv_.is_type_arg_explicit,
+                        priv_.is_unpacked,
+                    )
+                };
+
+                if let Some(type_args) = type_args {
+                    let mut type_changed = false;
+
+                    if let Some(tuple_type_args) = tuple_type_args {
+                        let updated_tuple_type_args: Vec<TupleTypeArg> = tuple_type_args
+                            .iter()
+                            .map(|tuple_type_arg| {
+                                let new_type_arg = clean_incomplete_unknown(tuple_type_arg.type_, recursion_count);
+                                if new_type_arg != tuple_type_arg.type_ {
+                                    type_changed = true;
+                                }
+                                TupleTypeArg {
+                                    type_: new_type_arg,
+                                    is_unbounded: tuple_type_arg.is_unbounded,
+                                    is_optional: tuple_type_arg.is_optional,
+                                }
+                            })
+                            .collect();
+
+                        if type_changed {
+                            return Some(
+                                specialize_tuple_class(
+                                    class_type,
+                                    &updated_tuple_type_args,
+                                    is_type_arg_explicit.unwrap_or(false),
+                                    is_unpacked.unwrap_or(false),
+                                )
+                                .0,
+                            );
+                        }
+                    } else {
+                        let updated_type_args: Vec<P<Type>> = type_args
+                            .iter()
+                            .map(|type_arg| {
+                                let new_type_arg = clean_incomplete_unknown(*type_arg, recursion_count);
+                                if new_type_arg != *type_arg {
+                                    type_changed = true;
+                                }
+                                new_type_arg
+                            })
+                            .collect();
+
+                        if type_changed {
+                            return Some(
+                                ClassType::specialize(
+                                    class_type,
+                                    Some(&updated_type_args),
+                                    Some(is_type_arg_explicit.unwrap_or(false)),
+                                    false,
+                                    None,
+                                    None,
+                                )
+                                .0,
+                            );
+                        }
+                    }
+                }
+            }
+
+            // TODO - this doesn't currently handle function types.
+
+            Some(subtype)
+        },
+        None,
+    );
+
+    // If we eliminated everything, don't return a Never.
+    if crate::analyzer::types::is_never(result) {
+        type_
+    } else {
+        result
+    }
 }
 
 // analyzer/typeUtils.ts:582
 pub fn sort_types(types: &[P<Type>]) -> Vec<P<Type>> {
-    todo!()
+    // Sorts types into a deterministic order.
+    let mut sorted = types.to_vec();
+    jsrt::sort::sort_by(&mut sorted, |a, b| compare_types(*a, *b, 0));
+    sorted
 }
 
 // analyzer/typeUtils.ts:588
 /// TS defaults: recursionCount = 0.
 pub(crate) fn compare_types(a: P<Type>, b: P<Type>, recursion_count: u32) -> i32 {
-    todo!()
+    if recursion_count > crate::analyzer::types::MAX_TYPE_RECURSION_COUNT {
+        return 0;
+    }
+    let recursion_count = recursion_count + 1;
+
+    if a.category != b.category {
+        return b.category as i32 - a.category as i32;
+    }
+
+    match a.category {
+        crate::analyzer::types::TypeCategory::Unbound | crate::analyzer::types::TypeCategory::Unknown | crate::analyzer::types::TypeCategory::Any | crate::analyzer::types::TypeCategory::Never | crate::analyzer::types::TypeCategory::Union => 0,
+
+        crate::analyzer::types::TypeCategory::Function => {
+            let a_func = FunctionType(a);
+            let b_func = FunctionType(b);
+
+            let a_params = a_func.d().shared.get().parameters.get().borrow().clone();
+            let b_params = b_func.d().shared.get().parameters.get().borrow().clone();
+            let a_param_count = a_params.len();
+            let b_param_count = b_params.len();
+            if a_param_count != b_param_count {
+                return i32::try_from(b_param_count).unwrap() - i32::try_from(a_param_count).unwrap();
+            }
+
+            for i in 0..a_param_count {
+                let a_param = &a_params[i];
+                let b_param = &b_params[i];
+                if a_param.category != b_param.category {
+                    return b_param.category as i32 - a_param.category as i32;
+                }
+
+                let index = i32::try_from(i).unwrap();
+                let type_comparison = compare_types(
+                    FunctionType::get_param_type(a_func, index),
+                    FunctionType::get_param_type(b_func, index),
+                    0,
+                );
+
+                if type_comparison != 0 {
+                    return type_comparison;
+                }
+            }
+
+            let return_type_comparison = compare_types(
+                FunctionType::get_effective_return_type(a_func, true)
+                    .unwrap_or_else(|| crate::analyzer::types::UnknownType::create(false).0),
+                FunctionType::get_effective_return_type(b_func, true)
+                    .unwrap_or_else(|| crate::analyzer::types::UnknownType::create(false).0),
+                0,
+            );
+
+            if return_type_comparison != 0 {
+                return return_type_comparison;
+            }
+
+            let a_name = a_func.d().shared.get().name.clone();
+            let b_name = b_func.d().shared.get().name.clone();
+
+            match jsrt::JsStr::js_cmp(a_name.as_str(), b_name.as_str()) {
+                std::cmp::Ordering::Less => -1,
+                std::cmp::Ordering::Greater => 1,
+                std::cmp::Ordering::Equal => 0,
+            }
+        }
+
+        crate::analyzer::types::TypeCategory::Overloaded => {
+            let a_overloads = crate::analyzer::types::OverloadedType::get_overloads(crate::analyzer::types::OverloadedType(a));
+            let b_overloads = crate::analyzer::types::OverloadedType::get_overloads(crate::analyzer::types::OverloadedType(b));
+            let a_overload_count = a_overloads.len();
+            let b_overload_count = b_overloads.len();
+            if a_overload_count != b_overload_count {
+                return i32::try_from(b_overload_count).unwrap() - i32::try_from(a_overload_count).unwrap();
+            }
+
+            for i in 0..a_overload_count {
+                let type_comparison = compare_types(a_overloads[i].0, b_overloads[i].0, 0);
+                if type_comparison != 0 {
+                    return type_comparison;
+                }
+            }
+
+            0
+        }
+
+        crate::analyzer::types::TypeCategory::Class => {
+            let a_class = ClassType(a);
+            let b_class = ClassType(b);
+
+            // Sort instances before instantiables.
+            if crate::analyzer::types::is_class_instance(a) && crate::analyzer::types::is_instantiable_class(b) {
+                return -1;
+            } else if crate::analyzer::types::is_instantiable_class(a) && crate::analyzer::types::is_class_instance(b) {
+                return 1;
+            }
+
+            // Sort literals before non-literals.
+            if is_literal_type(a_class) {
+                if !is_literal_type(b_class) {
+                    return -1;
+                } else if ClassType::is_same_generic_class(a_class, b_class, 0) {
+                    // Sort by literal value.
+                    let a_literal_value = a_class.d().priv_.borrow().literal_value.clone();
+                    let b_literal_value = b_class.d().priv_.borrow().literal_value.clone();
+
+                    match (a_literal_value, b_literal_value) {
+                        (
+                            Some(crate::analyzer::types::LiteralValue::String(a_value)),
+                            Some(crate::analyzer::types::LiteralValue::String(b_value)),
+                        ) => match jsrt::JsStr::js_cmp(a_value.as_str(), b_value.as_str()) {
+                            std::cmp::Ordering::Less => return -1,
+                            std::cmp::Ordering::Greater => return 1,
+                            std::cmp::Ordering::Equal => {}
+                        },
+                        (
+                            Some(crate::analyzer::types::LiteralValue::Number(a_value)),
+                            Some(crate::analyzer::types::LiteralValue::Number(b_value)),
+                        ) => {
+                            if a_value < b_value {
+                                return -1;
+                            } else if a_value > b_value {
+                                return 1;
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            } else if is_literal_type(b_class) {
+                return 1;
+            }
+
+            // Always sort NoneType at the end.
+            if ClassType::is_built_in(a_class, Some(&["NoneType".to_string()])) {
+                return 1;
+            } else if ClassType::is_built_in(b_class, Some(&["NoneType".to_string()])) {
+                return -1;
+            }
+
+            // Sort non-generics before generics.
+            let a_type_param_count = a_class.d().shared.get().type_params.borrow().len();
+            let b_type_param_count = b_class.d().shared.get().type_params.borrow().len();
+            if a_type_param_count > 0 || is_tuple_class(a_class) {
+                if b_type_param_count == 0 {
+                    return 1;
+                }
+            } else if b_type_param_count > 0 || is_tuple_class(b_class) {
+                return -1;
+            }
+
+            // Sort by class name.
+            let a_name = a_class.d().shared.get().name.clone();
+            let b_name = b_class.d().shared.get().name.clone();
+
+            match jsrt::JsStr::js_cmp(a_name.as_str(), b_name.as_str()) {
+                std::cmp::Ordering::Less => return -1,
+                std::cmp::Ordering::Greater => return 1,
+                std::cmp::Ordering::Equal => {}
+            }
+
+            // Sort by type argument count.
+            let a_type_args = a_class.d().priv_.borrow().type_args.clone();
+            let b_type_args = b_class.d().priv_.borrow().type_args.clone();
+            let a_type_arg_count = a_type_args.as_ref().map_or(0, |type_args| type_args.len());
+            let b_type_arg_count = b_type_args.as_ref().map_or(0, |type_args| type_args.len());
+
+            if a_type_arg_count < b_type_arg_count {
+                return -1;
+            } else if a_type_arg_count > b_type_arg_count {
+                return 1;
+            }
+
+            // Sort by type argument.
+            for i in 0..a_type_arg_count {
+                let type_comparison = compare_types(
+                    a_type_args.as_ref().unwrap()[i],
+                    b_type_args.as_ref().unwrap()[i],
+                    recursion_count,
+                );
+                if type_comparison != 0 {
+                    return type_comparison;
+                }
+            }
+
+            0
+        }
+
+        crate::analyzer::types::TypeCategory::Module => {
+            let a_name = ModuleType(a).d().priv_.borrow().module_name.clone();
+            let b_name = ModuleType(b).d().priv_.borrow().module_name.clone();
+            match jsrt::JsStr::js_cmp(a_name.as_str(), b_name.as_str()) {
+                std::cmp::Ordering::Less => -1,
+                std::cmp::Ordering::Equal => 0,
+                std::cmp::Ordering::Greater => 1,
+            }
+        }
+
+        crate::analyzer::types::TypeCategory::TypeVar => {
+            let a_name = TypeVarType(a).d().shared.get().name.borrow().clone();
+            let b_name = TypeVarType(b).d().shared.get().name.borrow().clone();
+            match jsrt::JsStr::js_cmp(a_name.as_str(), b_name.as_str()) {
+                std::cmp::Ordering::Less => -1,
+                std::cmp::Ordering::Equal => 0,
+                std::cmp::Ordering::Greater => 1,
+            }
+        }
+    }
 }
 
 // analyzer/typeUtils.ts:772
@@ -235,47 +775,182 @@ pub fn do_for_each_subtype(
     callback: &mut dyn FnMut(P<Type>, i32, &[P<Type>]),
     sort_subtypes: bool,
 ) {
-    todo!()
+    if crate::analyzer::types::is_union(type_) {
+        let union_subtypes = crate::analyzer::types::UnionType(type_).d().priv_.borrow().subtypes.clone();
+        let subtypes = if sort_subtypes { sort_types(&union_subtypes) } else { union_subtypes };
+        for (index, subtype) in subtypes.iter().enumerate() {
+            callback(*subtype, i32::try_from(index).unwrap(), &subtypes);
+        }
+    } else {
+        callback(type_, 0, &[type_]);
+    }
 }
 
 // analyzer/typeUtils.ts:787
 pub fn some_subtypes(type_: P<Type>, callback: &mut dyn FnMut(P<Type>) -> bool) -> bool {
-    todo!()
+    if crate::analyzer::types::is_union(type_) {
+        let subtypes = crate::analyzer::types::UnionType(type_).d().priv_.borrow().subtypes.clone();
+        subtypes.iter().any(|subtype| callback(*subtype))
+    } else {
+        callback(type_)
+    }
 }
 
 // analyzer/typeUtils.ts:797
 pub fn all_subtypes(type_: P<Type>, callback: &mut dyn FnMut(P<Type>) -> bool) -> bool {
-    todo!()
+    if crate::analyzer::types::is_union(type_) {
+        let subtypes = crate::analyzer::types::UnionType(type_).d().priv_.borrow().subtypes.clone();
+        // The TypeScript `every` callback returns nothing, so `every` stops after the
+        // first subtype and returns false.
+        subtypes.iter().all(|subtype| {
+            callback(*subtype);
+            false
+        })
+    } else {
+        callback(type_)
+    }
 }
 
 // analyzer/typeUtils.ts:807
 pub fn do_for_each_signature(type_: P<Type>, callback: &mut dyn FnMut(FunctionType, i32)) {
-    todo!()
+    if crate::analyzer::types::is_function(type_) {
+        callback(FunctionType(type_), 0);
+    } else {
+        let overloads = crate::analyzer::types::OverloadedType::get_overloads(crate::analyzer::types::OverloadedType(type_));
+        for (index, overload) in overloads.iter().enumerate() {
+            callback(*overload, i32::try_from(index).unwrap());
+        }
+    }
 }
 
 // analyzer/typeUtils.ts:821
 pub fn are_types_same(types: &[P<Type>], options: &TypeSameOptions) -> bool {
-    todo!()
+    // Determines if all of the types in the array are the same.
+    if types.len() < 2 {
+        return true;
+    }
+
+    for i in 1..types.len() {
+        if !crate::analyzer::types::is_type_same(types[0], types[i], options, 0) {
+            return false;
+        }
+    }
+
+    true
 }
 
 // analyzer/typeUtils.ts:838
 pub fn preserve_unknown(type1: P<Type>, type2: P<Type>) -> P<Type> {
-    todo!()
+    // If either type is "Unknown" (versus Any), propagate the Unknown. Preserve
+    // the incomplete flag on the unknown if present. The caller should verify that
+    // one or the other type is Unknown or Any.
+    if crate::analyzer::types::is_unknown(type1) && crate::analyzer::types::UnknownType(type1).d().priv_.is_incomplete {
+        type1
+    } else if crate::analyzer::types::is_unknown(type2)
+        && crate::analyzer::types::UnknownType(type2).d().priv_.is_incomplete
+    {
+        type2
+    } else if crate::analyzer::types::is_unknown(type1) || crate::analyzer::types::is_unknown(type2) {
+        crate::analyzer::types::UnknownType::create(false).0
+    } else {
+        crate::analyzer::types::AnyType::create(false).0
+    }
 }
 
 // analyzer/typeUtils.ts:852
 pub fn is_unionable_type(subtypes: &[P<Type>]) -> bool {
-    todo!()
+    // If all of the subtypes are TypeForm types, we know that they
+    // are unionable.
+    if subtypes
+        .iter()
+        .all(|t| t.props.borrow().as_ref().is_some_and(|props| props.type_form.is_some()))
+    {
+        return true;
+    }
+
+    let mut type_flags = crate::analyzer::types::TypeFlags::Instance | crate::analyzer::types::TypeFlags::Instantiable;
+
+    for subtype in subtypes {
+        type_flags = type_flags & subtype.flags.get();
+    }
+
+    // All subtypes need to be instantiable. Some types (like Any
+    // and None) are both instances and instantiable. It's OK to
+    // include some of these, but at least one subtype needs to
+    // be definitively instantiable (not an instance).
+    (type_flags & crate::analyzer::types::TypeFlags::Instantiable) != crate::analyzer::types::TypeFlags::None
+        && (type_flags & crate::analyzer::types::TypeFlags::Instance) == crate::analyzer::types::TypeFlags::None
 }
 
 // analyzer/typeUtils.ts:872
 pub fn derives_from_any_or_unknown(type_: P<Type>) -> bool {
-    todo!()
+    let mut any_or_unknown = false;
+
+    do_for_each_subtype(
+        type_,
+        &mut |subtype, _, _| {
+            // TypeScript tests the outer `type` here, not `subtype`.
+            if crate::analyzer::types::is_any_or_unknown(type_) {
+                any_or_unknown = true;
+            } else if crate::analyzer::types::is_instantiable_class(subtype) {
+                if ClassType::derives_from_any_or_unknown(ClassType(subtype)) {
+                    any_or_unknown = true;
+                }
+            } else if crate::analyzer::types::is_class_instance(subtype) {
+                if ClassType::derives_from_any_or_unknown(ClassType(subtype)) {
+                    any_or_unknown = true;
+                }
+            }
+        },
+        false,
+    );
+
+    any_or_unknown
 }
 
 // analyzer/typeUtils.ts:892
 pub fn get_full_name_of_type(type_: P<Type>) -> Option<String> {
-    todo!()
+    let type_alias_full_name = type_
+        .props
+        .borrow()
+        .as_ref()
+        .and_then(|props| props.type_alias_info.as_ref().map(|info| info.shared.full_name.clone()));
+    if let Some(type_alias_full_name) = type_alias_full_name {
+        if !type_alias_full_name.is_empty() {
+            return Some(type_alias_full_name);
+        }
+    }
+
+    match type_.category {
+        crate::analyzer::types::TypeCategory::Any | crate::analyzer::types::TypeCategory::Unknown => {
+            Some("typing.Any".to_string())
+        }
+
+        crate::analyzer::types::TypeCategory::Class => Some(ClassType(type_).d().shared.get().full_name.clone()),
+
+        crate::analyzer::types::TypeCategory::Function => Some(FunctionType(type_).d().shared.get().full_name.clone()),
+
+        crate::analyzer::types::TypeCategory::Module => Some(ModuleType(type_).d().priv_.borrow().module_name.clone()),
+
+        crate::analyzer::types::TypeCategory::Overloaded => {
+            let overloaded_type = crate::analyzer::types::OverloadedType(type_);
+            let overloads = crate::analyzer::types::OverloadedType::get_overloads(overloaded_type);
+            if !overloads.is_empty() {
+                return Some(overloads[0].d().shared.get().full_name.clone());
+            }
+
+            let implementation = crate::analyzer::types::OverloadedType::get_implementation(overloaded_type);
+            if let Some(implementation) = implementation {
+                if crate::analyzer::types::is_function(implementation) {
+                    return Some(FunctionType(implementation).d().shared.get().full_name.clone());
+                }
+            }
+
+            None
+        }
+
+        _ => None,
+    }
 }
 
 // analyzer/typeUtils.ts:927
@@ -284,17 +959,82 @@ pub fn add_condition_to_type(
     condition: Option<&[TypeCondition]>,
     options: Option<&AddConditionOptions>,
 ) -> P<Type> {
-    todo!()
+    let Some(condition) = condition else {
+        return type_;
+    };
+    let mut condition: Vec<TypeCondition> = condition.to_vec();
+
+    if options.is_some_and(|options| options.skip_self_condition.unwrap_or(false)) {
+        condition.retain(|c| !TypeVarType::is_self(c.type_var));
+        if condition.is_empty() {
+            return type_;
+        }
+    }
+
+    if options.is_some_and(|options| options.skip_bound_type_vars.unwrap_or(false)) {
+        condition.retain(|c| !c.type_var.d().shared.get().constraints.borrow().is_empty());
+        if condition.is_empty() {
+            return type_;
+        }
+    }
+
+    match type_.category {
+        crate::analyzer::types::TypeCategory::Unbound
+        | crate::analyzer::types::TypeCategory::Unknown
+        | crate::analyzer::types::TypeCategory::Any
+        | crate::analyzer::types::TypeCategory::Never
+        | crate::analyzer::types::TypeCategory::Module
+        | crate::analyzer::types::TypeCategory::TypeVar => type_,
+
+        crate::analyzer::types::TypeCategory::Function | crate::analyzer::types::TypeCategory::Class => {
+            let existing_condition = type_.props.borrow().as_ref().and_then(|props| props.condition.clone());
+            crate::analyzer::types::TypeBase::clone_for_condition(
+                type_,
+                TypeCondition::combine(existing_condition.as_deref(), Some(&condition)).as_deref(),
+            )
+        }
+
+        crate::analyzer::types::TypeCategory::Overloaded => {
+            let overloads: Vec<FunctionType> =
+                crate::analyzer::types::OverloadedType::get_overloads(crate::analyzer::types::OverloadedType(type_))
+                    .iter()
+                    .map(|t| FunctionType(add_condition_to_type(t.0, Some(&condition), None)))
+                    .collect();
+            crate::analyzer::types::OverloadedType::create(&overloads, None).0
+        }
+
+        crate::analyzer::types::TypeCategory::Union => {
+            let subtypes = crate::analyzer::types::UnionType(type_).d().priv_.borrow().subtypes.clone();
+            let conditioned: Vec<P<Type>> =
+                subtypes.iter().map(|t| add_condition_to_type(*t, Some(&condition), None)).collect();
+            crate::analyzer::types::combine_types(&conditioned, None)
+        }
+    }
 }
 
 // analyzer/typeUtils.ts:975
 pub fn get_type_condition(type_: P<Type>) -> Option<Vec<TypeCondition>> {
-    todo!()
+    match type_.category {
+        crate::analyzer::types::TypeCategory::Unbound
+        | crate::analyzer::types::TypeCategory::Unknown
+        | crate::analyzer::types::TypeCategory::Any
+        | crate::analyzer::types::TypeCategory::Never
+        | crate::analyzer::types::TypeCategory::Module
+        | crate::analyzer::types::TypeCategory::TypeVar
+        | crate::analyzer::types::TypeCategory::Overloaded
+        | crate::analyzer::types::TypeCategory::Union => None,
+
+        crate::analyzer::types::TypeCategory::Class | crate::analyzer::types::TypeCategory::Function => {
+            type_.props.borrow().as_ref().and_then(|props| props.condition.clone())
+        }
+    }
 }
 
 // analyzer/typeUtils.ts:995
 pub fn is_type_alias_placeholder(type_: P<Type>) -> bool {
-    todo!()
+    // Indicates whether the specified type is a recursive type alias
+    // placeholder that has not yet been resolved.
+    crate::analyzer::types::is_type_var(type_) && TypeVarType::is_type_alias_placeholder(TypeVarType(type_))
 }
 
 // analyzer/typeUtils.ts:1002
@@ -302,7 +1042,33 @@ pub fn is_type_alias_recursive(
     type_alias_placeholder: TypeVarType,
     type_: P<Type>,
 ) -> Option<bool> {
-    todo!()
+    // Determines whether the type alias placeholder is used directly
+    // within the specified type. It's OK if it's used indirectly as
+    // a type argument.
+    if type_.category != crate::analyzer::types::TypeCategory::Union {
+        if type_ == type_alias_placeholder.0 {
+            return Some(true);
+        }
+
+        if !crate::analyzer::types::is_unbound(type_) && !is_type_alias_placeholder(type_) {
+            return Some(false);
+        }
+
+        // Handle the specific case where the type alias directly refers to itself.
+        let type_alias_info = type_.props.borrow().as_ref().and_then(|props| props.type_alias_info.clone());
+        return type_alias_info.map(|type_alias_info| {
+            let recursive_alias = type_alias_placeholder.d().shared.get().recursive_alias.get();
+            recursive_alias.is_some_and(|recursive_alias| type_alias_info.shared.name == recursive_alias.name)
+        });
+    }
+
+    let placeholder_shared = type_alias_placeholder.d().shared.get();
+    Some(
+        crate::analyzer::types::find_subtype(type_, &mut |subtype| {
+            crate::analyzer::types::is_type_var(subtype) && TypeVarType(subtype).d().shared.get() == placeholder_shared
+        })
+        .is_some(),
+    )
 }
 
 // analyzer/typeUtils.ts:1029
@@ -311,17 +1077,107 @@ pub fn transform_possible_recursive_type_alias(
     type_: Option<P<Type>>,
     recursion_count: u32,
 ) -> Option<P<Type>> {
-    todo!()
+    // Recursively transforms all top-level TypeVars that represent recursive
+    // type aliases into their actual types.
+    if recursion_count >= crate::analyzer::types::MAX_TYPE_RECURSION_COUNT {
+        return type_;
+    }
+    let recursion_count = recursion_count + 1;
+
+    if let Some(type_) = type_ {
+        let alias_info = type_.props.borrow().as_ref().and_then(|props| props.type_alias_info.clone());
+
+        if crate::analyzer::types::is_type_var(type_) {
+            let shared = TypeVarType(type_).d().shared.get();
+            let recursive_alias = shared.recursive_alias.get();
+            let bound_type = shared.bound_type.get();
+            if let (Some(recursive_alias), Some(bound_type)) = (recursive_alias, bound_type) {
+                if !recursive_alias.name.is_empty() {
+                    let unspecialized_type = if crate::analyzer::types::TypeBase::is_instance(type_) {
+                        convert_to_instance(bound_type, true)
+                    } else {
+                        bound_type
+                    };
+
+                    let alias_type_args = alias_info.as_ref().and_then(|alias_info| alias_info.type_args.clone());
+                    let recursive_type_params = recursive_alias.type_params.borrow().clone();
+                    let (Some(alias_type_args), Some(recursive_type_params)) = (alias_type_args, recursive_type_params)
+                    else {
+                        return transform_possible_recursive_type_alias(Some(unspecialized_type), recursion_count);
+                    };
+
+                    let solution = build_solution(&recursive_type_params, Some(&alias_type_args));
+                    return transform_possible_recursive_type_alias(
+                        Some(apply_solved_type_vars(unspecialized_type, &solution, &ApplyTypeVarOptions::default())),
+                        recursion_count,
+                    );
+                }
+            }
+        }
+
+        if crate::analyzer::types::is_union(type_)
+            && crate::analyzer::types::UnionType(type_).d().priv_.borrow().includes_recursive_type_alias
+        {
+            let mut new_type = map_subtypes(
+                type_,
+                &mut |subtype| transform_possible_recursive_type_alias(Some(subtype), recursion_count),
+                None,
+            );
+
+            if new_type != type_ {
+                if let Some(alias_info) = alias_info {
+                    // Copy the type alias information if present.
+                    new_type = crate::analyzer::types::TypeBase::clone_for_type_alias(new_type, &alias_info);
+                }
+            }
+
+            return Some(new_type);
+        }
+    }
+
+    type_
 }
 
 // analyzer/typeUtils.ts:1069
 pub fn get_type_var_scope_id(type_: P<Type>) -> Option<String> {
-    todo!()
+    if crate::analyzer::types::is_class(type_) {
+        return ClassType(type_).d().shared.get().type_var_scope_id.borrow().clone();
+    }
+
+    if crate::analyzer::types::is_function(type_) {
+        return FunctionType(type_).d().shared.get().type_var_scope_id.borrow().clone();
+    }
+
+    if crate::analyzer::types::is_type_var(type_) {
+        return TypeVarType(type_).d().priv_.borrow().scope_id.clone();
+    }
+
+    None
 }
 
 // analyzer/typeUtils.ts:1087
 pub fn get_type_var_scope_ids(type_: P<Type>) -> Vec<String> {
-    todo!()
+    // This is similar to getTypeVarScopeId except that it includes
+    // the secondary scope IDs for functions.
+    let mut scope_ids: Vec<String> = Vec::new();
+
+    let scope_id = get_type_var_scope_id(type_);
+    if let Some(scope_id) = scope_id {
+        if !scope_id.is_empty() {
+            scope_ids.push(scope_id);
+        }
+    }
+
+    if crate::analyzer::types::is_function(type_) {
+        let constructor_type_var_scope_id = FunctionType(type_).d().priv_.borrow().constructor_type_var_scope_id.clone();
+        if let Some(constructor_type_var_scope_id) = constructor_type_var_scope_id {
+            if !constructor_type_var_scope_id.is_empty() {
+                scope_ids.push(constructor_type_var_scope_id);
+            }
+        }
+    }
+
+    scope_ids
 }
 
 // analyzer/typeUtils.ts:1106
@@ -329,7 +1185,40 @@ pub fn specialize_with_unknown_type_args(
     type_: ClassType,
     tuple_class_type: Option<ClassType>,
 ) -> ClassType {
-    todo!()
+    // Specializes the class with "Unknown" type args (or the equivalent for ParamSpecs
+    // or TypeVarTuples).
+    let type_params = type_.d().shared.get().type_params.borrow().clone();
+    if type_params.is_empty() {
+        return type_;
+    }
+
+    let include_subclasses = type_.d().priv_.borrow().include_subclasses;
+    if is_tuple_class(type_) {
+        return ClassType::clone_include_subclasses(
+            specialize_tuple_class(
+                type_,
+                &[TupleTypeArg {
+                    type_: crate::analyzer::types::UnknownType::create(false).0,
+                    is_unbounded: true,
+                    is_optional: None,
+                }],
+                /* isTypeArgExplicit */ false,
+                false,
+            ),
+            include_subclasses.unwrap_or(false),
+        );
+    }
+
+    let type_args: Vec<P<Type>> =
+        type_params.iter().map(|param| get_unknown_for_type_var(*param, tuple_class_type)).collect();
+    ClassType::specialize(
+        type_,
+        Some(&type_args),
+        /* isTypeArgExplicit */ Some(false),
+        /* includeSubclasses */ include_subclasses.unwrap_or(false),
+        None,
+        None,
+    )
 }
 
 // analyzer/typeUtils.ts:1131
@@ -337,17 +1226,56 @@ pub fn get_unknown_for_type_var(
     type_var: TypeVarType,
     tuple_class_type: Option<ClassType>,
 ) -> P<Type> {
-    todo!()
+    // Returns "Unknown" for simple TypeVars or the equivalent for a ParamSpec.
+    if crate::analyzer::types::is_param_spec(type_var.0) {
+        return crate::analyzer::types::ParamSpecType::get_unknown().0;
+    }
+
+    if crate::analyzer::types::is_type_var_tuple(type_var.0) {
+        if let Some(tuple_class_type) = tuple_class_type {
+            return get_unknown_for_type_var_tuple(tuple_class_type);
+        }
+    }
+
+    crate::analyzer::types::UnknownType::create(false).0
 }
 
 // analyzer/typeUtils.ts:1143
 pub fn get_unknown_for_type_var_tuple(tuple_class_type: ClassType) -> P<Type> {
-    todo!()
+    crate::common::debug::assert(
+        crate::analyzer::types::is_instantiable_class(tuple_class_type.0)
+            && ClassType::is_built_in(tuple_class_type, Some(&["tuple".to_string()])),
+        None,
+    );
+
+    ClassType::clone_as_instance(
+        specialize_tuple_class(
+            tuple_class_type,
+            &[TupleTypeArg {
+                type_: crate::analyzer::types::UnknownType::create(false).0,
+                is_unbounded: true,
+                is_optional: None,
+            }],
+            /* isTypeArgExplicit */ true,
+            /* isUnpacked */ true,
+        ),
+        true,
+    )
+    .0
 }
 
 // analyzer/typeUtils.ts:1157
 pub fn get_unknown_type_for_callable() -> FunctionType {
-    todo!()
+    // Returns the equivalent of "Callable[..., Unknown]".
+    let new_function = FunctionType::create_synthesized_instance("", crate::analyzer::types::FunctionTypeFlags::GradualCallableForm);
+    FunctionType::add_default_params(new_function, false);
+    new_function
+        .d()
+        .shared
+        .get()
+        .declared_return_type
+        .set(Some(crate::analyzer::types::UnknownType::create(false).0));
+    new_function
 }
 
 // analyzer/typeUtils.ts:1167
@@ -355,118 +1283,434 @@ pub fn self_specialize_class(
     type_: ClassType,
     options: Option<&SelfSpecializeOptions>,
 ) -> ClassType {
-    todo!()
+    // If the class is generic and not already specialized, this function
+    // "self specializes" the class, filling in its own type parameters
+    // as type arguments.
+    // We can't use requiresTypeArgs(type) here because it returns false
+    // if the type parameters have default values.
+    let type_params = type_.d().shared.get().type_params.borrow().clone();
+    if type_params.is_empty() {
+        return type_;
+    }
+
+    if type_.d().priv_.borrow().type_args.is_some() && !options.is_some_and(|options| options.override_type_args.unwrap_or(false)) {
+        return type_;
+    }
+
+    let type_params: Vec<P<Type>> = type_params
+        .iter()
+        .map(|type_param| {
+            let mut type_param = *type_param;
+            if crate::analyzer::types::is_type_var_tuple(type_param.0) {
+                type_param = TypeVarType::clone_for_unpacked(type_param, false);
+            }
+
+            if options.is_some_and(|options| options.use_bound_type_vars.unwrap_or(false)) {
+                TypeVarType::clone_as_bound(type_param).0
+            } else {
+                type_param.0
+            }
+        })
+        .collect();
+    ClassType::specialize(type_, Some(&type_params), None, false, None, None)
 }
 
 // analyzer/typeUtils.ts:1190
 pub fn get_specialized_tuple_type(type_: P<Type>) -> Option<ClassType> {
-    todo!()
+    let class_type: Option<ClassType>;
+
+    if crate::analyzer::types::is_instantiable_class(type_) {
+        class_type = Some(ClassType(type_));
+    } else if crate::analyzer::types::is_class_instance(type_) {
+        class_type = Some(ClassType::clone_as_instantiable(ClassType(type_), true));
+    } else {
+        class_type = None;
+    }
+
+    let class_type = class_type?;
+
+    // See if this class derives from Tuple or tuple. If it does, we'll assume that it
+    // hasn't been overridden in a way that changes the behavior of the tuple class.
+    let mro = class_type.d().shared.get().mro.borrow().clone();
+    let tuple_class = mro.into_iter().find(|mro_class| {
+        crate::analyzer::types::is_instantiable_class(*mro_class) && is_tuple_class(ClassType(*mro_class))
+    })?;
+    if !crate::analyzer::types::is_instantiable_class(tuple_class) {
+        return None;
+    }
+
+    if ClassType::is_same_generic_class(class_type, ClassType(tuple_class), 0) {
+        return Some(class_type);
+    }
+
+    let solution = build_solution_from_specialized_class(class_type);
+    Some(ClassType(apply_solved_type_vars(tuple_class, &solution, &ApplyTypeVarOptions::default())))
 }
 
 // analyzer/typeUtils.ts:1218
 pub fn is_literal_type(type_: ClassType) -> bool {
-    todo!()
+    crate::analyzer::types::TypeBase::is_instance(type_.0) && type_.d().priv_.borrow().literal_value.is_some()
 }
 
 // analyzer/typeUtils.ts:1222
 /// TS defaults: allowNone = false.
 pub fn is_literal_type_or_union(type_: P<Type>, allow_none: bool) -> bool {
-    todo!()
+    if crate::analyzer::types::is_class_instance(type_) {
+        if allow_none && is_none_instance(type_) {
+            return true;
+        }
+
+        return ClassType(type_).d().priv_.borrow().literal_value.is_some();
+    }
+
+    if crate::analyzer::types::is_union(type_) {
+        return crate::analyzer::types::find_subtype(type_, &mut |subtype| {
+            if !crate::analyzer::types::is_class_instance(subtype) {
+                return true;
+            }
+
+            if is_none_instance(subtype) {
+                return !allow_none;
+            }
+
+            ClassType(subtype).d().priv_.borrow().literal_value.is_none()
+        })
+        .is_none();
+    }
+
+    false
 }
 
 // analyzer/typeUtils.ts:1248
 pub fn is_literal_like_type(type_: ClassType) -> bool {
-    todo!()
+    if type_.d().priv_.borrow().literal_value.is_some() {
+        return true;
+    }
+
+    if ClassType::is_built_in(type_, Some(&["LiteralString".to_string()])) {
+        return true;
+    }
+
+    false
 }
 
 // analyzer/typeUtils.ts:1260
 pub fn is_sentinel_literal(type_: P<Type>) -> bool {
-    todo!()
+    crate::analyzer::types::is_class_instance(type_)
+        && matches!(
+            ClassType(type_).d().priv_.borrow().literal_value,
+            Some(crate::analyzer::types::LiteralValue::SentinelLiteral(_))
+        )
 }
 
 // analyzer/typeUtils.ts:1264
 /// TS defaults: includeTypeArgs = false.
 /// Nested in the TS body: class ContainsLiteralTypeWalker (:1265).
 pub fn contains_literal_type(type_: P<Type>, include_type_args: bool) -> bool {
-    todo!()
+    // ContainsLiteralTypeWalker, nested in containsLiteralType (typeUtils.ts:1265).
+    struct ContainsLiteralTypeWalker {
+        _recursion_count: u32,
+        _is_walk_canceled: bool,
+        _hit_recursion_limit: bool,
+        found_literal: bool,
+        _include_type_args: bool,
+    }
+
+    impl crate::analyzer::type_walker::TypeWalker for ContainsLiteralTypeWalker {
+        fn _recursion_count(&self) -> u32 {
+            self._recursion_count
+        }
+
+        fn _recursion_count_mut(&mut self) -> &mut u32 {
+            &mut self._recursion_count
+        }
+
+        fn _is_walk_canceled(&self) -> bool {
+            self._is_walk_canceled
+        }
+
+        fn _is_walk_canceled_mut(&mut self) -> &mut bool {
+            &mut self._is_walk_canceled
+        }
+
+        fn _hit_recursion_limit(&self) -> bool {
+            self._hit_recursion_limit
+        }
+
+        fn _hit_recursion_limit_mut(&mut self) -> &mut bool {
+            &mut self._hit_recursion_limit
+        }
+
+        // ContainsLiteralTypeWalker.visitClass (typeUtils.ts:1272).
+        fn visit_class(&mut self, class_type: ClassType) {
+            if crate::analyzer::types::is_class_instance(class_type.0) {
+                if is_literal_like_type(class_type) {
+                    self.found_literal = true;
+                    crate::analyzer::type_walker::TypeWalker::cancel_walk(self);
+                }
+            }
+
+            if self._include_type_args {
+                // super.visitClass(classType): the body of TypeWalker.visitClass (typeWalker.ts:174),
+                // which a Rust override cannot call.
+                if !ClassType::is_pseudo_generic_class(class_type) {
+                    // `tupleTypeArgs?.map(..) || typeArgs`: an empty mapped array is truthy.
+                    let type_args = {
+                        let priv_ = class_type.d().priv_.borrow();
+                        match &priv_.tuple_type_args {
+                            Some(tuple_type_args) => Some(tuple_type_args.iter().map(|t| t.type_).collect::<Vec<_>>()),
+                            None => priv_.type_args.clone(),
+                        }
+                    };
+                    if let Some(type_args) = type_args {
+                        for arg_type in type_args {
+                            crate::analyzer::type_walker::TypeWalker::walk(self, arg_type);
+                            if self._is_walk_canceled {
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    let mut walker = ContainsLiteralTypeWalker {
+        _recursion_count: 0,
+        _is_walk_canceled: false,
+        _hit_recursion_limit: false,
+        found_literal: false,
+        _include_type_args: include_type_args,
+    };
+    crate::analyzer::type_walker::TypeWalker::walk(&mut walker, type_);
+    walker.found_literal
 }
 
 // analyzer/typeUtils.ts:1295
 pub fn get_literal_type_class_name(type_: P<Type>) -> Option<String> {
-    todo!()
+    if crate::analyzer::types::is_class_instance(type_) {
+        let class_type = ClassType(type_);
+        if class_type.d().priv_.borrow().literal_value.is_some() && ClassType::is_built_in(class_type, None) {
+            return Some(class_type.d().shared.get().name.clone());
+        }
+        return None;
+    }
+
+    if crate::analyzer::types::is_union(type_) {
+        let mut class_name: Option<String> = None;
+        let mut found_mismatch = false;
+
+        do_for_each_subtype(
+            type_,
+            &mut |subtype, _, _| {
+                let subtype_literal_type_name = get_literal_type_class_name(subtype);
+                // `!name` is also true for an empty string.
+                if subtype_literal_type_name.as_deref().is_none_or(str::is_empty) {
+                    found_mismatch = true;
+                } else if class_name.as_deref().is_none_or(str::is_empty) {
+                    class_name = subtype_literal_type_name;
+                }
+            },
+            false,
+        );
+
+        return if found_mismatch { None } else { class_name };
+    }
+
+    None
 }
 
 // analyzer/typeUtils.ts:1322
 pub fn strip_type_form(type_: P<Type>) -> P<Type> {
-    todo!()
+    let has_type_form = type_.props.borrow().as_ref().is_some_and(|props| props.type_form.is_some());
+    if has_type_form {
+        return crate::analyzer::types::TypeBase::clone_with_type_form(type_, None);
+    }
+
+    type_
 }
 
 // analyzer/typeUtils.ts:1330
 /// TS defaults: recursionCount = 0.
 pub fn strip_type_form_recursive(type_: P<Type>, recursion_count: u32) -> P<Type> {
-    todo!()
+    if recursion_count > crate::analyzer::types::MAX_TYPE_RECURSION_COUNT {
+        return type_;
+    }
+    let recursion_count = recursion_count + 1;
+
+    let mut type_ = type_;
+    let has_type_form = type_.props.borrow().as_ref().is_some_and(|props| props.type_form.is_some());
+    if has_type_form {
+        type_ = crate::analyzer::types::TypeBase::clone_with_type_form(type_, None);
+    }
+
+    map_subtypes(type_, &mut |subtype| Some(strip_type_form_recursive(subtype, recursion_count)), None)
 }
 
 // analyzer/typeUtils.ts:1343
 pub fn get_union_subtype_count(type_: P<Type>) -> u32 {
-    todo!()
+    if crate::analyzer::types::is_union(type_) {
+        return u32::try_from(crate::analyzer::types::UnionType(type_).d().priv_.borrow().subtypes.len()).unwrap();
+    }
+
+    1
 }
 
 // analyzer/typeUtils.ts:1351
 pub fn is_ellipsis_type(type_: P<Type>) -> bool {
-    todo!()
+    crate::analyzer::types::is_any(type_) && crate::analyzer::types::AnyType(type_).d().priv_.is_ellipsis
 }
 
 // analyzer/typeUtils.ts:1355
 pub fn is_property(type_: P<Type>) -> bool {
-    todo!()
+    crate::analyzer::types::is_class_instance(type_) && ClassType::is_property_class(ClassType(type_))
 }
 
 // analyzer/typeUtils.ts:1359
 pub fn is_callable_type(type_: P<Type>) -> bool {
-    todo!()
+    if crate::analyzer::types::is_function_or_overloaded(type_) || crate::analyzer::types::is_any_or_unknown(type_) {
+        return true;
+    }
+
+    if is_effectively_instantiable(type_, None, 0) {
+        return true;
+    }
+
+    if crate::analyzer::types::is_class(type_) {
+        if crate::analyzer::types::TypeBase::is_instantiable(type_) {
+            return true;
+        }
+
+        let call_member = look_up_object_member(ClassType(type_), "__call__", MemberAccessFlags::SkipInstanceMembers, None);
+        return call_member.is_some();
+    }
+
+    if crate::analyzer::types::is_union(type_) {
+        let subtypes = crate::analyzer::types::UnionType(type_).d().priv_.borrow().subtypes.clone();
+        return subtypes.iter().all(|subtype| is_callable_type(*subtype));
+    }
+
+    false
 }
 
 // analyzer/typeUtils.ts:1384
 /// TS defaults: requireSetter = false.
 pub fn is_descriptor_instance(type_: P<Type>, require_setter: bool) -> bool {
-    todo!()
+    if crate::analyzer::types::is_union(type_) {
+        let subtypes = crate::analyzer::types::UnionType(type_).d().priv_.borrow().subtypes.clone();
+        return subtypes.iter().all(|subtype| is_maybe_descriptor_instance(*subtype, require_setter));
+    }
+
+    is_maybe_descriptor_instance(type_, require_setter)
 }
 
 // analyzer/typeUtils.ts:1392
 /// TS defaults: requireSetter = false.
 pub fn is_maybe_descriptor_instance(type_: P<Type>, require_setter: bool) -> bool {
-    todo!()
+    if crate::analyzer::types::is_union(type_) {
+        let subtypes = crate::analyzer::types::UnionType(type_).d().priv_.borrow().subtypes.clone();
+        return subtypes.iter().any(|subtype| is_maybe_descriptor_instance(*subtype, require_setter));
+    }
+
+    if !crate::analyzer::types::is_class_instance(type_) {
+        return false;
+    }
+
+    // Traverse MRO so descriptor subclasses are detected
+    let get_member = look_up_object_member(ClassType(type_), "__get__", MemberAccessFlags::Default, None);
+    if get_member.is_none() {
+        return false;
+    }
+
+    if require_setter {
+        let set_member = look_up_object_member(ClassType(type_), "__set__", MemberAccessFlags::Default, None);
+        if set_member.is_none() {
+            return false;
+        }
+    }
+
+    true
 }
 
 // analyzer/typeUtils.ts:1426
 pub fn is_maybe_descriptor_class(type_: P<Type>) -> bool {
-    todo!()
+    if crate::analyzer::types::is_union(type_) {
+        let subtypes = crate::analyzer::types::UnionType(type_).d().priv_.borrow().subtypes.clone();
+        return subtypes.iter().any(|subtype| is_maybe_descriptor_class(*subtype));
+    }
+
+    if !crate::analyzer::types::is_instantiable_class(type_) {
+        return false;
+    }
+
+    look_up_class_member(ClassType(type_), "__get__", MemberAccessFlags::Default, None).is_some()
 }
 
 // analyzer/typeUtils.ts:1438
 pub fn is_tuple_gradual_form(type_: P<Type>) -> Option<bool> {
-    todo!()
+    // `&&` yields its first falsy operand: `undefined` when there are no tuple type args.
+    if !crate::analyzer::types::is_class_instance(type_) || !is_tuple_class(ClassType(type_)) {
+        return Some(false);
+    }
+
+    let tuple_type_args = ClassType(type_).d().priv_.borrow().tuple_type_args.clone();
+    let tuple_type_args = tuple_type_args?;
+    Some(
+        tuple_type_args.len() == 1
+            && crate::analyzer::types::is_any_or_unknown(tuple_type_args[0].type_)
+            && tuple_type_args[0].is_unbounded,
+    )
 }
 
 // analyzer/typeUtils.ts:1452
 pub fn is_stub_only_subscriptable(class_type: ClassType) -> bool {
-    todo!()
+    ClassType::is_defined_in_stub(class_type)
+        && !ClassType::is_built_in(class_type, None)
+        && !class_type.d().shared.get().fields.get().has("__class_getitem__")
 }
 
 // analyzer/typeUtils.ts:1460
 pub fn is_tuple_class(type_: ClassType) -> bool {
-    todo!()
+    ClassType::is_built_in(type_, Some(&["tuple".to_string()]))
 }
 
 // analyzer/typeUtils.ts:1467
 pub fn is_unbounded_tuple_class(type_: ClassType) -> Option<bool> {
-    todo!()
+    type_.d().priv_.borrow().tuple_type_args.as_ref().map(|tuple_type_args| {
+        tuple_type_args.iter().any(|t| {
+            t.is_unbounded
+                || crate::analyzer::types::is_unpacked_type_var_tuple(t.type_)
+                || crate::analyzer::types::is_unpacked_type_var(t.type_)
+        })
+    })
 }
 
 // analyzer/typeUtils.ts:1475
 pub fn is_tuple_index_unambiguous(type_: ClassType, index: f64) -> bool {
-    todo!()
+    let tuple_type_args = type_.d().priv_.borrow().tuple_type_args.clone();
+    let Some(tuple_type_args) = tuple_type_args else {
+        return false;
+    };
+
+    let unbounded_index = tuple_type_args
+        .iter()
+        .position(|t| {
+            t.is_unbounded
+                || crate::analyzer::types::is_unpacked_type_var_tuple(t.type_)
+                || crate::analyzer::types::is_unpacked_type_var(t.type_)
+        })
+        .map_or(-1.0, |index| f64::from(u32::try_from(index).unwrap()));
+    let length = f64::from(u32::try_from(tuple_type_args.len()).unwrap());
+
+    let mut index = index;
+    if index < 0.0 {
+        let lower_index_limit = if unbounded_index < 0.0 { 0.0 } else { unbounded_index };
+        index += length;
+        return index >= lower_index_limit;
+    }
+
+    let upper_index_limit = if unbounded_index < 0.0 { length } else { unbounded_index };
+    index < upper_index_limit
 }
 
 // analyzer/typeUtils.ts:1497
@@ -477,7 +1721,65 @@ pub fn partially_specialize_type(
     type_class_type: Option<ClassType>,
     self_class: Option<P<Type>>,
 ) -> P<Type> {
-    todo!()
+    // If the context class is not specialized (or doesn't need specialization),
+    // then there's no need to do any more work.
+    if ClassType::is_unspecialized(context_class_type) && self_class.is_none() {
+        return type_;
+    }
+
+    // Partially specialize the type using the specialized class type vars.
+    let solution = build_solution_from_specialized_class(context_class_type);
+
+    if let Some(self_class) = self_class {
+        add_solution_for_self_type(&solution, context_class_type, self_class);
+    }
+
+    let mut result = apply_solved_type_vars(
+        type_,
+        &solution,
+        &ApplyTypeVarOptions {
+            type_class_type,
+            ..Default::default()
+        },
+    );
+
+    // If this is a property, we may need to partially specialize the
+    // access methods associated with it.
+    if crate::analyzer::types::is_class(result) {
+        let has_property_methods = {
+            let priv_ = ClassType(result).d().priv_.borrow();
+            priv_.fget_info.is_some() || priv_.fset_info.is_some() || priv_.fdel_info.is_some()
+        };
+        if has_property_methods {
+            // updatePropertyMethodInfo, nested in partiallySpecializeType (typeUtils.ts:1522).
+            let update_property_method_info = |method_info: Option<crate::analyzer::types::PropertyMethodInfo>| {
+                let method_info = method_info?;
+
+                Some(crate::analyzer::types::PropertyMethodInfo {
+                    method_type: partially_specialize_type(
+                        method_info.method_type,
+                        context_class_type,
+                        type_class_type,
+                        self_class,
+                    ),
+                    class_type: method_info.class_type,
+                })
+            };
+
+            result = crate::analyzer::types::TypeBase::clone_type(result);
+            let fget_info = ClassType(result).d().priv_.borrow().fget_info.clone();
+            let fget_info = update_property_method_info(fget_info);
+            ClassType(result).d().priv_.borrow_mut().fget_info = fget_info;
+            let fset_info = ClassType(result).d().priv_.borrow().fset_info.clone();
+            let fset_info = update_property_method_info(fset_info);
+            ClassType(result).d().priv_.borrow_mut().fset_info = fset_info;
+            let fdel_info = ClassType(result).d().priv_.borrow().fdel_info.clone();
+            let fdel_info = update_property_method_info(fdel_info);
+            ClassType(result).d().priv_.borrow_mut().fdel_info = fdel_info;
+        }
+    }
+
+    result
 }
 
 // analyzer/typeUtils.ts:1548
@@ -486,7 +1788,26 @@ pub fn add_solution_for_self_type(
     context_class_type: ClassType,
     self_class: P<Type>,
 ) {
-    todo!()
+    let synthesized_self_type_var = synthesize_type_var_for_self_cls(context_class_type, false);
+    let self_instance = convert_to_instance(self_class, true);
+
+    // We can't call stripLiteralValue here because that method requires the type evaluator.
+    // Instead, we'll do a simplified version of it here.
+    let self_without_literal = map_subtypes(
+        self_instance,
+        &mut |subtype| {
+            if crate::analyzer::types::is_class(subtype) {
+                if ClassType(subtype).d().priv_.borrow().literal_value.is_some() {
+                    return Some(ClassType::clone_with_literal(ClassType(subtype), None).0);
+                }
+            }
+
+            Some(subtype)
+        },
+        None,
+    );
+
+    solution.set_type(synthesized_self_type_var, self_without_literal);
 }
 
 // analyzer/typeUtils.ts:1573
@@ -495,22 +1816,43 @@ pub fn ensure_signatures_are_unique(
     signature_tracker: P<UniqueSignatureTracker>,
     expression_offset: i32,
 ) -> P<Type> {
-    todo!()
+    let mut transformer = UniqueFunctionSignatureTransformer::new(signature_tracker, expression_offset);
+    transformer.apply(type_, 0)
 }
 
 // analyzer/typeUtils.ts:1582
 pub fn make_function_type_vars_bound(type_: P<Type>) -> P<Type> {
-    todo!()
+    let mut scope_ids: Vec<String> = Vec::new();
+    do_for_each_signature(type_, &mut |signature, _| {
+        let local_scope_id = get_type_var_scope_id(signature.0);
+        if let Some(local_scope_id) = local_scope_id {
+            if !local_scope_id.is_empty() {
+                scope_ids.push(local_scope_id);
+            }
+        }
+    });
+
+    make_type_vars_bound(type_, Some(&scope_ids))
 }
 
 // analyzer/typeUtils.ts:1595
 pub fn make_type_vars_bound(type_: P<Type>, scope_ids: Option<&[String]>) -> P<Type> {
-    todo!()
+    if scope_ids.is_some_and(|scope_ids| scope_ids.is_empty()) {
+        return type_;
+    }
+
+    let mut transformer = BoundTypeVarTransform::new(scope_ids.map(|scope_ids| scope_ids.to_vec()));
+    transformer.apply(type_, 0)
 }
 
 // analyzer/typeUtils.ts:1605
 pub fn make_type_vars_free(type_: P<Type>, scope_ids: &[String]) -> P<Type> {
-    todo!()
+    if scope_ids.is_empty() {
+        return type_;
+    }
+
+    let mut transformer = FreeTypeVarTransform::new(scope_ids.to_vec());
+    transformer.apply(type_, 0)
 }
 
 // analyzer/typeUtils.ts:1616
@@ -520,16 +1862,38 @@ pub fn apply_solved_type_vars(
     solution: &ConstraintSolution,
     options: &ApplyTypeVarOptions,
 ) -> P<Type> {
-    todo!()
+    // Use a shortcut if constraints is empty and no transform is necessary.
+    if solution.is_empty() && options.replace_unsolved.is_none() {
+        return type_;
+    }
+
+    // The transformer keeps the solution; TypeScript hands it the same object. A new
+    // ConstraintSolution over the same solution sets stands in for it (the signature takes a
+    // reference, the transformer an Rc).
+    let solution = Rc::new(ConstraintSolution {
+        _solution_sets: solution._solution_sets.clone(),
+    });
+    let mut transformer = ApplySolvedTypeVarsTransformer::new(solution, options.clone());
+    transformer.apply(type_, 0)
 }
 
 // analyzer/typeUtils.ts:1628
 pub fn validate_type_var_default(
     type_var: TypeVarType,
     live_type_params: &[TypeVarType],
-    invalid_type_vars: &JsSet<String>,
+    invalid_type_vars: &mut JsSet<String>,
 ) {
-    todo!()
+    // If there is no default type or the default type is concrete, there's
+    // no need to do any more work here.
+    let shared = type_var.d().shared.get();
+    if shared.is_default_explicit.get() && requires_specialization(shared.default_type.get(), None, 0) {
+        // TypeScript hands the validator the caller's set and the validator adds to it; it holds
+        // the set only during `apply`, so the set moves in and back.
+        let mut validator =
+            TypeVarDefaultValidator::new(live_type_params.to_vec(), std::mem::take(invalid_type_vars));
+        validator.apply(shared.default_type.get(), 0);
+        *invalid_type_vars = validator._invalid_type_vars;
+    }
 }
 
 // analyzer/typeUtils.ts:1646
@@ -538,12 +1902,19 @@ pub fn transform_expected_type(
     live_type_var_scopes: &[String],
     usage_offset: Option<i32>,
 ) -> P<Type> {
-    todo!()
+    let mut transformer = UnificationTypeTransformer::new(live_type_var_scopes.to_vec(), usage_offset);
+    transformer.apply(expected_type, 0)
 }
 
 // analyzer/typeUtils.ts:1659
 pub fn get_protocol_symbols(class_type: ClassType) -> JsMap<String, ClassMember> {
-    todo!()
+    let mut symbol_map: JsMap<String, ClassMember> = JsMap::default();
+
+    if class_type.d().shared.get().flags.get().any(ClassTypeFlags::ProtocolClass) {
+        get_protocol_symbols_recursive(class_type, &mut symbol_map, ClassTypeFlags::ProtocolClass, 0);
+    }
+
+    symbol_map
 }
 
 // analyzer/typeUtils.ts:1669
@@ -554,13 +1925,94 @@ pub fn get_protocol_symbols_recursive(
     class_flags: ClassTypeFlags,
     recursion_count: u32,
 ) {
-    todo!()
+    // Special-case the NamedTuple class because it's not really
+    // a separate class at runtime. The typeshed stubs model it
+    // this way, and we don't want it to be treated as a protocol
+    // or abstract class.
+    if ClassType::is_built_in(class_type, Some(&["NamedTuple".to_string()])) {
+        return;
+    }
+
+    if recursion_count > crate::analyzer::types::MAX_TYPE_RECURSION_COUNT {
+        return;
+    }
+
+    let base_classes = class_type.d().shared.get().base_classes.borrow().clone();
+    for base_class in base_classes {
+        if crate::analyzer::types::is_class(base_class) && ClassType(base_class).d().shared.get().flags.get().any(class_flags) {
+            get_protocol_symbols_recursive(ClassType(base_class), symbol_map, class_flags, recursion_count + 1);
+        }
+    }
+
+    if class_type.d().shared.get().flags.get().any(class_flags) {
+        ClassType::get_symbol_table(class_type).for_each(|symbol, name| {
+            if !symbol.is_ignored_for_protocol_match() {
+                symbol_map.insert(
+                    name.to_string(),
+                    ClassMember {
+                        symbol,
+                        class_type: class_type.0,
+                        unspecialized_class_type: class_type.0,
+                        is_instance_member: symbol.is_instance_member(),
+                        is_class_member: symbol.is_class_member(),
+                        is_slots_member: symbol.is_slots_member(),
+                        is_class_var: crate::analyzer::symbol_utils::is_effectively_class_var(symbol, false),
+                        is_read_only: false,
+                        is_type_declared: symbol.has_typed_declarations(),
+                        skipped_undeclared_type: false,
+                    },
+                );
+            }
+        });
+    }
 }
 
 // analyzer/typeUtils.ts:1715
 /// TS defaults: recursionCount = 0.
 pub fn get_container_depth(type_: P<Type>, recursion_count: u32) -> u32 {
-    todo!()
+    if recursion_count > crate::analyzer::types::MAX_TYPE_RECURSION_COUNT {
+        return 1;
+    }
+
+    let recursion_count = recursion_count + 1;
+
+    if !crate::analyzer::types::is_class_instance(type_) {
+        return 0;
+    }
+
+    let mut max_child_depth = 0;
+
+    let (tuple_type_args, type_args) = {
+        let priv_ = ClassType(type_).d().priv_.borrow();
+        (priv_.tuple_type_args.clone(), priv_.type_args.clone())
+    };
+    if let Some(tuple_type_args) = tuple_type_args {
+        for type_arg_info in tuple_type_args {
+            do_for_each_subtype(
+                type_arg_info.type_,
+                &mut |subtype, _, _| {
+                    let child_depth = get_container_depth(subtype, recursion_count);
+                    max_child_depth = child_depth.max(max_child_depth);
+                },
+                false,
+            );
+        }
+    } else if let Some(type_args) = type_args {
+        for type_arg in type_args {
+            do_for_each_subtype(
+                type_arg,
+                &mut |subtype, _, _| {
+                    let child_depth = get_container_depth(subtype, recursion_count);
+                    max_child_depth = child_depth.max(max_child_depth);
+                },
+                false,
+            );
+        }
+    } else {
+        return 0;
+    }
+
+    1 + max_child_depth
 }
 
 // analyzer/typeUtils.ts:1749
@@ -571,7 +2023,11 @@ pub fn look_up_object_member(
     flags: MemberAccessFlags,
     skip_mro_class: Option<ClassType>,
 ) -> Option<ClassMember> {
-    todo!()
+    if crate::analyzer::types::is_class_instance(object_type.0) {
+        return look_up_class_member(object_type, member_name, flags, skip_mro_class);
+    }
+
+    None
 }
 
 // analyzer/typeUtils.ts:1764
@@ -582,7 +2038,35 @@ pub fn look_up_class_member(
     flags: MemberAccessFlags,
     skip_mro_class: Option<ClassType>,
 ) -> Option<ClassMember> {
-    todo!()
+    // Look in the metaclass first.
+    let metaclass = class_type.d().shared.get().effective_metaclass.get();
+
+    // Skip the "type" class as an optimization because it is known to not
+    // define any instance variables, and it's by far the most common metaclass.
+    if let Some(metaclass) = metaclass {
+        if crate::analyzer::types::is_class(metaclass)
+            && !ClassType::is_built_in(ClassType(metaclass), Some(&["type".to_string()]))
+        {
+            let mut meta_member_itr =
+                get_class_member_iterator(metaclass, member_name, MemberAccessFlags::SkipClassMembers, None);
+            let meta_member = meta_member_itr.next();
+
+            // If the metaclass defines the member and we didn't hit an Unknown
+            // class in the metaclass MRO, use the metaclass member.
+            if let Some(mut meta_member) = meta_member {
+                if !crate::analyzer::types::is_any_or_unknown(meta_member.class_type) {
+                    // Set the isClassMember to true because it's a class member from the
+                    // perspective of the classType.
+                    meta_member.is_class_member = true;
+                    return Some(meta_member);
+                }
+            }
+        }
+    }
+
+    let mut member_itr = get_class_member_iterator(class_type.0, member_name, flags, skip_mro_class);
+
+    member_itr.next()
 }
 
 // analyzer/typeUtils.ts:1804
@@ -593,12 +2077,237 @@ pub fn get_class_member_iterator(
     flags: MemberAccessFlags,
     skip_mro_class: Option<ClassType>,
 ) -> Box<dyn Iterator<Item = ClassMember>> {
-    todo!()
+    // A TypeScript generator: each `next()` runs the body up to its next `yield`, so the
+    // MRO walk and its partial specializations happen only as far as the caller reads.
+    let member_name = member_name.to_string();
+    let declared_types_only = flags.any(MemberAccessFlags::DeclaredTypesOnly);
+    let mut skipped_undeclared_type = false;
+    let mut started = false;
+    let mut finished = false;
+    let mut class_itr: Option<Box<dyn Iterator<Item = Vec<P<Type>>>>> = None;
+    // The MRO class being searched, its specialized form and symbol table, whether its typed
+    // dict entries are skipped, and whether its instance members were looked at yet.
+    let mut current: Option<(P<Type>, ClassType, SymbolTable, bool, bool)> = None;
+
+    let unknown_member = |class_type: P<Type>, symbol_type: P<Type>| ClassMember {
+        symbol: Symbol::create_with_type(crate::analyzer::symbol::SymbolFlags::None, symbol_type, None),
+        class_type,
+        unspecialized_class_type: class_type,
+        is_instance_member: false,
+        is_class_member: true,
+        is_slots_member: false,
+        is_class_var: false,
+        is_read_only: false,
+        is_type_declared: false,
+        skipped_undeclared_type: false,
+    };
+
+    Box::new(std::iter::from_fn(move || {
+        if finished {
+            return None;
+        }
+
+        if !started {
+            started = true;
+
+            if crate::analyzer::types::is_class(class_type) {
+                let mut skip_mro_class = skip_mro_class;
+                let mut class_flags = ClassIteratorFlags::Default;
+                if flags.any(MemberAccessFlags::SkipOriginalClass) {
+                    if crate::analyzer::types::is_class(class_type) {
+                        skip_mro_class = Some(if crate::analyzer::types::is_class_instance(class_type) {
+                            ClassType::clone_as_instantiable(ClassType(class_type), true)
+                        } else {
+                            ClassType(class_type)
+                        });
+                    }
+                }
+                if flags.any(MemberAccessFlags::SkipBaseClasses) {
+                    class_flags = class_flags | ClassIteratorFlags::SkipBaseClasses;
+                }
+                if flags.any(MemberAccessFlags::SkipObjectBaseClass) {
+                    class_flags = class_flags | ClassIteratorFlags::SkipObjectBaseClass;
+                }
+                if flags.any(MemberAccessFlags::SkipTypeBaseClass) {
+                    class_flags = class_flags | ClassIteratorFlags::SkipTypeBaseClass;
+                }
+
+                class_itr = Some(get_class_iterator(class_type, class_flags, skip_mro_class));
+            } else if crate::analyzer::types::is_any_or_unknown(class_type) {
+                // The class derives from an unknown type, so all bets are off
+                // when trying to find a member. Return an Any or Unknown symbol.
+                finished = true;
+                return Some(unknown_member(class_type, class_type));
+            } else {
+                finished = true;
+                return None;
+            }
+        }
+
+        loop {
+            if let Some((mro_class, specialized_mro_class, member_fields, skip_td_entry, instance_done)) = current {
+                // Look at instance members first if requested.
+                if !instance_done {
+                    current = Some((mro_class, specialized_mro_class, member_fields, skip_td_entry, true));
+
+                    if !flags.any(MemberAccessFlags::SkipInstanceMembers) {
+                        let symbol = member_fields.get(&member_name);
+
+                        if let Some(symbol) = symbol {
+                            if symbol.is_instance_member() && !skip_td_entry {
+                                let has_declared_type = symbol.has_typed_declarations();
+                                if !declared_types_only || has_declared_type {
+                                    return Some(ClassMember {
+                                        symbol,
+                                        is_instance_member: true,
+                                        is_class_member: symbol.is_class_member(),
+                                        is_slots_member: symbol.is_slots_member(),
+                                        is_class_var: crate::analyzer::symbol_utils::is_effectively_class_var(
+                                            symbol,
+                                            ClassType::is_data_class(specialized_mro_class),
+                                        ),
+                                        class_type: specialized_mro_class.0,
+                                        unspecialized_class_type: mro_class,
+                                        is_read_only: is_member_read_only(specialized_mro_class, &member_name),
+                                        is_type_declared: has_declared_type,
+                                        skipped_undeclared_type,
+                                    });
+                                } else {
+                                    skipped_undeclared_type = true;
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Next look at class members.
+                current = None;
+                if !flags.any(MemberAccessFlags::SkipClassMembers) {
+                    let mut symbol = member_fields.get(&member_name);
+
+                    if let Some(found_symbol) = symbol {
+                        if found_symbol.is_class_member() && !skip_td_entry {
+                            let has_declared_type = found_symbol.has_typed_declarations();
+                            if !declared_types_only || has_declared_type {
+                                let mut is_instance_member = found_symbol.is_instance_member();
+                                let mut is_class_member = true;
+
+                                // For data classes and typed dicts, variables that are declared
+                                // within the class are treated as instance variables. This distinction
+                                // is important in cases where a variable is a callable type because
+                                // we don't want to bind it to the instance like we would for a
+                                // class member.
+                                let is_dataclass = ClassType::is_data_class(specialized_mro_class);
+                                let is_typed_dict = ClassType::is_typed_dict_class(specialized_mro_class);
+                                if has_declared_type && (is_dataclass || is_typed_dict) {
+                                    let decls = found_symbol.get_declarations();
+                                    if !decls.is_empty()
+                                        && decls[0].type_ == crate::analyzer::declaration::DeclarationType::Variable
+                                    {
+                                        is_instance_member = true;
+                                        is_class_member = is_dataclass;
+                                    }
+                                }
+
+                                // Handle the special case of a __call__ class member in a partial class.
+                                let partial_call_type = ClassType(class_type).d().priv_.borrow().partial_call_type;
+                                if member_name == "__call__" {
+                                    if let Some(partial_call_type) = partial_call_type {
+                                        let generic_class = if crate::analyzer::types::TypeBase::is_instance(class_type) {
+                                            ClassType::clone_as_instantiable(ClassType(class_type), true)
+                                        } else {
+                                            ClassType(class_type)
+                                        };
+                                        if ClassType::is_same_generic_class(generic_class, specialized_mro_class, 0) {
+                                            symbol = Some(Symbol::create_with_type(
+                                                crate::analyzer::symbol::SymbolFlags::ClassMember,
+                                                partial_call_type,
+                                                None,
+                                            ));
+                                        }
+                                    }
+                                }
+                                let symbol = symbol.unwrap();
+
+                                return Some(ClassMember {
+                                    symbol,
+                                    is_instance_member,
+                                    is_class_member,
+                                    is_slots_member: symbol.is_slots_member(),
+                                    is_class_var: crate::analyzer::symbol_utils::is_effectively_class_var(
+                                        symbol,
+                                        is_dataclass,
+                                    ),
+                                    class_type: specialized_mro_class.0,
+                                    unspecialized_class_type: mro_class,
+                                    is_read_only: false,
+                                    is_type_declared: has_declared_type,
+                                    skipped_undeclared_type,
+                                });
+                            } else {
+                                skipped_undeclared_type = true;
+                            }
+                        }
+                    }
+                }
+                continue;
+            }
+
+            let Some(next_class) = class_itr.as_mut().and_then(|class_itr| class_itr.next()) else {
+                finished = true;
+                return None;
+            };
+            let mro_class = next_class[0];
+            let specialized_mro_class = next_class[1];
+
+            if !crate::analyzer::types::is_instantiable_class(mro_class) {
+                if !declared_types_only {
+                    let class_type = if crate::analyzer::types::is_any_or_unknown(mro_class) {
+                        mro_class
+                    } else {
+                        crate::analyzer::types::UnknownType::create(false).0
+                    };
+
+                    // The class derives from an unknown type, so all bets are off
+                    // when trying to find a member. Return an unknown symbol.
+                    return Some(unknown_member(class_type, mro_class));
+                }
+                continue;
+            }
+
+            if !crate::analyzer::types::is_instantiable_class(specialized_mro_class) {
+                continue;
+            }
+
+            let specialized_mro_class = ClassType(specialized_mro_class);
+            let member_fields = ClassType::get_symbol_table(specialized_mro_class);
+            let skip_td_entry = flags.any(MemberAccessFlags::SkipTypedDictEntries)
+                && specialized_mro_class
+                    .d()
+                    .shared
+                    .get()
+                    .typed_dict_entries
+                    .get()
+                    .is_some_and(|entries| entries.known_items.borrow().contains_key(&member_name));
+            current = Some((mro_class, specialized_mro_class, member_fields, skip_td_entry, false));
+        }
+    }))
 }
 
 // analyzer/typeUtils.ts:1970
 pub fn is_member_read_only(class_type: ClassType, name: &str) -> bool {
-    todo!()
+    if ClassType::has_named_tuple_entry(class_type, name) {
+        return true;
+    }
+
+    if ClassType::is_data_class_frozen(class_type) {
+        let dc_entries = class_type.d().shared.get().data_class_entries.borrow().clone();
+        if dc_entries.is_some_and(|dc_entries| dc_entries.iter().any(|entry| entry.name == name)) {
+            return true;
+        }
+    }
+
+    false
 }
 
 // analyzer/typeUtils.ts:1985
@@ -608,12 +2317,123 @@ pub fn get_class_iterator(
     flags: ClassIteratorFlags,
     skip_mro_class: Option<ClassType>,
 ) -> Box<dyn Iterator<Item = Vec<P<Type>>>> {
-    todo!()
+    // A TypeScript generator: each `next()` runs the body up to its next `yield`. The MRO is
+    // read by index, as `for..of` reads a live array.
+    let mut started = false;
+    let mut finished = false;
+    let mut index = 0;
+    let mut found_skip_mro_class = skip_mro_class.is_none();
+
+    Box::new(std::iter::from_fn(move || {
+        if finished {
+            return None;
+        }
+
+        if !started {
+            started = true;
+            if !crate::analyzer::types::is_class(class_type) {
+                finished = true;
+                return None;
+            }
+        }
+
+        let class_type = ClassType(class_type);
+        loop {
+            let mro_class = class_type.d().shared.get().mro.borrow().get(index).copied();
+            let Some(mro_class) = mro_class else {
+                finished = true;
+                return None;
+            };
+            index += 1;
+
+            // Are we still searching for the skipMroClass?
+            if !found_skip_mro_class {
+                if let Some(skip_mro_class) = skip_mro_class {
+                    if !crate::analyzer::types::is_class(mro_class) {
+                        found_skip_mro_class = true;
+                    } else if ClassType::is_same_generic_class(ClassType(mro_class), skip_mro_class, 0) {
+                        found_skip_mro_class = true;
+                        continue;
+                    } else {
+                        continue;
+                    }
+                }
+            }
+
+            // If mroClass is an ancestor of classType, partially specialize
+            // it in the context of classType.
+            let specialized_mro_class = partially_specialize_type(mro_class, class_type, None, None);
+
+            // Should we ignore members on the 'object' base class?
+            if flags.any(ClassIteratorFlags::SkipObjectBaseClass) {
+                if crate::analyzer::types::is_instantiable_class(specialized_mro_class) {
+                    if ClassType::is_built_in(ClassType(specialized_mro_class), Some(&["object".to_string()])) {
+                        finished = true;
+                        return None;
+                    }
+                }
+            }
+
+            // Should we ignore members on the 'type' base class?
+            if flags.any(ClassIteratorFlags::SkipTypeBaseClass) {
+                if crate::analyzer::types::is_instantiable_class(specialized_mro_class) {
+                    if ClassType::is_built_in(ClassType(specialized_mro_class), Some(&["type".to_string()])) {
+                        finished = true;
+                        return None;
+                    }
+                }
+            }
+
+            // After this yield, SkipBaseClasses ends the walk.
+            if flags.any(ClassIteratorFlags::SkipBaseClasses) {
+                finished = true;
+            }
+
+            return Some(vec![mro_class, specialized_mro_class]);
+        }
+    }))
 }
 
 // analyzer/typeUtils.ts:2035
 pub fn get_class_fields_recursive(class_type: ClassType) -> JsMap<String, ClassMember> {
-    todo!()
+    let mut member_map: JsMap<String, ClassMember> = JsMap::default();
+
+    // Evaluate the types of members from the end of the MRO to the beginning.
+    for mro_class in ClassType::get_reverse_mro(class_type) {
+        let specialized_mro_class = partially_specialize_type(mro_class, class_type, None, None);
+
+        if crate::analyzer::types::is_class(specialized_mro_class) {
+            let specialized_mro_class = ClassType(specialized_mro_class);
+            ClassType::get_symbol_table(specialized_mro_class).for_each(|symbol, name| {
+                if !symbol.is_ignored_for_protocol_match() && symbol.has_typed_declarations() {
+                    member_map.insert(
+                        name.to_string(),
+                        ClassMember {
+                            class_type: specialized_mro_class.0,
+                            unspecialized_class_type: mro_class,
+                            symbol,
+                            is_instance_member: symbol.is_instance_member(),
+                            is_class_member: symbol.is_class_member(),
+                            is_slots_member: symbol.is_slots_member(),
+                            is_class_var: crate::analyzer::symbol_utils::is_effectively_class_var(
+                                symbol,
+                                ClassType::is_data_class(specialized_mro_class),
+                            ),
+                            is_read_only: is_member_read_only(specialized_mro_class, name),
+                            is_type_declared: true,
+                            skipped_undeclared_type: false,
+                        },
+                    );
+                }
+            });
+        } else {
+            // If this ancestor class is unknown, throw away all symbols
+            // found so far because they could be overridden by the unknown class.
+            member_map.clear();
+        }
+    }
+
+    member_map
 }
 
 // analyzer/typeUtils.ts:2071
@@ -622,23 +2442,202 @@ pub fn add_type_vars_to_list_if_unique(
     list2: &[TypeVarType],
     type_var_scope_id: Option<&str>,
 ) {
-    todo!()
+    for type2 in list2 {
+        if let Some(type_var_scope_id) = type_var_scope_id {
+            if !type_var_scope_id.is_empty() && type2.d().priv_.borrow().scope_id.as_deref() != Some(type_var_scope_id) {
+                continue;
+            }
+        }
+
+        if !list1
+            .iter()
+            .any(|type1| crate::analyzer::types::is_type_same(type1.0, type2.0, &TypeSameOptions::default(), 0))
+        {
+            list1.push(*type2);
+        }
+    }
 }
 
 // analyzer/typeUtils.ts:2088
 /// TS defaults: recursionCount = 0.
 pub fn get_type_var_args_recursive(type_: P<Type>, recursion_count: u32) -> Vec<TypeVarType> {
-    todo!()
+    if recursion_count > crate::analyzer::types::MAX_TYPE_RECURSION_COUNT {
+        return Vec::new();
+    }
+    let recursion_count = recursion_count + 1;
+
+    let alias_info = type_.props.borrow().as_ref().and_then(|props| props.type_alias_info.clone());
+    if let Some(alias_info) = alias_info {
+        let mut combined_list: Vec<TypeVarType> = Vec::new();
+
+        if let Some(type_args) = &alias_info.type_args {
+            for type_arg in type_args {
+                add_type_vars_to_list_if_unique(
+                    &mut combined_list,
+                    &get_type_var_args_recursive(*type_arg, recursion_count),
+                    None,
+                );
+            }
+
+            return combined_list;
+        }
+
+        let type_params = alias_info.shared.type_params.borrow().clone();
+        if let Some(type_params) = type_params {
+            for type_param in type_params {
+                add_type_vars_to_list_if_unique(&mut combined_list, &[type_param], None);
+            }
+
+            return combined_list;
+        }
+    }
+
+    if crate::analyzer::types::is_type_var(type_) {
+        let type_var = TypeVarType(type_);
+
+        // Don't return any recursive type alias placeholders.
+        if type_var.d().shared.get().recursive_alias.get().is_some() {
+            return Vec::new();
+        }
+
+        // Don't return any bound type variables.
+        if TypeVarType::is_bound(type_var) {
+            return Vec::new();
+        }
+
+        // Don't return any P.args or P.kwargs types.
+        if crate::analyzer::types::is_param_spec(type_) && type_var.d().priv_.borrow().param_spec_access.is_some() {
+            return vec![TypeVarType(
+                TypeVarType::clone_for_param_spec_access(crate::analyzer::types::ParamSpecType(type_), None).0,
+            )];
+        }
+
+        return vec![if crate::analyzer::types::TypeBase::is_instantiable(type_) {
+            TypeVarType::clone_as_instance(type_var)
+        } else {
+            type_var
+        }];
+    }
+
+    if crate::analyzer::types::is_class(type_) {
+        let mut combined_list: Vec<TypeVarType> = Vec::new();
+        let type_args = {
+            let priv_ = ClassType(type_).d().priv_.borrow();
+            match &priv_.tuple_type_args {
+                Some(tuple_type_args) => Some(tuple_type_args.iter().map(|e| e.type_).collect::<Vec<_>>()),
+                None => priv_.type_args.clone(),
+            }
+        };
+        if let Some(type_args) = type_args {
+            for type_arg in type_args {
+                add_type_vars_to_list_if_unique(
+                    &mut combined_list,
+                    &get_type_var_args_recursive(type_arg, recursion_count),
+                    None,
+                );
+            }
+        }
+
+        return combined_list;
+    }
+
+    if crate::analyzer::types::is_union(type_) {
+        let mut combined_list: Vec<TypeVarType> = Vec::new();
+        do_for_each_subtype(
+            type_,
+            &mut |subtype, _, _| {
+                add_type_vars_to_list_if_unique(
+                    &mut combined_list,
+                    &get_type_var_args_recursive(subtype, recursion_count),
+                    None,
+                );
+            },
+            false,
+        );
+        return combined_list;
+    }
+
+    if crate::analyzer::types::is_function(type_) {
+        let function_type = FunctionType(type_);
+        let mut combined_list: Vec<TypeVarType> = Vec::new();
+
+        let mut i = 0;
+        while i < function_type.d().shared.get().parameters.get().borrow().len() {
+            add_type_vars_to_list_if_unique(
+                &mut combined_list,
+                &get_type_var_args_recursive(
+                    FunctionType::get_param_type(function_type, i32::try_from(i).unwrap()),
+                    recursion_count,
+                ),
+                None,
+            );
+            i += 1;
+        }
+
+        let return_type = FunctionType::get_effective_return_type(function_type, true);
+        if let Some(return_type) = return_type {
+            add_type_vars_to_list_if_unique(
+                &mut combined_list,
+                &get_type_var_args_recursive(return_type, recursion_count),
+                None,
+            );
+        }
+
+        return combined_list;
+    }
+
+    Vec::new()
 }
 
 // analyzer/typeUtils.ts:2177
 pub fn specialize_with_default_type_args(type_: ClassType) -> ClassType {
-    todo!()
+    let shared = type_.d().shared.get();
+    let type_var_scope_id = shared.type_var_scope_id.borrow().clone();
+    if shared.type_params.borrow().is_empty()
+        || type_.d().priv_.borrow().type_args.is_some()
+        || type_var_scope_id.as_deref().is_none_or(str::is_empty)
+    {
+        return type_;
+    }
+
+    let solution = ConstraintSolution::new(None);
+
+    ClassType(apply_solved_type_vars(
+        type_.0,
+        &solution,
+        &ApplyTypeVarOptions {
+            replace_unsolved: Some(ApplyTypeVarOptionsReplaceUnsolved {
+                scope_ids: vec![type_var_scope_id.unwrap()],
+                tuple_class_type: None,
+                unsolved_exempt_type_vars: None,
+                use_unknown: None,
+                eliminate_unsolved_in_unions: None,
+            }),
+            ..Default::default()
+        },
+    ))
 }
 
 // analyzer/typeUtils.ts:2193
 pub fn build_solution_from_specialized_class(class_type: ClassType) -> Rc<ConstraintSolution> {
-    todo!()
+    let type_params = ClassType::get_type_params(class_type);
+    let type_args: Option<Vec<P<Type>>>;
+
+    let (tuple_type_args, is_type_arg_explicit) = {
+        let priv_ = class_type.d().priv_.borrow();
+        (priv_.tuple_type_args.clone(), priv_.is_type_arg_explicit)
+    };
+    if let Some(tuple_type_args) = tuple_type_args {
+        type_args = Some(vec![convert_to_instance(
+            // An undefined isTypeArgExplicit takes the parameter's default, true.
+            specialize_tuple_class(class_type, &tuple_type_args, is_type_arg_explicit.unwrap_or(true), true).0,
+            true,
+        )]);
+    } else {
+        type_args = class_type.d().priv_.borrow().type_args.clone();
+    }
+
+    build_solution(&type_params, type_args.as_deref())
 }
 
 // analyzer/typeUtils.ts:2215
@@ -646,17 +2645,44 @@ pub fn build_solution(
     type_params: &[TypeVarType],
     type_args: Option<&[P<Type>]>,
 ) -> Rc<ConstraintSolution> {
-    todo!()
+    let solution = ConstraintSolution::new(None);
+
+    let Some(type_args) = type_args else {
+        return Rc::new(solution);
+    };
+
+    for (index, type_param) in type_params.iter().enumerate() {
+        if index < type_args.len() {
+            solution.set_type(*type_param, type_args[index]);
+        }
+    }
+
+    Rc::new(solution)
 }
 
 // analyzer/typeUtils.ts:2232
 pub fn specialize_for_base_class(src_type: ClassType, base_class: ClassType) -> ClassType {
-    todo!()
+    let type_params = ClassType::get_type_params(base_class);
+
+    // If there are no type parameters for the specified base class,
+    // no specialization is required.
+    if type_params.is_empty() {
+        return base_class;
+    }
+
+    let solution = build_solution_from_specialized_class(src_type);
+    let specialized_type = apply_solved_type_vars(base_class.0, &solution, &ApplyTypeVarOptions::default());
+    crate::common::debug::assert(crate::analyzer::types::is_instantiable_class(specialized_type), None);
+    ClassType(specialized_type)
 }
 
 // analyzer/typeUtils.ts:2247
 pub fn derives_from_stdlib_class(class_type: ClassType, class_name: &str) -> bool {
-    todo!()
+    let mro = class_type.d().shared.get().mro.borrow().clone();
+    mro.iter().any(|mro_class| {
+        crate::analyzer::types::is_class(*mro_class)
+            && ClassType::is_built_in(ClassType(*mro_class), Some(&[class_name.to_string()]))
+    })
 }
 
 // analyzer/typeUtils.ts:2254
@@ -665,32 +2691,130 @@ pub fn derives_from_class_recursive(
     base_class_to_find: ClassType,
     ignore_unknown: bool,
 ) -> bool {
-    todo!()
+    if ClassType::is_same_generic_class(class_type, base_class_to_find, 0) {
+        return true;
+    }
+
+    let base_classes = class_type.d().shared.get().base_classes.borrow().clone();
+    for base_class in base_classes {
+        if crate::analyzer::types::is_instantiable_class(base_class) {
+            if derives_from_class_recursive(ClassType(base_class), base_class_to_find, ignore_unknown) {
+                return true;
+            }
+        } else if !ignore_unknown && crate::analyzer::types::is_any_or_unknown(base_class) {
+            // If the base class is unknown, we have to make a conservative assumption.
+            return true;
+        }
+    }
+
+    false
 }
 
 // analyzer/typeUtils.ts:2273
 pub fn synthesize_type_var_for_self_cls(class_type: ClassType, is_cls_param: bool) -> TypeVarType {
-    todo!()
+    let self_type = TypeVarType::create_instance("__type_of_self__", crate::analyzer::types::TypeVarKind::TypeVar);
+    let scope_id = get_type_var_scope_id(class_type.0).unwrap_or_default();
+    let shared = self_type.d().shared.get();
+    shared.is_synthesized.set(true);
+    shared.is_synthesized_self.set(true);
+    self_type.d().priv_.borrow_mut().scope_id = Some(scope_id.clone());
+    self_type.d().priv_.borrow_mut().scope_name = Some(String::new());
+    let name = shared.name.borrow().clone();
+    let scope_name = self_type.d().priv_.borrow().scope_name.clone().unwrap_or_default();
+    let name_with_scope = TypeVarType::make_name_with_scope(&name, &scope_id, &scope_name);
+    self_type.d().priv_.borrow_mut().name_with_scope = Some(name_with_scope);
+
+    let include_subclasses = class_type.d().priv_.borrow().include_subclasses.unwrap_or(false);
+    let bound_type = ClassType::specialize(class_type, None, Some(false), include_subclasses, None, None);
+
+    shared.bound_type.set(Some(ClassType::clone_as_instance(bound_type, true).0));
+
+    if is_cls_param {
+        TypeVarType::clone_as_instantiable(self_type)
+    } else {
+        self_type
+    }
 }
 
 // analyzer/typeUtils.ts:2296
 pub fn get_declared_generator_return_type(function_type: FunctionType) -> Option<P<Type>> {
-    todo!()
+    let return_type = FunctionType::get_effective_return_type(function_type, true);
+    if let Some(return_type) = return_type {
+        let generator_type_args = get_generator_type_args(return_type);
+
+        if let Some(generator_type_args) = generator_type_args {
+            // The send type is the third type arg.
+            return Some(if generator_type_args.len() >= 3 {
+                generator_type_args[2]
+            } else {
+                crate::analyzer::types::UnknownType::create(false).0
+            });
+        }
+    }
+
+    None
 }
 
 // analyzer/typeUtils.ts:2313
 pub fn get_generator_yield_type(declared_return_type: P<Type>, is_async: bool) -> Option<P<Type>> {
-    todo!()
+    let mut is_legal_generator_type = true;
+
+    let yield_type = map_subtypes(
+        declared_return_type,
+        &mut |subtype| {
+            if crate::analyzer::types::is_any_or_unknown(subtype) {
+                return Some(subtype);
+            }
+
+            if crate::analyzer::types::is_class_instance(subtype) {
+                let expected_classes = [
+                    ["AsyncIterable", "Iterable"],
+                    ["AsyncIterator", "Iterator"],
+                    ["AsyncGenerator", "Generator"],
+                    ["", "AwaitableGenerator"],
+                ];
+
+                if expected_classes.iter().any(|classes| {
+                    let class_name = if is_async { classes[0] } else { classes[1] };
+                    ClassType::is_built_in(ClassType(subtype), Some(&[class_name.to_string()]))
+                }) {
+                    let type_args = ClassType(subtype).d().priv_.borrow().type_args.clone();
+                    return Some(match type_args {
+                        Some(type_args) if !type_args.is_empty() => type_args[0],
+                        _ => crate::analyzer::types::UnknownType::create(false).0,
+                    });
+                }
+            }
+
+            is_legal_generator_type = false;
+            None
+        },
+        None,
+    );
+
+    if is_legal_generator_type { Some(yield_type) } else { None }
 }
 
 // analyzer/typeUtils.ts:2343
 pub fn is_instantiable_metaclass(type_: P<Type>) -> bool {
-    todo!()
+    crate::analyzer::types::is_instantiable_class(type_) && {
+        let mro = ClassType(type_).d().shared.get().mro.borrow().clone();
+        mro.iter().any(|mro_class| {
+            crate::analyzer::types::is_class(*mro_class)
+                && ClassType::is_built_in(ClassType(*mro_class), Some(&["type".to_string()]))
+        })
+    }
 }
 
 // analyzer/typeUtils.ts:2350
 pub fn is_metaclass_instance(type_: P<Type>) -> bool {
-    todo!()
+    crate::analyzer::types::is_class_instance(type_) && {
+        let mro = ClassType(type_).d().shared.get().mro.borrow().clone();
+        mro.iter().any(|mro_class| {
+            crate::analyzer::types::is_class(*mro_class)
+                && ClassType::is_built_in(ClassType(*mro_class), Some(&["type".to_string()]))
+        })
+    }
 }
 
 // analyzer/typeUtils.ts:2357
@@ -700,19 +2824,185 @@ pub fn is_effectively_instantiable(
     options: Option<&IsInstantiableOptions>,
     recursion_count: u32,
 ) -> bool {
-    todo!()
+    if recursion_count > crate::analyzer::types::MAX_TYPE_RECURSION_COUNT {
+        return false;
+    }
+
+    let recursion_count = recursion_count + 1;
+
+    if crate::analyzer::types::TypeBase::is_instantiable(type_) {
+        return true;
+    }
+
+    if options.is_some_and(|options| options.honor_type_var_bounds.unwrap_or(false))
+        && crate::analyzer::types::is_type_var(type_)
+    {
+        if let Some(bound_type) = TypeVarType(type_).d().shared.get().bound_type.get() {
+            if is_effectively_instantiable(bound_type, options, recursion_count) {
+                return true;
+            }
+        }
+    }
+
+    // Handle the special case of 'type' (or subclasses thereof),
+    // which are instantiable.
+    if is_metaclass_instance(type_) {
+        return true;
+    }
+
+    if crate::analyzer::types::is_union(type_) {
+        let subtypes = crate::analyzer::types::UnionType(type_).d().priv_.borrow().subtypes.clone();
+        return subtypes.iter().all(|subtype| is_effectively_instantiable(*subtype, options, recursion_count));
+    }
+
+    false
 }
 
 // analyzer/typeUtils.ts:2391
 /// TS defaults: includeSubclasses = true.
 pub fn convert_to_instance(type_: P<Type>, include_subclasses: bool) -> P<Type> {
-    todo!()
+    // See if we've already performed this conversion and cached it.
+    let cached_instance_type = type_.cached.borrow().as_ref().and_then(|cached| cached.instance_type);
+    if let Some(cached_instance_type) = cached_instance_type {
+        if include_subclasses {
+            return cached_instance_type;
+        }
+    }
+
+    let mut result = map_subtypes(
+        type_,
+        &mut |subtype| {
+            match subtype.category {
+                crate::analyzer::types::TypeCategory::Class => {
+                    let class_subtype = ClassType(subtype);
+                    // Handle type[x] as a special case.
+                    if ClassType::is_built_in(class_subtype, Some(&["type".to_string()])) {
+                        let type_args = class_subtype.d().priv_.borrow().type_args.clone();
+                        if crate::analyzer::types::TypeBase::is_instance(subtype) {
+                            match type_args {
+                                Some(type_args) if !type_args.is_empty() => {
+                                    return Some(type_args[0]);
+                                }
+                                _ => {
+                                    return Some(crate::analyzer::types::UnknownType::create(false).0);
+                                }
+                            }
+                        } else if let Some(type_args) = type_args {
+                            if !type_args.is_empty() && !crate::analyzer::types::is_any_or_unknown(type_args[0]) {
+                                return Some(convert_to_instantiable(type_args[0], true));
+                            }
+                        }
+                    }
+
+                    return Some(ClassType::clone_as_instance(class_subtype, include_subclasses).0);
+                }
+
+                crate::analyzer::types::TypeCategory::Function => {
+                    if crate::analyzer::types::TypeBase::is_instantiable(subtype) {
+                        return Some(FunctionType::clone_as_instance(FunctionType(subtype)).0);
+                    }
+                }
+
+                crate::analyzer::types::TypeCategory::TypeVar => {
+                    if crate::analyzer::types::TypeBase::is_instantiable(subtype) {
+                        return Some(TypeVarType::clone_as_instance(TypeVarType(subtype)).0);
+                    }
+                }
+
+                crate::analyzer::types::TypeCategory::Any => {
+                    return Some(crate::analyzer::types::AnyType::convert_to_instance(crate::analyzer::types::AnyType(subtype)).0);
+                }
+
+                crate::analyzer::types::TypeCategory::Unknown => {
+                    return Some(
+                        crate::analyzer::types::UnknownType::convert_to_instance(crate::analyzer::types::UnknownType(subtype)).0,
+                    );
+                }
+
+                crate::analyzer::types::TypeCategory::Never => {
+                    return Some(crate::analyzer::types::NeverType::convert_to_instance(crate::analyzer::types::NeverType(subtype)).0);
+                }
+
+                crate::analyzer::types::TypeCategory::Unbound => {
+                    return Some(
+                        crate::analyzer::types::UnboundType::convert_to_instance(crate::analyzer::types::UnboundType(subtype)).0,
+                    );
+                }
+
+                _ => {}
+            }
+
+            Some(subtype)
+        },
+        Some(&MapSubtypesOptions {
+            skip_elide_redundant_literals: Some(true),
+            ..Default::default()
+        }),
+    );
+
+    // Copy over any type alias information.
+    let alias_info = type_.props.borrow().as_ref().and_then(|props| props.type_alias_info.clone());
+    if let Some(alias_info) = alias_info {
+        if type_ != result {
+            result = crate::analyzer::types::TypeBase::clone_for_type_alias(result, &alias_info);
+        }
+    }
+
+    if type_ != result && include_subclasses {
+        // Cache the converted value for next time.
+        let mut cached = type_.cached.borrow_mut();
+        if cached.is_none() {
+            *cached = Some(crate::analyzer::types::CachedTypeInfo::default());
+        }
+        cached.as_mut().unwrap().instance_type = Some(result);
+    }
+
+    result
 }
 
 // analyzer/typeUtils.ts:2477
 /// TS defaults: includeSubclasses = true.
 pub fn convert_to_instantiable(type_: P<Type>, include_subclasses: bool) -> P<Type> {
-    todo!()
+    // See if we've already performed this conversion and cached it.
+    let cached_instantiable_type = type_.cached.borrow().as_ref().and_then(|cached| cached.instantiable_type);
+    if let Some(cached_instantiable_type) = cached_instantiable_type {
+        return cached_instantiable_type;
+    }
+
+    let result = map_subtypes(
+        type_,
+        &mut |subtype| {
+            match subtype.category {
+                crate::analyzer::types::TypeCategory::Class => {
+                    return Some(ClassType::clone_as_instantiable(ClassType(subtype), include_subclasses).0);
+                }
+
+                crate::analyzer::types::TypeCategory::Function => {
+                    return Some(FunctionType::clone_as_instantiable(FunctionType(subtype)).0);
+                }
+
+                crate::analyzer::types::TypeCategory::TypeVar => {
+                    return Some(TypeVarType::clone_as_instantiable(TypeVarType(subtype)).0);
+                }
+
+                _ => {}
+            }
+
+            Some(subtype)
+        },
+        None,
+    );
+
+    if type_ != result {
+        // Cache the converted value for next time.
+        let mut cached = type_.cached.borrow_mut();
+        if cached.is_none() {
+            *cached = Some(crate::analyzer::types::CachedTypeInfo::default());
+        }
+        cached.as_mut().unwrap().instantiable_type = Some(result);
+    }
+
+    result
 }
 
 // analyzer/typeUtils.ts:2512
@@ -721,46 +3011,529 @@ pub fn get_members_for_class(
     symbol_table: SymbolTable,
     include_instance_vars: bool,
 ) {
-    todo!()
+    let mro = class_type.d().shared.get().mro.borrow().clone();
+    for mro_class in mro {
+        if crate::analyzer::types::is_instantiable_class(mro_class) {
+            // Add any new member variables from this class.
+            let is_class_typed_dict = ClassType::is_typed_dict_class(ClassType(mro_class));
+            ClassType::get_symbol_table(ClassType(mro_class)).for_each(|symbol, name| {
+                if symbol.is_class_member()
+                    || symbol.is_named_tuple_member_member()
+                    || (include_instance_vars && symbol.is_instance_member())
+                {
+                    if !is_class_typed_dict
+                        || !crate::analyzer::symbol_utils::is_typed_dict_member_accessed_through_index(symbol)
+                    {
+                        if !symbol.is_init_var() {
+                            let existing_symbol = symbol_table.get(name);
+
+                            match existing_symbol {
+                                None => {
+                                    symbol_table.set(name, symbol);
+                                }
+                                Some(existing_symbol) => {
+                                    if !existing_symbol.has_typed_declarations() && symbol.has_typed_declarations() {
+                                        // If the existing symbol is unannotated but a parent class
+                                        // has an annotation for the symbol, use the parent type instead.
+                                        symbol_table.set(name, symbol);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+        }
+    }
+
+    // Add members of the metaclass as well.
+    if !include_instance_vars {
+        let metaclass = class_type.d().shared.get().effective_metaclass.get();
+        if let Some(metaclass) = metaclass {
+            if crate::analyzer::types::is_instantiable_class(metaclass) {
+                let metaclass_mro = ClassType(metaclass).d().shared.get().mro.borrow().clone();
+                for mro_class in metaclass_mro {
+                    if crate::analyzer::types::is_instantiable_class(mro_class) {
+                        ClassType::get_symbol_table(ClassType(mro_class)).for_each(|symbol, name| {
+                            let existing_symbol = symbol_table.get(name);
+
+                            match existing_symbol {
+                                None => {
+                                    symbol_table.set(name, symbol);
+                                }
+                                Some(existing_symbol) => {
+                                    if !existing_symbol.has_typed_declarations() && symbol.has_typed_declarations() {
+                                        // If the existing symbol is unannotated but a parent class
+                                        // has an annotation for the symbol, use the parent type instead.
+                                        symbol_table.set(name, symbol);
+                                    }
+                                }
+                            }
+                        });
+                    } else {
+                        break;
+                    }
+                }
+            }
+        }
+    }
 }
 
 // analyzer/typeUtils.ts:2566
 pub fn get_members_for_module(module_type: ModuleType, symbol_table: SymbolTable) {
-    todo!()
+    // Start with the loader fields. If there are any symbols of the
+    // same name defined within the module, they will overwrite the
+    // loader fields.
+    let (loader_fields, fields) = {
+        let priv_ = module_type.d().priv_.borrow();
+        (priv_.loader_fields, priv_.fields)
+    };
+    loader_fields.for_each(|symbol, name| {
+        symbol_table.set(name, symbol);
+    });
+
+    fields.for_each(|symbol, name| {
+        symbol_table.set(name, symbol);
+    });
 }
 
 // analyzer/typeUtils.ts:2582
 /// TS defaults: includeUnknown = true.
 /// Nested in the TS body: class AnyWalker (:2583).
 pub fn contains_any_recursive(type_: P<Type>, include_unknown: bool) -> bool {
-    todo!()
+    struct AnyWalker {
+        found_any: bool,
+        _include_unknown: bool,
+        _recursion_count: u32,
+        _is_walk_canceled: bool,
+        _hit_recursion_limit: bool,
+    }
+
+    impl crate::analyzer::type_walker::TypeWalker for AnyWalker {
+        fn _recursion_count(&self) -> u32 {
+            self._recursion_count
+        }
+
+        fn _recursion_count_mut(&mut self) -> &mut u32 {
+            &mut self._recursion_count
+        }
+
+        fn _is_walk_canceled(&self) -> bool {
+            self._is_walk_canceled
+        }
+
+        fn _is_walk_canceled_mut(&mut self) -> &mut bool {
+            &mut self._is_walk_canceled
+        }
+
+        fn _hit_recursion_limit(&self) -> bool {
+            self._hit_recursion_limit
+        }
+
+        fn _hit_recursion_limit_mut(&mut self) -> &mut bool {
+            &mut self._hit_recursion_limit
+        }
+
+        // AnyWalker.visitAny (typeUtils.ts:2590)
+        fn visit_any(&mut self, type_: crate::analyzer::types::AnyType) {
+            self.found_any = true;
+            self.cancel_walk();
+        }
+
+        // AnyWalker.visitUnknown (typeUtils.ts:2595)
+        fn visit_unknown(&mut self, type_: crate::analyzer::types::UnknownType) {
+            if self._include_unknown {
+                self.found_any = true;
+                self.cancel_walk();
+            }
+        }
+    }
+
+    let mut walker = AnyWalker {
+        found_any: false,
+        _include_unknown: include_unknown,
+        _recursion_count: 0,
+        _is_walk_canceled: false,
+        _hit_recursion_limit: false,
+    };
+    crate::analyzer::type_walker::TypeWalker::walk(&mut walker, type_);
+    walker.found_any
 }
 
 // analyzer/typeUtils.ts:2612
 /// Nested in the TS body: class AnyOrUnknownWalker (:2613).
 pub fn contains_any_or_unknown(type_: P<Type>, recurse: bool) -> Option<P<Type>> {
-    todo!()
+    struct AnyOrUnknownWalker {
+        any_or_unknown_type: Option<P<Type>>,
+        _recurse: bool,
+        _recursion_count: u32,
+        _is_walk_canceled: bool,
+        _hit_recursion_limit: bool,
+    }
+
+    impl crate::analyzer::type_walker::TypeWalker for AnyOrUnknownWalker {
+        fn _recursion_count(&self) -> u32 {
+            self._recursion_count
+        }
+
+        fn _recursion_count_mut(&mut self) -> &mut u32 {
+            &mut self._recursion_count
+        }
+
+        fn _is_walk_canceled(&self) -> bool {
+            self._is_walk_canceled
+        }
+
+        fn _is_walk_canceled_mut(&mut self) -> &mut bool {
+            &mut self._is_walk_canceled
+        }
+
+        fn _hit_recursion_limit(&self) -> bool {
+            self._hit_recursion_limit
+        }
+
+        fn _hit_recursion_limit_mut(&mut self) -> &mut bool {
+            &mut self._hit_recursion_limit
+        }
+
+        // AnyOrUnknownWalker.visitTypeAlias (typeUtils.ts:2620)
+        fn visit_type_alias(&mut self, type_: P<Type>) {
+            // Don't explore type aliases.
+        }
+
+        // AnyOrUnknownWalker.visitUnknown (typeUtils.ts:2624)
+        fn visit_unknown(&mut self, type_: crate::analyzer::types::UnknownType) {
+            self.any_or_unknown_type = Some(match self.any_or_unknown_type {
+                Some(any_or_unknown_type) => preserve_unknown(any_or_unknown_type, type_.0),
+                None => type_.0,
+            });
+        }
+
+        // AnyOrUnknownWalker.visitAny (typeUtils.ts:2628)
+        fn visit_any(&mut self, type_: crate::analyzer::types::AnyType) {
+            self.any_or_unknown_type = Some(match self.any_or_unknown_type {
+                Some(any_or_unknown_type) => preserve_unknown(any_or_unknown_type, type_.0),
+                None => type_.0,
+            });
+        }
+
+        // AnyOrUnknownWalker.visitClass (typeUtils.ts:2632)
+        fn visit_class(&mut self, type_: ClassType) {
+            if self._recurse {
+                // super.visitClass(type): the body of TypeWalker.visitClass (typeWalker.ts:174),
+                // since a Rust override cannot call the trait's default method.
+                if !ClassType::is_pseudo_generic_class(type_) {
+                    // `tupleTypeArgs?.map(..) || typeArgs`: an empty mapped array is truthy.
+                    let type_args = {
+                        let priv_ = type_.d().priv_.borrow();
+                        match &priv_.tuple_type_args {
+                            Some(tuple_type_args) => Some(tuple_type_args.iter().map(|t| t.type_).collect::<Vec<_>>()),
+                            None => priv_.type_args.clone(),
+                        }
+                    };
+                    if let Some(type_args) = type_args {
+                        for arg_type in type_args {
+                            self.walk(arg_type);
+                            if self._is_walk_canceled() {
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // AnyOrUnknownWalker.visitFunction (typeUtils.ts:2638)
+        fn visit_function(&mut self, type_: FunctionType) {
+            if self._recurse {
+                // A function with a "..." type is effectively an "Any".
+                if FunctionType::is_gradual_callable_form(type_) {
+                    self.any_or_unknown_type = Some(match self.any_or_unknown_type {
+                        Some(any_or_unknown_type) => {
+                            preserve_unknown(any_or_unknown_type, crate::analyzer::types::AnyType::create(false).0)
+                        }
+                        None => crate::analyzer::types::AnyType::create(false).0,
+                    });
+                }
+
+                // super.visitFunction(type): the body of TypeWalker.visitFunction (typeWalker.ts:139).
+                let shared = type_.d().shared.get();
+                let param_count = shared.parameters.get().borrow().len();
+                for i in 0..param_count {
+                    // Ignore parameters such as "*" that have no name.
+                    let has_name = shared.parameters.get().borrow()[i]
+                        .name
+                        .as_deref()
+                        .is_some_and(|name| !name.is_empty());
+                    if has_name {
+                        let param_type = FunctionType::get_param_type(type_, i32::try_from(i).unwrap());
+                        self.walk(param_type);
+                        if self._is_walk_canceled() {
+                            break;
+                        }
+                    }
+                }
+
+                if !self._is_walk_canceled() && !FunctionType::is_param_spec_value(type_) {
+                    let return_type = shared.declared_return_type.get().or_else(|| {
+                        shared.inferred_return_type.borrow().as_ref().map(|inferred| inferred.type_)
+                    });
+                    if let Some(return_type) = return_type {
+                        self.walk(return_type);
+                    }
+                }
+            }
+        }
+    }
+
+    let mut walker = AnyOrUnknownWalker {
+        any_or_unknown_type: None,
+        _recurse: recurse,
+        _recursion_count: 0,
+        _is_walk_canceled: false,
+        _hit_recursion_limit: false,
+    };
+    crate::analyzer::type_walker::TypeWalker::walk(&mut walker, type_);
+    walker.any_or_unknown_type
 }
 
 // analyzer/typeUtils.ts:2661
 /// TS defaults: recursionCount = 0.
 pub fn is_partly_unknown(type_: P<Type>, recursion_count: u32) -> bool {
-    todo!()
+    if recursion_count > crate::analyzer::types::MAX_TYPE_RECURSION_COUNT {
+        return false;
+    }
+    let recursion_count = recursion_count + 1;
+
+    if crate::analyzer::types::is_unknown(type_) {
+        return true;
+    }
+
+    // If this is a generic type alias, see if any of its type arguments
+    // are either unspecified or are partially known.
+    let alias_type_args = type_
+        .props
+        .borrow()
+        .as_ref()
+        .and_then(|props| props.type_alias_info.as_ref().and_then(|info| info.type_args.clone()));
+    if let Some(alias_type_args) = alias_type_args {
+        if alias_type_args.iter().any(|type_arg| is_partly_unknown(*type_arg, recursion_count)) {
+            return true;
+        }
+    }
+
+    // See if a union contains an unknown type.
+    if crate::analyzer::types::is_union(type_) {
+        return crate::analyzer::types::find_subtype(type_, &mut |subtype| is_partly_unknown(subtype, recursion_count)).is_some();
+    }
+
+    // See if an object or class has an unknown type argument.
+    if crate::analyzer::types::is_class(type_) {
+        let class_type = ClassType(type_);
+        // If this is a reference to the class itself, as opposed to a reference
+        // to a type that represents the class and its subclasses, don't flag
+        // the type as partially unknown.
+        if !class_type.d().priv_.borrow().include_subclasses.unwrap_or(false) {
+            return false;
+        }
+
+        if !ClassType::is_pseudo_generic_class(class_type) {
+            // `tupleTypeArgs?.map(..) || typeArgs`: an empty mapped array is truthy.
+            let type_args = {
+                let priv_ = class_type.d().priv_.borrow();
+                match &priv_.tuple_type_args {
+                    Some(tuple_type_args) => Some(tuple_type_args.iter().map(|t| t.type_).collect::<Vec<_>>()),
+                    None => priv_.type_args.clone(),
+                }
+            };
+            if let Some(type_args) = type_args {
+                for arg_type in type_args {
+                    if is_partly_unknown(arg_type, recursion_count) {
+                        return true;
+                    }
+                }
+            }
+        }
+
+        return false;
+    }
+
+    // See if a function has an unknown type.
+    if crate::analyzer::types::is_overloaded(type_) {
+        return crate::analyzer::types::OverloadedType::get_overloads(crate::analyzer::types::OverloadedType(type_))
+            .iter()
+            .any(|overload| is_partly_unknown(overload.0, recursion_count));
+    }
+
+    if crate::analyzer::types::is_function(type_) {
+        let function_type = FunctionType(type_);
+        let shared = function_type.d().shared.get();
+        let param_count = shared.parameters.get().borrow().len();
+        for i in 0..param_count {
+            // Ignore parameters such as "*" that have no name.
+            let has_name = shared.parameters.get().borrow()[i].name.as_deref().is_some_and(|name| !name.is_empty());
+            if has_name {
+                let param_type = FunctionType::get_param_type(function_type, i32::try_from(i).unwrap());
+                if is_partly_unknown(param_type, recursion_count) {
+                    return true;
+                }
+            }
+        }
+
+        if let Some(declared_return_type) = shared.declared_return_type.get() {
+            if !FunctionType::is_param_spec_value(function_type) && is_partly_unknown(declared_return_type, recursion_count) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    false
 }
 
 // analyzer/typeUtils.ts:2743
 pub fn explode_generic_class(class_type: ClassType) -> P<Type> {
-    todo!()
+    let type_args = class_type.d().priv_.borrow().type_args.clone();
+    let Some(type_args) = type_args else {
+        return class_type.0;
+    };
+    if type_args.len() != 1 || !crate::analyzer::types::is_union(type_args[0]) {
+        return class_type.0;
+    }
+
+    let subtypes = crate::analyzer::types::UnionType(type_args[0]).d().priv_.borrow().subtypes.clone();
+    crate::analyzer::types::combine_types(
+        &subtypes
+            .iter()
+            .map(|subtype| ClassType::specialize(class_type, Some(&[*subtype]), None, false, None, None).0)
+            .collect::<Vec<_>>(),
+        None,
+    )
 }
 
 // analyzer/typeUtils.ts:2757
 pub fn combine_same_sized_tuples(type_: P<Type>, tuple_type: Option<P<Type>>) -> P<Type> {
-    todo!()
+    let Some(tuple_type) = tuple_type else {
+        return type_;
+    };
+    if !crate::analyzer::types::is_instantiable_class(tuple_type)
+        || is_unbounded_tuple_class(ClassType(tuple_type)).unwrap_or(false)
+    {
+        return type_;
+    }
+
+    let mut tuple_entries: Option<Vec<Vec<P<Type>>>> = None;
+    let mut is_valid = true;
+
+    do_for_each_subtype(
+        type_,
+        &mut |subtype, _, _| {
+            if crate::analyzer::types::is_class_instance(subtype) {
+                let mut tuple_class: Option<ClassType> = None;
+                if crate::analyzer::types::is_class(subtype)
+                    && is_tuple_class(ClassType(subtype))
+                    && !is_unbounded_tuple_class(ClassType(subtype)).unwrap_or(false)
+                {
+                    tuple_class = Some(ClassType(subtype));
+                }
+
+                if tuple_class.is_none() {
+                    // Look in the mro list to see if this subtype derives from a
+                    // tuple with a known size. This includes named tuples.
+                    let mro = ClassType(subtype).d().shared.get().mro.borrow().clone();
+                    tuple_class = mro
+                        .into_iter()
+                        .find(|mro_class| {
+                            crate::analyzer::types::is_class(*mro_class)
+                                && is_tuple_class(ClassType(*mro_class))
+                                && !is_unbounded_tuple_class(ClassType(*mro_class)).unwrap_or(false)
+                        })
+                        .map(ClassType);
+                }
+
+                let tuple_type_args = match tuple_class {
+                    Some(tuple_class) if crate::analyzer::types::is_class(tuple_class.0) => {
+                        tuple_class.d().priv_.borrow().tuple_type_args.clone()
+                    }
+                    _ => None,
+                };
+                if let Some(tuple_type_args) = tuple_type_args {
+                    if let Some(tuple_entries) = tuple_entries.as_mut() {
+                        if tuple_entries.len() == tuple_type_args.len() {
+                            for (index, entry) in tuple_type_args.iter().enumerate() {
+                                tuple_entries[index].push(entry.type_);
+                            }
+                        } else {
+                            is_valid = false;
+                        }
+                    } else {
+                        tuple_entries = Some(tuple_type_args.iter().map(|entry| vec![entry.type_]).collect());
+                    }
+                } else {
+                    is_valid = false;
+                }
+            } else {
+                is_valid = false;
+            }
+        },
+        false,
+    );
+
+    let tuple_entries = match tuple_entries {
+        Some(tuple_entries) if is_valid => tuple_entries,
+        _ => return type_,
+    };
+
+    convert_to_instance(
+        specialize_tuple_class(
+            ClassType(tuple_type),
+            &tuple_entries
+                .iter()
+                .map(|entry| TupleTypeArg {
+                    type_: crate::analyzer::types::combine_types(entry, None),
+                    is_unbounded: false,
+                    is_optional: None,
+                })
+                .collect::<Vec<_>>(),
+            true,
+            false,
+        )
+        .0,
+        true,
+    )
 }
 
 // analyzer/typeUtils.ts:2814
 pub fn combine_tuple_type_args(type_args: &[TupleTypeArg]) -> P<Type> {
-    todo!()
+    let mut types_to_combine: Vec<P<Type>> = Vec::new();
+
+    for t in type_args {
+        if crate::analyzer::types::is_type_var(t.type_) {
+            if crate::analyzer::types::is_unpacked_type_var_tuple(t.type_) {
+                // Treat the unpacked TypeVarTuple as a union.
+                types_to_combine.push(TypeVarType::clone_for_unpacked(TypeVarType(t.type_), true).0);
+                continue;
+            }
+
+            if crate::analyzer::types::is_unpacked_type_var(t.type_) {
+                let bound_type = TypeVarType(t.type_).d().shared.get().bound_type.get();
+                if let Some(bound_type) = bound_type {
+                    if crate::analyzer::types::is_class_instance(bound_type) && is_tuple_class(ClassType(bound_type)) {
+                        let bound_tuple_type_args = ClassType(bound_type).d().priv_.borrow().tuple_type_args.clone();
+                        if let Some(bound_tuple_type_args) = bound_tuple_type_args {
+                            types_to_combine.push(combine_tuple_type_args(&bound_tuple_type_args));
+                        }
+                    }
+                }
+                continue;
+            }
+        }
+
+        types_to_combine.push(t.type_);
+    }
+
+    crate::analyzer::types::combine_types(&types_to_combine, None)
 }
 
 // analyzer/typeUtils.ts:2847
@@ -771,32 +3544,148 @@ pub fn specialize_tuple_class(
     is_type_arg_explicit: bool,
     is_unpacked: bool,
 ) -> ClassType {
-    todo!()
+    let cloned_class_type = ClassType::specialize(
+        class_type,
+        Some(&[combine_tuple_type_args(type_args)]),
+        Some(is_type_arg_explicit),
+        // includeSubclasses: undefined, which ClassType.specialize defaults to false.
+        false,
+        Some(type_args),
+        None,
+    );
+
+    if is_unpacked {
+        cloned_class_type.d().priv_.borrow_mut().is_unpacked = Some(true);
+    }
+
+    cloned_class_type
 }
 
 // analyzer/typeUtils.ts:2868
 pub(crate) fn _expand_unpacked_type_var_tuple_union(type_: P<Type>) -> P<Type> {
-    todo!()
+    if crate::analyzer::types::is_class_instance(type_) && is_tuple_class(ClassType(type_)) {
+        let (tuple_type_args, is_unpacked) = {
+            let priv_ = ClassType(type_).d().priv_.borrow();
+            (priv_.tuple_type_args.clone(), priv_.is_unpacked.unwrap_or(false))
+        };
+        if let Some(tuple_type_args) = tuple_type_args {
+            if is_unpacked {
+                return crate::analyzer::types::combine_types(
+                    &tuple_type_args.iter().map(|t| t.type_).collect::<Vec<_>>(),
+                    None,
+                );
+            }
+        }
+    }
+
+    type_
 }
 
 // analyzer/typeUtils.ts:2877
 pub fn make_packed(type_: P<Type>) -> P<Type> {
-    todo!()
+    if crate::analyzer::types::is_unpacked_class(type_) {
+        return ClassType::clone_for_packed(ClassType(type_)).0;
+    }
+
+    if crate::analyzer::types::is_unpacked_type_var_tuple(type_)
+        && !TypeVarType(type_).d().priv_.borrow().is_in_union.unwrap_or(false)
+    {
+        return TypeVarType::clone_for_packed(TypeVarType(type_)).0;
+    }
+
+    if crate::analyzer::types::is_unpacked_type_var(type_) {
+        return TypeVarType::clone_for_packed(TypeVarType(type_)).0;
+    }
+
+    type_
 }
 
 // analyzer/typeUtils.ts:2893
 pub fn make_unpacked(type_: P<Type>) -> P<Type> {
-    todo!()
+    if crate::analyzer::types::is_class(type_) {
+        return ClassType::clone_for_unpacked(ClassType(type_)).0;
+    }
+
+    if crate::analyzer::types::is_type_var_tuple(type_) && !TypeVarType(type_).d().priv_.borrow().is_in_union.unwrap_or(false) {
+        return TypeVarType::clone_for_unpacked(TypeVarType(type_), false).0;
+    }
+
+    if crate::analyzer::types::is_type_var(type_) {
+        return TypeVarType::clone_for_unpacked(TypeVarType(type_), false).0;
+    }
+
+    type_
 }
 
 // analyzer/typeUtils.ts:2911
 pub fn get_generator_type_args(return_type: P<Type>) -> Option<Vec<P<Type>>> {
-    todo!()
+    if crate::analyzer::types::is_class_instance(return_type) {
+        let class_type = ClassType(return_type);
+        if ClassType::is_built_in(class_type, Some(&["Generator".to_string(), "AsyncGenerator".to_string()])) {
+            return class_type.d().priv_.borrow().type_args.clone();
+        } else if ClassType::is_built_in(class_type, Some(&["AwaitableGenerator".to_string()])) {
+            // AwaitableGenerator has four type arguments, and the first 3
+            // correspond to the generator.
+            return class_type
+                .d()
+                .priv_
+                .borrow()
+                .type_args
+                .as_ref()
+                .map(|type_args| type_args.iter().take(3).copied().collect());
+        }
+    }
+
+    None
 }
 
 // analyzer/typeUtils.ts:2925
 pub fn requires_type_args(class_type: ClassType) -> bool {
-    todo!()
+    let first_type_param = class_type.d().shared.get().type_params.borrow().first().copied();
+    if let Some(first_type_param) = first_type_param {
+        // If there are type parameters, type arguments are needed.
+        // The exception is if type parameters have been synthesized
+        // for classes that have untyped constructors.
+        if first_type_param.d().shared.get().is_synthesized.get() {
+            return false;
+        }
+
+        // If the first type parameter has a default type, then no
+        // type arguments are needed.
+        if first_type_param.d().shared.get().is_default_explicit.get() {
+            return false;
+        }
+
+        return true;
+    }
+
+    // There are a few built-in special classes that require
+    // type arguments even though typeParams is empty.
+    if ClassType::is_special_built_in(class_type, None) {
+        let special_classes = [
+            "Tuple",
+            "Callable",
+            "Generic",
+            "Type",
+            "Optional",
+            "Union",
+            "Literal",
+            "Annotated",
+            "TypeGuard",
+            "TypeIs",
+        ];
+
+        // `classType.priv.aliasName || classType.shared.name`: an empty alias name falls back.
+        let name = match class_type.d().priv_.borrow().alias_name.clone() {
+            Some(alias_name) if !alias_name.is_empty() => alias_name,
+            _ => class_type.d().shared.get().name.clone(),
+        };
+        if special_classes.iter().any(|t| *t == name) {
+            return true;
+        }
+    }
+
+    false
 }
 
 // analyzer/typeUtils.ts:2969
@@ -806,7 +3695,32 @@ pub fn requires_specialization(
     options: Option<&RequiresSpecializationOptions>,
     recursion_count: u32,
 ) -> bool {
-    todo!()
+    if recursion_count > crate::analyzer::types::MAX_TYPE_RECURSION_COUNT {
+        return false;
+    }
+    let recursion_count = recursion_count + 1;
+
+    // Is the answer cached?
+    let can_use_cache = !options.and_then(|options| options.ignore_pseudo_generic).unwrap_or(false)
+        && !options.and_then(|options| options.ignore_self).unwrap_or(false);
+    if can_use_cache {
+        let cached = type_.cached.borrow().as_ref().and_then(|cached| cached.requires_specialization);
+        if let Some(cached) = cached {
+            return cached;
+        }
+    }
+
+    let result = _requires_specialization(type_, options, recursion_count);
+
+    if can_use_cache {
+        let mut cached = type_.cached.borrow_mut();
+        if cached.is_none() {
+            *cached = Some(crate::analyzer::types::CachedTypeInfo::default());
+        }
+        cached.as_mut().unwrap().requires_specialization = Some(result);
+    }
+
+    result
 }
 
 // analyzer/typeUtils.ts:2997
@@ -816,33 +3730,421 @@ pub(crate) fn _requires_specialization(
     options: Option<&RequiresSpecializationOptions>,
     recursion_count: u32,
 ) -> bool {
-    todo!()
+    // If the type is conditioned on a TypeVar, it may need to be specialized.
+    if type_.props.borrow().as_ref().is_some_and(|props| props.condition.is_some()) {
+        return true;
+    }
+
+    match type_.category {
+        crate::analyzer::types::TypeCategory::Class => {
+            let class_type = ClassType(type_);
+            if ClassType::is_pseudo_generic_class(class_type)
+                && options.and_then(|options| options.ignore_pseudo_generic).unwrap_or(false)
+            {
+                return false;
+            }
+
+            let (is_type_arg_explicit, tuple_type_args, type_args) = {
+                let priv_ = class_type.d().priv_.borrow();
+                (priv_.is_type_arg_explicit.unwrap_or(false), priv_.tuple_type_args.clone(), priv_.type_args.clone())
+            };
+
+            if !is_type_arg_explicit && options.and_then(|options| options.ignore_implicit_type_args).unwrap_or(false) {
+                return false;
+            }
+
+            if let Some(tuple_type_args) = tuple_type_args {
+                if tuple_type_args
+                    .iter()
+                    .any(|type_arg| requires_specialization(type_arg.type_, options, recursion_count))
+                {
+                    return true;
+                }
+            }
+
+            if let Some(type_args) = type_args {
+                return type_args.iter().any(|type_arg| requires_specialization(*type_arg, options, recursion_count));
+            }
+
+            return !ClassType::get_type_params(class_type).is_empty();
+        }
+
+        crate::analyzer::types::TypeCategory::Function => {
+            let function_type = FunctionType(type_);
+            let shared = function_type.d().shared.get();
+            let param_count = shared.parameters.get().borrow().len();
+            for i in 0..param_count {
+                if requires_specialization(
+                    FunctionType::get_param_type(function_type, i32::try_from(i).unwrap()),
+                    options,
+                    recursion_count,
+                ) {
+                    return true;
+                }
+            }
+
+            let specialized_return_type = function_type
+                .d()
+                .priv_
+                .borrow()
+                .specialized_types
+                .and_then(|specialized_types| specialized_types.return_type.get());
+            let declared_return_type = match specialized_return_type {
+                Some(specialized_return_type) => Some(specialized_return_type),
+                None => shared.declared_return_type.get(),
+            };
+            if let Some(declared_return_type) = declared_return_type {
+                if requires_specialization(declared_return_type, options, recursion_count) {
+                    return true;
+                }
+            } else {
+                let inferred_return_type = shared.inferred_return_type.borrow().as_ref().map(|inferred| inferred.type_);
+                if let Some(inferred_return_type) = inferred_return_type {
+                    if requires_specialization(inferred_return_type, options, recursion_count) {
+                        return true;
+                    }
+                }
+            }
+
+            return false;
+        }
+
+        crate::analyzer::types::TypeCategory::Overloaded => {
+            let overloaded_type = crate::analyzer::types::OverloadedType(type_);
+            let overloads = crate::analyzer::types::OverloadedType::get_overloads(overloaded_type);
+            if overloads
+                .iter()
+                .any(|overload| requires_specialization(overload.0, options, recursion_count))
+            {
+                return true;
+            }
+
+            let impl_ = crate::analyzer::types::OverloadedType::get_implementation(overloaded_type);
+            if let Some(impl_) = impl_ {
+                return requires_specialization(impl_, options, recursion_count);
+            }
+
+            return false;
+        }
+
+        crate::analyzer::types::TypeCategory::Union => {
+            let subtypes = crate::analyzer::types::UnionType(type_).d().priv_.borrow().subtypes.clone();
+            return subtypes
+                .iter()
+                .any(|subtype| requires_specialization(*subtype, options, recursion_count));
+        }
+
+        crate::analyzer::types::TypeCategory::TypeVar => {
+            let type_var = TypeVarType(type_);
+            // Most TypeVar types need to be specialized.
+            if type_var.d().shared.get().recursive_alias.get().is_none() {
+                if TypeVarType::is_self(type_var) && options.and_then(|options| options.ignore_self).unwrap_or(false) {
+                    return false;
+                }
+
+                return true;
+            }
+
+            // If this is a recursive type alias, it may need to be specialized
+            // if it has generic type arguments.
+            let alias_type_args = type_
+                .props
+                .borrow()
+                .as_ref()
+                .and_then(|props| props.type_alias_info.as_ref().and_then(|info| info.type_args.clone()));
+            if let Some(alias_type_args) = alias_type_args {
+                return alias_type_args
+                    .iter()
+                    .any(|type_arg| requires_specialization(*type_arg, options, recursion_count));
+            }
+        }
+
+        _ => {}
+    }
+
+    false
 }
 
 // analyzer/typeUtils.ts:3096
 pub fn invert_variance(variance: Variance) -> Variance {
-    todo!()
+    if variance == Variance::Contravariant {
+        return Variance::Covariant;
+    }
+
+    if variance == Variance::Covariant {
+        return Variance::Contravariant;
+    }
+
+    variance
 }
 
 // analyzer/typeUtils.ts:3109
 pub fn combine_variances(variance1: Variance, variance2: Variance) -> Variance {
-    todo!()
+    if variance1 == Variance::Unknown {
+        return variance2;
+    }
+
+    if variance2 == Variance::Invariant
+        || (variance2 == Variance::Covariant && variance1 == Variance::Contravariant)
+        || (variance2 == Variance::Contravariant && variance1 == Variance::Covariant)
+    {
+        return Variance::Invariant;
+    }
+
+    variance1
 }
 
 // analyzer/typeUtils.ts:3127
 pub fn is_variance_of_type_arg_compatible(type_: P<Type>, type_param_variance: Variance) -> bool {
-    todo!()
+    if type_param_variance == Variance::Unknown || type_param_variance == Variance::Auto {
+        return true;
+    }
+
+    if crate::analyzer::types::is_type_var(type_)
+        && !crate::analyzer::types::is_param_spec(type_)
+        && !crate::analyzer::types::is_type_var_tuple(type_)
+    {
+        let type_arg_variance = TypeVarType(type_).d().shared.get().declared_variance.get();
+
+        if type_arg_variance == Variance::Contravariant || type_arg_variance == Variance::Covariant {
+            return type_arg_variance == type_param_variance;
+        }
+    } else if crate::analyzer::types::is_class_instance(type_) {
+        let class_type = ClassType(type_);
+        let type_params = class_type.d().shared.get().type_params.borrow().clone();
+        if !type_params.is_empty() {
+            return type_params.iter().enumerate().all(|(index, type_param)| {
+                let mut type_arg_type: Option<P<Type>> = None;
+
+                if crate::analyzer::types::is_param_spec(type_param.0) || crate::analyzer::types::is_type_var_tuple(type_param.0) {
+                    return true;
+                }
+
+                let type_args = class_type.d().priv_.borrow().type_args.clone();
+                if let Some(type_args) = type_args {
+                    if index < type_args.len() {
+                        type_arg_type = Some(type_args[index]);
+                    }
+                }
+
+                let declared_variance = type_param.d().shared.get().declared_variance.get();
+                if declared_variance == Variance::Auto {
+                    return true;
+                }
+
+                let mut effective_variance = Variance::Invariant;
+                if declared_variance == Variance::Covariant {
+                    // If the declared variance is covariant, the effective variance
+                    // is simply copied from the type param variance.
+                    effective_variance = type_param_variance;
+                } else if declared_variance == Variance::Contravariant {
+                    // If the declared variance is contravariant, it flips the
+                    // effective variance from contravariant to covariant or vice versa.
+                    if type_param_variance == Variance::Covariant {
+                        effective_variance = Variance::Contravariant;
+                    } else if type_param_variance == Variance::Contravariant {
+                        effective_variance = Variance::Covariant;
+                    }
+                }
+
+                is_variance_of_type_arg_compatible(
+                    type_arg_type.unwrap_or_else(|| crate::analyzer::types::UnknownType::create(false).0),
+                    effective_variance,
+                )
+            });
+        }
+    }
+
+    true
 }
 
 // analyzer/typeUtils.ts:3183
 /// Nested in the TS body: isInTail (:3256), filterClass (:3269).
 pub fn compute_mro_linearization(class_type: ClassType) -> bool {
-    todo!()
+    let mut is_mro_found = true;
+    let shared = class_type.d().shared.get();
+
+    // Clear out any existing MRO information.
+    *shared.mro.borrow_mut() = Vec::new();
+
+    let base_classes = shared.base_classes.borrow().clone();
+    let filtered_base_classes: Vec<P<Type>> = base_classes
+        .iter()
+        .enumerate()
+        .filter(|(index, base_class)| {
+            let base_class = **base_class;
+            if crate::analyzer::types::is_instantiable_class(base_class) {
+                // Generic has some special-case logic (see description of __mro_entries__
+                // in PEP 560) that we need to account for here.
+                if ClassType::is_built_in(ClassType(base_class), Some(&["Generic".to_string()])) {
+                    // If the class is a Protocol or TypedDict, the generic is ignored for
+                    // the purposes of computing the MRO.
+                    if ClassType::is_protocol_class(class_type) || ClassType::is_typed_dict_class(class_type) {
+                        return false;
+                    }
+
+                    // If the class contains any specialized generic classes after
+                    // the Generic base, the Generic base is ignored for purposes
+                    // of computing the MRO.
+                    let current_base_classes = shared.base_classes.borrow().clone();
+                    if current_base_classes.iter().enumerate().any(|(inner_index, inner_base_class)| {
+                        inner_index > *index
+                            && crate::analyzer::types::is_instantiable_class(*inner_base_class)
+                            && {
+                                let priv_ = ClassType(*inner_base_class).d().priv_.borrow();
+                                priv_.type_args.is_some() && priv_.is_type_arg_explicit.unwrap_or(false)
+                            }
+                    }) {
+                        return false;
+                    }
+                }
+            }
+
+            true
+        })
+        .map(|(_, base_class)| *base_class)
+        .collect();
+
+    // Construct the list of class lists that need to be merged.
+    let mut class_lists_to_merge: Vec<Vec<P<Type>>> = Vec::new();
+
+    for base_class in &filtered_base_classes {
+        let base_class = *base_class;
+        if crate::analyzer::types::is_instantiable_class(base_class) {
+            let solution = build_solution_from_specialized_class(ClassType(base_class));
+            let base_mro = ClassType(base_class).d().shared.get().mro.borrow().clone();
+            class_lists_to_merge.push(
+                base_mro
+                    .iter()
+                    .map(|mro_class| apply_solved_type_vars(*mro_class, &solution, &Default::default()))
+                    .collect(),
+            );
+        } else {
+            class_lists_to_merge.push(vec![base_class]);
+        }
+    }
+
+    class_lists_to_merge.push(
+        filtered_base_classes
+            .iter()
+            .map(|base_class| {
+                let solution = build_solution_from_specialized_class(class_type);
+                apply_solved_type_vars(*base_class, &solution, &Default::default())
+            })
+            .collect(),
+    );
+
+    // The first class in the MRO is the class itself.
+    let solution = build_solution_from_specialized_class(class_type);
+    let mut specialized_class_type = apply_solved_type_vars(class_type.0, &solution, &Default::default());
+    if !crate::analyzer::types::is_class(specialized_class_type)
+        && !crate::analyzer::types::is_any_or_unknown(specialized_class_type)
+    {
+        specialized_class_type = crate::analyzer::types::UnknownType::create(false).0;
+    }
+
+    shared.mro.borrow_mut().push(specialized_class_type);
+
+    // Helper function that returns true if the specified searchClass
+    // is found in the "tail" (i.e. in elements 1 through n) of any
+    // of the class lists.
+    let is_in_tail = |search_class: ClassType, class_lists: &[Vec<P<Type>>]| -> bool {
+        class_lists.iter().any(|class_list| {
+            class_list
+                .iter()
+                .position(|value| {
+                    crate::analyzer::types::is_instantiable_class(*value)
+                        && ClassType::is_same_generic_class(ClassType(*value), search_class, 0)
+                })
+                .is_some_and(|index| index > 0)
+        })
+    };
+
+    // Helper function that filters the class lists to remove any duplicate
+    // entries of the specified class. This is used once the class has been
+    // added to the MRO.
+    let filter_class = |class_to_filter: ClassType, class_lists: &mut Vec<Vec<P<Type>>>| {
+        for class_list in class_lists.iter_mut() {
+            *class_list = class_list
+                .iter()
+                .copied()
+                .filter(|value| {
+                    !crate::analyzer::types::is_instantiable_class(*value)
+                        || !ClassType::is_same_generic_class(ClassType(*value), class_to_filter, 0)
+                })
+                .collect();
+        }
+    };
+
+    loop {
+        let mut found_valid_head = false;
+        // `nonEmptyList` is the first non-empty list, by index: no filterClass call replaces
+        // the lists between where it is found and where it is used below.
+        let mut non_empty_list: Option<usize> = None;
+
+        for i in 0..class_lists_to_merge.len() {
+            if !class_lists_to_merge[i].is_empty() {
+                if non_empty_list.is_none() {
+                    non_empty_list = Some(i);
+                }
+
+                let first = class_lists_to_merge[i][0];
+                if !crate::analyzer::types::is_instantiable_class(first) {
+                    found_valid_head = true;
+                    let mut head = first;
+                    if !crate::analyzer::types::is_class(head) && !crate::analyzer::types::is_any_or_unknown(head) {
+                        head = crate::analyzer::types::UnknownType::create(false).0;
+                    }
+                    shared.mro.borrow_mut().push(head);
+                    class_lists_to_merge[i].remove(0);
+                    break;
+                }
+
+                if !is_in_tail(ClassType(first), &class_lists_to_merge) {
+                    found_valid_head = true;
+                    shared.mro.borrow_mut().push(first);
+                    filter_class(ClassType(first), &mut class_lists_to_merge);
+                    break;
+                }
+            }
+        }
+
+        // If all lists are empty, we are done.
+        let Some(non_empty_list) = non_empty_list else {
+            break;
+        };
+
+        // We made it all the way through the list of class lists without
+        // finding a valid head, but there is at least one list that's not
+        // yet empty. This means there's no valid MRO order.
+        if !found_valid_head {
+            is_mro_found = false;
+
+            // Handle the situation by pull the head off the first empty list.
+            // This allows us to make forward progress.
+            let first = class_lists_to_merge[non_empty_list][0];
+            if !crate::analyzer::types::is_instantiable_class(first) {
+                let mut head = first;
+                if !crate::analyzer::types::is_class(head) && !crate::analyzer::types::is_any_or_unknown(head) {
+                    head = crate::analyzer::types::UnknownType::create(false).0;
+                }
+                shared.mro.borrow_mut().push(head);
+                class_lists_to_merge[non_empty_list].remove(0);
+            } else {
+                shared.mro.borrow_mut().push(first);
+                filter_class(ClassType(first), &mut class_lists_to_merge);
+            }
+        }
+    }
+
+    is_mro_found
 }
 
 // analyzer/typeUtils.ts:3342
 pub fn get_declaring_modules_for_type(type_: P<Type>) -> Vec<String> {
-    todo!()
+    let mut module_list: Vec<String> = Vec::new();
+    add_declaring_module_names_for_type(type_, &mut module_list, 0);
+    module_list
 }
 
 // analyzer/typeUtils.ts:3348
@@ -852,17 +4154,142 @@ pub(crate) fn add_declaring_module_names_for_type(
     module_list: &mut Vec<String>,
     recursion_count: u32,
 ) {
-    todo!()
+    if recursion_count > crate::analyzer::types::MAX_TYPE_RECURSION_COUNT {
+        return;
+    }
+    let recursion_count = recursion_count + 1;
+
+    let add_if_unique = |module_list: &mut Vec<String>, module_name: &str| {
+        if !module_name.is_empty() && !module_list.iter().any(|n| n == module_name) {
+            module_list.push(module_name.to_string());
+        }
+    };
+
+    match type_.category {
+        crate::analyzer::types::TypeCategory::Class => {
+            add_if_unique(module_list, &ClassType(type_).d().shared.get().module_name);
+        }
+
+        crate::analyzer::types::TypeCategory::Function => {
+            add_if_unique(module_list, &FunctionType(type_).d().shared.get().module_name);
+        }
+
+        crate::analyzer::types::TypeCategory::Overloaded => {
+            let overloaded_type = crate::analyzer::types::OverloadedType(type_);
+            let overloads = crate::analyzer::types::OverloadedType::get_overloads(overloaded_type);
+            for overload in &overloads {
+                add_declaring_module_names_for_type(overload.0, module_list, recursion_count);
+            }
+            let impl_ = crate::analyzer::types::OverloadedType::get_implementation(overloaded_type);
+            if let Some(impl_) = impl_ {
+                add_declaring_module_names_for_type(impl_, module_list, recursion_count);
+            }
+        }
+
+        crate::analyzer::types::TypeCategory::Union => {
+            do_for_each_subtype(
+                type_,
+                &mut |subtype, _, _| {
+                    add_declaring_module_names_for_type(subtype, module_list, recursion_count);
+                },
+                false,
+            );
+        }
+
+        crate::analyzer::types::TypeCategory::Module => {
+            let module_name = crate::analyzer::types::ModuleType(type_).d().priv_.borrow().module_name.clone();
+            add_if_unique(module_list, &module_name);
+        }
+
+        _ => {}
+    }
 }
 
 // analyzer/typeUtils.ts:3400
 pub fn convert_type_to_param_spec_value(type_: P<Type>) -> FunctionType {
-    todo!()
+    if crate::analyzer::types::is_param_spec(type_) {
+        let new_function = FunctionType::create_instance(
+            "",
+            "",
+            "",
+            crate::analyzer::types::FunctionTypeFlags::ParamSpecValue,
+            None,
+        );
+        FunctionType::add_param_spec_variadics(new_function, crate::analyzer::types::ParamSpecType(type_));
+        *new_function.d().shared.get().type_var_scope_id.borrow_mut() = get_type_var_scope_id(type_);
+        return new_function;
+    }
+
+    if crate::analyzer::types::is_function(type_) {
+        let function_type = FunctionType(type_);
+        // If it's already a ParamSpecValue, return it as is.
+        if FunctionType::is_param_spec_value(function_type) {
+            return function_type;
+        }
+
+        let shared = function_type.d().shared.get();
+        let doc_string = shared.doc_string.borrow().clone();
+        let new_function = FunctionType::create_instance(
+            "",
+            "",
+            "",
+            shared.flags.get() | crate::analyzer::types::FunctionTypeFlags::ParamSpecValue,
+            doc_string.as_deref(),
+        );
+
+        *new_function.d().shared.get().deprecated_message.borrow_mut() = shared.deprecated_message.borrow().clone();
+
+        let parameters = shared.parameters.get().borrow().clone();
+        for (index, param) in parameters.iter().enumerate() {
+            let index = i32::try_from(index).unwrap();
+            FunctionType::add_param(
+                new_function,
+                &crate::analyzer::types::FunctionParam::create(
+                    param.category,
+                    FunctionType::get_param_type(function_type, index),
+                    param.flags,
+                    param.name.as_deref(),
+                    FunctionType::get_param_default_type(function_type, index),
+                    param.default_expr,
+                ),
+            );
+        }
+
+        *new_function.d().shared.get().type_var_scope_id.borrow_mut() = shared.type_var_scope_id.borrow().clone();
+        let constructor_type_var_scope_id = function_type.d().priv_.borrow().constructor_type_var_scope_id.clone();
+        new_function.d().priv_.borrow_mut().constructor_type_var_scope_id = constructor_type_var_scope_id;
+
+        return new_function;
+    }
+
+    crate::analyzer::types::ParamSpecType::get_unknown()
 }
 
 // analyzer/typeUtils.ts:3449
 pub fn simplify_function_to_param_spec(type_: FunctionType) -> P<Type> {
-    todo!()
+    let param_spec = FunctionType::get_param_spec_from_args_kwargs(type_);
+    let without_param_spec = FunctionType::clone_remove_param_spec_args_kwargs(type_, false);
+
+    let without_params = without_param_spec.d().shared.get().parameters.get().borrow().clone();
+    let mut has_params = !without_params.is_empty();
+
+    if without_params.len() == 1 {
+        // If the ParamSpec has a position-only separator as its only parameter,
+        // treat it as though there are no parameters.
+        let only_param = &without_params[0];
+        if crate::analyzer::types::is_position_only_separator(only_param) {
+            has_params = false;
+        }
+    }
+
+    // Can we simplify it to just a paramSpec?
+    if !has_params {
+        if let Some(param_spec) = param_spec {
+            return param_spec.0;
+        }
+    }
+
+    type_.0
 }
 
 // analyzer/typeUtils.ts:3475
@@ -871,7 +4298,7 @@ pub fn transform_type_pair(
     target_type: P<Type>,
     transform_node: &mut dyn FnMut(P<Type>, P<Type>) -> Option<P<Type>>,
 ) -> P<Type> {
-    todo!()
+    transform_type_pair_recursive(source_type, target_type, transform_node, &mut JsSet::default(), 0)
 }
 
 // analyzer/typeUtils.ts:3483
@@ -882,106 +4309,1019 @@ pub(crate) fn transform_type_pair_recursive(
     pending_types: &mut JsSet<P<Type>>,
     recursion_count: u32,
 ) -> P<Type> {
-    todo!()
+    let replacement_type = transform_node(source_type, target_type);
+    if let Some(replacement_type) = replacement_type {
+        return replacement_type;
+    }
+
+    if recursion_count > crate::analyzer::types::MAX_TYPE_RECURSION_COUNT || pending_types.contains(&source_type) {
+        return source_type;
+    }
+
+    pending_types.insert(source_type);
+    // The TypeScript body runs in `try { .. } finally { pendingTypes.delete(sourceType) }`.
+    let result = (|| -> P<Type> {
+        if crate::analyzer::types::is_function(source_type) && crate::analyzer::types::is_function(target_type) {
+            let source_function = FunctionType(source_type);
+            let target_function = FunctionType(target_type);
+            let param_count = source_function.d().shared.get().parameters.get().borrow().len();
+            if param_count != target_function.d().shared.get().parameters.get().borrow().len() {
+                return source_type;
+            }
+
+            let parameter_types: Vec<P<Type>> = (0..param_count)
+                .map(|index| {
+                    let index = i32::try_from(index).unwrap();
+                    transform_type_pair_recursive(
+                        FunctionType::get_param_type(source_function, index),
+                        FunctionType::get_param_type(target_function, index),
+                        &mut *transform_node,
+                        &mut *pending_types,
+                        recursion_count + 1,
+                    )
+                })
+                .collect();
+            let parameter_default_types: Vec<Option<P<Type>>> = (0..param_count)
+                .map(|index| {
+                    let index = i32::try_from(index).unwrap();
+                    let source_default_type = FunctionType::get_param_default_type(source_function, index);
+                    let target_default_type = FunctionType::get_param_default_type(target_function, index);
+                    match (source_default_type, target_default_type) {
+                        (Some(source_default_type), Some(target_default_type)) => Some(transform_type_pair_recursive(
+                            source_default_type,
+                            target_default_type,
+                            &mut *transform_node,
+                            &mut *pending_types,
+                            recursion_count + 1,
+                        )),
+                        _ => source_default_type,
+                    }
+                })
+                .collect();
+            let source_return_type = FunctionType::get_effective_return_type(source_function, true);
+            let target_return_type = FunctionType::get_effective_return_type(target_function, true);
+            let return_type = match (source_return_type, target_return_type) {
+                (Some(source_return_type), Some(target_return_type)) => Some(transform_type_pair_recursive(
+                    source_return_type,
+                    target_return_type,
+                    &mut *transform_node,
+                    &mut *pending_types,
+                    recursion_count + 1,
+                )),
+                _ => source_return_type,
+            };
+
+            if parameter_types
+                .iter()
+                .enumerate()
+                .all(|(index, type_)| *type_ == FunctionType::get_param_type(source_function, i32::try_from(index).unwrap()))
+                && parameter_default_types.iter().enumerate().all(|(index, type_)| {
+                    *type_ == FunctionType::get_param_default_type(source_function, i32::try_from(index).unwrap())
+                })
+                && return_type == source_return_type
+            {
+                return source_type;
+            }
+
+            let transformed_type = FunctionType::clone(source_function, false, None);
+            transformed_type.d().priv_.borrow_mut().specialized_types =
+                Some(P::new_eval(crate::analyzer::types::SpecializedFunctionTypes {
+                    parameter_types: std::cell::Cell::new(P::new_eval(RefCell::new(parameter_types))),
+                    parameter_default_types: std::cell::Cell::new(Some(P::new_eval(RefCell::new(parameter_default_types)))),
+                    return_type: std::cell::Cell::new(return_type),
+                }));
+            return transformed_type.0;
+        }
+
+        if crate::analyzer::types::is_type_var(source_type) && crate::analyzer::types::is_type_var(target_type) {
+            let source_shared = TypeVarType(source_type).d().shared.get();
+            let target_shared = TypeVarType(target_type).d().shared.get();
+            let source_constraints = source_shared.constraints.borrow().clone();
+            let target_constraints = target_shared.constraints.borrow().clone();
+            if source_constraints.len() != target_constraints.len() {
+                return source_type;
+            }
+
+            let constraints: Vec<P<Type>> = source_constraints
+                .iter()
+                .enumerate()
+                .map(|(index, constraint)| {
+                    transform_type_pair_recursive(
+                        *constraint,
+                        target_constraints[index],
+                        &mut *transform_node,
+                        &mut *pending_types,
+                        recursion_count + 1,
+                    )
+                })
+                .collect();
+            let bound_type = match (source_shared.bound_type.get(), target_shared.bound_type.get()) {
+                (Some(source_bound_type), Some(target_bound_type)) => Some(transform_type_pair_recursive(
+                    source_bound_type,
+                    target_bound_type,
+                    &mut *transform_node,
+                    &mut *pending_types,
+                    recursion_count + 1,
+                )),
+                _ => source_shared.bound_type.get(),
+            };
+            let default_type = transform_type_pair_recursive(
+                source_shared.default_type.get(),
+                target_shared.default_type.get(),
+                &mut *transform_node,
+                &mut *pending_types,
+                recursion_count + 1,
+            );
+
+            let current_constraints = source_shared.constraints.borrow().clone();
+            if constraints
+                .iter()
+                .enumerate()
+                .all(|(index, type_)| current_constraints.get(index) == Some(type_))
+                && bound_type == source_shared.bound_type.get()
+                && default_type == source_shared.default_type.get()
+            {
+                return source_type;
+            }
+
+            let transformed_type = crate::analyzer::types::TypeBase::clone_type(source_type);
+            // `{ ...sourceType.shared, constraints, boundType, defaultType }`.
+            let transformed_shared = P::new_eval(crate::analyzer::types::TypeVarDetailsShared {
+                kind: source_shared.kind,
+                name: RefCell::new(source_shared.name.borrow().clone()),
+                constraints: RefCell::new(constraints),
+                bound_type: std::cell::Cell::new(bound_type),
+                is_default_explicit: std::cell::Cell::new(source_shared.is_default_explicit.get()),
+                default_type: std::cell::Cell::new(default_type),
+                declared_variance: std::cell::Cell::new(source_shared.declared_variance.get()),
+                is_synthesized: std::cell::Cell::new(source_shared.is_synthesized.get()),
+                is_synthesized_self: std::cell::Cell::new(source_shared.is_synthesized_self.get()),
+                synthesized_index: std::cell::Cell::new(source_shared.synthesized_index.get()),
+                is_exempt_from_bound_check: std::cell::Cell::new(source_shared.is_exempt_from_bound_check.get()),
+                is_type_param_syntax: std::cell::Cell::new(source_shared.is_type_param_syntax.get()),
+                recursive_alias: std::cell::Cell::new(source_shared.recursive_alias.get()),
+            });
+            TypeVarType(transformed_type).d().shared.set(transformed_shared);
+            return transformed_type;
+        }
+
+        if crate::analyzer::types::is_union(source_type) && crate::analyzer::types::is_union(target_type) {
+            let source_subtypes = crate::analyzer::types::UnionType(source_type).d().priv_.borrow().subtypes.clone();
+            let target_subtypes = crate::analyzer::types::UnionType(target_type).d().priv_.borrow().subtypes.clone();
+            if source_subtypes.len() != target_subtypes.len() {
+                return source_type;
+            }
+
+            let subtypes: Vec<crate::analyzer::types::UnionableType> = source_subtypes
+                .iter()
+                .enumerate()
+                .map(|(index, subtype)| {
+                    let transformed_subtype = transform_type_pair_recursive(
+                        *subtype,
+                        target_subtypes[index],
+                        &mut *transform_node,
+                        &mut *pending_types,
+                        recursion_count + 1,
+                    );
+                    if crate::analyzer::types::is_never(transformed_subtype)
+                        || crate::analyzer::types::is_union(transformed_subtype)
+                    {
+                        *subtype
+                    } else {
+                        transformed_subtype
+                    }
+                })
+                .collect();
+            let current_subtypes = crate::analyzer::types::UnionType(source_type).d().priv_.borrow().subtypes.clone();
+            if subtypes
+                .iter()
+                .enumerate()
+                .all(|(index, type_)| current_subtypes.get(index) == Some(type_))
+            {
+                return source_type;
+            }
+
+            let transformed_type = crate::analyzer::types::TypeBase::clone_type(source_type);
+            crate::analyzer::types::UnionType(transformed_type).d().priv_.borrow_mut().subtypes = subtypes;
+            return transformed_type;
+        }
+
+        if crate::analyzer::types::is_class(source_type) && crate::analyzer::types::is_class(target_type) {
+            let source_class = ClassType(source_type);
+            let target_class = ClassType(target_type);
+            let (source_type_args, source_tuple_type_args) = {
+                let priv_ = source_class.d().priv_.borrow();
+                (priv_.type_args.clone(), priv_.tuple_type_args.clone())
+            };
+            let (target_type_args, target_tuple_type_args) = {
+                let priv_ = target_class.d().priv_.borrow();
+                (priv_.type_args.clone(), priv_.tuple_type_args.clone())
+            };
+            if source_class.d().shared.get().full_name != target_class.d().shared.get().full_name
+                || crate::analyzer::types::TypeBase::is_instance(source_type)
+                    != crate::analyzer::types::TypeBase::is_instance(target_type)
+                || source_type_args.as_ref().map(|a| a.len()) != target_type_args.as_ref().map(|a| a.len())
+                || source_tuple_type_args.as_ref().map(|a| a.len()) != target_tuple_type_args.as_ref().map(|a| a.len())
+            {
+                return source_type;
+            }
+
+            let type_args: Option<Vec<P<Type>>> = source_type_args.as_ref().map(|source_type_args| {
+                let target_type_args = target_type_args.as_ref().unwrap();
+                source_type_args
+                    .iter()
+                    .enumerate()
+                    .map(|(index, type_arg)| {
+                        transform_type_pair_recursive(
+                            *type_arg,
+                            target_type_args[index],
+                            &mut *transform_node,
+                            &mut *pending_types,
+                            recursion_count + 1,
+                        )
+                    })
+                    .collect()
+            });
+            let tuple_type_args: Option<Vec<TupleTypeArg>> = source_tuple_type_args.as_ref().map(|source_tuple_type_args| {
+                let target_tuple_type_args = target_tuple_type_args.as_ref().unwrap();
+                source_tuple_type_args
+                    .iter()
+                    .enumerate()
+                    .map(|(index, tuple_type_arg)| TupleTypeArg {
+                        type_: transform_type_pair_recursive(
+                            tuple_type_arg.type_,
+                            target_tuple_type_args[index].type_,
+                            &mut *transform_node,
+                            &mut *pending_types,
+                            recursion_count + 1,
+                        ),
+                        ..tuple_type_arg.clone()
+                    })
+                    .collect()
+            });
+
+            let (current_type_args, current_tuple_type_args) = {
+                let priv_ = source_class.d().priv_.borrow();
+                (priv_.type_args.clone(), priv_.tuple_type_args.clone())
+            };
+            let type_args_changed = type_args.as_ref().is_some_and(|type_args| {
+                type_args
+                    .iter()
+                    .enumerate()
+                    .any(|(index, type_)| Some(type_) != current_type_args.as_ref().and_then(|a| a.get(index)))
+            });
+            let tuple_type_args_changed = tuple_type_args.as_ref().is_some_and(|tuple_type_args| {
+                tuple_type_args.iter().enumerate().any(|(index, tuple_type_arg)| {
+                    Some(tuple_type_arg.type_)
+                        != current_tuple_type_args.as_ref().and_then(|a| a.get(index)).map(|t| t.type_)
+                })
+            });
+            if !type_args_changed && !tuple_type_args_changed {
+                return source_type;
+            }
+
+            let transformed_type = crate::analyzer::types::TypeBase::clone_type(source_type);
+            {
+                let mut priv_ = ClassType(transformed_type).d().priv_.borrow_mut();
+                priv_.type_args = type_args;
+                priv_.tuple_type_args = tuple_type_args;
+            }
+            return transformed_type;
+        }
+
+        source_type
+    })();
+    pending_types.shift_remove(&source_type);
+    result
 }
 
 // analyzer/typeUtils.ts:3687
-pub struct TypeVarTransformer {
-    pub(crate) _pending_type_var_transformations: JsSet<String>,
-    pub(crate) _pending_function_transformations: Vec<P<Type>>,
-}
+pub trait TypeVarTransformer {
+    // analyzer/typeUtils.ts:3688
+    fn _pending_type_var_transformations(&self) -> &JsSet<String>;
 
-impl TypeVarTransformer {
+    fn _pending_type_var_transformations_mut(&mut self) -> &mut JsSet<String>;
+
+    // analyzer/typeUtils.ts:3689
+    fn _pending_function_transformations(&self) -> &Vec<P<Type>>;
+
+    fn _pending_function_transformations_mut(&mut self) -> &mut Vec<P<Type>>;
+
     // analyzer/typeUtils.ts:3691
-    pub fn pending_type_var_transformations(&self) -> JsSet<String> {
-        todo!()
+    fn pending_type_var_transformations(&self) -> JsSet<String> {
+        self._pending_type_var_transformations().clone()
     }
 
     // analyzer/typeUtils.ts:3695
-    pub fn apply(&mut self, type_: P<Type>, recursion_count: u32) -> P<Type> {
-        todo!()
+    fn apply(&mut self, type_: P<Type>, recursion_count: u32) -> P<Type> {
+        let mut type_ = type_;
+        let mut recursion_count = recursion_count;
+        if recursion_count > crate::analyzer::types::MAX_TYPE_RECURSION_COUNT {
+            return type_;
+        }
+        recursion_count += 1;
+
+        type_ = self.transform_generic_type_alias(type_, recursion_count);
+
+        // If the type is conditioned on a type variable, see if the condition
+        // still applies.
+        let has_condition = type_.props.borrow().as_ref().is_some_and(|props| props.condition.is_some());
+        if has_condition {
+            type_ = self.transform_conditional_type(type_, recursion_count);
+        }
+
+        // Shortcut the operation if possible.
+        if self.can_skip_transform(type_) {
+            return type_;
+        }
+
+        if crate::analyzer::types::is_any_or_unknown(type_) {
+            return type_;
+        }
+
+        if is_none_instance(type_) {
+            return type_;
+        }
+
+        if crate::analyzer::types::is_type_var(type_) {
+            let mut type_var = TypeVarType(type_);
+
+            // Handle recursive type aliases specially. In particular,
+            // we need to specialize type arguments for generic recursive
+            // type aliases.
+            let alias_info = type_.props.borrow().as_ref().and_then(|props| props.type_alias_info.clone());
+            if type_var.d().shared.get().recursive_alias.get().is_some() {
+                let Some(alias_type_args) = alias_info.as_ref().and_then(|info| info.type_args.clone()) else {
+                    return type_;
+                };
+
+                let mut requires_update = false;
+                let type_args: Vec<P<Type>> = alias_type_args
+                    .iter()
+                    .map(|&type_arg| {
+                        let replacement_type = self.apply(type_arg, recursion_count);
+                        if replacement_type != type_arg {
+                            requires_update = true;
+                        }
+                        replacement_type
+                    })
+                    .collect();
+
+                if requires_update {
+                    return crate::analyzer::types::TypeBase::clone_for_type_alias(
+                        type_,
+                        &crate::analyzer::types::TypeAliasInfo { type_args: Some(type_args), ..alias_info.unwrap() },
+                    );
+                }
+
+                return type_;
+            }
+
+            let mut replacement_type: P<Type> = type_var.0;
+
+            // Recursively transform the results, but ensure that we don't replace any
+            // type variables in the same scope recursively by setting it the scope in the
+            // _pendingTypeVarTransformations set.
+            let scope_id = type_var.d().priv_.borrow().scope_id.clone();
+            if !self._is_type_var_scope_pending(scope_id.as_deref()) {
+                let mut param_spec_access: Option<crate::analyzer::types::ParamSpecAccess> = None;
+
+                // If this is a ParamSpec with a ".args" or ".kwargs" access, strip
+                // it off for now. We'll add it back later if appropriate.
+                let access = type_var.d().priv_.borrow().param_spec_access;
+                if crate::analyzer::types::is_param_spec(type_var.0) && access.is_some() {
+                    param_spec_access = access;
+                    type_var = TypeVarType(
+                        TypeVarType::clone_for_param_spec_access(crate::analyzer::types::ParamSpecType(type_var.0), None).0,
+                    );
+                }
+
+                replacement_type = self.transform_type_var(type_var, recursion_count).unwrap_or(type_var.0);
+
+                if crate::analyzer::types::is_param_spec(type_var.0) && replacement_type != type_var.0 {
+                    replacement_type = simplify_function_to_param_spec(convert_type_to_param_spec_value(replacement_type));
+                }
+
+                // If the original type was a ParamSpec with a ".args" or ".kwargs" access,
+                // preserve that information in the transformed type.
+                if let Some(param_spec_access) = param_spec_access {
+                    if crate::analyzer::types::is_param_spec(replacement_type) {
+                        replacement_type = TypeVarType::clone_for_param_spec_access(
+                            crate::analyzer::types::ParamSpecType(replacement_type),
+                            Some(param_spec_access),
+                        )
+                        .0;
+                    } else {
+                        replacement_type = crate::analyzer::types::UnknownType::create(false).0;
+                    }
+                }
+
+                // If we're transforming a TypeVarTuple that was in a union,
+                // expand the union types.
+                let is_in_union = type_var.d().priv_.borrow().is_in_union.unwrap_or(false);
+                if crate::analyzer::types::is_type_var_tuple(type_var.0) && is_in_union {
+                    replacement_type = _expand_unpacked_type_var_tuple_union(replacement_type);
+                }
+
+                let scope_id = type_var.d().priv_.borrow().scope_id.clone();
+                if let Some(scope_id) = scope_id.filter(|id| !id.is_empty()) {
+                    self._pending_type_var_transformations_mut().insert(scope_id.clone());
+                    replacement_type = self.apply(replacement_type, recursion_count);
+                    self._pending_type_var_transformations_mut().shift_remove(&scope_id);
+                }
+            }
+
+            return replacement_type;
+        }
+
+        if crate::analyzer::types::is_union(type_) {
+            let new_union_type = map_subtypes(
+                type_,
+                &mut |subtype| {
+                    let mut transformed_type: P<Type> = self.apply(subtype, recursion_count);
+
+                    // If we're transforming a TypeVarTuple within a union,
+                    // combine the individual types within the TypeVarTuple.
+                    if crate::analyzer::types::is_type_var_tuple(subtype)
+                        && !crate::analyzer::types::is_type_var_tuple(transformed_type)
+                    {
+                        let mut subtypes_to_combine: Vec<P<Type>> = Vec::new();
+                        do_for_each_subtype(
+                            transformed_type,
+                            &mut |transformed_subtype, _, _| {
+                                subtypes_to_combine.push(_expand_unpacked_type_var_tuple_union(transformed_subtype));
+                            },
+                            false,
+                        );
+
+                        transformed_type = crate::analyzer::types::combine_types(&subtypes_to_combine, None);
+                    }
+
+                    // `if (this.transformUnionSubtype)`: the method is always defined.
+                    self.transform_union_subtype(subtype, transformed_type, recursion_count)
+                },
+                Some(&MapSubtypesOptions { retain_type_alias: Some(true), ..Default::default() }),
+            );
+
+            return if !crate::analyzer::types::is_never(new_union_type) {
+                new_union_type
+            } else {
+                crate::analyzer::types::UnknownType::create(false).0
+            };
+        }
+
+        if crate::analyzer::types::is_class(type_) {
+            return self.transform_type_vars_in_class_type(ClassType(type_), recursion_count);
+        }
+
+        if crate::analyzer::types::is_function(type_) {
+            // Prevent recursion.
+            if self._pending_function_transformations().iter().any(|t| *t == type_) {
+                return type_;
+            }
+
+            self._pending_function_transformations_mut().push(type_);
+            let result = self.transform_type_vars_in_function_type(FunctionType(type_), recursion_count);
+            self._pending_function_transformations_mut().pop();
+
+            return result;
+        }
+
+        if crate::analyzer::types::is_overloaded(type_) {
+            // Prevent recursion.
+            if self._pending_function_transformations().iter().any(|t| *t == type_) {
+                return type_;
+            }
+
+            self._pending_function_transformations_mut().push(type_);
+
+            let mut requires_update = false;
+
+            // Specialize each of the functions in the overload.
+            let overloaded = crate::analyzer::types::OverloadedType(type_);
+            let overloads = crate::analyzer::types::OverloadedType::get_overloads(overloaded);
+            let mut new_overloads: Vec<FunctionType> = Vec::new();
+
+            for entry in overloads.iter() {
+                let replacement_type = self.transform_type_vars_in_function_type(*entry, recursion_count);
+
+                if crate::analyzer::types::is_function(replacement_type) {
+                    new_overloads.push(FunctionType(replacement_type));
+                } else {
+                    new_overloads.extend(crate::analyzer::types::OverloadedType::get_overloads(
+                        crate::analyzer::types::OverloadedType(replacement_type),
+                    ));
+                }
+
+                if replacement_type != entry.0 {
+                    requires_update = true;
+                }
+            }
+
+            let impl_ = crate::analyzer::types::OverloadedType::get_implementation(overloaded);
+            let mut new_impl: Option<P<Type>> = impl_;
+
+            if let Some(impl_) = impl_ {
+                let applied = self.apply(impl_, recursion_count);
+                new_impl = Some(applied);
+
+                if applied != impl_ {
+                    requires_update = true;
+                }
+            }
+
+            self._pending_function_transformations_mut().pop();
+
+            // Construct a new overload with the specialized function types.
+            return if requires_update {
+                crate::analyzer::types::OverloadedType::create(&new_overloads, new_impl).0
+            } else {
+                type_
+            };
+        }
+
+        type_
     }
 
     // analyzer/typeUtils.ts:3889
-    pub fn can_skip_transform(&mut self, type_: P<Type>) -> bool {
-        todo!()
+    fn can_skip_transform(&mut self, type_: P<Type>) -> bool {
+        !requires_specialization(type_, None, 0)
     }
 
     // analyzer/typeUtils.ts:3893
-    pub fn transform_type_var(
+    fn transform_type_var(
         &mut self,
         type_var: TypeVarType,
         recursion_count: u32,
     ) -> Option<P<Type>> {
-        todo!()
+        None
     }
 
     // analyzer/typeUtils.ts:3897
-    pub fn transform_tuple_type_var(
+    fn transform_tuple_type_var(
         &mut self,
         param_spec: TypeVarType,
         recursion_count: u32,
     ) -> Option<Vec<TupleTypeArg>> {
-        todo!()
+        None
     }
 
     // analyzer/typeUtils.ts:3901
-    pub fn transform_union_subtype(
+    fn transform_union_subtype(
         &mut self,
         pre_transform: P<Type>,
         post_transform: P<Type>,
         recursion_count: u32,
     ) -> Option<P<Type>> {
-        todo!()
+        Some(post_transform)
     }
 
     // analyzer/typeUtils.ts:3905
-    pub fn do_for_each_constraint_set(
+    fn do_for_each_constraint_set(
         &mut self,
-        callback: &mut dyn FnMut(&mut TypeVarTransformer) -> FunctionType,
+        callback: &mut dyn FnMut(&mut Self) -> FunctionType,
     ) -> P<Type> {
-        todo!()
+        // By default, simply return the result of the callback. Subclasses
+        // can override this method as they see fit.
+        callback(self).0
     }
 
     // analyzer/typeUtils.ts:3911
-    pub fn transform_generic_type_alias(
-        &mut self,
-        type_: P<Type>,
-        recursion_count: u32,
-    ) -> P<Type> {
-        todo!()
+    fn transform_generic_type_alias(&mut self, type_: P<Type>, recursion_count: u32) -> P<Type> {
+        let alias_info = type_.props.borrow().as_ref().and_then(|props| props.type_alias_info.clone());
+        let Some(alias_info) = alias_info else {
+            return type_;
+        };
+        if alias_info.shared.type_params.borrow().is_none() || alias_info.type_args.is_none() {
+            return type_;
+        }
+
+        let mut requires_update = false;
+        let new_type_args: Vec<P<Type>> = alias_info
+            .type_args
+            .clone()
+            .unwrap()
+            .iter()
+            .map(|&type_arg| {
+                let updated_type = self.apply(type_arg, recursion_count);
+                // Compares the alias type itself, not the type argument, as pyright does.
+                if type_ != updated_type {
+                    requires_update = true;
+                }
+                updated_type
+            })
+            .collect();
+
+        if requires_update {
+            crate::analyzer::types::TypeBase::clone_for_type_alias(
+                type_,
+                &crate::analyzer::types::TypeAliasInfo { type_args: Some(new_type_args), ..alias_info },
+            )
+        } else {
+            type_
+        }
     }
 
     // analyzer/typeUtils.ts:3929
-    pub fn transform_conditional_type(&mut self, type_: P<Type>, recursion_count: u32) -> P<Type> {
-        todo!()
+    fn transform_conditional_type(&mut self, type_: P<Type>, recursion_count: u32) -> P<Type> {
+        // By default, do not perform any transform.
+        type_
     }
 
     // analyzer/typeUtils.ts:3934
-    pub fn transform_type_vars_in_class_type(
+    fn transform_type_vars_in_class_type(
         &mut self,
         class_type: ClassType,
         recursion_count: u32,
     ) -> P<Type> {
-        todo!()
+        let type_params = ClassType::get_type_params(class_type);
+
+        // Handle the common case where the class has no type parameters.
+        if type_params.is_empty()
+            && !ClassType::is_special_built_in(class_type, None)
+            && !ClassType::is_built_in(class_type, Some(&["type".to_string()][..]))
+        {
+            return class_type.0;
+        }
+
+        let mut new_type_args: Option<Vec<P<Type>>> = None;
+        let mut new_tuple_type_args: Option<Vec<TupleTypeArg>> = None;
+        let mut specialization_needed = false;
+        let mut is_type_arg_explicit = true;
+
+        // If type args were previously provided, specialize them.
+
+        // Handle tuples specially.
+        if ClassType::is_tuple_class(class_type) {
+            // As a performance safeguard, bail out early on very deeply nested
+            // tuples (the recursion count limit would eventually stop us, but
+            // constructing such deep types is expensive). Only do this when there
+            // are no type variables left to substitute; bailing out while type
+            // variables remain would return the unspecialized class and let those
+            // TypeVars "escape" unsolved (see microsoft/pyright#11472).
+            if get_container_depth(class_type.0, 0) > MAX_TUPLE_TYPE_ARG_RECURSION_DEPTH
+                && !requires_specialization(class_type.0, None, 0)
+            {
+                return class_type.0;
+            }
+
+            let old_tuple_type_args = class_type.d().priv_.borrow().tuple_type_args.clone();
+            if let Some(old_tuple_type_args) = old_tuple_type_args {
+                let mut collected: Vec<TupleTypeArg> = Vec::new();
+
+                for old_type_arg_type in old_tuple_type_args.iter() {
+                    let new_type_arg_type = self.apply(old_type_arg_type.type_, recursion_count);
+
+                    if new_type_arg_type != old_type_arg_type.type_ {
+                        specialization_needed = true;
+                    }
+
+                    let tuple_type_args_of = |t: P<Type>| ClassType(t).d().priv_.borrow().tuple_type_args.clone();
+                    if crate::analyzer::types::is_unpacked_type_var_tuple(old_type_arg_type.type_)
+                        && crate::analyzer::types::is_class_instance(new_type_arg_type)
+                        && is_tuple_class(ClassType(new_type_arg_type))
+                        && tuple_type_args_of(new_type_arg_type).is_some()
+                    {
+                        collected.extend(tuple_type_args_of(new_type_arg_type).unwrap());
+                    } else if crate::analyzer::types::is_unpacked_class(new_type_arg_type)
+                        && tuple_type_args_of(new_type_arg_type).is_some()
+                    {
+                        collected.extend(tuple_type_args_of(new_type_arg_type).unwrap());
+                    } else {
+                        // Handle the special case where tuple[T, ...] is being specialized
+                        // to tuple[Never, ...]. This is equivalent to tuple[()].
+                        let is_empty_tuple = old_type_arg_type.is_unbounded
+                            && crate::analyzer::types::is_type_var(old_type_arg_type.type_)
+                            && crate::analyzer::types::is_never(new_type_arg_type)
+                            && class_type.d().priv_.borrow().tuple_type_args.as_ref().unwrap().len() == 1;
+
+                        if !is_empty_tuple {
+                            collected.push(TupleTypeArg {
+                                type_: new_type_arg_type,
+                                is_unbounded: old_type_arg_type.is_unbounded,
+                                is_optional: old_type_arg_type.is_optional,
+                            });
+                        }
+                    }
+                }
+
+                new_tuple_type_args = Some(collected);
+            } else if !type_params.is_empty() {
+                new_tuple_type_args = self.transform_tuple_type_var(type_params[0], recursion_count);
+                if new_tuple_type_args.is_some() {
+                    specialization_needed = true;
+                } else {
+                    let new_type_arg_type = self.apply(type_params[0].0, recursion_count);
+                    new_tuple_type_args = Some(vec![TupleTypeArg {
+                        type_: new_type_arg_type,
+                        is_unbounded: true,
+                        is_optional: None,
+                    }]);
+
+                    // If this is the literal "tuple" class (as opposed to a type that
+                    // represents all subtypes of tuple), don't specialize
+                    // if the type arg is the same as the type param. This is the same
+                    // thing we do with non-tuple classes below.
+                    if new_type_arg_type != type_params[0].0
+                        || class_type.d().priv_.borrow().include_subclasses.unwrap_or(false)
+                    {
+                        specialization_needed = true;
+                    }
+                    is_type_arg_explicit = false;
+                }
+            }
+
+            // If this is an empty tuple, don't recompute the non-tuple type argument.
+            if let Some(tuple_type_args) = &new_tuple_type_args {
+                if !tuple_type_args.is_empty() {
+                    // Combine the tuple type args into a single non-tuple type argument.
+                    new_type_args = Some(vec![combine_tuple_type_args(tuple_type_args)]);
+                }
+            }
+        }
+
+        if new_type_args.is_none() {
+            let class_type_args = class_type.d().priv_.borrow().type_args.clone();
+            let type_args: Vec<P<Type>> = class_type_args
+                .clone()
+                .unwrap_or_else(|| type_params.iter().map(|type_param| type_param.0).collect());
+
+            if class_type_args.is_none() {
+                is_type_arg_explicit = false;
+            }
+
+            new_type_args = Some(
+                type_args
+                    .iter()
+                    .map(|&old_type_arg_type| {
+                        let mut new_type_arg_type = self.apply(old_type_arg_type, recursion_count);
+                        if new_type_arg_type != old_type_arg_type {
+                            specialization_needed = true;
+
+                            // If this was a TypeVarTuple that was part of a union
+                            // (e.g. Union[Unpack[Vs]]), expand the subtypes into a union here.
+                            if crate::analyzer::types::is_type_var(old_type_arg_type)
+                                && crate::analyzer::types::is_type_var_tuple(old_type_arg_type)
+                                && TypeVarType(old_type_arg_type).d().priv_.borrow().is_in_union.unwrap_or(false)
+                            {
+                                new_type_arg_type = _expand_unpacked_type_var_tuple_union(new_type_arg_type);
+                            }
+                        }
+                        new_type_arg_type
+                    })
+                    .collect(),
+            );
+        }
+
+        // If specialization wasn't needed, don't allocate a new class.
+        if !specialization_needed {
+            return class_type.0;
+        }
+
+        ClassType::specialize(
+            class_type,
+            new_type_args.as_deref(),
+            Some(is_type_arg_explicit),
+            /* includeSubclasses */ false,
+            new_tuple_type_args.as_deref(),
+            None,
+        )
+        .0
     }
 
     // analyzer/typeUtils.ts:4064
-    pub fn transform_type_vars_in_function_type(
+    fn transform_type_vars_in_function_type(
         &mut self,
         source_type: FunctionType,
         recursion_count: u32,
     ) -> P<Type> {
-        todo!()
+        self.do_for_each_constraint_set(&mut |this: &mut Self| -> FunctionType {
+            let mut function_type = source_type;
+
+            let declared_return_type = FunctionType::get_effective_return_type(function_type, true);
+            let specialized_return_type = declared_return_type.map(|declared| this.apply(declared, recursion_count));
+            let mut types_required_specialization = declared_return_type != specialized_return_type;
+
+            let specialized_params = P::new_eval(crate::analyzer::types::SpecializedFunctionTypes {
+                parameter_types: std::cell::Cell::new(P::new_eval(RefCell::new(Vec::new()))),
+                parameter_default_types: std::cell::Cell::new(None),
+                return_type: std::cell::Cell::new(specialized_return_type),
+            });
+
+            let param_spec = FunctionType::get_param_spec_from_args_kwargs(function_type);
+
+            if let Some(param_spec) = param_spec {
+                let param_spec_type = this.transform_type_var(TypeVarType(param_spec.0), recursion_count);
+                if let Some(param_spec_type) = param_spec_type {
+                    let param_spec_value = convert_type_to_param_spec_value(param_spec_type);
+                    let transformed_param_spec = FunctionType::get_param_spec_from_args_kwargs(param_spec_value);
+
+                    if !param_spec_value.d().shared.get().parameters.get().borrow().is_empty()
+                        || transformed_param_spec.is_none()
+                        || !crate::analyzer::types::is_type_same(
+                            param_spec.0,
+                            transformed_param_spec.unwrap().0,
+                            &TypeSameOptions::default(),
+                            0,
+                        )
+                    {
+                        function_type = FunctionType::apply_param_spec_value(function_type, param_spec_value);
+                    }
+                }
+            }
+
+            let mut variadic_param_index: Option<usize> = None;
+            let mut variadic_types_to_unpack: Option<Vec<TupleTypeArg>> = None;
+            let mut specialized_default_args: Vec<Option<P<Type>>> = Vec::new();
+
+            let mut i: usize = 0;
+            while i < function_type.d().shared.get().parameters.get().borrow().len() {
+                let index = i32::try_from(i).unwrap();
+                let param_type = FunctionType::get_param_type(function_type, index);
+                let specialized_type = this.apply(param_type, recursion_count);
+                specialized_params.parameter_types.get().borrow_mut().push(specialized_type);
+
+                // Do we need to specialize the default argument type for this parameter?
+                let mut default_arg_type = FunctionType::get_param_default_type(function_type, index);
+                if let Some(default_type) = default_arg_type {
+                    let specialized_arg_type = this.apply(default_type, recursion_count);
+                    if specialized_arg_type != default_type {
+                        default_arg_type = Some(specialized_arg_type);
+                        types_required_specialization = true;
+                    }
+                }
+                specialized_default_args.push(default_arg_type);
+
+                if variadic_param_index.is_none()
+                    && crate::analyzer::types::is_type_var_tuple(param_type)
+                    && function_type.d().shared.get().parameters.get().borrow()[i].category
+                        == crate::parser::parse_nodes::ParamCategory::ArgsList
+                {
+                    variadic_param_index = Some(i);
+
+                    if crate::analyzer::types::is_class_instance(specialized_type)
+                        && is_tuple_class(ClassType(specialized_type))
+                        && ClassType(specialized_type).d().priv_.borrow().is_unpacked.unwrap_or(false)
+                    {
+                        variadic_types_to_unpack = ClassType(specialized_type).d().priv_.borrow().tuple_type_args.clone();
+                    }
+                }
+
+                if param_type != specialized_type {
+                    types_required_specialization = true;
+                }
+                i += 1;
+            }
+
+            let inferred_return_type_of = |function_type: FunctionType| {
+                function_type.d().shared.get().inferred_return_type.borrow().as_ref().map(|inferred| inferred.type_)
+            };
+            if let Some(inferred_return_type) = inferred_return_type_of(function_type) {
+                let specialized_inferred_return_type = this.apply(inferred_return_type, recursion_count);
+                if Some(specialized_inferred_return_type) != inferred_return_type_of(function_type) {
+                    specialized_params.return_type.set(Some(specialized_inferred_return_type));
+                    types_required_specialization = true;
+                }
+            }
+
+            // Do we need to update the boundToType?
+            let bound_to_type = function_type.d().priv_.borrow().bound_to_type;
+            if let Some(bound_to_type) = bound_to_type {
+                let new_bound_to_type = this.apply(bound_to_type.0, recursion_count);
+                let current_bound_to_type = function_type.d().priv_.borrow().bound_to_type.map(|bound| bound.0);
+                if Some(new_bound_to_type) != current_bound_to_type && crate::analyzer::types::is_class(new_bound_to_type) {
+                    function_type = FunctionType::clone(function_type, /* stripFirstParam */ false, Some(ClassType(new_bound_to_type)));
+                }
+            }
+
+            // Do we need to update the strippedFirstParamType?
+            let stripped_first_param_type = function_type.d().priv_.borrow().stripped_first_param_type;
+            if let Some(stripped_first_param_type) = stripped_first_param_type {
+                if !crate::analyzer::types::is_any_or_unknown(stripped_first_param_type) {
+                    let new_stripped_type = this.apply(stripped_first_param_type, recursion_count);
+                    if Some(new_stripped_type) != function_type.d().priv_.borrow().stripped_first_param_type {
+                        function_type = FunctionType(crate::analyzer::types::TypeBase::clone_type(function_type.0));
+                        function_type.d().priv_.borrow_mut().stripped_first_param_type = Some(new_stripped_type);
+                    }
+                }
+            }
+
+            if !types_required_specialization {
+                return function_type;
+            }
+
+            if specialized_default_args.iter().any(|t| t.is_some()) {
+                specialized_params
+                    .parameter_default_types
+                    .set(Some(P::new_eval(RefCell::new(specialized_default_args.clone()))));
+            }
+
+            // If there was no unpacked variadic type variable, we're done.
+            let Some(variadic_types_to_unpack) = variadic_types_to_unpack else {
+                return FunctionType::specialize(function_type, specialized_params);
+            };
+
+            // Unpack the tuple and synthesize a new function in the process.
+            let function_flags = function_type.d().shared.get().flags.get();
+            let new_function_type = if crate::analyzer::types::TypeBase::is_instantiable(function_type.0) {
+                FunctionType::create_instantiable(
+                    function_flags | crate::analyzer::types::FunctionTypeFlags::SynthesizedMethod,
+                    None,
+                )
+            } else {
+                FunctionType::create_synthesized_instance("", function_flags)
+            };
+            let mut insert_keyword_only_separator = false;
+            let mut swallow_position_only_separator = false;
+            let new_param_count = || new_function_type.d().shared.get().parameters.get().borrow().len();
+
+            let specialized_param_types = specialized_params.parameter_types.get().borrow().clone();
+            for (index, param_type) in specialized_param_types.iter().enumerate() {
+                if Some(index) == variadic_param_index {
+                    let mut saw_unbounded_entry = false;
+
+                    // Unpack the tuple into individual parameters.
+                    for unpacked_type in variadic_types_to_unpack.iter() {
+                        let category = if unpacked_type.is_unbounded || crate::analyzer::types::is_type_var_tuple(unpacked_type.type_) {
+                            crate::parser::parse_nodes::ParamCategory::ArgsList
+                        } else {
+                            crate::parser::parse_nodes::ParamCategory::Simple
+                        };
+                        let name = format!("__p{}", new_param_count());
+                        FunctionType::add_param(
+                            new_function_type,
+                            &crate::analyzer::types::FunctionParam::create(
+                                category,
+                                unpacked_type.type_,
+                                crate::analyzer::types::FunctionParamFlags::NameSynthesized
+                                    | crate::analyzer::types::FunctionParamFlags::TypeDeclared,
+                                Some(&name),
+                                None,
+                                None,
+                            ),
+                        );
+
+                        if unpacked_type.is_unbounded {
+                            saw_unbounded_entry = true;
+                        }
+                    }
+
+                    if saw_unbounded_entry {
+                        swallow_position_only_separator = true;
+                    } else {
+                        insert_keyword_only_separator = true;
+                    }
+                } else {
+                    let param = function_type.d().shared.get().parameters.get().borrow()[index].clone();
+                    let has_name = param.name.as_deref().is_some_and(|name| !name.is_empty());
+
+                    if crate::analyzer::types::is_keyword_only_separator(&param) {
+                        insert_keyword_only_separator = false;
+                    } else if param.category == crate::parser::parse_nodes::ParamCategory::KwargsDict {
+                        insert_keyword_only_separator = false;
+                    }
+
+                    // Insert a keyword-only separator parameter if we previously
+                    // unpacked a TypeVarTuple.
+                    if param.category == crate::parser::parse_nodes::ParamCategory::Simple && has_name && insert_keyword_only_separator {
+                        FunctionType::add_keyword_only_param_separator(new_function_type);
+                        insert_keyword_only_separator = false;
+                    }
+
+                    if param.category != crate::parser::parse_nodes::ParamCategory::Simple || has_name || !swallow_position_only_separator {
+                        let name = if has_name && crate::analyzer::types::FunctionParam::is_name_synthesized(&param) {
+                            Some(format!("__p{}", new_param_count()))
+                        } else {
+                            param.name.clone()
+                        };
+                        FunctionType::add_param(
+                            new_function_type,
+                            &crate::analyzer::types::FunctionParam::create(
+                                param.category,
+                                *param_type,
+                                param.flags,
+                                name.as_deref(),
+                                FunctionType::get_param_default_type(function_type, i32::try_from(index).unwrap()),
+                                param.default_expr,
+                            ),
+                        );
+                    }
+                }
+            }
+
+            new_function_type.d().shared.get().declared_return_type.set(specialized_params.return_type.get());
+
+            new_function_type
+        })
     }
 
     // analyzer/typeUtils.ts:4256
-    pub(crate) fn _is_type_var_scope_pending(&mut self, type_var_scope_id: Option<&str>) -> bool {
-        todo!()
+    fn _is_type_var_scope_pending(&mut self, type_var_scope_id: Option<&str>) -> bool {
+        type_var_scope_id.is_some_and(|scope_id| !scope_id.is_empty())
+            && self._pending_type_var_transformations().contains(type_var_scope_id.unwrap())
     }
 }
 
-// TypeVarDefaultValidator extends TypeVarTransformer: the base fields are repeated below.
 // analyzer/typeUtils.ts:4263
 pub struct TypeVarDefaultValidator {
     pub(crate) _pending_type_var_transformations: JsSet<String>,
@@ -990,19 +5330,58 @@ pub struct TypeVarDefaultValidator {
     pub(crate) _invalid_type_vars: JsSet<String>,
 }
 
-impl TypeVarDefaultValidator {
-    // analyzer/typeUtils.ts:4264
-    pub fn new(_live_type_params: Vec<TypeVarType>, _invalid_type_vars: JsSet<String>) -> Self {
-        todo!()
+impl TypeVarTransformer for TypeVarDefaultValidator {
+    fn _pending_type_var_transformations(&self) -> &JsSet<String> {
+        &self._pending_type_var_transformations
+    }
+
+    fn _pending_type_var_transformations_mut(&mut self) -> &mut JsSet<String> {
+        &mut self._pending_type_var_transformations
+    }
+
+    fn _pending_function_transformations(&self) -> &Vec<P<Type>> {
+        &self._pending_function_transformations
+    }
+
+    fn _pending_function_transformations_mut(&mut self) -> &mut Vec<P<Type>> {
+        &mut self._pending_function_transformations
     }
 
     // analyzer/typeUtils.ts:4268
-    pub fn transform_type_var(&mut self, type_var: TypeVarType) -> UnknownType {
-        todo!()
+    fn transform_type_var(
+        &mut self,
+        type_var: TypeVarType,
+        recursion_count: u32,
+    ) -> Option<P<Type>> {
+        let name = type_var.d().shared.get().name.borrow().clone();
+        let replacement_type = self
+            ._live_type_params
+            .iter()
+            .find(|param| *param.d().shared.get().name.borrow() == name)
+            .copied();
+        if replacement_type.is_none()
+            || crate::analyzer::types::is_param_spec(replacement_type.unwrap().0)
+                != crate::analyzer::types::is_param_spec(type_var.0)
+        {
+            self._invalid_type_vars.insert(type_var.d().shared.get().name.borrow().clone());
+        }
+
+        Some(crate::analyzer::types::UnknownType::create(false).0)
     }
 }
 
-// UniqueFunctionSignatureTransformer extends TypeVarTransformer: the base fields are repeated below.
+impl TypeVarDefaultValidator {
+    // analyzer/typeUtils.ts:4264
+    pub fn new(_live_type_params: Vec<TypeVarType>, _invalid_type_vars: JsSet<String>) -> Self {
+        TypeVarDefaultValidator {
+            _pending_type_var_transformations: JsSet::default(),
+            _pending_function_transformations: Vec::new(),
+            _live_type_params,
+            _invalid_type_vars,
+        }
+    }
+}
+
 // analyzer/typeUtils.ts:4278
 pub struct UniqueFunctionSignatureTransformer {
     pub(crate) _pending_type_var_transformations: JsSet<String>,
@@ -1011,41 +5390,128 @@ pub struct UniqueFunctionSignatureTransformer {
     pub(crate) _expression_offset: i32,
 }
 
-impl UniqueFunctionSignatureTransformer {
-    // analyzer/typeUtils.ts:4279
-    pub fn new(_signature_tracker: P<UniqueSignatureTracker>, _expression_offset: i32) -> Self {
-        todo!()
+impl TypeVarTransformer for UniqueFunctionSignatureTransformer {
+    fn _pending_type_var_transformations(&self) -> &JsSet<String> {
+        &self._pending_type_var_transformations
+    }
+
+    fn _pending_type_var_transformations_mut(&mut self) -> &mut JsSet<String> {
+        &mut self._pending_type_var_transformations
+    }
+
+    fn _pending_function_transformations(&self) -> &Vec<P<Type>> {
+        &self._pending_function_transformations
+    }
+
+    fn _pending_function_transformations_mut(&mut self) -> &mut Vec<P<Type>> {
+        &mut self._pending_function_transformations
     }
 
     // analyzer/typeUtils.ts:4283
-    pub fn transform_generic_type_alias(
-        &mut self,
-        type_: P<Type>,
-        recursion_count: u32,
-    ) -> P<Type> {
-        todo!()
+    fn transform_generic_type_alias(&mut self, type_: P<Type>, recursion_count: u32) -> P<Type> {
+        // Don't transform type aliases.
+        type_
     }
 
     // analyzer/typeUtils.ts:4288
-    pub fn transform_type_vars_in_class_type(
+    fn transform_type_vars_in_class_type(
         &mut self,
         class_type: ClassType,
         recursion_count: u32,
     ) -> P<Type> {
-        todo!()
+        // Don't transform classes.
+        class_type.0
     }
 
     // analyzer/typeUtils.ts:4293
-    pub fn transform_type_vars_in_function_type(
+    fn transform_type_vars_in_function_type(
         &mut self,
         source_type: FunctionType,
         recursion_count: u32,
     ) -> P<Type> {
-        todo!()
+        // If this function is not generic, there's no need to check for uniqueness.
+        if source_type.d().shared.get().type_params.borrow().is_empty() {
+            // `super.transformTypeVarsInFunctionType(..)`: runs the trait's default body on a view of
+            // this transformer whose `apply` is this transformer's own, so nested types still reach the
+            // overrides above, as `this` does in TypeScript. The view uses the defaults of
+            // `doForEachConstraintSet` and `transformTypeVar`, which this class does not override.
+            struct Super<'a>(&'a mut UniqueFunctionSignatureTransformer);
+            impl TypeVarTransformer for Super<'_> {
+                fn _pending_type_var_transformations(&self) -> &JsSet<String> {
+                    self.0._pending_type_var_transformations()
+                }
+
+                fn _pending_type_var_transformations_mut(&mut self) -> &mut JsSet<String> {
+                    self.0._pending_type_var_transformations_mut()
+                }
+
+                fn _pending_function_transformations(&self) -> &Vec<P<Type>> {
+                    self.0._pending_function_transformations()
+                }
+
+                fn _pending_function_transformations_mut(&mut self) -> &mut Vec<P<Type>> {
+                    self.0._pending_function_transformations_mut()
+                }
+
+                fn apply(&mut self, type_: P<Type>, recursion_count: u32) -> P<Type> {
+                    self.0.apply(type_, recursion_count)
+                }
+            }
+
+            return Super(self).transform_type_vars_in_function_type(source_type, recursion_count);
+        }
+
+        let mut updated_source_type: P<Type> = source_type.0;
+        let existing_signature = self._signature_tracker.find_signature(source_type.0);
+        if let Some(existing_signature) = existing_signature {
+            let mut offset_index = existing_signature
+                .expression_offsets
+                .iter()
+                .position(|&offset| offset == self._expression_offset)
+                .map_or(-1, |index| i32::try_from(index).unwrap());
+            if offset_index < 0 {
+                offset_index = i32::try_from(existing_signature.expression_offsets.len()).unwrap();
+            }
+
+            if offset_index > 0 {
+                let solution = ConstraintSolution::new(None);
+
+                // Create new type variables with the same scope but with
+                // different (unique) names.
+                let type_params = source_type.d().shared.get().type_params.borrow().clone();
+                for type_param in type_params.iter() {
+                    if type_param.d().priv_.borrow().scope_type == Some(crate::analyzer::types::TypeVarScopeType::Function) {
+                        let name = type_param.d().shared.get().name.borrow().clone();
+                        let replacement: P<Type> =
+                            TypeVarType::clone_for_new_name(*type_param, format!("{name}({offset_index})")).0;
+
+                        solution.set_type(*type_param, replacement);
+                    }
+                }
+
+                updated_source_type = apply_solved_type_vars(source_type.0, &solution, &ApplyTypeVarOptions::default());
+                crate::common::debug::assert(crate::analyzer::types::is_function_or_overloaded(updated_source_type), None);
+            }
+        }
+
+        self._signature_tracker.add_signature(source_type.0, self._expression_offset);
+
+        updated_source_type
     }
 }
 
-// BoundTypeVarTransform extends TypeVarTransformer: the base fields are repeated below.
+impl UniqueFunctionSignatureTransformer {
+    // analyzer/typeUtils.ts:4279
+    pub fn new(_signature_tracker: P<UniqueSignatureTracker>, _expression_offset: i32) -> Self {
+        UniqueFunctionSignatureTransformer {
+            _pending_type_var_transformations: JsSet::default(),
+            _pending_function_transformations: Vec::new(),
+            _signature_tracker,
+            _expression_offset,
+        }
+    }
+}
+
 // analyzer/typeUtils.ts:4342
 pub struct BoundTypeVarTransform {
     pub(crate) _pending_type_var_transformations: JsSet<String>,
@@ -1053,29 +5519,68 @@ pub struct BoundTypeVarTransform {
     pub(crate) _scope_ids: Option<Vec<String>>,
 }
 
-impl BoundTypeVarTransform {
-    // analyzer/typeUtils.ts:4343
-    pub fn new(_scope_ids: Option<Vec<String>>) -> Self {
-        todo!()
+impl TypeVarTransformer for BoundTypeVarTransform {
+    fn _pending_type_var_transformations(&self) -> &JsSet<String> {
+        &self._pending_type_var_transformations
+    }
+
+    fn _pending_type_var_transformations_mut(&mut self) -> &mut JsSet<String> {
+        &mut self._pending_type_var_transformations
+    }
+
+    fn _pending_function_transformations(&self) -> &Vec<P<Type>> {
+        &self._pending_function_transformations
+    }
+
+    fn _pending_function_transformations_mut(&mut self) -> &mut Vec<P<Type>> {
+        &mut self._pending_function_transformations
     }
 
     // analyzer/typeUtils.ts:4347
-    pub fn transform_type_var(&self, type_var: TypeVarType) -> Option<P<Type>> {
-        todo!()
-    }
+    fn transform_type_var(
+        &mut self,
+        type_var: TypeVarType,
+        recursion_count: u32,
+    ) -> Option<P<Type>> {
+        if self._is_type_var_in_scope(type_var) {
+            return Some(self._replace_type_var(type_var).0);
+        }
 
-    // analyzer/typeUtils.ts:4355
-    pub(crate) fn _is_type_var_in_scope(&self, type_var: TypeVarType) -> bool {
-        todo!()
-    }
-
-    // analyzer/typeUtils.ts:4368
-    pub(crate) fn _replace_type_var(&self, type_var: TypeVarType) -> TypeVarType {
-        todo!()
+        None
     }
 }
 
-// FreeTypeVarTransform extends TypeVarTransformer: the base fields are repeated below.
+impl BoundTypeVarTransform {
+    // analyzer/typeUtils.ts:4343
+    pub fn new(_scope_ids: Option<Vec<String>>) -> Self {
+        BoundTypeVarTransform {
+            _pending_type_var_transformations: JsSet::default(),
+            _pending_function_transformations: Vec::new(),
+            _scope_ids,
+        }
+    }
+
+    // analyzer/typeUtils.ts:4355
+    pub(crate) fn _is_type_var_in_scope(&mut self, type_var: TypeVarType) -> bool {
+        let scope_id = type_var.d().priv_.borrow().scope_id.clone();
+        let Some(scope_id) = scope_id.filter(|id| !id.is_empty()) else {
+            return false;
+        };
+
+        // If no scopeIds were specified, transform all Type Vars.
+        let Some(scope_ids) = &self._scope_ids else {
+            return true;
+        };
+
+        scope_ids.contains(&scope_id)
+    }
+
+    // analyzer/typeUtils.ts:4368
+    pub(crate) fn _replace_type_var(&mut self, type_var: TypeVarType) -> TypeVarType {
+        TypeVarType::clone_as_bound(type_var)
+    }
+}
+
 // analyzer/typeUtils.ts:4375
 pub struct FreeTypeVarTransform {
     pub(crate) _pending_type_var_transformations: JsSet<String>,
@@ -1083,24 +5588,61 @@ pub struct FreeTypeVarTransform {
     pub(crate) _scope_ids: Vec<String>,
 }
 
-impl FreeTypeVarTransform {
-    // analyzer/typeUtils.ts:4376
-    pub fn new(_scope_ids: Vec<String>) -> Self {
-        todo!()
+impl TypeVarTransformer for FreeTypeVarTransform {
+    fn _pending_type_var_transformations(&self) -> &JsSet<String> {
+        &self._pending_type_var_transformations
+    }
+
+    fn _pending_type_var_transformations_mut(&mut self) -> &mut JsSet<String> {
+        &mut self._pending_type_var_transformations
+    }
+
+    fn _pending_function_transformations(&self) -> &Vec<P<Type>> {
+        &self._pending_function_transformations
+    }
+
+    fn _pending_function_transformations_mut(&mut self) -> &mut Vec<P<Type>> {
+        &mut self._pending_function_transformations
     }
 
     // analyzer/typeUtils.ts:4380
-    pub fn transform_type_var(&self, type_var: TypeVarType) -> Option<P<Type>> {
-        todo!()
-    }
+    fn transform_type_var(
+        &mut self,
+        type_var: TypeVarType,
+        recursion_count: u32,
+    ) -> Option<P<Type>> {
+        let free_type_var = type_var.d().priv_.borrow().free_type_var;
+        if let Some(free_type_var) = free_type_var {
+            if self._is_type_var_in_scope(free_type_var) {
+                return Some(free_type_var.0);
+            }
+        }
 
-    // analyzer/typeUtils.ts:4388
-    pub(crate) fn _is_type_var_in_scope(&self, type_var: TypeVarType) -> bool {
-        todo!()
+        None
     }
 }
 
-// ApplySolvedTypeVarsTransformer extends TypeVarTransformer: the base fields are repeated below.
+impl FreeTypeVarTransform {
+    // analyzer/typeUtils.ts:4376
+    pub fn new(_scope_ids: Vec<String>) -> Self {
+        FreeTypeVarTransform {
+            _pending_type_var_transformations: JsSet::default(),
+            _pending_function_transformations: Vec::new(),
+            _scope_ids,
+        }
+    }
+
+    // analyzer/typeUtils.ts:4388
+    pub(crate) fn _is_type_var_in_scope(&mut self, type_var: TypeVarType) -> bool {
+        let scope_id = type_var.d().priv_.borrow().scope_id.clone();
+        let Some(scope_id) = scope_id.filter(|id| !id.is_empty()) else {
+            return false;
+        };
+
+        self._scope_ids.contains(&scope_id)
+    }
+}
+
 // analyzer/typeUtils.ts:4399
 pub struct ApplySolvedTypeVarsTransformer {
     pub(crate) _pending_type_var_transformations: JsSet<String>,
@@ -1111,46 +5653,378 @@ pub struct ApplySolvedTypeVarsTransformer {
     pub(crate) _options: ApplyTypeVarOptions,
 }
 
-impl ApplySolvedTypeVarsTransformer {
-    // analyzer/typeUtils.ts:4403
-    pub fn new(_solution: Rc<ConstraintSolution>, _options: ApplyTypeVarOptions) -> Self {
-        todo!()
+impl TypeVarTransformer for ApplySolvedTypeVarsTransformer {
+    fn _pending_type_var_transformations(&self) -> &JsSet<String> {
+        &self._pending_type_var_transformations
+    }
+
+    fn _pending_type_var_transformations_mut(&mut self) -> &mut JsSet<String> {
+        &mut self._pending_type_var_transformations
+    }
+
+    fn _pending_function_transformations(&self) -> &Vec<P<Type>> {
+        &self._pending_function_transformations
+    }
+
+    fn _pending_function_transformations_mut(&mut self) -> &mut Vec<P<Type>> {
+        &mut self._pending_function_transformations
     }
 
     // analyzer/typeUtils.ts:4407
-    pub fn transform_type_var(
+    fn transform_type_var(
         &mut self,
         type_var: TypeVarType,
         recursion_count: u32,
     ) -> Option<P<Type>> {
-        todo!()
+        let solution_set = self._solution.get_solution_set(self._active_constraint_set_index.unwrap_or(0));
+
+        // If we're solving a default type, handle type variables with no scope ID.
+        let has_scope_id = type_var.d().priv_.borrow().scope_id.as_deref().is_some_and(|id| !id.is_empty());
+        if self._is_solving_default_type && !has_scope_id {
+            let replacement = self._get_replacement_for_default_by_name(type_var, solution_set);
+            if replacement.is_some() {
+                return replacement;
+            }
+
+            if type_var.d().shared.get().is_default_explicit.get() {
+                return Some(self.apply(type_var.d().shared.get().default_type.get(), recursion_count));
+            }
+
+            return Some(crate::analyzer::types::UnknownType::create(false).0);
+        }
+
+        if !self._should_replace_type_var(type_var) {
+            return None;
+        }
+
+        let replacement = solution_set.get_type(type_var);
+
+        if let Some(mut replacement) = replacement {
+            // No more processing is needed for ParamSpecs.
+            if crate::analyzer::types::is_param_spec(type_var.0) {
+                return Some(replacement);
+            }
+
+            if crate::analyzer::types::TypeBase::is_instantiable(type_var.0) {
+                let type_class_type = self._options.type_class_type;
+                if crate::analyzer::types::is_any_or_unknown(replacement)
+                    && type_class_type.is_some_and(|type_class_type| crate::analyzer::types::is_instantiable_class(type_class_type.0))
+                {
+                    replacement = ClassType::specialize(
+                        ClassType::clone_as_instance(type_class_type.unwrap(), true),
+                        Some(&[replacement][..]),
+                        None,
+                        false,
+                        None,
+                        None,
+                    )
+                    .0;
+                } else {
+                    replacement = convert_to_instantiable(replacement, /* includeSubclasses */ false);
+                }
+            } else {
+                // If the TypeVar is not instantiable (i.e. not a type[T]), then
+                // it represents an instance of a type. If the replacement includes
+                // a generic class that has not been specialized, specialize it
+                // now with default type arguments.
+                let replace_unsolved = self._options.replace_unsolved.clone();
+                replacement = map_subtypes(
+                    replacement,
+                    &mut |subtype| {
+                        let mut subtype = subtype;
+                        if crate::analyzer::types::is_class_instance(subtype) {
+                            // If the includeSubclasses wasn't set, force it to be set by
+                            // converting to/from an instantiable.
+                            if !ClassType(subtype).d().priv_.borrow().include_subclasses.unwrap_or(false) {
+                                subtype = ClassType::clone_as_instance(
+                                    ClassType::clone_as_instantiable(ClassType(subtype), true),
+                                    true,
+                                )
+                                .0;
+                            }
+
+                            // `subtype.shared.typeParams` is always an array, so only the type
+                            // arguments decide.
+                            if ClassType(subtype).d().priv_.borrow().type_args.is_none() {
+                                if let Some(replace_unsolved) = &replace_unsolved {
+                                    return Some(if replace_unsolved.use_unknown.unwrap_or(false) {
+                                        specialize_with_unknown_type_args(ClassType(subtype), replace_unsolved.tuple_class_type).0
+                                    } else {
+                                        specialize_with_default_type_args(ClassType(subtype)).0
+                                    });
+                                }
+                            }
+                        }
+
+                        Some(subtype)
+                    },
+                    None,
+                );
+            }
+
+            let type_var_is_unpacked = type_var.d().priv_.borrow().is_unpacked.unwrap_or(false);
+            if crate::analyzer::types::is_type_var_tuple(replacement)
+                && crate::analyzer::types::is_type_var_tuple(type_var.0)
+                && type_var_is_unpacked
+            {
+                let is_in_union = type_var.d().priv_.borrow().is_in_union.unwrap_or(false);
+                return Some(TypeVarType::clone_for_unpacked(TypeVarType(replacement), is_in_union).0);
+            }
+
+            if !crate::analyzer::types::is_type_var_tuple(replacement)
+                && crate::analyzer::types::is_type_var(replacement)
+                && crate::analyzer::types::is_type_var(type_var.0)
+                && type_var_is_unpacked
+            {
+                return Some(TypeVarType::clone_for_unpacked(TypeVarType(replacement), false).0);
+            }
+
+            // If this isn't a TypeVarTuple, combine all of the tuple
+            // type args into a common type.
+            if !crate::analyzer::types::is_type_var_tuple(type_var.0) && crate::analyzer::types::is_class_instance(replacement) {
+                let (tuple_type_args, is_unpacked) = {
+                    let priv_ = ClassType(replacement).d().priv_.borrow();
+                    (priv_.tuple_type_args.clone(), priv_.is_unpacked.unwrap_or(false))
+                };
+                if let Some(tuple_type_args) = tuple_type_args {
+                    if is_unpacked {
+                        replacement = combine_tuple_type_args(&tuple_type_args);
+                    }
+                }
+            }
+
+            if crate::analyzer::types::is_unpacked_type_var(type_var.0) && crate::analyzer::types::is_class(replacement) {
+                replacement = ClassType::clone_for_unpacked(ClassType(replacement)).0;
+            }
+
+            if !crate::analyzer::types::is_type_var(replacement)
+                || !TypeVarType::is_unification(TypeVarType(replacement)).unwrap_or(false)
+                || self._options.replace_unsolved.is_none()
+            {
+                return Some(replacement);
+            }
+        }
+
+        if !self._should_replace_unsolved_type_var(type_var) {
+            return None;
+        }
+
+        // Use the default value if there is one.
+        if type_var.d().shared.get().is_default_explicit.get()
+            && !self._options.replace_unsolved.as_ref().is_some_and(|replace_unsolved| replace_unsolved.use_unknown.unwrap_or(false))
+        {
+            return Some(self._solve_default_type(type_var, recursion_count));
+        }
+
+        Some(get_unknown_for_type_var(
+            type_var,
+            self._options.replace_unsolved.as_ref().and_then(|replace_unsolved| replace_unsolved.tuple_class_type),
+        ))
     }
 
     // analyzer/typeUtils.ts:4522
-    pub fn transform_union_subtype(
+    fn transform_union_subtype(
         &mut self,
         pre_transform: P<Type>,
         post_transform: P<Type>,
+        recursion_count: u32,
     ) -> Option<P<Type>> {
-        todo!()
+        // If a union contains unsolved TypeVars within scope, eliminate them
+        // unless this results in an empty union. This elimination is needed
+        // in cases where TypeVars can go unsolved due to unions in parameter
+        // annotations, like this:
+        //   def test(x: Union[str, T]) -> Union[str, T]
+        if !self
+            ._options
+            .replace_unsolved
+            .as_ref()
+            .is_some_and(|replace_unsolved| replace_unsolved.eliminate_unsolved_in_unions.unwrap_or(false))
+        {
+            return Some(post_transform);
+        }
+
+        let solution_set = self._solution.get_solution_set(self._active_constraint_set_index.unwrap_or(0));
+
+        if crate::analyzer::types::is_type_var(pre_transform) {
+            let pre_transform_type_var = TypeVarType(pre_transform);
+            if !self._should_replace_type_var(pre_transform_type_var)
+                || !self._should_replace_unsolved_type_var(pre_transform_type_var)
+            {
+                return Some(post_transform);
+            }
+
+            let type_var_type = solution_set.get_type(pre_transform_type_var);
+
+            // Did the TypeVar remain unsolved?
+            if let Some(type_var_type) = type_var_type {
+                if !crate::analyzer::types::is_type_var(type_var_type)
+                    || !TypeVarType::is_unification(TypeVarType(type_var_type)).unwrap_or(false)
+                {
+                    return Some(post_transform);
+                }
+            }
+
+            // If the TypeVar was not transformed, then it was unsolved,
+            // and we'll eliminate it.
+            if pre_transform == post_transform {
+                return None;
+            }
+
+            // If useDefaultForUnsolved or useUnknownForUnsolved is true, the postTransform type will
+            // be Unknown, which we want to eliminate.
+            if self._options.replace_unsolved.is_some() && crate::analyzer::types::is_unknown(post_transform) {
+                return None;
+            }
+        } else {
+            let condition = pre_transform.props.borrow().as_ref().and_then(|props| props.condition.clone());
+            if let Some(condition) = condition {
+                // If this is a type that is conditioned on a unification TypeVar,
+                // see if TypeVar was solved. If not, eliminate the type.
+                for condition in condition.iter() {
+                    if TypeVarType::is_unification(condition.type_var).unwrap_or(false)
+                        && solution_set.get_type(condition.type_var).is_none()
+                    {
+                        return None;
+                    }
+                }
+            }
+        }
+
+        Some(post_transform)
     }
 
     // analyzer/typeUtils.ts:4572
-    pub fn transform_tuple_type_var(&mut self, type_var: TypeVarType) -> Option<Vec<TupleTypeArg>> {
-        todo!()
+    fn transform_tuple_type_var(
+        &mut self,
+        param_spec: TypeVarType,
+        recursion_count: u32,
+    ) -> Option<Vec<TupleTypeArg>> {
+        let type_var = param_spec;
+        if !self._should_replace_type_var(type_var) {
+            let default_type = type_var.d().shared.get().default_type.get();
+
+            if type_var.d().shared.get().is_default_explicit.get() && crate::analyzer::types::is_class_instance(default_type) {
+                let tuple_type_args = ClassType(default_type).d().priv_.borrow().tuple_type_args.clone();
+                if tuple_type_args.is_some() {
+                    return tuple_type_args;
+                }
+            }
+
+            return None;
+        }
+
+        let solution_set = self._solution.get_solution_set(self._active_constraint_set_index.unwrap_or(0));
+        let value = solution_set.get_type(type_var);
+        if let Some(value) = value {
+            if crate::analyzer::types::is_class_instance(value) {
+                let tuple_type_args = ClassType(value).d().priv_.borrow().tuple_type_args.clone();
+                if tuple_type_args.is_some() && crate::analyzer::types::is_unpacked_class(value) {
+                    return tuple_type_args;
+                }
+            }
+        }
+        None
     }
 
     // analyzer/typeUtils.ts:4591
-    pub fn transform_conditional_type(&mut self, type_: P<Type>, recursion_count: u32) -> P<Type> {
-        todo!()
+    fn transform_conditional_type(&mut self, type_: P<Type>, recursion_count: u32) -> P<Type> {
+        let condition = type_.props.borrow().as_ref().and_then(|props| props.condition.clone());
+        let Some(condition) = condition else {
+            return type_;
+        };
+
+        let solution_set = self._solution.get_solution_set(self._active_constraint_set_index.unwrap_or(0));
+
+        for condition in condition.iter() {
+            // This doesn't apply to bound type variables.
+            if !TypeVarType::has_constraints(condition.type_var) {
+                continue;
+            }
+
+            let condition_type_var = condition.type_var.d().priv_.borrow().free_type_var.unwrap_or(condition.type_var);
+            let replacement = solution_set.get_type(condition_type_var);
+            let constraint_count = i32::try_from(condition_type_var.d().shared.get().constraints.borrow().len()).unwrap();
+            if replacement.is_none() || condition.constraint_index >= constraint_count {
+                continue;
+            }
+
+            let value = solution_set.get_type(condition_type_var);
+            let Some(value) = value else {
+                continue;
+            };
+
+            let constraint_type =
+                condition_type_var.d().shared.get().constraints.borrow()[usize::try_from(condition.constraint_index).unwrap()];
+
+            // If this violates the constraint, substitute a Never type.
+            if !crate::analyzer::types::is_type_same(constraint_type, value, &TypeSameOptions::default(), 0) {
+                return crate::analyzer::types::NeverType::create_never().0;
+            }
+        }
+        type_
     }
 
     // analyzer/typeUtils.ts:4625
-    pub fn do_for_each_constraint_set(
+    fn do_for_each_constraint_set(
         &mut self,
-        callback: &mut dyn FnMut(&mut ApplySolvedTypeVarsTransformer) -> FunctionType,
+        callback: &mut dyn FnMut(&mut Self) -> FunctionType,
     ) -> P<Type> {
-        todo!()
+        let solution_sets = self._solution.get_solution_sets();
+
+        // Handle the common case where there are not multiple signature contexts.
+        if solution_sets.len() <= 1 {
+            return callback(self).0;
+        }
+
+        // Handle the case where we're already processing one of the signature contexts
+        // and are called recursively. Don't loop over all the signature contexts again.
+        if self._active_constraint_set_index.is_some() {
+            return callback(self).0;
+        }
+
+        // Loop through all of the signature contexts in the type var context
+        // to create an overload type.
+        let mut overload_types: Vec<P<Type>> = Vec::new();
+        for index in 0..solution_sets.len() {
+            self._active_constraint_set_index = Some(i32::try_from(index).unwrap());
+            overload_types.push(callback(self).0);
+        }
+        self._active_constraint_set_index = None;
+
+        let mut filtered_overloads: Vec<FunctionType> = Vec::new();
+        do_for_each_subtype(
+            crate::analyzer::types::combine_types(&overload_types, None),
+            &mut |subtype, _, _| {
+                crate::common::debug::assert(crate::analyzer::types::is_function(subtype), None);
+                let function_type = FunctionType(subtype);
+                let flags = function_type.d().shared.get().flags.get();
+                filtered_overloads.push(FunctionType::clone_with_new_flags(
+                    function_type,
+                    flags | crate::analyzer::types::FunctionTypeFlags::Overloaded,
+                ));
+            },
+            false,
+        );
+
+        if filtered_overloads.len() == 1 {
+            return filtered_overloads[0].0;
+        }
+
+        crate::analyzer::types::OverloadedType::create(&filtered_overloads, None).0
+    }
+}
+
+impl ApplySolvedTypeVarsTransformer {
+    // analyzer/typeUtils.ts:4403
+    pub fn new(_solution: Rc<ConstraintSolution>, _options: ApplyTypeVarOptions) -> Self {
+        ApplySolvedTypeVarsTransformer {
+            _pending_type_var_transformations: JsSet::default(),
+            _pending_function_transformations: Vec::new(),
+            _is_solving_default_type: false,
+            _active_constraint_set_index: None,
+            _solution,
+            _options,
+        }
     }
 
     // analyzer/typeUtils.ts:4666
@@ -1159,17 +6033,62 @@ impl ApplySolvedTypeVarsTransformer {
         type_var: TypeVarType,
         solution_set: P<ConstraintSolutionSet>,
     ) -> Option<P<Type>> {
-        todo!()
+        let mut replacement_value: Option<P<Type>> = None;
+        let partial_scope_id = format!("{}.", type_var.d().shared.get().name.borrow());
+
+        solution_set.do_for_each_type_var(&mut |value, type_var_id| {
+            if type_var_id.starts_with(&partial_scope_id) {
+                replacement_value = Some(value);
+            }
+        });
+
+        replacement_value
     }
 
     // analyzer/typeUtils.ts:4682
     pub(crate) fn _should_replace_type_var(&mut self, type_var: TypeVarType) -> bool {
-        todo!()
+        let has_scope_id = type_var.d().priv_.borrow().scope_id.as_deref().is_some_and(|id| !id.is_empty());
+        if !has_scope_id || TypeVarType::is_bound(type_var) {
+            return false;
+        }
+
+        true
     }
 
     // analyzer/typeUtils.ts:4690
     pub(crate) fn _should_replace_unsolved_type_var(&mut self, type_var: TypeVarType) -> bool {
-        todo!()
+        // Never replace nested TypeVars with unknown.
+        if !self.pending_type_var_transformations().is_empty() {
+            return false;
+        }
+
+        let scope_id = type_var.d().priv_.borrow().scope_id.clone();
+        let Some(scope_id) = scope_id.filter(|id| !id.is_empty()) else {
+            return false;
+        };
+
+        let Some(replace_unsolved) = &self._options.replace_unsolved else {
+            return false;
+        };
+
+        if !replace_unsolved.scope_ids.contains(&scope_id) {
+            return false;
+        }
+
+        if let Some(exempt_type_vars) = &replace_unsolved.unsolved_exempt_type_vars {
+            if exempt_type_vars.iter().any(|t| {
+                crate::analyzer::types::is_type_same(
+                    t.0,
+                    type_var.0,
+                    &TypeSameOptions { ignore_type_flags: Some(true), ..Default::default() },
+                    0,
+                )
+            }) {
+                return false;
+            }
+        }
+
+        true
     }
 
     // analyzer/typeUtils.ts:4718
@@ -1178,11 +6097,15 @@ impl ApplySolvedTypeVarsTransformer {
         type_var: TypeVarType,
         recursion_count: u32,
     ) -> P<Type> {
-        todo!()
+        let default_type = type_var.d().shared.get().default_type.get();
+        let was_solving_default_type = self._is_solving_default_type;
+        self._is_solving_default_type = true;
+        let result = self.apply(default_type, recursion_count);
+        self._is_solving_default_type = was_solving_default_type;
+        result
     }
 }
 
-// UnificationTypeTransformer extends TypeVarTransformer: the base fields are repeated below.
 // analyzer/typeUtils.ts:4728
 pub struct UnificationTypeTransformer {
     pub(crate) _pending_type_var_transformations: JsSet<String>,
@@ -1191,20 +6114,60 @@ pub struct UnificationTypeTransformer {
     pub(crate) _usage_offset: Option<i32>,
 }
 
-impl UnificationTypeTransformer {
-    // analyzer/typeUtils.ts:4729
-    pub fn new(_live_type_var_scopes: Vec<String>, _usage_offset: Option<i32>) -> Self {
-        todo!()
+impl TypeVarTransformer for UnificationTypeTransformer {
+    fn _pending_type_var_transformations(&self) -> &JsSet<String> {
+        &self._pending_type_var_transformations
+    }
+
+    fn _pending_type_var_transformations_mut(&mut self) -> &mut JsSet<String> {
+        &mut self._pending_type_var_transformations
+    }
+
+    fn _pending_function_transformations(&self) -> &Vec<P<Type>> {
+        &self._pending_function_transformations
+    }
+
+    fn _pending_function_transformations_mut(&mut self) -> &mut Vec<P<Type>> {
+        &mut self._pending_function_transformations
     }
 
     // analyzer/typeUtils.ts:4733
-    pub fn transform_type_var(&self, type_var: TypeVarType) -> Option<P<Type>> {
-        todo!()
+    fn transform_type_var(
+        &mut self,
+        type_var: TypeVarType,
+        recursion_count: u32,
+    ) -> Option<P<Type>> {
+        if !self._is_type_var_live(type_var) {
+            return Some(TypeVarType::clone_as_unification_var(type_var, self._usage_offset).0);
+        }
+
+        None
+    }
+}
+
+impl UnificationTypeTransformer {
+    // analyzer/typeUtils.ts:4729
+    pub fn new(_live_type_var_scopes: Vec<String>, _usage_offset: Option<i32>) -> Self {
+        UnificationTypeTransformer {
+            _pending_type_var_transformations: JsSet::default(),
+            _pending_function_transformations: Vec::new(),
+            _live_type_var_scopes,
+            _usage_offset,
+        }
     }
 
     // analyzer/typeUtils.ts:4741
-    pub(crate) fn _is_type_var_live(&self, type_var: TypeVarType) -> bool {
-        todo!()
+    pub(crate) fn _is_type_var_live(&mut self, type_var: TypeVarType) -> bool {
+        let scope_id = type_var.d().priv_.borrow().scope_id.clone();
+        let free_type_var_scope_id = type_var
+            .d()
+            .priv_
+            .borrow()
+            .free_type_var
+            .and_then(|free_type_var| free_type_var.d().priv_.borrow().scope_id.clone());
+        self._live_type_var_scopes.iter().any(|live_scope_id| {
+            scope_id.as_deref() == Some(live_scope_id.as_str()) || free_type_var_scope_id.as_deref() == Some(live_scope_id.as_str())
+        })
     }
 }
 

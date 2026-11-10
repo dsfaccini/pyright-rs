@@ -67,6 +67,8 @@ pub mod type_guards;
 pub mod type_printer;
 pub mod type_printer_utils;
 pub mod type_utils;
+#[cfg(test)]
+mod type_utils_tests;
 pub mod type_walker;
 pub mod typed_dicts;
 pub mod typeshed_info_provider;
