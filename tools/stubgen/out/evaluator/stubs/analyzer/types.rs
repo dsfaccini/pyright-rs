@@ -149,7 +149,7 @@ pub struct TypeAliasSharedInfo {
     pub type_var_scope_id: String,
     pub is_type_alias_type: bool,
     pub type_params: RefCell<Option<Vec<TypeVarType>>>,
-    pub computed_variance: RefCell<Option<Vec<Variance>>>,
+    pub computed_variance: Cell<Option<P<RefCell<Vec<Variance>>>>>,
 }
 
 // analyzer/types.ts:153

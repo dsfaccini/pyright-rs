@@ -16,7 +16,7 @@ use crate::analyzer::types::{
     TypeCondition, TypeSameOptions, TypeVarType, UnknownType, Variance,
 };
 use jsrt::{JsMap, JsSet, P, flag_ops};
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 // analyzer/typeUtils.ts:78
@@ -71,9 +71,8 @@ impl ClassIteratorFlags {
 flag_ops!(ClassIteratorFlags);
 
 // analyzer/typeUtils.ts:189
-#[derive(Clone)]
 pub struct InferenceContext {
-    pub expected_type: P<Type>,
+    pub expected_type: Cell<P<Type>>,
     pub is_type_incomplete: Option<bool>,
     pub return_type_override: Option<P<Type>>,
 }
@@ -183,7 +182,7 @@ pub fn make_inference_context(
     expected_type: Option<P<Type>>,
     is_type_incomplete: Option<bool>,
     return_type_override: Option<P<Type>>,
-) -> Option<InferenceContext> {
+) -> Option<P<InferenceContext>> {
     todo!()
 }
 

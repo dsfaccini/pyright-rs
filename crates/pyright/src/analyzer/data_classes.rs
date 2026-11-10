@@ -1001,8 +1001,7 @@ pub fn synthesize_data_class_methods(
                                                 Some(bound_effective_type),
                                                 None,
                                                 None,
-                                            )
-                                            .as_mut(),
+                                            ),
                                         )
                                         .type_
                                         .get()

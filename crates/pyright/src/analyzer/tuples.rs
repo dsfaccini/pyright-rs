@@ -79,7 +79,7 @@ pub fn get_type_of_tuple(
     evaluator: &TypeEvaluator,
     node: TupleNode,
     flags: EvalFlags,
-    inference_context: Option<&InferenceContext>,
+    inference_context: Option<P<InferenceContext>>,
     node_info: &AnalyzerNodeInfoAccessor,
 ) -> P<TypeResult> {
     let mut flags = flags;
@@ -120,17 +120,17 @@ pub fn get_type_of_tuple(
 
     // If the expected type is a union, recursively call for each of the subtypes
     // to find one that matches.
-    let mut expected_type = inference_context.map(|context| context.expected_type);
+    let mut expected_type = inference_context.map(|context| context.expected_type.get());
     let mut expected_type_contains_any =
-        inference_context.is_some_and(|context| is_any(context.expected_type));
+        inference_context.is_some_and(|context| is_any(context.expected_type.get()));
 
     if let Some(context) = inference_context
-        && is_union(context.expected_type)
+        && is_union(context.expected_type.get())
     {
         let mut matching_subtype: Option<P<Type>> = None;
 
         do_for_each_subtype(
-            context.expected_type,
+            context.expected_type.get(),
             &mut |subtype, _, _| {
                 if is_any(subtype) {
                     expected_type_contains_any = true;
@@ -144,7 +144,7 @@ pub fn get_type_of_tuple(
                                 evaluator,
                                 node,
                                 flags,
-                                &mut make_inference_context(Some(subtype), None, None).unwrap(),
+                                make_inference_context(Some(subtype), None, None).unwrap(),
                                 node_info,
                             )
                         },
@@ -177,7 +177,7 @@ pub fn get_type_of_tuple(
             evaluator,
             node,
             flags,
-            &mut make_inference_context(Some(expected_type), None, None).unwrap(),
+            make_inference_context(Some(expected_type), None, None).unwrap(),
             node_info,
         );
 
@@ -211,12 +211,11 @@ pub fn get_type_of_tuple_with_context(
     evaluator: &TypeEvaluator,
     node: TupleNode,
     flags: EvalFlags,
-    inference_context: &mut InferenceContext,
+    inference_context: P<InferenceContext>,
     node_info: &AnalyzerNodeInfoAccessor,
 ) -> Option<P<TypeResult>> {
-    inference_context.expected_type =
-        transform_possible_recursive_type_alias(Some(inference_context.expected_type), 0).unwrap();
-    if !is_class_instance(inference_context.expected_type) {
+    inference_context.expected_type.set(transform_possible_recursive_type_alias(Some(inference_context.expected_type.get()), 0).unwrap());
+    if !is_class_instance(inference_context.expected_type.get()) {
         return None;
     }
 
@@ -228,7 +227,7 @@ pub fn get_type_of_tuple_with_context(
     // Build an array of expected types.
     let mut expected_types: Vec<P<Type>> = vec![];
 
-    let expected_class = ClassType(inference_context.expected_type);
+    let expected_class = ClassType(inference_context.expected_type.get());
     let expected_tuple_type_args = expected_class.d().priv_.borrow().tuple_type_args.clone();
     if let Some(expected_tuple_type_args) =
         expected_tuple_type_args.filter(|_| is_tuple_class(expected_class))
@@ -252,7 +251,7 @@ pub fn get_type_of_tuple_with_context(
         if !add_constraints_for_expected_type(
             evaluator,
             ClassType::clone_as_instance(tuple_class, true),
-            inference_context.expected_type,
+            inference_context.expected_type.get(),
             tuple_constraints,
             Some(&get_type_var_scopes_for_node(node.0, node_info.reader())),
             Some(node.start.get()),
@@ -288,8 +287,7 @@ pub fn get_type_of_tuple_with_context(
                     expected_types.get(index).copied(),
                     inference_context.is_type_incomplete,
                     None,
-                )
-                .as_mut(),
+                ),
             )
         })
         .collect();

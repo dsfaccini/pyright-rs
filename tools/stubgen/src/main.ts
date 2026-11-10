@@ -235,6 +235,14 @@ function report(gen: Gen, run: Run, deps: Map<string, Set<string>>, notes: strin
         .filter(([k, m]) => m === 'value' && gen.identityComparedAt(k) !== undefined)
         .map(([k]) => `- \`${k}\`: compared with \`===\` at ${gen.identityComparedAt(k)}`);
     lines.push('', `[modes] values that some code compares by identity (porting.md wants a handle): ${conflicts.length}.`, '', ...conflicts);
+    const writtenThrough = [...gen.decls.keys()]
+        .filter((k) => gen.decls.get(k)?.some((d) => ts.isInterfaceDeclaration(d) || ts.isClassDeclaration(d)) && gen.modeOf(k) === 'value')
+        .filter((k) => !(gen.familyMembers.has(k) || gen.familyByRootKey.has(k) || gen.traitClasses.has(k) || gen.factoryByIface.has(k) || gen.table.merge.has(k)))
+        .map((k) => [k, gen.writtenThroughParamSites(k)] as const)
+        .filter(([, sites]) => sites.length > 0)
+        .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+        .map(([k, sites]) => `- \`${k}\`: ${sites.length} params, e.g. ${sites.slice(0, 3).join('; ')}`);
+    lines.push('', `Value-mode types whose fields some code writes through a parameter, directly or through calls (the caller does not see a write to a copy): ${writtenThrough.length}.`, '', ...writtenThrough);
     if (notes.length) {
         lines.push('', 'Notes:', '', ...notes.map((n) => `- ${n}`));
     }
