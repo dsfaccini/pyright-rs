@@ -32,6 +32,10 @@ Promise = "$0"
 # A `Map<string, Symbol>` held by reference: a module type holds its scope's table (typeEvaluator.ts:24280),
 # `isTypeSame` compares module tables with `===` (types.ts:3766), and spread copies of a type share it.
 "analyzer/symbol.ts:SymbolTable" = { rust = "SymbolTable", use = "crate::analyzer::symbol::SymbolTable", copy = true }
+# A function reference: the evaluator passes its nested `getEffectiveReturnType`, the oracle dumper
+# a closure of its own. A trait object held by a Copy handle, like the JS reference; the evaluator
+# implements the trait itself, so no print allocates one ([items]).
+"analyzer/typePrinter.ts:FunctionReturnTypeCallback" = { rust = "jsrt::P<dyn crate::analyzer::type_printer::FunctionReturnTypeCallback>", copy = true }
 
 # How a class or interface is held (default rules in docs/evaluator-design.md, "objects"):
 # "handle": `P<T>`, shared by reference; fields written after construction get Cell/RefCell.
@@ -192,6 +196,8 @@ interface = "analyzer/codeFlowEngine.ts:CodeFlowAnalyzer"
 # Per-site Rust type, overriding the mapping: "<file>:<site>" = "Rust type", used verbatim in every
 # position. Qualify names outside the module (`jsrt::P`) and the generator imports them.
 [sites]
+# The checker hands the reader to its walker base, which stores it (checker.ts:244).
+"analyzer/checker.ts:Checker.constructor.nodeInfoReader" = "jsrt::P<dyn crate::analyzer::analyzer_node_info::AnalyzerNodeInfoReader>"
 # Deferred binding callbacks run later with the binder that queued them.
 "analyzer/binder.ts:DeferredBindingTask.callback" = "Box<dyn FnOnce(&mut crate::analyzer::binder::Binder)>"
 "analyzer/binder.ts:Binder._deferBinding.callback" = "Box<dyn FnOnce(&mut crate::analyzer::binder::Binder)>"
@@ -472,6 +478,27 @@ impl Arg {
             Arg::ArgWithType(a) => a.enforce_iterable,
             Arg::ArgWithExpression(a) => a.enforce_iterable,
         }
+    }
+}
+"""
+# `FunctionReturnTypeCallback` is a function type the printer stores (`UniqueNameMap`), mapped in
+# [types] to a trait object behind a Copy handle. The evaluator hands the printer its own
+# `getEffectiveReturnType`, so it implements the trait; the oracle dumper's implementation, which
+# never runs inference, lives in crate::oracle::types.
+"analyzer/typePrinter.ts:FunctionReturnTypeCallback" = """
+// analyzer/typePrinter.ts:104
+/// `(type: FunctionType) => Type`, held as `P<dyn FunctionReturnTypeCallback>`.
+pub trait FunctionReturnTypeCallback {
+    fn call(&self, type_: crate::analyzer::types::FunctionType) -> jsrt::P<crate::analyzer::types::Type>;
+}
+"""
+"analyzer/typeEvaluator.ts:impl FunctionReturnTypeCallback for TypeEvaluator" = """
+impl crate::analyzer::type_printer::FunctionReturnTypeCallback for crate::analyzer::type_evaluator::TypeEvaluator {
+    // analyzer/typeEvaluator.ts:30313
+    /// The nested `getEffectiveReturnType` that `printObjectTypeForClass`, `printFunctionParts` and
+    /// `printType` pass to the printer.
+    fn call(&self, type_: crate::analyzer::types::FunctionType) -> jsrt::P<crate::analyzer::types::Type> {
+        self.get_effective_return_type(type_)
     }
 }
 """

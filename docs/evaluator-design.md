@@ -138,6 +138,7 @@ porting.md "memory": a closure that a struct stores becomes a struct with named 
 - Captures: a local or parameter of an enclosing function is a field of its type; a closure factory's locals and nested functions are its struct (`type_evaluator: P<TypeEvaluator>`); `this` is the class; a local function or `const` closure the closure calls adds its own captures and a doc line. A captured `let` that the TypeScript reassigns gets a comment: the struct holds a copy.
 - A slot whose every site captures nothing is a `fn` pointer (`typeFormSpecialFormDiagnosticFactories` holds `fn() -> String`).
 - Aliases only passed or returned (`TypeNarrowingCallback`) stay `Rc<dyn Fn>`: no struct keeps them.
+- A function type alias that `[types]` maps is not a slot. The table gives its Rust type, `[items]` defines it, and the generator emits nothing at the alias. `FunctionReturnTypeCallback` (typePrinter.ts:104) is a trait held as `P<dyn FunctionReturnTypeCallback>` in every position, a Copy handle like the JS function reference. Pyright passes three different functions to it: the evaluator's own nested `getEffectiveReturnType`, so `TypeEvaluator` implements the trait (typeEvaluator.ts:30313) and hands the printer `evaluator_interface.to_dyn(..)` without allocating; the oracle dumper's, which never runs inference (`oracle/types.rs`); and the typePrinter tests' (2026-11-10).
 
 ### objects
 
