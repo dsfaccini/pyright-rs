@@ -636,3 +636,57 @@ impl TypeResultWithNode {
         }
     }
 }
+
+// Defined in tools/stubgen/typemap.toml [items].
+/// Reads of the `ArgBase` members on an `Arg`, whichever variant holds it: TypeScript reads them
+/// on the union. `type_result` and `value_expression` are optional on one variant only.
+impl Arg {
+    pub fn arg_category(&self) -> ArgCategory {
+        match self {
+            Arg::ArgWithType(a) => a.arg_category,
+            Arg::ArgWithExpression(a) => a.arg_category,
+        }
+    }
+
+    pub fn node(&self) -> Option<ArgumentNode> {
+        match self {
+            Arg::ArgWithType(a) => a.node,
+            Arg::ArgWithExpression(a) => a.node,
+        }
+    }
+
+    pub fn name(&self) -> Option<NameNode> {
+        match self {
+            Arg::ArgWithType(a) => a.name,
+            Arg::ArgWithExpression(a) => a.name,
+        }
+    }
+
+    pub fn type_result(&self) -> Option<P<TypeResult>> {
+        match self {
+            Arg::ArgWithType(a) => Some(a.type_result),
+            Arg::ArgWithExpression(a) => a.type_result,
+        }
+    }
+
+    pub fn value_expression(&self) -> Option<ExpressionNode> {
+        match self {
+            Arg::ArgWithType(a) => a.value_expression,
+            Arg::ArgWithExpression(a) => Some(a.value_expression),
+        }
+    }
+
+    pub fn active(&self) -> Option<bool> {
+        match self {
+            Arg::ArgWithType(a) => a.active,
+            Arg::ArgWithExpression(a) => a.active,
+        }
+    }
+
+    pub fn enforce_iterable(&self) -> Option<bool> {
+        match self {
+            Arg::ArgWithType(a) => a.enforce_iterable,
+            Arg::ArgWithExpression(a) => a.enforce_iterable,
+        }
+    }
+}
