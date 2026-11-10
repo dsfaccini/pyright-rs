@@ -232,7 +232,7 @@ interface = "analyzer/codeFlowEngine.ts:CodeFlowAnalyzer"
 # A type's own records: one pointer until the first write ([mutable] keeps them out of a RefCell).
 "analyzer/types.ts:Type.props" = "jsrt::OptionRefCell<crate::analyzer::types::TypeBaseProps>"
 "analyzer/types.ts:Type.cached" = "jsrt::OptionRefCell<crate::analyzer::types::CachedTypeInfo>"
-"analyzer/types.ts:LiteralTypes.literalStrMap" = "Option<Box<jsrt::JsMap<String, crate::analyzer::types::UnionableType>>>"
+"analyzer/types.ts:LiteralTypes.literalStrMap" = "Option<Box<jsrt::JsMap<jsrt::JsString, crate::analyzer::types::UnionableType>>>"
 "analyzer/types.ts:LiteralTypes.literalIntMap" = "Option<Box<jsrt::JsMap<jsrt::NumberValue, crate::analyzer::types::UnionableType>>>"
 "analyzer/types.ts:LiteralTypes.literalEnumMap" = "Option<Box<jsrt::JsMap<String, crate::analyzer::types::UnionableType>>>"
 "analyzer/types.ts:UnionDetailsPriv.typeAliasSources" = "Option<Box<jsrt::JsSet<crate::analyzer::types::UnionType>>>"

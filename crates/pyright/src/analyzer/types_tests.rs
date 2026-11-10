@@ -112,6 +112,38 @@ fn combine_types_dedups_and_flattens() {
     ));
 }
 
+// Not in types.test.ts: the union literal map keys a str literal by its UTF-16 value, so literals
+// that differ only in a lone surrogate stay distinct members, as in pyright.
+#[test]
+fn union_keeps_literals_that_differ_in_a_lone_surrogate() {
+    let str_class = create_class("str", ClassTypeFlags::BuiltIn);
+    let str_instance = ClassType::clone_as_instance(str_class, true);
+    let literal = |units: &[u16]| {
+        ClassType::clone_with_literal(str_instance, Some(LiteralValue::String(units.into()))).0
+    };
+
+    let high = literal(&[0x61, 0xd800]);
+    let low = literal(&[0x61, 0xdc00]);
+    let union = combine_types(&[high, low, literal(&[0x61, 0xd800])], None);
+    assert_eq!(UnionType(union).d().priv_.borrow().subtypes, vec![high, low]);
+    for member in [&[0x61, 0xd800], &[0x61, 0xdc00]] {
+        assert!(UnionType::contains_type(
+            UnionType(union),
+            literal(member),
+            &TypeSameOptions::default(),
+            None,
+            0
+        ));
+    }
+    assert!(!UnionType::contains_type(
+        UnionType(union),
+        literal(&[0x61, 0xfffd]),
+        &TypeSameOptions::default(),
+        None,
+        0
+    ));
+}
+
 #[test]
 fn union_of_str_literals_uses_literal_map() {
     let str_class = create_class("str", ClassTypeFlags::BuiltIn);
