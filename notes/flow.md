@@ -18,7 +18,7 @@ All through `tools/stubgen` (`typemap.toml`, generator), documented in `docs/eva
 
 ## Shared-file edits
 
-- `tuple_type_args` readers and writers, for the handle above: `constraint_solver.rs`, `constructors.rs`, `data_classes.rs`, `named_tuples.rs`, `operations.rs`, `parameter_utils.rs`, `tuples.rs`, `type_evaluator.rs`, `type_guards.rs` (share J's part too), `type_printer.rs`, `type_utils.rs`, `type_utils_tests.rs`, `type_walker.rs`, `types.rs`.
+- `tuple_type_args` readers and writers, for the handle above: `checker.rs`, `constraint_solver.rs`, `constructors.rs`, `data_classes.rs`, `named_tuples.rs`, `operations.rs`, `parameter_utils.rs`, `tuples.rs`, `type_evaluator.rs`, `type_guards.rs` (share J's part too), `type_printer.rs`, `type_utils.rs`, `type_utils_tests.rs`, `type_walker.rs`, `types.rs`.
 - `crates/pyright/src/analyzer/mod.rs`: `#[cfg(test)] mod type_cache_utils_tests;`. A test module inside a generated file makes `--install` refuse, so ported tests live in sibling files.
 
 ## Needs from others
