@@ -6,9 +6,9 @@
 
 use std::cell::{Cell, RefCell};
 
-use jsrt::{JsMap, JsSet, JsStr, P};
+use jsrt::{JsMap, JsSet, P};
 
-use super::analyzer_file_info::{AnalyzerFileInfo, ImportLookupKey, ImportLookupResult};
+use super::analyzer_file_info::{AnalyzerFileInfo, ImportLookupKey};
 use super::analyzer_node_info::{AnalyzerNodeInfoAccessor, DunderAllInfo};
 use super::cell_chain_index::CellChainIndexProvider;
 use super::code_flow_types::{
@@ -18,7 +18,7 @@ use super::code_flow_types::{
     FlowNodeDetails, FlowPostContextManagerLabel, FlowPostContextManagerLabelDetails,
     FlowPostFinallyDetails, FlowPreFinallyGate, FlowPreFinallyGateDetails,
     FlowVariableAnnotationDetails, FlowWildcardImportDetails, WILDCARD_IMPORT_REFERENCE_KEY,
-    create_key_for_reference, create_keys_for_reference_subexpressions, get_unique_flow_node_id,
+    create_key_for_reference, get_unique_flow_node_id,
     is_code_flow_supported_for_reference,
 };
 use super::declaration::{
@@ -51,9 +51,9 @@ use crate::common::uri::Uri;
 use crate::localization::localize::LocMessage;
 use crate::parser::parse_nodes::{
     ArgCategory, AssertNode, AssignmentExpressionNode, AssignmentNode, AugmentedAssignmentNode,
-    AwaitNode, BinaryOperationNode, BreakNode, CallNode, CaseNode, ClassNode, ComprehensionNode,
+    AwaitNode, BinaryOperationNode, BreakNode, CallNode, ClassNode, ComprehensionNode,
     ContinueNode, DelNode, ExceptNode, ExpressionNode, ForNode, FunctionNode, GlobalNode, IfNode,
-    ImportAsNode, ImportFromAsNode, ImportFromNode, IndexNode, LambdaNode, ListNode, MatchNode,
+    ImportAsNode, ImportFromNode, IndexNode, LambdaNode, ListNode, MatchNode,
     MemberAccessNode, ModuleNameNode, ModuleNode, NameNode, NonlocalNode, ParseNode,
     ParseNodeDetails as D, ParseNodeType, PatternAsNode, PatternCaptureNode,
     PatternMappingExpandEntryNode, RaiseNode, ReturnNode, StatementNode, StringListNode,
@@ -62,7 +62,9 @@ use crate::parser::parse_nodes::{
 };
 use crate::parser::tokenizer_types::{KeywordType, OperatorType};
 
+// The binder reads only `class_scope` and `is_instance_member`.
 // analyzer/binder.ts:138
+#[allow(dead_code)]
 struct MemberAccessInfo {
     class_node: ClassNode,
     method_node: FunctionNode,
@@ -470,7 +472,11 @@ impl Binder {
             chained_module_level_scope_lookup,
             move |this| {
                 this._node_info.set_scope(node, this.cur_scope());
-                this._node_info.set_flow_node(node, this.cur_flow());
+                // `this._currentFlowNode!` is still undefined here, so TypeScript
+                // stores undefined: the module's node info has no flow node.
+                if let Some(flow_node) = this._current_flow_node {
+                    this._node_info.set_flow_node(node, flow_node);
+                }
 
                 // Bind implicit names.
                 // List taken from https://docs.python.org/3/reference/import.html#__name__
@@ -1084,12 +1090,9 @@ impl ParseTreeVisitor<bool> for Binder {
                 // Is this a call to "__all__.remove()"?
                 let arg_expr = args[0].d().value_expr.get();
                 if let Some(string_node) = single_string_node(arg_expr) {
-                    if self._dunder_all_names.is_some() {
+                    if let Some(dunder_all_names) = &mut self._dunder_all_names {
                         let value = string_value(string_node);
-                        self._dunder_all_names
-                            .as_mut()
-                            .unwrap()
-                            .retain(|name| *name != value);
+                        dunder_all_names.retain(|name| *name != value);
                         self._dunder_all_string_nodes
                             .retain(|node| string_value(*node) != value);
                         emit_dunder_all_warning = false;
@@ -2339,7 +2342,7 @@ impl ParseTreeVisitor<bool> for Binder {
         // symbols below) in case one of the imported symbols is the same name as the
         // submodule. In that case, we want to the symbol to appear later in the
         // declaration list because it should "win" when resolving the alias.
-        let file_name = strip_file_extension(&self._file_info.file_uri.file_name(), false);
+        let file_name = strip_file_extension(self._file_info.file_uri.file_name(), false);
         let name_parts = module.d().name_parts.borrow().clone();
         let is_module_init_file =
             file_name == "__init__" && module.d().leading_dots.get() == 1 && name_parts.len() == 1;
@@ -2532,7 +2535,7 @@ impl ParseTreeVisitor<bool> for Binder {
                     // Is the import referring to an implicitly-imported module?
                     let mut implicit_import: Option<&ImplicitImport> = None;
                     if let Some(import_info) = import_info {
-                        if let Some(filtered_implicit_imports) = &import_info.filtered_implicit_imports {
+                        if let Some(filtered_implicit_imports) = &import_info.get().filtered_implicit_imports {
                             implicit_import = filtered_implicit_imports.get(&imported_name);
                         }
                     }
@@ -3273,12 +3276,12 @@ impl Binder {
             !decl.uri.get().is_empty() && decl.alias().unwrap().load_symbols_from_path.get()
         }) {
             Some(alias_decl.uri.get())
-        } else if let Some(fallback) = fallback.filter(|fallback| {
-            !fallback.uri.get().is_empty() && fallback.alias().unwrap().load_symbols_from_path.get()
-        }) {
-            Some(fallback.uri.get())
         } else {
-            None
+            fallback
+                .filter(|fallback| {
+                    !fallback.uri.get().is_empty() && fallback.alias().unwrap().load_symbols_from_path.get()
+                })
+                .map(|fallback| fallback.uri.get())
         };
         let resolved_uri = resolved_uri?;
 
@@ -4670,7 +4673,7 @@ impl Binder {
     // analyzer/binder.ts:4103
     fn _is_inference_allowed_in_py_typed(&self, symbol_name: &str) -> bool {
         let exempt_symbols = ["__match_args__", "__slots__", "__all__"];
-        exempt_symbols.iter().any(|name| *name == symbol_name)
+        exempt_symbols.contains(&symbol_name)
     }
 
     // analyzer/binder.ts:4108
@@ -5056,7 +5059,7 @@ impl Binder {
 
         // Determine whether the left-hand side indicates a class or
         // instance member.
-        let mut is_instance_member = false;
+        let mut is_instance_member: bool;
 
         let params = method_node.d().params.borrow().clone();
         if params.len() < 1 {

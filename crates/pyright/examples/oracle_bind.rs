@@ -9,8 +9,12 @@
 //! lookups bind their target on demand. It also compares each file's bind
 //! diagnostics with the `bind:` list of the reference diag dump.
 //!
-//! Python version 3.13, platform Linux, standard rule set: the corpora's config.
-//! `isInPyTypedPackage` is guessed from a `py.typed` file under `site-packages`.
+//! Options give the corpus config: `--python-version 3.11` (default 3.13),
+//! `--mode strict|standard|basic|off` (default standard), and `--rule
+//! <name>=<level>` (repeatable, applied after the mode). Platform is Linux.
+//! `isInPyTypedPackage` is an import-resolution result, so it is replayed too:
+//! true when the reference dump shows a symbol with `PrivatePyTypedImport` (512),
+//! the only bind output it changes.
 
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
@@ -26,15 +30,17 @@ use pyright::analyzer::analyzer_node_info::{
     create_analyzer_node_info_accessor, get_dunder_all_info, get_scope,
 };
 use pyright::analyzer::binder::Binder;
+use pyright::analyzer::comment_utils::get_file_level_directives;
 use pyright::analyzer::import_result::{ImplicitImport, ImportResult, ImportType};
 use pyright::analyzer::py_typed_utils::PyTypedInfo;
 use pyright::analyzer::source_file::IPythonMode;
 use pyright::analyzer::symbol::SymbolTable;
 use pyright::common::case_sensitivity_detector::CaseSensitiveDetector;
-use pyright::common::config_options::{ExecutionEnvironment, get_standard_diagnostic_rule_set};
+use pyright::common::config_options::{ConfigOptions, DiagnosticLevel, DiagnosticRuleSet, ExecutionEnvironment};
+use pyright::common::diagnostic_rules::DiagnosticRule;
+use pyright::common::python_version::PythonVersion;
 use pyright::common::diagnostic::Diagnostic;
 use pyright::common::diagnostic_sink::{DiagnosticSink, TextRangeDiagnosticSink};
-use pyright::common::python_version::PYTHON_VERSION3_13;
 use pyright::common::uri::Uri;
 use pyright::oracle::bind::{dump_bind, node_ref, number_scopes, walk_tree};
 use pyright::oracle::flow::dump_flow;
@@ -101,6 +107,8 @@ fn json_string(value: &str) -> String {
 }
 
 struct Harness {
+    python_version: PythonVersion,
+    rule_set: DiagnosticRuleSet,
     reference: PathBuf,
     out: PathBuf,
     fork: PathBuf,
@@ -110,7 +118,6 @@ struct Harness {
 }
 
 struct FileState {
-    mapped: String,
     binding: Cell<bool>,
     bound: Cell<bool>,
     module: Cell<Option<ModuleNode>>,
@@ -218,7 +225,6 @@ impl Harness {
             .entry(mapped.to_string())
             .or_insert_with(|| {
                 Rc::new(FileState {
-                    mapped: mapped.to_string(),
                     binding: Cell::new(false),
                     bound: Cell::new(false),
                     module: Cell::new(None),
@@ -228,15 +234,14 @@ impl Harness {
             .clone()
     }
 
-    fn is_in_py_typed_package(path: &Path) -> bool {
-        let text = path.to_string_lossy();
-        let Some(i) = text.find("/site-packages/") else {
-            return false;
-        };
-        let root = &text[..i + "/site-packages/".len()];
-        let rest = &text[root.len()..];
-        let top = rest.split('/').next().unwrap_or("");
-        Path::new(root).join(top).join("py.typed").exists()
+    /// Whether a symbol of the reference bind dump has `PrivatePyTypedImport`.
+    fn is_in_py_typed_package(reference_text: &str) -> bool {
+        reference_text.lines().any(|line| {
+            line.trim_start()
+                .strip_prefix("_flags: ")
+                .and_then(|flags| flags.parse::<u32>().ok())
+                .is_some_and(|flags| flags & 512 != 0)
+        })
     }
 
     fn import_lookup(self: &Rc<Self>, key: ImportLookupKey, skip_parsing: bool) -> Option<ImportLookupResult> {
@@ -306,7 +311,7 @@ impl Harness {
 
         let parse_options = ParseOptions {
             is_stub_file,
-            python_version: PYTHON_VERSION3_13,
+            python_version: self.python_version,
             ..ParseOptions::new()
         };
         let parse_results = Parser::new().parse_source_file(
@@ -383,7 +388,16 @@ impl Harness {
             .iter()
             .any(|s| path_ends_with(s));
 
-        let rule_set = get_standard_diagnostic_rule_set();
+        // SourceFile.parse: the file's `# pyright:` comments adjust the rule set.
+        let env_rule_set = self.rule_set.clone();
+        let mut comment_diagnostics = Vec::new();
+        let rule_set = get_file_level_directives(
+            &parse_results.tokenizer_output.tokens,
+            lines,
+            &env_rule_set,
+            false,
+            &mut comment_diagnostics,
+        );
         let harness = self.clone();
         let file_info = P::new(AnalyzerFileInfo {
             import_lookup: Rc::new(move |key, options| {
@@ -395,8 +409,8 @@ impl Harness {
             execution_environment: P::new(ExecutionEnvironment::new(
                 "python".to_string(),
                 Uri::empty(),
-                &rule_set,
-                Some(PYTHON_VERSION3_13),
+                &env_rule_set,
+                Some(self.python_version),
                 Some("Linux".to_string()),
                 None,
                 false,
@@ -416,7 +430,7 @@ impl Harness {
                 && (path_ends_with("stdlib/_typeshed/__init__.pyi")
                     || path_ends_with("stdlib/_typeshed/_type_checker_internals.pyi")),
             is_built_in_stub_file,
-            is_in_py_typed_package: Self::is_in_py_typed_package(&source),
+            is_in_py_typed_package: Self::is_in_py_typed_package(&reference_text),
             ipython_mode: IPythonMode::None,
             accessed_symbol_set: Default::default(),
         });
@@ -497,13 +511,34 @@ fn collect(dir: &Path, files: &mut Vec<PathBuf>) -> std::io::Result<()> {
 fn run() -> ExitCode {
     let mut prefixes: Vec<String> = vec![];
     let mut positional: Vec<String> = vec![];
+    let mut python_version = PythonVersion::from_string("3.13").unwrap();
+    let mut mode = "standard".to_string();
+    let mut rules: Vec<(DiagnosticRule, DiagnosticLevel)> = vec![];
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
-        if arg == "--path" {
-            prefixes.push(args.next().expect("--path needs a value"));
-        } else {
-            positional.push(arg);
+        match arg.as_str() {
+            "--path" => prefixes.push(args.next().expect("--path needs a value")),
+            "--python-version" => {
+                python_version =
+                    PythonVersion::from_string(&args.next().expect("--python-version needs a value")).expect("version")
+            }
+            "--mode" => mode = args.next().expect("--mode needs a value"),
+            "--rule" => {
+                let rule = args.next().expect("--rule needs name=level");
+                let (name, level) = rule.split_once('=').expect("--rule needs name=level");
+                let level = match level {
+                    "false" => DiagnosticLevel::None,
+                    "true" => DiagnosticLevel::Error,
+                    other => DiagnosticLevel::from_name(other).expect("level"),
+                };
+                rules.push((DiagnosticRule::from_name(name).expect("rule name"), level));
+            }
+            _ => positional.push(arg),
         }
+    }
+    let mut rule_set = ConfigOptions::get_diagnostic_rule_set(Some(&mode));
+    for (rule, level) in rules {
+        rule_set.set_level(rule, level);
     }
     let [reference, out] = positional.as_slice() else {
         eprintln!("usage: oracle_bind [--path PREFIX]... <reference dump dir> <out dir>");
@@ -513,6 +548,8 @@ fn run() -> ExitCode {
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from(std::env::var_os("HOME").expect("HOME")).join("pyright-oracle"));
     let harness = Rc::new(Harness {
+        python_version,
+        rule_set,
         reference: PathBuf::from(reference),
         out: PathBuf::from(out),
         fork,
