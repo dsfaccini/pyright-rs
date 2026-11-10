@@ -18,7 +18,7 @@ Dependency placeholders (compile check only):
 - `deps/analyzer/code_flow_engine.rs`: CachedType, CodeFlowAnalyzer, CodeFlowEngine, CodeFlowTypeCache, FlowNodeTypeOptions, FlowNodeTypeResult, IncompleteSubtypeInfo, IncompleteType, ReachabilityCacheEntry
 - `deps/analyzer/code_flow_types.rs`: CodeFlowReferenceExpressionNode, FlowFlags, FlowNode, FlowPreFinallyGate
 - `deps/analyzer/constraint_tracker.rs`: ConstraintSet, ConstraintTracker, TypeVarConstraints
-- `deps/analyzer/declaration.rs`: AliasDeclaration, DeclarationBase, DeclarationType, FunctionDeclaration, IntrinsicType, ModuleLoaderActions
+- `deps/analyzer/declaration.rs`: DeclarationBase, DeclarationType, IntrinsicType, ModuleLoaderActions
 - `deps/analyzer/declaration_utils.rs`: ResolvedAliasInfo
 - `deps/analyzer/import_result.rs`: ImplicitImport, ImportResult, ImportType
 - `deps/analyzer/parameter_utils.rs`: ParamKind, ParamListDetails, VirtualParamDetails

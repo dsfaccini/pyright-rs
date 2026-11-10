@@ -75,7 +75,9 @@ Promise = "$0"
 # kind: the discriminant field (left out when members are told apart by flags);
 # flatten: a slot field whose object type is spread into the details struct;
 # all_fields_mutable: every field is Cell/RefCell (porting.md "parse nodes");
-# root_variant: the variant for objects created as the base itself.
+# root_variant: the variant for objects created as the base itself;
+# typed_handles = false: members are P<Root>, with no typed handle (default true);
+# empty_variants = "unit": a member without fields of its own is a unit variant (default "struct").
 [families.ParseNode]
 file = "parser/parseNodes.ts"
 base = "ParseNodeBase"
@@ -89,7 +91,8 @@ file = "parser/tokenizerTypes.ts"
 base = "TokenBase"
 union = "Token"
 kind = "type"
-root_variant = "Plain"
+# As ported in crates/pyright/src/parser/tokenizer_types.rs.
+root_variant = "None"
 
 [families.Type]
 file = "analyzer/types.ts"
@@ -102,6 +105,10 @@ file = "analyzer/declaration.ts"
 base = "DeclarationBase"
 union = "Declaration"
 kind = "type"
+# As ported in crates/pyright/src/analyzer/declaration.rs: every member is a P<Declaration>, and a
+# kind without fields of its own is a unit variant.
+typed_handles = false
+empty_variants = "unit"
 
 [families.FlowNode]
 file = "analyzer/codeFlowTypes.ts"

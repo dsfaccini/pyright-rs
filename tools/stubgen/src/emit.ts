@@ -351,7 +351,7 @@ export class FileEmitter {
                 continue;
             }
             seen.add(m.variant);
-            variants.push(`    ${m.variant}(${m.name}Details),`);
+            variants.push(fam.emptyVariants === 'unit' && !this.memberHasFields(m) ? `    ${m.variant},` : `    ${m.variant}(${m.name}Details),`);
         }
         this.out.push(`// ${fam.file}: one variant per ${fam.kind ? `\`${fam.kind}\` value` : 'interface'}.`, `pub enum ${fam.name}Details {`, ...variants, '}', '');
     }
@@ -366,9 +366,36 @@ export class FileEmitter {
         return parts.length === 1 && parts[0].kind === ts.SyntaxKind.ObjectKeyword;
     }
 
+    // The fields a member's details struct holds, and whether there are none.
+    private memberHasFields(m: FamilyMember): boolean {
+        const fam = m.fam;
+        const base = this.gen.decls.get(`${fam.file}:${fam.base}`)?.find(ts.isInterfaceDeclaration);
+        const baseSlots = new Set<string>();
+        const baseNames = new Set<string>();
+        for (const { node: p } of base ? this.gen.collectProps(base) : []) {
+            const n = memberName(p);
+            if (n !== undefined) {
+                (this.isSlot(p) ? baseSlots : baseNames).add(n);
+            }
+        }
+        if (m.parent) {
+            return true;
+        }
+        const props = this.gen.collectProps(m.decl).map((p) => p.node);
+        return props.some((p) => {
+            const n = memberName(p);
+            return n !== undefined && !(baseNames.has(n) && !baseSlots.has(n)) && !this.isSlot(p);
+        });
+    }
+
     private familyMember(m: FamilyMember) {
         const fam = m.fam;
         const decl = m.decl;
+        if (fam.emptyVariants === 'unit' && !m.sharesVariantOf && !this.memberHasFields(m)) {
+            // A unit variant: no details struct, and no typed handle to reach one.
+            this.out.push(`${this.marker(decl)}: \`${m.name}\` has no fields of its own: \`${fam.name}Details::${m.variant}\`.`, '');
+            return;
+        }
         const baseKey = `${fam.file}:${fam.base}`;
         const base = this.gen.decls.get(baseKey)?.find(ts.isInterfaceDeclaration);
         const baseSlots = new Set<string>();
@@ -413,7 +440,9 @@ export class FileEmitter {
             }
             this.out.push(this.marker(decl), `pub struct ${m.name}Details {`, ...fields, '}', '');
         }
-        this.typedHandle(m);
+        if (fam.typedHandles) {
+            this.typedHandle(m);
+        }
     }
 
     // `FunctionNode(P<ParseNode>)` with `cast`, `d` and `Deref`, per docs/porting.md "parse nodes".

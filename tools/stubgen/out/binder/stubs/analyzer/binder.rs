@@ -15,9 +15,7 @@ use crate::analyzer::code_flow_types::{
     CodeFlowReferenceExpressionNode, FlowBranchLabel, FlowFlags, FlowLabel, FlowNode,
     FlowPostContextManagerLabel,
 };
-use crate::analyzer::declaration::{
-    AliasDeclaration, Declaration, FunctionDeclaration, IntrinsicType, ModuleLoaderActions,
-};
+use crate::analyzer::declaration::{Declaration, IntrinsicType, ModuleLoaderActions};
 use crate::analyzer::import_result::ImportResult;
 use crate::analyzer::parse_tree_walker::{ParseTreeVisitor, ParseTreeWalker};
 use crate::analyzer::scope::{Scope, ScopeChainedModuleLevelLookup, ScopeType};
@@ -110,7 +108,7 @@ pub struct Binder {
     pub(crate) _deferred_binding_tasks: Vec<DeferredBindingTask>,
     pub(crate) _current_scope: P<Scope>,
     pub(crate) _current_flow_node: Option<P<FlowNode>>,
-    pub(crate) _target_function_declaration: Option<FunctionDeclaration>,
+    pub(crate) _target_function_declaration: Option<P<Declaration>>,
     pub(crate) _current_break_target: Option<FlowLabel>,
     pub(crate) _current_continue_target: Option<FlowLabel>,
     pub(crate) _current_true_target: Option<FlowLabel>,
@@ -834,8 +832,8 @@ impl Binder {
     pub(crate) fn _clone_multipart_module_alias_declaration(
         &mut self,
         node: ImportFromNode,
-        declaration: AliasDeclaration,
-    ) -> AliasDeclaration {
+        declaration: P<Declaration>,
+    ) -> P<Declaration> {
         todo!()
     }
 

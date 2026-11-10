@@ -791,6 +791,10 @@ export class Gen {
         }
         const member = this.familyMembers.get(key);
         if (member) {
+            if (!member.fam.typedHandles) {
+                this.need(`${member.fam.file}:${member.fam.base}`);
+                return this.familyRootIR(member.fam);
+            }
             this.need(key);
             return { k: 'named', text: name, copy: true, uses: [path] };
         }

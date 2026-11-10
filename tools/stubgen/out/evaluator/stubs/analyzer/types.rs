@@ -8,7 +8,7 @@
     clippy::all
 )]
 
-use crate::analyzer::declaration::{Declaration, FunctionDeclaration};
+use crate::analyzer::declaration::Declaration;
 use crate::analyzer::symbol::Symbol;
 use crate::common::uri::uri::Uri;
 use crate::parser::parse_nodes::{
@@ -1157,7 +1157,7 @@ pub struct FunctionDetailsShared {
     pub type_params: RefCell<Vec<TypeVarType>>,
     pub parameters: RefCell<Vec<FunctionParam>>,
     pub declared_return_type: Cell<Option<P<Type>>>,
-    pub declaration: Cell<Option<FunctionDeclaration>>,
+    pub declaration: Cell<Option<P<Declaration>>>,
     pub type_var_scope_id: RefCell<Option<String>>,
     pub doc_string: RefCell<Option<String>>,
     pub deprecated_message: RefCell<Option<String>>,

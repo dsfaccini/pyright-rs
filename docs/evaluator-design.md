@@ -172,6 +172,7 @@ porting.md "types, classes and unions" and "parse nodes". `[families]` lists the
 - In a family without a kind field, a member's details embed its parent member's details as `base` (`FlowBranchLabelDetails.base: FlowLabelDetails`), so `FlowLabel::d()` works on every label variant.
 - References: the union and the base are `P<Root>`; a member is its typed handle; an alias of a union of members (`ExpressionNode`) is `pub type ExpressionNode = P<ParseNode>`.
 - `all_fields_mutable` makes every field `Cell`/`RefCell` except the kind field and `id`, as porting.md requires for parse nodes.
+- Two options record the shape a hand port chose. `typed_handles = false` drops the typed handles, so a member is `P<Root>`; `empty_variants = "unit"` makes a member without fields of its own a unit variant. `Declaration` uses both, as `crates/pyright/src/analyzer/declaration.rs` does. Tokens name their root variant `None`, as `tokenizer_types.rs` does.
 
 ### traits
 
@@ -233,7 +234,11 @@ An alias declared inside a function body is inlined.
 A run writes `out/<run>/stubs/`, one module per stubbed file, and `out/<run>/deps/`: type-only placeholders for every file the stubs name that is not in the run.
 
 - A placeholder holds the types other emitted code names, to a fixpoint, and the whole family when it holds a family. Never copy a placeholder into `crates/`.
-- `--check` copies `crates/` to `target/stubgen-check/<run>`, places each stub, places each placeholder only where the crate's file is still an empty skeleton, and runs `cargo check -p pyright`. Once a file is ported, the stubs compile against the real one; a name mismatch then fails the check.
+- `--check` copies `crates/` to `target/stubgen-check/<run>` and runs `cargo check -p pyright` with:
+  - each stub placed, unless the crate's file is already ported (a function with a real body): the port supersedes the stub, and the report lists it;
+  - each placeholder placed where the crate's file is still an empty skeleton;
+  - for a partially ported file, the items the stubs name that it lacks, served from the placeholder through a side module the file re-exports. The report lists them: they are requests to the file's owner.
+- So the stubs compile against every real file on `main`; a name mismatch fails the check.
 - Where a ported file chose a shape the rules would not give, `typemap.toml` records it: `TextRangeCollection<T>` keeps its generic, `ConsoleInterface` is a trait.
 - `jsrt` items the stubs use but `crates/jsrt` lacks come from `tools/stubgen/jsrt_shim.rs`. The check report lists each: they are requests to the `jsrt` owner.
 
@@ -245,4 +250,5 @@ A run writes `out/<run>/stubs/`, one module per stubbed file, and `out/<run>/dep
 - `RegExp` has no mapping yet; jsrt's `js_regex` translates patterns for the `regex` crate. Neither run uses it.
 - The remaining `/*? .. */` sites in each run's report need a decision: `definedConstants` values (`boolean | string`), `ImportLookup`'s `Uri | AbsoluteModuleDescriptor` parameter, the `any` results in `staticExpressions.ts`.
 - Number sites ending in `?` in `numbers.toml` are unreviewed guesses. The binder group, `typeEvaluator.ts` and `types.ts` have none; the remaining ones sit in files only placeholders cover so far.
-- The stubs compile against the ported `parse_nodes.rs`, `tokenizer_types.rs` and the ported `common/` files on `main` at the time of the run. A later change to their names fails the check until the table follows.
+- The evaluator stubs compile against the hand-ported binder group, `parse_nodes.rs`, `tokenizer_types.rs`, `parser.rs` and `common/` files on `main` at the time of the run. A later change to their names fails the check until the table follows.
+- The binder group was ported by hand while the binder run was being built, so the check reports all nine binder stubs as superseded. The run stays as a record of the mapping on those files.

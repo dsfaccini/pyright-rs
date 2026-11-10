@@ -24,6 +24,10 @@ export interface Family {
     detailsField: string;
     allFieldsMutable: boolean;
     rootVariant: string | undefined;
+    // Typed handles per member (`FunctionNode(P<ParseNode>)`); without them a member is `P<Root>`.
+    typedHandles: boolean;
+    // A member with no fields of its own: a variant holding an empty details struct, or a unit variant.
+    emptyVariants: 'struct' | 'unit';
 }
 
 export interface Factory {
@@ -155,7 +159,11 @@ export function loadTable(path: string): Table {
     for (const [name, v] of Object.entries(table(root.families, 'families'))) {
         const where = `families.${name}`;
         const o = table(v, where);
-        checkKeys(o, where, ['file', 'base', 'union', 'kind', 'flatten', 'details_field', 'all_fields_mutable', 'root_variant']);
+        checkKeys(o, where, ['file', 'base', 'union', 'kind', 'flatten', 'details_field', 'all_fields_mutable', 'root_variant', 'typed_handles', 'empty_variants']);
+        const empty = optStr(o.empty_variants, where) ?? 'struct';
+        if (empty !== 'struct' && empty !== 'unit') {
+            fail(where, 'empty_variants must be "struct" or "unit"');
+        }
         families.push({
             name,
             file: str(o.file, where),
@@ -166,6 +174,8 @@ export function loadTable(path: string): Table {
             detailsField: optStr(o.details_field, where) ?? 'd',
             allFieldsMutable: bool(o.all_fields_mutable, where, false),
             rootVariant: optStr(o.root_variant, where),
+            typedHandles: bool(o.typed_handles, where, true),
+            emptyVariants: empty,
         });
     }
 

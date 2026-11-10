@@ -39,6 +39,31 @@ function isSkeleton(file: string): boolean {
         .every((l) => l.trim() === '' || l.trim().startsWith('//'));
 }
 
+// A ported file holds at least one function whose body is not `todo!()`.
+function isPorted(file: string): boolean {
+    if (!existsSync(file)) {
+        return false;
+    }
+    const text = readFileSync(file, 'utf8');
+    const fns = (text.match(/^\s*(pub(\([^)]*\))?\s+)?fn\s/gm) ?? []).length;
+    const todos = (text.match(/todo!\(\)/g) ?? []).length;
+    return fns > todos;
+}
+
+// Top-level items a generated file defines.
+function itemNames(text: string): string[] {
+    const out: string[] = [];
+    for (const m of text.matchAll(/^pub(?:\(crate\))?\s+(?:struct|enum|type|trait|fn|const|mod)\s+([A-Za-z_][A-Za-z0-9_]*)/gm)) {
+        out.push(m[1]);
+    }
+    return out;
+}
+
+// Defined by an item, a `pub use`, or a macro call that takes the name first (`node_handle!(FunctionNode, ..)`).
+function defines(text: string, name: string): boolean {
+    return new RegExp(`\\b(struct|enum|type|trait|fn|const|static|mod)\\s+${name}\\b|pub use [^;]*\\b${name}\\b|!\\s*[({]\\s*${name}\\b`).test(text);
+}
+
 function ensureModDecl(srcRoot: string, rel: string) {
     const parts = rel.replace(/\.rs$/, '').split('/');
     for (let i = parts.length - 1; i >= 1; i--) {
@@ -78,11 +103,15 @@ export function checkRun(repoRoot: string, runDir: string): boolean {
 
     const placed: string[] = [];
     const keptReal: string[] = [];
-    for (const f of walk(path.join(runDir, 'deps'))) {
-        const rel = path.relative(path.join(runDir, 'deps'), f);
+    const filled: string[] = [];
+    const superseded: string[] = [];
+    for (const f of walk(path.join(runDir, 'stubs'))) {
+        const rel = path.relative(path.join(runDir, 'stubs'), f);
         const target = path.join(src, rel);
-        if (!isSkeleton(path.join(repoRoot, 'crates', 'pyright', 'src', rel))) {
-            keptReal.push(rel);
+        // A file someone has ported supersedes its stub: placing the stub would break the code
+        // that already calls the port.
+        if (isPorted(path.join(repoRoot, 'crates', 'pyright', 'src', rel))) {
+            superseded.push(rel);
             continue;
         }
         mkdirSync(path.dirname(target), { recursive: true });
@@ -90,15 +119,33 @@ export function checkRun(repoRoot: string, runDir: string): boolean {
         ensureModDecl(src, rel);
         placed.push(rel);
     }
-    for (const f of walk(path.join(runDir, 'stubs'))) {
-        const rel = path.relative(path.join(runDir, 'stubs'), f);
+
+    // Placeholders serve the placed stubs only.
+    for (const f of placed.length ? walk(path.join(runDir, 'deps')) : []) {
+        const rel = path.relative(path.join(runDir, 'deps'), f);
         const target = path.join(src, rel);
+        const real = path.join(repoRoot, 'crates', 'pyright', 'src', rel);
+        if (!isSkeleton(real)) {
+            keptReal.push(rel);
+            // A partially ported file may lack items the stubs name: serve them from the
+            // placeholder, in a side module the real file re-exports.
+            const missing = itemNames(readFileSync(f, 'utf8')).filter((n) => !defines(readFileSync(real, 'utf8'), n));
+            if (missing.length) {
+                const stem = path.basename(rel, '.rs');
+                const fillRel = path.join(path.dirname(rel), `${stem}_stubgen_fill.rs`);
+                const fill = readFileSync(f, 'utf8').replace(/^(#!\[allow\([^)]*\)\])$/m, `$1\n\nuse super::${stem}::*;`);
+                writeFileSync(path.join(src, fillRel), fill);
+                ensureModDecl(src, fillRel);
+                writeFileSync(target, readFileSync(target, 'utf8') + `\n#[allow(unused_imports)]\npub use super::${stem}_stubgen_fill::{${missing.join(', ')}};\n`);
+                filled.push(`${rel}: ${missing.join(', ')}`);
+            }
+            continue;
+        }
         mkdirSync(path.dirname(target), { recursive: true });
         writeFileSync(target, readFileSync(f));
         ensureModDecl(src, rel);
         placed.push(rel);
     }
-
     // jsrt items the stubs name that crates/jsrt does not define yet.
     const jsrtSrc = walk(path.join(repoRoot, 'crates', 'jsrt', 'src')).map((f) => readFileSync(f, 'utf8')).join('\n');
     const usedJsrt = new Set<string>();
@@ -146,6 +193,8 @@ export function checkRun(repoRoot: string, runDir: string): boolean {
         '',
         `cargo check -p pyright: ${r.status === 0 ? 'pass' : 'FAIL'} (${errors.length} error lines, ${warnings.length} warning lines)`,
         `files placed: ${placed.length}; ported crate files used instead of placeholders: ${keptReal.join(', ') || 'none'}`,
+        `stubs not placed because the crate file is already ported: ${superseded.join(', ') || 'none'}`,
+        `items missing from ported files, served from placeholders (needed from their owners): ${filled.join('; ') || 'none'}`,
         `jsrt items shimmed (needed from the jsrt owner): ${shimmed.join(', ') || 'none'}`,
         `jsrt items with no shim: ${missing.join(', ') || 'none'}`,
         '',

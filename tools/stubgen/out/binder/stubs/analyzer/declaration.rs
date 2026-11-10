@@ -13,7 +13,6 @@ use crate::common::uri::uri::Uri;
 use crate::parser::parse_nodes::{ExpressionNode, NameNode, ParseNode, RaiseNode, ReturnNode};
 use jsrt::{JsMap, P};
 use std::cell::{Cell, RefCell};
-use std::ops::Deref;
 
 thread_local! {
     // analyzer/declaration.ts:36
@@ -76,11 +75,11 @@ pub struct Declaration {
 // analyzer/declaration.ts: one variant per `type` value.
 pub enum DeclarationDetails {
     Intrinsic(IntrinsicDeclarationDetails),
-    Class(ClassDeclarationDetails),
-    SpecialBuiltInClass(SpecialBuiltInClassDeclarationDetails),
+    Class,
+    SpecialBuiltInClass,
     Function(FunctionDeclarationDetails),
     Param(ParamDeclarationDetails),
-    TypeParam(TypeParamDeclarationDetails),
+    TypeParam,
     TypeAlias(TypeAliasDeclarationDetails),
     Variable(VariableDeclarationDetails),
     Alias(AliasDeclarationDetails),
@@ -92,95 +91,9 @@ pub struct IntrinsicDeclarationDetails {
     pub intrinsic_type: IntrinsicType,
 }
 
-// analyzer/declaration.ts:88
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub struct IntrinsicDeclaration(pub P<Declaration>);
+// analyzer/declaration.ts:95: `ClassDeclaration` has no fields of its own: `DeclarationDetails::Class`.
 
-impl IntrinsicDeclaration {
-    pub fn cast(node: P<Declaration>) -> Option<Self> {
-        match node.d {
-            DeclarationDetails::Intrinsic(_) => Some(Self(node)),
-            _ => None,
-        }
-    }
-
-    pub fn d(self) -> &'static IntrinsicDeclarationDetails {
-        match &self.0.get().d {
-            DeclarationDetails::Intrinsic(d) => d,
-            _ => unreachable!("IntrinsicDeclaration holds another variant"),
-        }
-    }
-}
-
-impl Deref for IntrinsicDeclaration {
-    type Target = Declaration;
-
-    fn deref(&self) -> &Declaration {
-        self.0.get()
-    }
-}
-
-// analyzer/declaration.ts:95
-pub struct ClassDeclarationDetails {}
-
-// analyzer/declaration.ts:95
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub struct ClassDeclaration(pub P<Declaration>);
-
-impl ClassDeclaration {
-    pub fn cast(node: P<Declaration>) -> Option<Self> {
-        match node.d {
-            DeclarationDetails::Class(_) => Some(Self(node)),
-            _ => None,
-        }
-    }
-
-    pub fn d(self) -> &'static ClassDeclarationDetails {
-        match &self.0.get().d {
-            DeclarationDetails::Class(d) => d,
-            _ => unreachable!("ClassDeclaration holds another variant"),
-        }
-    }
-}
-
-impl Deref for ClassDeclaration {
-    type Target = Declaration;
-
-    fn deref(&self) -> &Declaration {
-        self.0.get()
-    }
-}
-
-// analyzer/declaration.ts:102
-pub struct SpecialBuiltInClassDeclarationDetails {}
-
-// analyzer/declaration.ts:102
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub struct SpecialBuiltInClassDeclaration(pub P<Declaration>);
-
-impl SpecialBuiltInClassDeclaration {
-    pub fn cast(node: P<Declaration>) -> Option<Self> {
-        match node.d {
-            DeclarationDetails::SpecialBuiltInClass(_) => Some(Self(node)),
-            _ => None,
-        }
-    }
-
-    pub fn d(self) -> &'static SpecialBuiltInClassDeclarationDetails {
-        match &self.0.get().d {
-            DeclarationDetails::SpecialBuiltInClass(d) => d,
-            _ => unreachable!("SpecialBuiltInClassDeclaration holds another variant"),
-        }
-    }
-}
-
-impl Deref for SpecialBuiltInClassDeclaration {
-    type Target = Declaration;
-
-    fn deref(&self) -> &Declaration {
-        self.0.get()
-    }
-}
+// analyzer/declaration.ts:102: `SpecialBuiltInClassDeclaration` has no fields of its own: `DeclarationDetails::SpecialBuiltInClass`.
 
 // analyzer/declaration.ts:107
 pub struct FunctionDeclarationDetails {
@@ -191,130 +104,17 @@ pub struct FunctionDeclarationDetails {
     pub raise_statements: RefCell<Option<Vec<RaiseNode>>>,
 }
 
-// analyzer/declaration.ts:107
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub struct FunctionDeclaration(pub P<Declaration>);
-
-impl FunctionDeclaration {
-    pub fn cast(node: P<Declaration>) -> Option<Self> {
-        match node.d {
-            DeclarationDetails::Function(_) => Some(Self(node)),
-            _ => None,
-        }
-    }
-
-    pub fn d(self) -> &'static FunctionDeclarationDetails {
-        match &self.0.get().d {
-            DeclarationDetails::Function(d) => d,
-            _ => unreachable!("FunctionDeclaration holds another variant"),
-        }
-    }
-}
-
-impl Deref for FunctionDeclaration {
-    type Target = Declaration;
-
-    fn deref(&self) -> &Declaration {
-        self.0.get()
-    }
-}
-
 // analyzer/declaration.ts:117
 pub struct ParamDeclarationDetails {
     pub inferred_name: Option<String>,
     pub inferred_type_nodes: Option<Vec<ExpressionNode>>,
 }
 
-// analyzer/declaration.ts:117
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub struct ParamDeclaration(pub P<Declaration>);
-
-impl ParamDeclaration {
-    pub fn cast(node: P<Declaration>) -> Option<Self> {
-        match node.d {
-            DeclarationDetails::Param(_) => Some(Self(node)),
-            _ => None,
-        }
-    }
-
-    pub fn d(self) -> &'static ParamDeclarationDetails {
-        match &self.0.get().d {
-            DeclarationDetails::Param(d) => d,
-            _ => unreachable!("ParamDeclaration holds another variant"),
-        }
-    }
-}
-
-impl Deref for ParamDeclaration {
-    type Target = Declaration;
-
-    fn deref(&self) -> &Declaration {
-        self.0.get()
-    }
-}
-
-// analyzer/declaration.ts:129
-pub struct TypeParamDeclarationDetails {}
-
-// analyzer/declaration.ts:129
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub struct TypeParamDeclaration(pub P<Declaration>);
-
-impl TypeParamDeclaration {
-    pub fn cast(node: P<Declaration>) -> Option<Self> {
-        match node.d {
-            DeclarationDetails::TypeParam(_) => Some(Self(node)),
-            _ => None,
-        }
-    }
-
-    pub fn d(self) -> &'static TypeParamDeclarationDetails {
-        match &self.0.get().d {
-            DeclarationDetails::TypeParam(d) => d,
-            _ => unreachable!("TypeParamDeclaration holds another variant"),
-        }
-    }
-}
-
-impl Deref for TypeParamDeclaration {
-    type Target = Declaration;
-
-    fn deref(&self) -> &Declaration {
-        self.0.get()
-    }
-}
+// analyzer/declaration.ts:129: `TypeParamDeclaration` has no fields of its own: `DeclarationDetails::TypeParam`.
 
 // analyzer/declaration.ts:134
 pub struct TypeAliasDeclarationDetails {
     pub doc_string: Option<String>,
-}
-
-// analyzer/declaration.ts:134
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub struct TypeAliasDeclaration(pub P<Declaration>);
-
-impl TypeAliasDeclaration {
-    pub fn cast(node: P<Declaration>) -> Option<Self> {
-        match node.d {
-            DeclarationDetails::TypeAlias(_) => Some(Self(node)),
-            _ => None,
-        }
-    }
-
-    pub fn d(self) -> &'static TypeAliasDeclarationDetails {
-        match &self.0.get().d {
-            DeclarationDetails::TypeAlias(d) => d,
-            _ => unreachable!("TypeAliasDeclaration holds another variant"),
-        }
-    }
-}
-
-impl Deref for TypeAliasDeclaration {
-    type Target = Declaration;
-
-    fn deref(&self) -> &Declaration {
-        self.0.get()
-    }
 }
 
 // analyzer/declaration.ts:142
@@ -333,73 +133,17 @@ pub struct VariableDeclarationDetails {
     pub is_explicit_binding: Option<bool>,
 }
 
-// analyzer/declaration.ts:142
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub struct VariableDeclaration(pub P<Declaration>);
-
-impl VariableDeclaration {
-    pub fn cast(node: P<Declaration>) -> Option<Self> {
-        match node.d {
-            DeclarationDetails::Variable(_) => Some(Self(node)),
-            _ => None,
-        }
-    }
-
-    pub fn d(self) -> &'static VariableDeclarationDetails {
-        match &self.0.get().d {
-            DeclarationDetails::Variable(d) => d,
-            _ => unreachable!("VariableDeclaration holds another variant"),
-        }
-    }
-}
-
-impl Deref for VariableDeclaration {
-    type Target = Declaration;
-
-    fn deref(&self) -> &Declaration {
-        self.0.get()
-    }
-}
-
 // analyzer/declaration.ts:193
 pub struct AliasDeclarationDetails {
     pub uses_local_name: Cell<bool>,
     pub load_symbols_from_path: Cell<bool>,
     pub symbol_name: Option<String>,
-    pub submodule_fallback: Option<AliasDeclaration>,
+    pub submodule_fallback: Option<P<Declaration>>,
     pub first_name_part: Option<String>,
     pub implicit_imports: Option<JsMap<String, P<ModuleLoaderActions>>>,
     pub is_unresolved: Cell<Option<bool>>,
     pub is_native_lib: Cell<Option<bool>>,
     pub is_lazy: Cell<Option<bool>>,
-}
-
-// analyzer/declaration.ts:193
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub struct AliasDeclaration(pub P<Declaration>);
-
-impl AliasDeclaration {
-    pub fn cast(node: P<Declaration>) -> Option<Self> {
-        match node.d {
-            DeclarationDetails::Alias(_) => Some(Self(node)),
-            _ => None,
-        }
-    }
-
-    pub fn d(self) -> &'static AliasDeclarationDetails {
-        match &self.0.get().d {
-            DeclarationDetails::Alias(d) => d,
-            _ => unreachable!("AliasDeclaration holds another variant"),
-        }
-    }
-}
-
-impl Deref for AliasDeclaration {
-    type Target = Declaration;
-
-    fn deref(&self) -> &Declaration {
-        self.0.get()
-    }
 }
 
 // analyzer/declaration.ts:239

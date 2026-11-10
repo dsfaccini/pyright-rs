@@ -15,7 +15,7 @@ use crate::analyzer::code_flow_engine::{
 };
 use crate::analyzer::code_flow_types::{CodeFlowReferenceExpressionNode, FlowNode};
 use crate::analyzer::constraint_tracker::{ConstraintSet, ConstraintTracker};
-use crate::analyzer::declaration::{Declaration, FunctionDeclaration};
+use crate::analyzer::declaration::Declaration;
 use crate::analyzer::declaration_utils::ResolvedAliasInfo;
 use crate::analyzer::parameter_utils::ParamListDetails;
 use crate::analyzer::scope::{Scope, SymbolWithScope};
@@ -2836,7 +2836,7 @@ impl TypeEvaluator {
     // analyzer/typeEvaluator.ts:21217
     pub(crate) fn method_always_raises_not_implemented(
         &self,
-        function_decl: Option<FunctionDeclaration>,
+        function_decl: Option<P<Declaration>>,
     ) -> bool {
         todo!()
     }

@@ -202,7 +202,7 @@ pub struct Token {
 
 // parser/tokenizerTypes.ts: one variant per `type` value.
 pub enum TokenDetails {
-    Plain,
+    None,
     Indent(IndentTokenDetails),
     Dedent(DedentTokenDetails),
     NewLine(NewLineTokenDetails),
