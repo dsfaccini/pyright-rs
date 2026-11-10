@@ -28917,8 +28917,8 @@ impl TypeEvaluator {
             return;
         }
 
-        let invalid_type_vars: JsSet<String> = JsSet::default();
-        analyzer::type_utils::validate_type_var_default(type_param, other_live_type_params, &invalid_type_vars);
+        let mut invalid_type_vars: JsSet<String> = JsSet::default();
+        analyzer::type_utils::validate_type_var_default(type_param, other_live_type_params, &mut invalid_type_vars);
 
         // If we found one or more unapplied type variable, report an error.
         if !invalid_type_vars.is_empty() {

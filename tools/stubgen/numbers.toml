@@ -366,6 +366,12 @@
 "UnificationTypeTransformer._usageOffset" = "i32"
 "UnificationTypeTransformer.constructor._usageOffset" = "i32"
 "invertVariance.return" = "f64"
+"TypeVarDefaultValidator.transformTypeVar.recursionCount" = "u32"
+"BoundTypeVarTransform.transformTypeVar.recursionCount" = "u32"
+"FreeTypeVarTransform.transformTypeVar.recursionCount" = "u32"
+"ApplySolvedTypeVarsTransformer.transformUnionSubtype.recursionCount" = "u32"
+"ApplySolvedTypeVarsTransformer.transformTupleTypeVar.recursionCount" = "u32"
+"UnificationTypeTransformer.transformTypeVar.recursionCount" = "u32"
 
 ["analyzer/typeWalker.ts"]
 "TypeWalker._recursionCount" = "u32"

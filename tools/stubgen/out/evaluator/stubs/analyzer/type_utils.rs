@@ -13,7 +13,7 @@ use crate::analyzer::constraint_solution::{ConstraintSolution, ConstraintSolutio
 use crate::analyzer::symbol::{Symbol, SymbolTable};
 use crate::analyzer::types::{
     ClassType, ClassTypeFlags, FunctionType, ModuleType, SignatureWithOffsets, TupleTypeArg, Type,
-    TypeCondition, TypeSameOptions, TypeVarType, UnknownType, Variance,
+    TypeCondition, TypeSameOptions, TypeVarType, Variance,
 };
 use jsrt::{JsMap, JsSet, P, flag_ops};
 use std::cell::{Cell, RefCell};
@@ -527,7 +527,7 @@ pub fn apply_solved_type_vars(
 pub fn validate_type_var_default(
     type_var: TypeVarType,
     live_type_params: &[TypeVarType],
-    invalid_type_vars: &JsSet<String>,
+    invalid_type_vars: &mut JsSet<String>,
 ) {
     todo!()
 }
@@ -886,29 +886,34 @@ pub(crate) fn transform_type_pair_recursive(
 }
 
 // analyzer/typeUtils.ts:3687
-pub struct TypeVarTransformer {
-    pub(crate) _pending_type_var_transformations: JsSet<String>,
-    pub(crate) _pending_function_transformations: Vec<P<Type>>,
-}
+pub trait TypeVarTransformer {
+    // analyzer/typeUtils.ts:3688
+    fn _pending_type_var_transformations(&self) -> &JsSet<String>;
 
-impl TypeVarTransformer {
+    fn _pending_type_var_transformations_mut(&mut self) -> &mut JsSet<String>;
+
+    // analyzer/typeUtils.ts:3689
+    fn _pending_function_transformations(&self) -> &Vec<P<Type>>;
+
+    fn _pending_function_transformations_mut(&mut self) -> &mut Vec<P<Type>>;
+
     // analyzer/typeUtils.ts:3691
-    pub fn pending_type_var_transformations(&self) -> JsSet<String> {
+    fn pending_type_var_transformations(&self) -> JsSet<String> {
         todo!()
     }
 
     // analyzer/typeUtils.ts:3695
-    pub fn apply(&mut self, type_: P<Type>, recursion_count: u32) -> P<Type> {
+    fn apply(&mut self, type_: P<Type>, recursion_count: u32) -> P<Type> {
         todo!()
     }
 
     // analyzer/typeUtils.ts:3889
-    pub fn can_skip_transform(&mut self, type_: P<Type>) -> bool {
+    fn can_skip_transform(&mut self, type_: P<Type>) -> bool {
         todo!()
     }
 
     // analyzer/typeUtils.ts:3893
-    pub fn transform_type_var(
+    fn transform_type_var(
         &mut self,
         type_var: TypeVarType,
         recursion_count: u32,
@@ -917,7 +922,7 @@ impl TypeVarTransformer {
     }
 
     // analyzer/typeUtils.ts:3897
-    pub fn transform_tuple_type_var(
+    fn transform_tuple_type_var(
         &mut self,
         param_spec: TypeVarType,
         recursion_count: u32,
@@ -926,7 +931,7 @@ impl TypeVarTransformer {
     }
 
     // analyzer/typeUtils.ts:3901
-    pub fn transform_union_subtype(
+    fn transform_union_subtype(
         &mut self,
         pre_transform: P<Type>,
         post_transform: P<Type>,
@@ -936,29 +941,25 @@ impl TypeVarTransformer {
     }
 
     // analyzer/typeUtils.ts:3905
-    pub fn do_for_each_constraint_set(
+    fn do_for_each_constraint_set(
         &mut self,
-        callback: &mut dyn FnMut(&mut TypeVarTransformer) -> FunctionType,
+        callback: &mut dyn FnMut(&mut Self) -> FunctionType,
     ) -> P<Type> {
         todo!()
     }
 
     // analyzer/typeUtils.ts:3911
-    pub fn transform_generic_type_alias(
-        &mut self,
-        type_: P<Type>,
-        recursion_count: u32,
-    ) -> P<Type> {
+    fn transform_generic_type_alias(&mut self, type_: P<Type>, recursion_count: u32) -> P<Type> {
         todo!()
     }
 
     // analyzer/typeUtils.ts:3929
-    pub fn transform_conditional_type(&mut self, type_: P<Type>, recursion_count: u32) -> P<Type> {
+    fn transform_conditional_type(&mut self, type_: P<Type>, recursion_count: u32) -> P<Type> {
         todo!()
     }
 
     // analyzer/typeUtils.ts:3934
-    pub fn transform_type_vars_in_class_type(
+    fn transform_type_vars_in_class_type(
         &mut self,
         class_type: ClassType,
         recursion_count: u32,
@@ -967,7 +968,7 @@ impl TypeVarTransformer {
     }
 
     // analyzer/typeUtils.ts:4064
-    pub fn transform_type_vars_in_function_type(
+    fn transform_type_vars_in_function_type(
         &mut self,
         source_type: FunctionType,
         recursion_count: u32,
@@ -976,12 +977,11 @@ impl TypeVarTransformer {
     }
 
     // analyzer/typeUtils.ts:4256
-    pub(crate) fn _is_type_var_scope_pending(&mut self, type_var_scope_id: Option<&str>) -> bool {
+    fn _is_type_var_scope_pending(&mut self, type_var_scope_id: Option<&str>) -> bool {
         todo!()
     }
 }
 
-// TypeVarDefaultValidator extends TypeVarTransformer: the base fields are repeated below.
 // analyzer/typeUtils.ts:4263
 pub struct TypeVarDefaultValidator {
     pub(crate) _pending_type_var_transformations: JsSet<String>,
@@ -990,19 +990,40 @@ pub struct TypeVarDefaultValidator {
     pub(crate) _invalid_type_vars: JsSet<String>,
 }
 
+impl TypeVarTransformer for TypeVarDefaultValidator {
+    fn _pending_type_var_transformations(&self) -> &JsSet<String> {
+        &self._pending_type_var_transformations
+    }
+
+    fn _pending_type_var_transformations_mut(&mut self) -> &mut JsSet<String> {
+        &mut self._pending_type_var_transformations
+    }
+
+    fn _pending_function_transformations(&self) -> &Vec<P<Type>> {
+        &self._pending_function_transformations
+    }
+
+    fn _pending_function_transformations_mut(&mut self) -> &mut Vec<P<Type>> {
+        &mut self._pending_function_transformations
+    }
+
+    // analyzer/typeUtils.ts:4268
+    fn transform_type_var(
+        &mut self,
+        type_var: TypeVarType,
+        recursion_count: u32,
+    ) -> Option<P<Type>> {
+        todo!()
+    }
+}
+
 impl TypeVarDefaultValidator {
     // analyzer/typeUtils.ts:4264
     pub fn new(_live_type_params: Vec<TypeVarType>, _invalid_type_vars: JsSet<String>) -> Self {
         todo!()
     }
-
-    // analyzer/typeUtils.ts:4268
-    pub fn transform_type_var(&mut self, type_var: TypeVarType) -> UnknownType {
-        todo!()
-    }
 }
 
-// UniqueFunctionSignatureTransformer extends TypeVarTransformer: the base fields are repeated below.
 // analyzer/typeUtils.ts:4278
 pub struct UniqueFunctionSignatureTransformer {
     pub(crate) _pending_type_var_transformations: JsSet<String>,
@@ -1011,23 +1032,30 @@ pub struct UniqueFunctionSignatureTransformer {
     pub(crate) _expression_offset: i32,
 }
 
-impl UniqueFunctionSignatureTransformer {
-    // analyzer/typeUtils.ts:4279
-    pub fn new(_signature_tracker: P<UniqueSignatureTracker>, _expression_offset: i32) -> Self {
-        todo!()
+impl TypeVarTransformer for UniqueFunctionSignatureTransformer {
+    fn _pending_type_var_transformations(&self) -> &JsSet<String> {
+        &self._pending_type_var_transformations
+    }
+
+    fn _pending_type_var_transformations_mut(&mut self) -> &mut JsSet<String> {
+        &mut self._pending_type_var_transformations
+    }
+
+    fn _pending_function_transformations(&self) -> &Vec<P<Type>> {
+        &self._pending_function_transformations
+    }
+
+    fn _pending_function_transformations_mut(&mut self) -> &mut Vec<P<Type>> {
+        &mut self._pending_function_transformations
     }
 
     // analyzer/typeUtils.ts:4283
-    pub fn transform_generic_type_alias(
-        &mut self,
-        type_: P<Type>,
-        recursion_count: u32,
-    ) -> P<Type> {
+    fn transform_generic_type_alias(&mut self, type_: P<Type>, recursion_count: u32) -> P<Type> {
         todo!()
     }
 
     // analyzer/typeUtils.ts:4288
-    pub fn transform_type_vars_in_class_type(
+    fn transform_type_vars_in_class_type(
         &mut self,
         class_type: ClassType,
         recursion_count: u32,
@@ -1036,7 +1064,7 @@ impl UniqueFunctionSignatureTransformer {
     }
 
     // analyzer/typeUtils.ts:4293
-    pub fn transform_type_vars_in_function_type(
+    fn transform_type_vars_in_function_type(
         &mut self,
         source_type: FunctionType,
         recursion_count: u32,
@@ -1045,12 +1073,45 @@ impl UniqueFunctionSignatureTransformer {
     }
 }
 
-// BoundTypeVarTransform extends TypeVarTransformer: the base fields are repeated below.
+impl UniqueFunctionSignatureTransformer {
+    // analyzer/typeUtils.ts:4279
+    pub fn new(_signature_tracker: P<UniqueSignatureTracker>, _expression_offset: i32) -> Self {
+        todo!()
+    }
+}
+
 // analyzer/typeUtils.ts:4342
 pub struct BoundTypeVarTransform {
     pub(crate) _pending_type_var_transformations: JsSet<String>,
     pub(crate) _pending_function_transformations: Vec<P<Type>>,
     pub(crate) _scope_ids: Option<Vec<String>>,
+}
+
+impl TypeVarTransformer for BoundTypeVarTransform {
+    fn _pending_type_var_transformations(&self) -> &JsSet<String> {
+        &self._pending_type_var_transformations
+    }
+
+    fn _pending_type_var_transformations_mut(&mut self) -> &mut JsSet<String> {
+        &mut self._pending_type_var_transformations
+    }
+
+    fn _pending_function_transformations(&self) -> &Vec<P<Type>> {
+        &self._pending_function_transformations
+    }
+
+    fn _pending_function_transformations_mut(&mut self) -> &mut Vec<P<Type>> {
+        &mut self._pending_function_transformations
+    }
+
+    // analyzer/typeUtils.ts:4347
+    fn transform_type_var(
+        &mut self,
+        type_var: TypeVarType,
+        recursion_count: u32,
+    ) -> Option<P<Type>> {
+        todo!()
+    }
 }
 
 impl BoundTypeVarTransform {
@@ -1059,28 +1120,49 @@ impl BoundTypeVarTransform {
         todo!()
     }
 
-    // analyzer/typeUtils.ts:4347
-    pub fn transform_type_var(&self, type_var: TypeVarType) -> Option<P<Type>> {
-        todo!()
-    }
-
     // analyzer/typeUtils.ts:4355
-    pub(crate) fn _is_type_var_in_scope(&self, type_var: TypeVarType) -> bool {
+    pub(crate) fn _is_type_var_in_scope(&mut self, type_var: TypeVarType) -> bool {
         todo!()
     }
 
     // analyzer/typeUtils.ts:4368
-    pub(crate) fn _replace_type_var(&self, type_var: TypeVarType) -> TypeVarType {
+    pub(crate) fn _replace_type_var(&mut self, type_var: TypeVarType) -> TypeVarType {
         todo!()
     }
 }
 
-// FreeTypeVarTransform extends TypeVarTransformer: the base fields are repeated below.
 // analyzer/typeUtils.ts:4375
 pub struct FreeTypeVarTransform {
     pub(crate) _pending_type_var_transformations: JsSet<String>,
     pub(crate) _pending_function_transformations: Vec<P<Type>>,
     pub(crate) _scope_ids: Vec<String>,
+}
+
+impl TypeVarTransformer for FreeTypeVarTransform {
+    fn _pending_type_var_transformations(&self) -> &JsSet<String> {
+        &self._pending_type_var_transformations
+    }
+
+    fn _pending_type_var_transformations_mut(&mut self) -> &mut JsSet<String> {
+        &mut self._pending_type_var_transformations
+    }
+
+    fn _pending_function_transformations(&self) -> &Vec<P<Type>> {
+        &self._pending_function_transformations
+    }
+
+    fn _pending_function_transformations_mut(&mut self) -> &mut Vec<P<Type>> {
+        &mut self._pending_function_transformations
+    }
+
+    // analyzer/typeUtils.ts:4380
+    fn transform_type_var(
+        &mut self,
+        type_var: TypeVarType,
+        recursion_count: u32,
+    ) -> Option<P<Type>> {
+        todo!()
+    }
 }
 
 impl FreeTypeVarTransform {
@@ -1089,18 +1171,12 @@ impl FreeTypeVarTransform {
         todo!()
     }
 
-    // analyzer/typeUtils.ts:4380
-    pub fn transform_type_var(&self, type_var: TypeVarType) -> Option<P<Type>> {
-        todo!()
-    }
-
     // analyzer/typeUtils.ts:4388
-    pub(crate) fn _is_type_var_in_scope(&self, type_var: TypeVarType) -> bool {
+    pub(crate) fn _is_type_var_in_scope(&mut self, type_var: TypeVarType) -> bool {
         todo!()
     }
 }
 
-// ApplySolvedTypeVarsTransformer extends TypeVarTransformer: the base fields are repeated below.
 // analyzer/typeUtils.ts:4399
 pub struct ApplySolvedTypeVarsTransformer {
     pub(crate) _pending_type_var_transformations: JsSet<String>,
@@ -1111,14 +1187,25 @@ pub struct ApplySolvedTypeVarsTransformer {
     pub(crate) _options: ApplyTypeVarOptions,
 }
 
-impl ApplySolvedTypeVarsTransformer {
-    // analyzer/typeUtils.ts:4403
-    pub fn new(_solution: Rc<ConstraintSolution>, _options: ApplyTypeVarOptions) -> Self {
-        todo!()
+impl TypeVarTransformer for ApplySolvedTypeVarsTransformer {
+    fn _pending_type_var_transformations(&self) -> &JsSet<String> {
+        &self._pending_type_var_transformations
+    }
+
+    fn _pending_type_var_transformations_mut(&mut self) -> &mut JsSet<String> {
+        &mut self._pending_type_var_transformations
+    }
+
+    fn _pending_function_transformations(&self) -> &Vec<P<Type>> {
+        &self._pending_function_transformations
+    }
+
+    fn _pending_function_transformations_mut(&mut self) -> &mut Vec<P<Type>> {
+        &mut self._pending_function_transformations
     }
 
     // analyzer/typeUtils.ts:4407
-    pub fn transform_type_var(
+    fn transform_type_var(
         &mut self,
         type_var: TypeVarType,
         recursion_count: u32,
@@ -1127,29 +1214,41 @@ impl ApplySolvedTypeVarsTransformer {
     }
 
     // analyzer/typeUtils.ts:4522
-    pub fn transform_union_subtype(
+    fn transform_union_subtype(
         &mut self,
         pre_transform: P<Type>,
         post_transform: P<Type>,
+        recursion_count: u32,
     ) -> Option<P<Type>> {
         todo!()
     }
 
     // analyzer/typeUtils.ts:4572
-    pub fn transform_tuple_type_var(&mut self, type_var: TypeVarType) -> Option<Vec<TupleTypeArg>> {
+    fn transform_tuple_type_var(
+        &mut self,
+        param_spec: TypeVarType,
+        recursion_count: u32,
+    ) -> Option<Vec<TupleTypeArg>> {
         todo!()
     }
 
     // analyzer/typeUtils.ts:4591
-    pub fn transform_conditional_type(&mut self, type_: P<Type>, recursion_count: u32) -> P<Type> {
+    fn transform_conditional_type(&mut self, type_: P<Type>, recursion_count: u32) -> P<Type> {
         todo!()
     }
 
     // analyzer/typeUtils.ts:4625
-    pub fn do_for_each_constraint_set(
+    fn do_for_each_constraint_set(
         &mut self,
-        callback: &mut dyn FnMut(&mut ApplySolvedTypeVarsTransformer) -> FunctionType,
+        callback: &mut dyn FnMut(&mut Self) -> FunctionType,
     ) -> P<Type> {
+        todo!()
+    }
+}
+
+impl ApplySolvedTypeVarsTransformer {
+    // analyzer/typeUtils.ts:4403
+    pub fn new(_solution: Rc<ConstraintSolution>, _options: ApplyTypeVarOptions) -> Self {
         todo!()
     }
 
@@ -1182,7 +1281,6 @@ impl ApplySolvedTypeVarsTransformer {
     }
 }
 
-// UnificationTypeTransformer extends TypeVarTransformer: the base fields are repeated below.
 // analyzer/typeUtils.ts:4728
 pub struct UnificationTypeTransformer {
     pub(crate) _pending_type_var_transformations: JsSet<String>,
@@ -1191,19 +1289,41 @@ pub struct UnificationTypeTransformer {
     pub(crate) _usage_offset: Option<i32>,
 }
 
+impl TypeVarTransformer for UnificationTypeTransformer {
+    fn _pending_type_var_transformations(&self) -> &JsSet<String> {
+        &self._pending_type_var_transformations
+    }
+
+    fn _pending_type_var_transformations_mut(&mut self) -> &mut JsSet<String> {
+        &mut self._pending_type_var_transformations
+    }
+
+    fn _pending_function_transformations(&self) -> &Vec<P<Type>> {
+        &self._pending_function_transformations
+    }
+
+    fn _pending_function_transformations_mut(&mut self) -> &mut Vec<P<Type>> {
+        &mut self._pending_function_transformations
+    }
+
+    // analyzer/typeUtils.ts:4733
+    fn transform_type_var(
+        &mut self,
+        type_var: TypeVarType,
+        recursion_count: u32,
+    ) -> Option<P<Type>> {
+        todo!()
+    }
+}
+
 impl UnificationTypeTransformer {
     // analyzer/typeUtils.ts:4729
     pub fn new(_live_type_var_scopes: Vec<String>, _usage_offset: Option<i32>) -> Self {
         todo!()
     }
 
-    // analyzer/typeUtils.ts:4733
-    pub fn transform_type_var(&self, type_var: TypeVarType) -> Option<P<Type>> {
-        todo!()
-    }
-
     // analyzer/typeUtils.ts:4741
-    pub(crate) fn _is_type_var_live(&self, type_var: TypeVarType) -> bool {
+    pub(crate) fn _is_type_var_live(&mut self, type_var: TypeVarType) -> bool {
         todo!()
     }
 }
