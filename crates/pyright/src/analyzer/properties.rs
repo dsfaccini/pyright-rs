@@ -134,7 +134,7 @@ pub fn create_property(
         .d()
         .priv_
         .borrow_mut()
-        .is_asymmetric_descriptor = Some(false);
+        .cold_mut().is_asymmetric_descriptor = Some(false);
 
     // Update the __set__ and __delete__ methods if present.
     update_get_set_del_method_for_cloned_property(evaluator, property_object);
@@ -144,7 +144,7 @@ pub fn create_property(
         method_type: fget.0,
         class_type: fget.d().shared.get().method_class.get(),
     };
-    property_object.d().priv_.borrow_mut().fget_info = Some(fget_info);
+    property_object.d().priv_.borrow_mut().cold_mut().fget_info = Some(fget_info);
 
     if FunctionType::is_class_method(fget) {
         property_shared
@@ -180,7 +180,7 @@ pub fn clone_property_with_setter(
         .d()
         .priv_
         .borrow()
-        .is_asymmetric_descriptor
+        .cold().is_asymmetric_descriptor
         .unwrap_or(false);
 
     // Verify parameters for fset.
@@ -267,13 +267,13 @@ pub fn clone_property_with_setter(
 
     let (fget_info, fdel_info) = {
         let class_priv = class_type.d().priv_.borrow();
-        (class_priv.fget_info.clone(), class_priv.fdel_info.clone())
+        (class_priv.cold().fget_info.clone(), class_priv.cold().fdel_info.clone())
     };
     {
         let mut property_priv = property_class.d().priv_.borrow_mut();
-        property_priv.fget_info = fget_info;
-        property_priv.fdel_info = fdel_info;
-        property_priv.is_asymmetric_descriptor = Some(is_asymmetric_descriptor);
+        property_priv.cold_mut().fget_info = fget_info;
+        property_priv.cold_mut().fdel_info = fdel_info;
+        property_priv.cold_mut().is_asymmetric_descriptor = Some(is_asymmetric_descriptor);
     }
     let property_object = ClassType::clone_as_instance(property_class, true);
 
@@ -294,7 +294,7 @@ pub fn clone_property_with_setter(
         .d()
         .priv_
         .borrow()
-        .fset_info
+        .cold().fset_info
         .as_ref()
         .map(|fset_info| fset_info.method_type);
     let combined_setter = combine_setter_overloads(prev_setter, fset);
@@ -304,7 +304,7 @@ pub fn clone_property_with_setter(
         method_type: combined_setter,
         class_type: fset.d().shared.get().method_class.get(),
     };
-    property_object.d().priv_.borrow_mut().fset_info = Some(fset_info);
+    property_object.d().priv_.borrow_mut().cold_mut().fset_info = Some(fset_info);
 
     // Fill in the __set__ method.
     add_set_method_to_property_symbol_table(evaluator, property_object, combined_setter);
@@ -361,22 +361,22 @@ pub fn clone_property_with_deleter(
     let (fget_info, fset_info, is_asymmetric_descriptor) = {
         let class_priv = class_type.d().priv_.borrow();
         (
-            class_priv.fget_info.clone(),
-            class_priv.fset_info.clone(),
-            class_priv.is_asymmetric_descriptor,
+            class_priv.cold().fget_info.clone(),
+            class_priv.cold().fset_info.clone(),
+            class_priv.cold().is_asymmetric_descriptor,
         )
     };
     {
         let mut property_priv = property_class.d().priv_.borrow_mut();
-        property_priv.fget_info = fget_info;
-        property_priv.fset_info = fset_info;
+        property_priv.cold_mut().fget_info = fget_info;
+        property_priv.cold_mut().fset_info = fset_info;
     }
     let property_object = ClassType::clone_as_instance(property_class, true);
     property_class
         .d()
         .priv_
         .borrow_mut()
-        .is_asymmetric_descriptor = Some(is_asymmetric_descriptor.unwrap_or(false));
+        .cold_mut().is_asymmetric_descriptor = Some(is_asymmetric_descriptor.unwrap_or(false));
 
     // Clone the symbol table of the old class type.
     let fields = ClassType::get_symbol_table(property_class);
@@ -394,7 +394,7 @@ pub fn clone_property_with_deleter(
         method_type: fdel.0,
         class_type: fdel.d().shared.get().method_class.get(),
     };
-    property_object.d().priv_.borrow_mut().fdel_info = Some(fdel_info);
+    property_object.d().priv_.borrow_mut().cold_mut().fdel_info = Some(fdel_info);
 
     // Fill in the __delete__ method.
     add_del_method_to_property_symbol_table(evaluator, property_object, fdel);
@@ -816,7 +816,7 @@ pub(crate) fn update_get_set_del_method_for_cloned_property(
     evaluator: &TypeEvaluator,
     property_object: ClassType,
 ) {
-    let fget_info = property_object.d().priv_.borrow().fget_info.clone();
+    let fget_info = property_object.d().priv_.borrow().cold().fget_info.clone();
     if let Some(fget_info) = fget_info
         && is_function(fget_info.method_type)
     {
@@ -827,14 +827,14 @@ pub(crate) fn update_get_set_del_method_for_cloned_property(
         );
     }
 
-    let fset_info = property_object.d().priv_.borrow().fset_info.clone();
+    let fset_info = property_object.d().priv_.borrow().cold().fset_info.clone();
     if let Some(fset_info) = fset_info
         && (is_function(fset_info.method_type) || is_overloaded(fset_info.method_type))
     {
         add_set_method_to_property_symbol_table(evaluator, property_object, fset_info.method_type);
     }
 
-    let fdel_info = property_object.d().priv_.borrow().fdel_info.clone();
+    let fdel_info = property_object.d().priv_.borrow().cold().fdel_info.clone();
     if let Some(fdel_info) = fdel_info
         && is_function(fdel_info.method_type)
     {
@@ -919,7 +919,7 @@ pub fn assign_property(
                 c.d()
                     .priv_
                     .borrow()
-                    .fget_info
+                    .cold().fget_info
                     .as_ref()
                     .map(|info| info.method_type)
             },
@@ -931,7 +931,7 @@ pub fn assign_property(
                 c.d()
                     .priv_
                     .borrow()
-                    .fset_info
+                    .cold().fset_info
                     .as_ref()
                     .map(|info| info.method_type)
             },
@@ -943,7 +943,7 @@ pub fn assign_property(
                 c.d()
                     .priv_
                     .borrow()
-                    .fdel_info
+                    .cold().fdel_info
                     .as_ref()
                     .map(|info| info.method_type)
             },

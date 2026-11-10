@@ -1186,7 +1186,7 @@ pub(crate) fn create_function_from_new_method(
             let param_type = FunctionType::get_param_type(new_subtype, index as i32);
             let type_vars = get_type_var_args_recursive(param_type, 0);
             type_vars.iter().any(|type_var| {
-                type_var.d().priv_.borrow().scope_id == get_type_var_scope_id(class_type.0)
+                type_var.d().priv_.borrow().scope_id.as_deref() == get_type_var_scope_id(class_type.0).as_deref()
             })
         });
 

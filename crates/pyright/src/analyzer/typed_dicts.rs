@@ -1331,7 +1331,7 @@ pub fn get_typed_dict_members_for_class(
 
         // If the class is "Partial", make all entries optional and convert all
         // read-only entries to Never.
-        let is_typed_dict_partial = class_type.d().priv_.borrow().is_typed_dict_partial;
+        let is_typed_dict_partial = class_type.d().priv_.borrow().cold().is_typed_dict_partial;
         if is_typed_dict_partial == Some(true) {
             td_entry.is_required = false;
 
@@ -1351,7 +1351,7 @@ pub fn get_typed_dict_members_for_class(
             .d()
             .priv_
             .borrow()
-            .typed_dict_narrowed_entries
+            .cold().typed_dict_narrowed_entries
             .clone();
         if let Some(narrowed_entries) = narrowed_entries {
             for (key, value) in narrowed_entries {
@@ -2418,7 +2418,7 @@ pub fn narrow_for_key_assignment(class_type: ClassType, key: &str) -> ClassType 
         .d()
         .priv_
         .borrow()
-        .typed_dict_narrowed_entries
+        .cold().typed_dict_narrowed_entries
         .as_ref()
         .and_then(|narrowed_entries| narrowed_entries.get(key).cloned());
     if narrowed_td_entry.is_some_and(|narrowed_td_entry| narrowed_td_entry.is_provided) {
@@ -2429,7 +2429,7 @@ pub fn narrow_for_key_assignment(class_type: ClassType, key: &str) -> ClassType 
         .d()
         .priv_
         .borrow()
-        .typed_dict_narrowed_entries
+        .cold().typed_dict_narrowed_entries
         .clone()
         .unwrap_or_default();
     narrowed_entries.insert(

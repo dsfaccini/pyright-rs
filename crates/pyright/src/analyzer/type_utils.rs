@@ -1149,7 +1149,7 @@ pub fn get_type_var_scope_id(type_: P<Type>) -> Option<String> {
     }
 
     if crate::analyzer::types::is_type_var(type_) {
-        return TypeVarType(type_).d().priv_.borrow().scope_id.clone();
+        return TypeVarType(type_).d().priv_.borrow().scope_id.as_deref().map(str::to_string);
     }
 
     None
@@ -1748,7 +1748,7 @@ pub fn partially_specialize_type(
     if crate::analyzer::types::is_class(result) {
         let has_property_methods = {
             let priv_ = ClassType(result).d().priv_.borrow();
-            priv_.fget_info.is_some() || priv_.fset_info.is_some() || priv_.fdel_info.is_some()
+            priv_.cold().fget_info.is_some() || priv_.cold().fset_info.is_some() || priv_.cold().fdel_info.is_some()
         };
         if has_property_methods {
             // updatePropertyMethodInfo, nested in partiallySpecializeType (typeUtils.ts:1522).
@@ -1767,15 +1767,15 @@ pub fn partially_specialize_type(
             };
 
             result = crate::analyzer::types::TypeBase::clone_type(result);
-            let fget_info = ClassType(result).d().priv_.borrow().fget_info.clone();
+            let fget_info = ClassType(result).d().priv_.borrow().cold().fget_info.clone();
             let fget_info = update_property_method_info(fget_info);
-            ClassType(result).d().priv_.borrow_mut().fget_info = fget_info;
-            let fset_info = ClassType(result).d().priv_.borrow().fset_info.clone();
+            ClassType(result).d().priv_.borrow_mut().cold_mut().fget_info = fget_info;
+            let fset_info = ClassType(result).d().priv_.borrow().cold().fset_info.clone();
             let fset_info = update_property_method_info(fset_info);
-            ClassType(result).d().priv_.borrow_mut().fset_info = fset_info;
-            let fdel_info = ClassType(result).d().priv_.borrow().fdel_info.clone();
+            ClassType(result).d().priv_.borrow_mut().cold_mut().fset_info = fset_info;
+            let fdel_info = ClassType(result).d().priv_.borrow().cold().fdel_info.clone();
             let fdel_info = update_property_method_info(fdel_info);
-            ClassType(result).d().priv_.borrow_mut().fdel_info = fdel_info;
+            ClassType(result).d().priv_.borrow_mut().cold_mut().fdel_info = fdel_info;
         }
     }
 
@@ -2210,7 +2210,7 @@ pub fn get_class_member_iterator(
                                 }
 
                                 // Handle the special case of a __call__ class member in a partial class.
-                                let partial_call_type = ClassType(class_type).d().priv_.borrow().partial_call_type;
+                                let partial_call_type = ClassType(class_type).d().priv_.borrow().cold().partial_call_type;
                                 if member_name == "__call__" {
                                     if let Some(partial_call_type) = partial_call_type {
                                         let generic_class = if crate::analyzer::types::TypeBase::is_instance(class_type) {
@@ -2717,12 +2717,12 @@ pub fn synthesize_type_var_for_self_cls(class_type: ClassType, is_cls_param: boo
     let shared = self_type.d().shared.get();
     shared.is_synthesized.set(true);
     shared.is_synthesized_self.set(true);
-    self_type.d().priv_.borrow_mut().scope_id = Some(scope_id.clone());
-    self_type.d().priv_.borrow_mut().scope_name = Some(String::new());
+    self_type.d().priv_.borrow_mut().scope_id = Some(scope_id.as_str().into());
+    self_type.d().priv_.borrow_mut().scope_name = Some("".into());
     let name = shared.name.borrow().clone();
-    let scope_name = self_type.d().priv_.borrow().scope_name.clone().unwrap_or_default();
+    let scope_name = self_type.d().priv_.borrow().scope_name.as_deref().unwrap_or_default().to_string();
     let name_with_scope = TypeVarType::make_name_with_scope(&name, &scope_id, &scope_name);
-    self_type.d().priv_.borrow_mut().name_with_scope = Some(name_with_scope);
+    self_type.d().priv_.borrow_mut().name_with_scope = Some(name_with_scope.into());
 
     let include_subclasses = class_type.d().priv_.borrow().include_subclasses.unwrap_or(false);
     let bound_type = ClassType::specialize(class_type, None, Some(false), include_subclasses, None, None);
@@ -2952,7 +2952,7 @@ pub fn convert_to_instance(type_: P<Type>, include_subclasses: bool) -> P<Type> 
         // Cache the converted value for next time.
         let mut cached = type_.cached.borrow_mut();
         if cached.is_none() {
-            *cached = Some(crate::analyzer::types::CachedTypeInfo::default());
+            *cached = Some(Box::default());
         }
         cached.as_mut().unwrap().instance_type = Some(result);
     }
@@ -2997,7 +2997,7 @@ pub fn convert_to_instantiable(type_: P<Type>, include_subclasses: bool) -> P<Ty
         // Cache the converted value for next time.
         let mut cached = type_.cached.borrow_mut();
         if cached.is_none() {
-            *cached = Some(crate::analyzer::types::CachedTypeInfo::default());
+            *cached = Some(Box::default());
         }
         cached.as_mut().unwrap().instantiable_type = Some(result);
     }
@@ -3676,7 +3676,7 @@ pub fn requires_type_args(class_type: ClassType) -> bool {
         ];
 
         // `classType.priv.aliasName || classType.shared.name`: an empty alias name falls back.
-        let name = match class_type.d().priv_.borrow().alias_name.clone() {
+        let name = match class_type.d().priv_.borrow().cold().alias_name.clone() {
             Some(alias_name) if !alias_name.is_empty() => alias_name,
             _ => class_type.d().shared.get().name.clone(),
         };
@@ -3715,7 +3715,7 @@ pub fn requires_specialization(
     if can_use_cache {
         let mut cached = type_.cached.borrow_mut();
         if cached.is_none() {
-            *cached = Some(crate::analyzer::types::CachedTypeInfo::default());
+            *cached = Some(Box::default());
         }
         cached.as_mut().unwrap().requires_specialization = Some(result);
     }
@@ -4726,9 +4726,9 @@ pub trait TypeVarTransformer {
 
                 let scope_id = type_var.d().priv_.borrow().scope_id.clone();
                 if let Some(scope_id) = scope_id.filter(|id| !id.is_empty()) {
-                    self._pending_type_var_transformations_mut().insert(scope_id.clone());
+                    self._pending_type_var_transformations_mut().insert(scope_id.to_string());
                     replacement_type = self.apply(replacement_type, recursion_count);
-                    self._pending_type_var_transformations_mut().shift_remove(&scope_id);
+                    self._pending_type_var_transformations_mut().shift_remove(&*scope_id);
                 }
             }
 
@@ -5573,7 +5573,7 @@ impl BoundTypeVarTransform {
             return true;
         };
 
-        scope_ids.contains(&scope_id)
+        scope_ids.iter().any(|id| **id == *scope_id)
     }
 
     // analyzer/typeUtils.ts:4368
@@ -5640,7 +5640,7 @@ impl FreeTypeVarTransform {
             return false;
         };
 
-        self._scope_ids.contains(&scope_id)
+        self._scope_ids.iter().any(|id| **id == *scope_id)
     }
 }
 
@@ -6072,7 +6072,7 @@ impl ApplySolvedTypeVarsTransformer {
             return false;
         };
 
-        if !replace_unsolved.scope_ids.contains(&scope_id) {
+        if !replace_unsolved.scope_ids.iter().any(|id| **id == *scope_id) {
             return false;
         }
 

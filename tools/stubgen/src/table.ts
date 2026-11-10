@@ -67,6 +67,9 @@ export interface Table {
     sites: Map<string, string>;
     bounds: Map<string, string>;
     mutable: Map<string, boolean>;
+    // Fields few objects set, by "<file>:<Struct>": moved into `<Struct>Cold`, which the struct
+    // holds as `cold: Option<Box<..>>` and allocates on first write.
+    cold: Map<string, string[]>;
     flagEnums: Map<string, boolean>;
     skip: Set<string>;
     // Rust items the table defines, by "<file>:<Name>": emitted verbatim into that file's module.
@@ -139,7 +142,7 @@ function readToml(path: string): Obj {
 
 export function loadTable(path: string): Table {
     const root = readToml(path);
-    checkKeys(root, path, ['types', 'modes', 'traits', 'families', 'merge', 'factories', 'sites', 'bounds', 'mutable', 'enums', 'skip', 'items']);
+    checkKeys(root, path, ['types', 'modes', 'traits', 'families', 'merge', 'factories', 'sites', 'bounds', 'mutable', 'cold', 'enums', 'skip', 'items']);
 
     const types = new Map<string, TypeEntry>();
     for (const [k, v] of Object.entries(table(root.types, 'types'))) {
@@ -243,6 +246,11 @@ export function loadTable(path: string): Table {
         mutable.set(k, bool(v, `mutable."${k}"`, false));
     }
 
+    const cold = new Map<string, string[]>();
+    for (const [k, v] of Object.entries(table(root.cold, 'cold'))) {
+        cold.set(k, strList(v, `cold."${k}"`));
+    }
+
     const flagEnums = new Map<string, boolean>();
     const enums = table(root.enums, 'enums');
     checkKeys(enums, 'enums', ['flags', 'plain']);
@@ -260,7 +268,7 @@ export function loadTable(path: string): Table {
         items.set(k, str(v, `items."${k}"`));
     }
 
-    return { types, modes, traits, families, merge, factories, sites, bounds, mutable, flagEnums, skip, items };
+    return { types, modes, traits, families, merge, factories, sites, bounds, mutable, cold, flagEnums, skip, items };
 }
 
 export function loadRuns(path: string): Run[] {

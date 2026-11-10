@@ -239,12 +239,20 @@ export class FileEmitter {
         void extraProps;
         const props = this.gen.collectProps(decl, sp.erased);
         const used = new Set<string>();
+        const key = `${this.file}:${name}`;
+        const coldNames = new Set(this.gen.table.cold.get(key) ?? []);
+        if (coldNames.size && mode !== 'value') {
+            throw new Error(`[cold] ${key}: only a value struct can hold cold fields`);
+        }
+        const coldFields: string[] = [];
         for (const p of props) {
             if (this.gen.accessorOf(p.node)?.drop) {
                 continue;
             }
             const f = this.field(p.node, name, mode === 'handle', false, p.subst);
-            if (f) {
+            if (f && coldNames.delete(memberName(p.node) ?? '')) {
+                coldFields.push(f);
+            } else if (f) {
                 fields.push(f);
                 for (const tp of tps) {
                     if (new RegExp(`\\b${tp}\\b`).test(f)) {
@@ -261,8 +269,10 @@ export class FileEmitter {
                 }
             }
         }
+        if (coldNames.size) {
+            throw new Error(`[cold] ${key}: no field ${[...coldNames].join(', ')}`);
+        }
         // Interfaces merged into this one ([merge]) add the fields this one lacks, as Options.
-        const key = `${this.file}:${name}`;
         const have = new Set(props.map((p) => memberName(p.node)));
         for (const [src, target] of this.gen.table.merge) {
             const targetKey = target.includes(':') ? target : `${this.gen.fileOfKey(src)}:${target}`;
@@ -287,9 +297,50 @@ export class FileEmitter {
             this.uses.add(['std::marker::PhantomData']);
             fields.push(`    pub _phantom: PhantomData<(${unused.join(', ')}${unused.length === 1 ? ',' : ''})>,`);
         }
+        if (coldFields.length) {
+            fields.push(`    // Fields few objects set ([cold] in tools/stubgen/typemap.toml): read with \`cold()\`, write with \`cold_mut()\`.`);
+            fields.push(`    pub cold: Option<Box<${name}Cold>>,`);
+        }
         // A value is copied where the TypeScript spreads it or reads it out of a container.
         const derive = mode === 'value' ? [valueDerive(fields)] : [];
         this.out.push(this.marker(decl), ...derive, `pub struct ${name}${generics} {`, ...fields, '}', '');
+        if (coldFields.length) {
+            this.coldStruct(decl, name, coldFields);
+        }
+    }
+
+    // The cold half of a [cold] struct: allocated on the first write through `cold_mut()`, so an
+    // object that never sets one of its fields pays one pointer. `cold()` reads an empty one.
+    private coldStruct(decl: ts.InterfaceDeclaration | ts.ClassDeclaration, name: string, coldFields: string[]) {
+        const cold = `${name}Cold`;
+        if (!coldFields.every((f) => /^\s*pub(\(crate\))? \w+: Option</.test(f))) {
+            throw new Error(`[cold] ${this.file}:${name}: every cold field must be optional`);
+        }
+        const empties = coldFields.map((f) => f.replace(/^\s*pub(\(crate\))? (\w+): .*$/, '            $2: None,'));
+        this.out.push(
+            this.marker(decl),
+            '#[derive(Clone, Default)]',
+            `pub struct ${cold} {`,
+            ...coldFields,
+            '}',
+            '',
+            `impl ${cold} {`,
+            `    const EMPTY: ${cold} = ${cold} {`,
+            ...empties,
+            '    };',
+            '}',
+            '',
+            `impl ${name} {`,
+            `    pub fn cold(&self) -> &${cold} {`,
+            `        self.cold.as_deref().unwrap_or(&${cold}::EMPTY)`,
+            '    }',
+            '',
+            `    pub fn cold_mut(&mut self) -> &mut ${cold} {`,
+            '        self.cold.get_or_insert_with(Default::default)',
+            '    }',
+            '}',
+            ''
+        );
     }
 
     private fieldInterior(p: ts.Node, t: IR, handle: boolean, forced: boolean): boolean {

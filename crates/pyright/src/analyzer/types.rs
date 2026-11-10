@@ -21,6 +21,7 @@ use crate::parser::parse_nodes::{
 use jsrt::{JsBigInt, JsMap, JsSet, NumberValue, P, flag_ops};
 use std::cell::{Cell, RefCell, RefMut};
 use std::ops::Deref;
+use std::rc::Rc;
 
 // analyzer/types.ts:17
 #[repr(i32)]
@@ -192,11 +193,13 @@ pub struct TypeBaseProps {
 pub struct Type {
     pub category: TypeCategory,
     pub flags: Cell<TypeFlags>,
-    pub props: RefCell<Option<TypeBaseProps>>,
-    pub cached: RefCell<Option<CachedTypeInfo>>,
+    pub props: RefCell<Option<Box<TypeBaseProps>>>,
+    pub cached: RefCell<Option<Box<CachedTypeInfo>>>,
     // Private: reach details through typed handles and `d()`; create through the create functions.
     d: TypeDetails,
 }
+// Every type pays for its largest details variant; rare records are boxed (PLAN.md step 6).
+const _: () = assert!(size_of::<Type>() <= 144);
 
 // analyzer/types.ts: one variant per `category` value.
 enum TypeDetails {
@@ -235,7 +238,7 @@ impl TypeBase {
     // analyzer/types.ts:229
     pub fn add_props(type_: P<Type>) -> RefMut<'static, TypeBaseProps> {
         RefMut::map(type_.get().props.borrow_mut(), |props| {
-            props.get_or_insert_with(TypeBaseProps::default)
+            &mut **props.get_or_insert_with(Default::default)
         })
     }
 
@@ -369,7 +372,7 @@ impl TypeBase {
             type_
                 .cached
                 .borrow_mut()
-                .get_or_insert_with(CachedTypeInfo::default)
+                .get_or_insert_with(Default::default)
                 .type_base_instance_type = Some(new_instance);
         }
 
@@ -428,7 +431,7 @@ impl TypeBase {
             type_
                 .cached
                 .borrow_mut()
-                .get_or_insert_with(CachedTypeInfo::default)
+                .get_or_insert_with(Default::default)
                 .type_base_instantiable_type = Some(new_instance);
         }
 
@@ -690,6 +693,7 @@ pub struct ModuleDetailsPriv {
 pub struct ModuleTypeDetails {
     pub priv_: RefCell<ModuleDetailsPriv>,
 }
+const _: () = assert!(size_of::<ModuleTypeDetails>() <= 88);
 
 // analyzer/types.ts:497
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
@@ -924,6 +928,13 @@ pub struct ClassDetailsPriv {
     pub include_subclasses: Option<bool>,
     pub include_promotions: Option<bool>,
     pub literal_value: Option<LiteralValue>,
+    // Fields few objects set ([cold] in tools/stubgen/typemap.toml): read with `cold()`, write with `cold_mut()`.
+    pub cold: Option<Box<ClassDetailsPrivCold>>,
+}
+
+// analyzer/types.ts:780
+#[derive(Clone, Default)]
+pub struct ClassDetailsPrivCold {
     pub alias_name: Option<String>,
     pub typed_dict_narrowed_entries: Option<JsMap<String, TypedDictEntry>>,
     pub is_typed_dict_partial: Option<bool>,
@@ -936,11 +947,37 @@ pub struct ClassDetailsPriv {
     pub partial_call_type: Option<P<Type>>,
 }
 
+impl ClassDetailsPrivCold {
+    const EMPTY: ClassDetailsPrivCold = ClassDetailsPrivCold {
+        alias_name: None,
+        typed_dict_narrowed_entries: None,
+        is_typed_dict_partial: None,
+        is_asymmetric_descriptor: None,
+        is_asymmetric_attribute_accessor: None,
+        fget_info: None,
+        fset_info: None,
+        fdel_info: None,
+        deprecated_instance_message: None,
+        partial_call_type: None,
+    };
+}
+
+impl ClassDetailsPriv {
+    pub fn cold(&self) -> &ClassDetailsPrivCold {
+        self.cold.as_deref().unwrap_or(&ClassDetailsPrivCold::EMPTY)
+    }
+
+    pub fn cold_mut(&mut self) -> &mut ClassDetailsPrivCold {
+        self.cold.get_or_insert_with(Default::default)
+    }
+}
+
 // analyzer/types.ts:862
 pub struct ClassTypeDetails {
     pub shared: Cell<P<ClassDetailsShared>>,
     pub priv_: RefCell<ClassDetailsPriv>,
 }
+const _: () = assert!(size_of::<ClassTypeDetails>() <= 96);
 
 // analyzer/types.ts:862
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
@@ -1178,14 +1215,14 @@ impl ClassType {
             .d()
             .priv_
             .borrow_mut()
-            .deprecated_instance_message = deprecated_message;
+            .cold_mut().deprecated_instance_message = deprecated_message;
         new_class_type
     }
 
     // analyzer/types.ts:1001
     pub fn clone_for_typing_alias(class_type: ClassType, alias_name: String) -> ClassType {
         let new_class_type = ClassType(TypeBase::clone_type(class_type.0));
-        new_class_type.d().priv_.borrow_mut().alias_name = Some(alias_name);
+        new_class_type.d().priv_.borrow_mut().cold_mut().alias_name = Some(alias_name);
         new_class_type
     }
 
@@ -1199,14 +1236,14 @@ impl ClassType {
             .d()
             .priv_
             .borrow_mut()
-            .typed_dict_narrowed_entries = narrowed_entries;
+            .cold_mut().typed_dict_narrowed_entries = narrowed_entries;
         new_class_type
     }
 
     // analyzer/types.ts:1016
     pub fn clone_for_partial_typed_dict(class_type: ClassType) -> ClassType {
         let new_class_type = ClassType(TypeBase::clone_type(class_type.0));
-        new_class_type.d().priv_.borrow_mut().is_typed_dict_partial = Some(true);
+        new_class_type.d().priv_.borrow_mut().cold_mut().is_typed_dict_partial = Some(true);
         new_class_type
     }
 
@@ -1234,7 +1271,7 @@ impl ClassType {
     // analyzer/types.ts:1034
     pub fn clone_for_partial(class_type: ClassType, partial_call_type: P<Type>) -> ClassType {
         let new_class_type = ClassType(TypeBase::clone_type(class_type.0));
-        new_class_type.d().priv_.borrow_mut().partial_call_type = Some(partial_call_type);
+        new_class_type.d().priv_.borrow_mut().cold_mut().partial_call_type = Some(partial_call_type);
         new_class_type
     }
 
@@ -1307,8 +1344,8 @@ impl ClassType {
     pub fn is_typed_dict_narrowed_entries_same(type1: ClassType, type2: ClassType) -> bool {
         let priv1 = type1.d().priv_.borrow();
         let priv2 = type2.d().priv_.borrow();
-        if let Some(td_entries1) = &priv1.typed_dict_narrowed_entries {
-            let Some(td_entries2) = &priv2.typed_dict_narrowed_entries else {
+        if let Some(td_entries1) = &priv1.cold().typed_dict_narrowed_entries {
+            let Some(td_entries2) = &priv2.cold().typed_dict_narrowed_entries else {
                 return false;
             };
 
@@ -1324,7 +1361,7 @@ impl ClassType {
                     return false;
                 }
             }
-        } else if priv2.typed_dict_narrowed_entries.is_some() {
+        } else if priv2.cold().typed_dict_narrowed_entries.is_some() {
             return false;
         }
 
@@ -1334,13 +1371,13 @@ impl ClassType {
     // analyzer/types.ts:1128
     pub fn is_typed_dict_narrower(type1: ClassType, type2: ClassType) -> bool {
         let priv2 = type2.d().priv_.borrow();
-        let Some(td_entries2) = &priv2.typed_dict_narrowed_entries else {
+        let Some(td_entries2) = &priv2.cold().typed_dict_narrowed_entries else {
             return true;
         };
 
         let priv1 = type1.d().priv_.borrow();
         let empty = JsMap::default();
-        let td_entries1 = priv1.typed_dict_narrowed_entries.as_ref().unwrap_or(&empty);
+        let td_entries1 = priv1.cold().typed_dict_narrowed_entries.as_ref().unwrap_or(&empty);
 
         for (key, entry2) in td_entries2 {
             if entry2.is_provided {
@@ -1367,7 +1404,7 @@ impl ClassType {
             .d()
             .priv_
             .borrow()
-            .alias_name
+            .cold().alias_name
             .as_deref()
             .is_some_and(|alias_name| !alias_name.is_empty());
         if !shared.flags.get().any(ClassTypeFlags::SpecialBuiltIn) && !has_alias_name {
@@ -1389,7 +1426,7 @@ impl ClassType {
         }
 
         if let Some(class_name) = class_name {
-            let alias_name = class_type.d().priv_.borrow().alias_name.clone();
+            let alias_name = class_type.d().priv_.borrow().cold().alias_name.clone();
             return class_name.iter().any(|name| {
                 *name == shared.name
                     || *name == shared.full_name
@@ -1969,13 +2006,13 @@ impl ClassType {
             .d()
             .priv_
             .borrow()
-            .is_typed_dict_partial
+            .cold().is_typed_dict_partial
             .unwrap_or(false)
             != type2
                 .d()
                 .priv_
                 .borrow()
-                .is_typed_dict_partial
+                .cold().is_typed_dict_partial
                 .unwrap_or(false)
         {
             return false;
@@ -2325,7 +2362,7 @@ pub struct SignatureWithOffsets {
 pub struct FunctionDetailsPriv {
     pub constructor_type_var_scope_id: Option<String>,
     pub specialized_types: Option<P<SpecializedFunctionTypes>>,
-    pub call_site_return_type_cache: Option<Vec<CallSiteInferenceTypeCacheEntry>>,
+    pub call_site_return_type_cache: Option<Box<Vec<CallSiteInferenceTypeCacheEntry>>>,
     pub stripped_first_param_type: Option<P<Type>>,
     pub bound_to_type: Option<ClassType>,
     pub pre_bound_flags: Option<FunctionTypeFlags>,
@@ -2338,6 +2375,7 @@ pub struct FunctionTypeDetails {
     pub shared: Cell<P<FunctionDetailsShared>>,
     pub priv_: RefCell<FunctionDetailsPriv>,
 }
+const _: () = assert!(size_of::<FunctionTypeDetails>() <= 96);
 
 // analyzer/types.ts:1817
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
@@ -3437,6 +3475,7 @@ pub struct OverloadedDetailsPriv {
 pub struct OverloadedTypeDetails {
     pub priv_: RefCell<OverloadedDetailsPriv>,
 }
+const _: () = assert!(size_of::<OverloadedTypeDetails>() <= 40);
 
 // analyzer/types.ts:2430
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
@@ -3842,9 +3881,9 @@ impl TypeCondition {
 // analyzer/types.ts:2668
 #[derive(Clone, Default)]
 pub struct LiteralTypes {
-    pub literal_str_map: Option<JsMap<String, UnionableType>>,
-    pub literal_int_map: Option<JsMap<NumberValue, UnionableType>>,
-    pub literal_enum_map: Option<JsMap<String, UnionableType>>,
+    pub literal_str_map: Option<Box<JsMap<String, UnionableType>>>,
+    pub literal_int_map: Option<Box<JsMap<NumberValue, UnionableType>>>,
+    pub literal_enum_map: Option<Box<JsMap<String, UnionableType>>>,
 }
 
 // analyzer/types.ts:2674
@@ -3853,7 +3892,7 @@ pub struct UnionDetailsPriv {
     pub subtypes: Vec<UnionableType>,
     pub literal_instances: LiteralTypes,
     pub literal_classes: LiteralTypes,
-    pub type_alias_sources: Option<JsSet<UnionType>>,
+    pub type_alias_sources: Option<Box<JsSet<UnionType>>>,
     pub includes_recursive_type_alias: bool,
     pub includes_enum_literal: bool,
 }
@@ -3862,6 +3901,7 @@ pub struct UnionDetailsPriv {
 pub struct UnionTypeDetails {
     pub priv_: RefCell<UnionDetailsPriv>,
 }
+const _: () = assert!(size_of::<UnionTypeDetails>() <= 96);
 
 // analyzer/types.ts:2684
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
@@ -3956,7 +3996,7 @@ impl UnionType {
                     if let LiteralValue::String(value) = &literal_value {
                         literal_maps
                             .literal_str_map
-                            .get_or_insert_with(JsMap::default)
+                            .get_or_insert_with(Default::default)
                             .insert(value.clone(), new_type);
                     }
                 } else if is_int {
@@ -3968,7 +4008,7 @@ impl UnionType {
                     if let Some(key) = key {
                         literal_maps
                             .literal_int_map
-                            .get_or_insert_with(JsMap::default)
+                            .get_or_insert_with(Default::default)
                             .insert(key, new_type);
                     }
                 } else if is_enum {
@@ -3977,7 +4017,7 @@ impl UnionType {
                     };
                     literal_maps
                         .literal_enum_map
-                        .get_or_insert_with(JsMap::default)
+                        .get_or_insert_with(Default::default)
                         .insert(enum_literal.get_name(), new_type);
                 }
             }
@@ -4111,7 +4151,7 @@ impl UnionType {
                 let mut union_priv = union_type.d().priv_.borrow_mut();
                 let type_alias_sources = union_priv
                     .type_alias_sources
-                    .get_or_insert_with(JsSet::default);
+                    .get_or_insert_with(Default::default);
 
                 for source in sources_to_add {
                     type_alias_sources.insert(source);
@@ -4195,10 +4235,10 @@ pub enum TypeVarScopeType {
 // analyzer/types.ts:2876
 #[derive(Clone, Default)]
 pub struct TypeVarDetailsPriv {
-    pub scope_id: Option<String>,
-    pub scope_name: Option<String>,
+    pub scope_id: Option<Rc<str>>,
+    pub scope_name: Option<Rc<str>>,
     pub scope_type: Option<TypeVarScopeType>,
-    pub name_with_scope: Option<String>,
+    pub name_with_scope: Option<Rc<str>>,
     pub computed_variance: Option<Variance>,
     pub is_unification_var: Option<bool>,
     pub free_type_var: Option<TypeVarType>,
@@ -4214,6 +4254,7 @@ pub struct TypeVarTypeDetails {
     pub shared: Cell<P<TypeVarDetailsShared>>,
     pub priv_: RefCell<TypeVarDetailsPriv>,
 }
+const _: () = assert!(size_of::<TypeVarTypeDetails>() <= 88);
 
 // analyzer/types.ts:2909
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
@@ -4394,7 +4435,7 @@ impl TypeVarType {
                 &scope_id,
                 scope_name.as_deref().unwrap_or(""),
             );
-            new_instance.d().priv_.borrow_mut().name_with_scope = Some(name_with_scope);
+            new_instance.d().priv_.borrow_mut().name_with_scope = Some(name_with_scope.into());
         }
 
         new_instance
@@ -4410,13 +4451,12 @@ impl TypeVarType {
         let new_instance = TypeVarType(TypeBase::clone_type(type_.0));
         let name = type_.d().shared.get().name.borrow().clone();
         let mut priv_ = new_instance.d().priv_.borrow_mut();
-        priv_.name_with_scope = Some(TypeVarType::make_name_with_scope(
-            &name,
-            &scope_id,
-            scope_name.as_deref().unwrap_or(""),
-        ));
-        priv_.scope_id = Some(scope_id);
-        priv_.scope_name = scope_name;
+        priv_.name_with_scope = Some(
+            TypeVarType::make_name_with_scope(&name, &scope_id, scope_name.as_deref().unwrap_or(""))
+                .into(),
+        );
+        priv_.scope_id = Some(scope_id.into());
+        priv_.scope_name = scope_name.map(Into::into);
         priv_.scope_type = scope_type;
         drop(priv_);
         new_instance
@@ -4518,17 +4558,20 @@ impl TypeVarType {
         // function like `foo(foo(1))`.
         let mut new_name_with_scope = type_.d().priv_.borrow().name_with_scope.clone();
         if let Some(usage_offset) = usage_offset.filter(|usage_offset| *usage_offset != 0) {
-            new_name_with_scope = Some(format!(
-                "{}-{}",
-                new_name_with_scope.as_deref().unwrap_or("undefined"),
-                usage_offset
-            ));
+            new_name_with_scope = Some(
+                format!(
+                    "{}-{}",
+                    new_name_with_scope.as_deref().unwrap_or("undefined"),
+                    usage_offset
+                )
+                .into(),
+            );
         }
 
         let new_instance = TypeVarType(TypeBase::clone_type(type_.0));
         let mut priv_ = new_instance.d().priv_.borrow_mut();
         priv_.is_unification_var = Some(true);
-        priv_.scope_id = Some(UNIFICATION_SCOPE_ID.to_string());
+        priv_.scope_id = Some(UNIFICATION_SCOPE_ID.into());
         priv_.name_with_scope = new_name_with_scope;
         drop(priv_);
         new_instance
@@ -4582,7 +4625,7 @@ impl TypeVarType {
         let clone = TypeVarType::clone_for_scope_id(
             type_,
             TypeVarType::make_bound_scope_id(Some(&scope_id)).unwrap_or_default(),
-            scope_name,
+            scope_name.as_deref().map(str::to_string),
             scope_type,
         );
 
@@ -4648,7 +4691,7 @@ impl TypeVarType {
         // If there is no name with scope, fall back on the (unscoped) name.
         let name_with_scope = type_var_type.d().priv_.borrow().name_with_scope.clone();
         match name_with_scope {
-            Some(name_with_scope) if !name_with_scope.is_empty() => name_with_scope,
+            Some(name_with_scope) if !name_with_scope.is_empty() => name_with_scope.to_string(),
             _ => type_var_type.d().shared.get().name.borrow().clone(),
         }
     }
@@ -5097,8 +5140,8 @@ pub fn is_type_same(
                 return false;
             }
 
-            if priv1.is_typed_dict_partial.unwrap_or(false)
-                != priv2.is_typed_dict_partial.unwrap_or(false)
+            if priv1.cold().is_typed_dict_partial.unwrap_or(false)
+                != priv2.cold().is_typed_dict_partial.unwrap_or(false)
             {
                 return false;
             }
@@ -5547,7 +5590,7 @@ pub fn combine_types(subtypes: &[P<Type>], options: Option<&CombineTypesOptions>
             if has_type_alias_info {
                 type_alias_sources.insert(union);
             } else if let Some(sources) = &union_priv.type_alias_sources {
-                for source in sources {
+                for source in sources.iter() {
                     type_alias_sources.insert(*source);
                 }
             }
@@ -5599,7 +5642,7 @@ pub fn combine_types(subtypes: &[P<Type>], options: Option<&CombineTypesOptions>
 
     let new_union_type = UnionType::create();
     if !type_alias_sources.is_empty() {
-        new_union_type.d().priv_.borrow_mut().type_alias_sources = Some(type_alias_sources);
+        new_union_type.d().priv_.borrow_mut().type_alias_sources = Some(Box::new(type_alias_sources));
     }
 
     let mut hit_max_subtype_count = false;

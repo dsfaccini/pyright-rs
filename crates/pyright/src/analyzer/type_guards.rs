@@ -3284,7 +3284,7 @@ pub(crate) fn narrow_type_for_typed_dict_key(
                         .d()
                         .priv_
                         .borrow()
-                        .typed_dict_narrowed_entries
+                        .cold().typed_dict_narrowed_entries
                         .clone()
                         .unwrap_or_default();
 
@@ -3571,7 +3571,7 @@ pub fn narrow_type_for_discriminated_literal_field_comparison(
                         .d()
                         .priv_
                         .borrow()
-                        .fget_info
+                        .cold().fget_info
                         .as_ref()
                         .map(|fget_info| fget_info.method_type);
                     if let Some(getter_type) = getter_type

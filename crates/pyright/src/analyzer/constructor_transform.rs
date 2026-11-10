@@ -566,7 +566,7 @@ pub(crate) fn apply_partial_transform_to_function(
                     .d()
                     .priv_
                     .borrow()
-                    .typed_dict_narrowed_entries
+                    .cold().typed_dict_narrowed_entries
                     .clone()
                     .unwrap_or_default();
 

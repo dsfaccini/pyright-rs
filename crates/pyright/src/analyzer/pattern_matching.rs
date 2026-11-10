@@ -780,7 +780,7 @@ pub(crate) fn narrow_type_based_on_mapping_pattern(
                                                 .d()
                                                 .priv_
                                                 .borrow()
-                                                .typed_dict_narrowed_entries
+                                                .cold().typed_dict_narrowed_entries
                                                 .clone()
                                                 .unwrap_or_default();
                                             new_narrowed_entries_map.insert(

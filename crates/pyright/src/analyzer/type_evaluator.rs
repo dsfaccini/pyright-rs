@@ -3712,7 +3712,7 @@ impl TypeEvaluator {
         }
         let kwargs_type = ClassType(kwargs_type);
 
-        let narrowed_entries = kwargs_type.d().priv_.borrow().typed_dict_narrowed_entries.clone();
+        let narrowed_entries = kwargs_type.d().priv_.borrow().cold().typed_dict_narrowed_entries.clone();
         let td_entries = match narrowed_entries {
             Some(entries) => Some(entries),
             None => kwargs_type
@@ -7836,7 +7836,7 @@ impl TypeEvaluator {
         let enclosing_class = analyzer::parse_tree_utils::get_enclosing_class(node, false);
         if let Some(enclosing_class) = enclosing_class {
             let live_type_var_scope_ids = self.get_type_var_scopes_for_node(enclosing_class.node());
-            if !live_type_var_scope_ids.contains(&scope_id) {
+            if !live_type_var_scope_ids.iter().any(|id| **id == *scope_id) {
                 self.add_diagnostic(
                     DiagnosticRule::reportGeneralTypeIssues,
                     &crate::localization::localize::LocMessage::type_var_invalid_for_member_variable()
@@ -7874,7 +7874,7 @@ impl TypeEvaluator {
                 {
                     let (has_type_args, is_type_arg_explicit, alias_name) = {
                         let priv_ = class_type.d().priv_.borrow();
-                        (priv_.type_args.is_some(), priv_.is_type_arg_explicit.unwrap_or(false), priv_.alias_name.clone())
+                        (priv_.type_args.is_some(), priv_.is_type_arg_explicit.unwrap_or(false), priv_.cold().alias_name.clone())
                     };
                     if !has_type_args || !is_type_arg_explicit {
                         let name = match alias_name {
@@ -7962,7 +7962,7 @@ impl TypeEvaluator {
                     };
                     if let (Some(scope_id), Some(scope_name), Some(scope_type)) = (scope_id, scope_name, scope_type) {
                         // Use the scoped version of the TypeVar rather than the (unscoped) original type.
-                        type_ = TypeVarType::clone_for_scope_id(type_, scope_id, Some(scope_name), Some(scope_type));
+                        type_ = TypeVarType::clone_for_scope_id(type_, scope_id.to_string(), Some(scope_name.to_string()), Some(scope_type));
                         type_.d().shared.get().declared_variance.set(match_.d().shared.get().declared_variance.get());
                         return ScopedTypeVarResult {
                             type_,
@@ -9632,11 +9632,11 @@ impl TypeEvaluator {
             let access_method_class: Option<ClassType> = {
                 let priv_ = concrete_member_type.d().priv_.borrow();
                 if usage.method == "get" {
-                    priv_.fget_info.as_ref().and_then(|info| info.class_type)
+                    priv_.cold().fget_info.as_ref().and_then(|info| info.class_type)
                 } else if usage.method == "set" {
-                    priv_.fset_info.as_ref().and_then(|info| info.class_type)
+                    priv_.cold().fset_info.as_ref().and_then(|info| info.class_type)
                 } else {
-                    priv_.fdel_info.as_ref().and_then(|info| info.class_type)
+                    priv_.cold().fdel_info.as_ref().and_then(|info| info.class_type)
                 }
             };
 
@@ -9918,7 +9918,7 @@ impl TypeEvaluator {
     // analyzer/typeEvaluator.ts:7245
     pub(crate) fn is_asymmetric_descriptor_class(&self, class_type: ClassType) -> bool {
         // If the value has already been cached in this type, return the cached value.
-        let cached = class_type.d().priv_.borrow().is_asymmetric_descriptor;
+        let cached = class_type.d().priv_.borrow().cold().is_asymmetric_descriptor;
         if let Some(cached) = cached {
             return cached;
         }
@@ -10004,7 +10004,7 @@ impl TypeEvaluator {
         }
 
         // Cache the value for next time.
-        class_type.d().priv_.borrow_mut().is_asymmetric_descriptor = Some(is_asymmetric);
+        class_type.d().priv_.borrow_mut().cold_mut().is_asymmetric_descriptor = Some(is_asymmetric);
         is_asymmetric
     }
 
@@ -10014,7 +10014,7 @@ impl TypeEvaluator {
         class_type: ClassType,
     ) -> bool {
         // If the value has already been cached in this type, return the cached value.
-        let cached = class_type.d().priv_.borrow().is_asymmetric_attribute_accessor;
+        let cached = class_type.d().priv_.borrow().cold().is_asymmetric_attribute_accessor;
         if let Some(cached) = cached {
             return cached;
         }
@@ -10074,7 +10074,7 @@ impl TypeEvaluator {
         }
 
         // Cache the value for next time.
-        class_type.d().priv_.borrow_mut().is_asymmetric_attribute_accessor = Some(is_asymmetric);
+        class_type.d().priv_.borrow_mut().cold_mut().is_asymmetric_attribute_accessor = Some(is_asymmetric);
         is_asymmetric
     }
 
@@ -10259,7 +10259,7 @@ impl TypeEvaluator {
                         .d()
                         .priv_
                         .borrow()
-                        .alias_name
+                        .cold().alias_name
                         .as_ref()
                         .is_none_or(|alias_name| alias_name.is_empty())
                 {
@@ -10277,7 +10277,7 @@ impl TypeEvaluator {
                                 .d()
                                 .priv_
                                 .borrow()
-                                .alias_name
+                                .cold().alias_name
                                 .clone()
                                 .filter(|alias_name| !alias_name.is_empty());
                             let name = match alias_name {
@@ -16724,7 +16724,7 @@ impl TypeEvaluator {
         }
 
         if ClassType::is_built_in(expanded_call_type, None) {
-            let alias_name = expanded_call_type.d().priv_.borrow().alias_name.clone();
+            let alias_name = expanded_call_type.d().priv_.borrow().cold().alias_name.clone();
             let class_name =
                 alias_name.unwrap_or_else(|| expanded_call_type.d().shared.get().name.clone());
 
@@ -19978,7 +19978,7 @@ impl TypeEvaluator {
         let new_type_params: Vec<TypeVarType> = type_params
             .iter()
             .map(|type_var| {
-                let scope_name = type_var.d().priv_.borrow().scope_name.clone();
+                let scope_name = type_var.d().priv_.borrow().scope_name.as_deref().map(str::to_string);
                 let new_type_param = TypeVarType::clone_for_scope_id(
                     *type_var,
                     new_scope_id.clone(),
@@ -20351,7 +20351,7 @@ impl TypeEvaluator {
                 arg_param.param_type,
                 &mut |subtype, _, _| {
                     if !analyzer::types::is_type_var(subtype)
-                        || TypeVarType(subtype).d().priv_.borrow().scope_id != type_result_scope_id
+                        || TypeVarType(subtype).d().priv_.borrow().scope_id.as_deref() != type_result_scope_id.as_deref()
                     {
                         is_expected_type_bare_type_var = false;
                     }
@@ -24020,7 +24020,7 @@ impl TypeEvaluator {
                         .d()
                         .priv_
                         .borrow()
-                        .typed_dict_narrowed_entries
+                        .cold().typed_dict_narrowed_entries
                         .clone();
                     return Some(
                         ClassType::clone_for_narrowed_typed_dict_entries(
@@ -25796,7 +25796,7 @@ impl TypeEvaluator {
                 .d()
                 .priv_
                 .borrow()
-                .alias_name
+                .cold().alias_name
                 .clone()
                 .filter(|n| !n.is_empty())
                 .unwrap_or_else(|| class_type.d().shared.get().name.clone())
@@ -26624,7 +26624,7 @@ impl TypeEvaluator {
                         .d()
                         .priv_
                         .borrow()
-                        .alias_name
+                        .cold().alias_name
                         .clone()
                         .filter(|n| !n.is_empty())
                         .unwrap_or_else(|| class_type.d().shared.get().name.clone());
@@ -27626,7 +27626,7 @@ impl TypeEvaluator {
             type_params: RefCell::new(None),
             computed_variance: Cell::new(None),
         })));
-        placeholder.d().priv_.borrow_mut().scope_id = Some(type_var_scope_id);
+        placeholder.d().priv_.borrow_mut().scope_id = Some(type_var_scope_id.into());
 
         placeholder
     }
@@ -28574,7 +28574,7 @@ impl TypeEvaluator {
                                     );
                                     type_var.d().shared.get().is_synthesized.set(true);
                                     type_var.d().priv_.borrow_mut().scope_id =
-                                        Some(self.get_scope_id_for_node(init_decl_node.0));
+                                        Some(self.get_scope_id_for_node(init_decl_node.0).into());
                                     type_var.d().shared.get().bound_type.set(Some(analyzer::types::UnknownType::create(false).0));
                                     TypeVarType::clone_for_scope_id(
                                         type_var,
@@ -32340,7 +32340,7 @@ impl TypeEvaluator {
                 .d()
                 .priv_
                 .borrow()
-                .alias_name
+                .cold().alias_name
                 .clone()
                 .filter(|name| !name.is_empty())
                 .unwrap_or_else(|| class_type.d().shared.get().name.clone())
@@ -36032,11 +36032,11 @@ impl TypeEvaluator {
                 // Cache the resulting type.
                 let mut priv_ = function_type_result.function_type.d().priv_.borrow_mut();
                 if priv_.call_site_return_type_cache.is_none() {
-                    priv_.call_site_return_type_cache = Some(Vec::new());
+                    priv_.call_site_return_type_cache = Some(Box::default());
                 }
                 if priv_.call_site_return_type_cache.as_ref().unwrap().len() >= MAX_CALL_SITE_RETURN_TYPE_CACHE_SIZE as usize {
                     priv_.call_site_return_type_cache =
-                        Some(priv_.call_site_return_type_cache.as_ref().unwrap()[1..].to_vec());
+                        Some(Box::new(priv_.call_site_return_type_cache.as_ref().unwrap()[1..].to_vec()));
                 }
                 priv_
                     .call_site_return_type_cache
@@ -36806,7 +36806,7 @@ impl TypeEvaluator {
             return None;
         }
 
-        let fget_info = property_class.d().priv_.borrow().fget_info.clone();
+        let fget_info = property_class.d().priv_.borrow().cold().fget_info.clone();
         if let Some(fget_info) = fget_info
             && analyzer::types::is_function(fget_info.method_type)
         {
@@ -37048,7 +37048,7 @@ impl TypeEvaluator {
         {
             let src_class = ClassType::cast(src_type).unwrap();
             // Read out first: no `RefCell` borrow may live across `classGetItemReturnsGenericAlias`.
-            let src_alias_name_is_falsy = src_class.d().priv_.borrow().alias_name.as_ref().is_none_or(|n| n.is_empty());
+            let src_alias_name_is_falsy = src_class.d().priv_.borrow().cold().alias_name.as_ref().is_none_or(|n| n.is_empty());
             let src_has_type_args = src_class.d().priv_.borrow().type_args.is_some();
             let src_has_type_form = src_type.props.borrow().as_ref().and_then(|p| p.type_form).is_some();
             if !ClassType::is_special_built_in(src_class, None)
@@ -38141,7 +38141,7 @@ impl TypeEvaluator {
         ClassType::is_built_in(type_, Some(&["TypeForm".to_owned()]))
             || (ClassType::is_special_built_in(type_, None)
                 && (type_.d().shared.get().name == "TypeForm"
-                    || type_.d().priv_.borrow().alias_name.as_deref() == Some("TypeForm")))
+                    || type_.d().priv_.borrow().cold().alias_name.as_deref() == Some("TypeForm")))
     }
 
     // analyzer/typeEvaluator.ts:27097
@@ -40599,7 +40599,7 @@ impl TypeEvaluator {
                                     .d()
                                     .priv_
                                     .borrow()
-                                    .typed_dict_narrowed_entries
+                                    .cold().typed_dict_narrowed_entries
                                     .is_some()
                                 && analyzer::types::is_type_same(
                                     assigned_subtype,

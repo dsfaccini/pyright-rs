@@ -1487,9 +1487,9 @@ pub(crate) fn get_converter_input_type(
     // will be used to check compatibility of the provided converter.
     let type_var = TypeVarType::create_instance("__converterInput", TypeVarKind::TypeVar);
     let scope_id = get_scope_id_for_node(converter_node.0, node_info.reader());
-    type_var.d().priv_.borrow_mut().scope_id = Some(scope_id);
+    type_var.d().priv_.borrow_mut().scope_id = Some(scope_id.into());
     let target_function = FunctionType::create_synthesized_instance("", FunctionTypeFlags::None);
-    let type_var_scope_id = type_var.d().priv_.borrow().scope_id.clone();
+    let type_var_scope_id = type_var.d().priv_.borrow().scope_id.as_deref().map(str::to_string);
     *target_function
         .d()
         .shared
