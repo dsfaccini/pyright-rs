@@ -2412,3 +2412,87 @@ impl CalculateInheritedSlotsNamesDeferred {
         todo!()
     }
 }
+
+// Defined in tools/stubgen/typemap.toml [items].
+impl Clone for ClassDetailsShared {
+    fn clone(&self) -> ClassDetailsShared {
+        ClassDetailsShared {
+            name: self.name.clone(),
+            full_name: self.full_name.clone(),
+            module_name: self.module_name.clone(),
+            file_uri: self.file_uri,
+            flags: self.flags.clone(),
+            type_source_id: self.type_source_id,
+            base_classes: self.base_classes.clone(),
+            mro: self.mro.clone(),
+            declaration: self.declaration.clone(),
+            declared_metaclass: self.declared_metaclass.clone(),
+            effective_metaclass: self.effective_metaclass.clone(),
+            fields: self.fields.clone(),
+            type_params: self.type_params.clone(),
+            type_var_scope_id: self.type_var_scope_id.clone(),
+            doc_string: self.doc_string.clone(),
+            data_class_entries: self.data_class_entries.clone(),
+            data_class_behaviors: self.data_class_behaviors.clone(),
+            named_tuple_entries: self.named_tuple_entries.clone(),
+            typed_dict_entries: self.typed_dict_entries.clone(),
+            typed_dict_extra_items_expr: self.typed_dict_extra_items_expr.clone(),
+            local_slots_names: self.local_slots_names.clone(),
+            has_non_empty_slots: self.has_non_empty_slots.clone(),
+            deprecated_message: self.deprecated_message.clone(),
+            protocol_compatibility: self.protocol_compatibility.clone(),
+            class_data_class_transform: self.class_data_class_transform.clone(),
+            requires_variance_inference: self.requires_variance_inference.clone(),
+            is_instance_hashable: self.is_instance_hashable.clone(),
+            synthesize_methods_deferred: self.synthesize_methods_deferred.clone(),
+            synthesize_data_class_slots_deferred: self.synthesize_data_class_slots_deferred.clone(),
+            calculate_inherited_slots_names_deferred: self
+                .calculate_inherited_slots_names_deferred
+                .clone(),
+            inherited_slots_names_cached: self.inherited_slots_names_cached.clone(),
+        }
+    }
+}
+
+// Defined in tools/stubgen/typemap.toml [items].
+impl Clone for FunctionDetailsShared {
+    fn clone(&self) -> FunctionDetailsShared {
+        FunctionDetailsShared {
+            name: self.name.clone(),
+            full_name: self.full_name.clone(),
+            module_name: self.module_name.clone(),
+            flags: self.flags.clone(),
+            type_params: self.type_params.clone(),
+            parameters: self.parameters.clone(),
+            declared_return_type: self.declared_return_type.clone(),
+            declaration: self.declaration.clone(),
+            type_var_scope_id: self.type_var_scope_id.clone(),
+            doc_string: self.doc_string.clone(),
+            deprecated_message: self.deprecated_message.clone(),
+            method_class: self.method_class.clone(),
+            decorator_data_class_behaviors: self.decorator_data_class_behaviors.clone(),
+            inferred_return_type: self.inferred_return_type.clone(),
+        }
+    }
+}
+
+// Defined in tools/stubgen/typemap.toml [items].
+impl Clone for TypeVarDetailsShared {
+    fn clone(&self) -> TypeVarDetailsShared {
+        TypeVarDetailsShared {
+            kind: self.kind,
+            name: self.name.clone(),
+            constraints: self.constraints.clone(),
+            bound_type: self.bound_type.clone(),
+            is_default_explicit: self.is_default_explicit.clone(),
+            default_type: self.default_type.clone(),
+            declared_variance: self.declared_variance.clone(),
+            is_synthesized: self.is_synthesized.clone(),
+            is_synthesized_self: self.is_synthesized_self.clone(),
+            synthesized_index: self.synthesized_index.clone(),
+            is_exempt_from_bound_check: self.is_exempt_from_bound_check.clone(),
+            is_type_param_syntax: self.is_type_param_syntax.clone(),
+            recursive_alias: self.recursive_alias.clone(),
+        }
+    }
+}

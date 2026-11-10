@@ -70,3 +70,5 @@ pub mod type_walker;
 pub mod typed_dicts;
 pub mod typeshed_info_provider;
 pub mod types;
+#[cfg(test)]
+mod types_tests;
