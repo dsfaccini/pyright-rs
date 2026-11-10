@@ -55,6 +55,8 @@ pub struct VirtualParamDetails {
     pub index: i32,
     pub kind: ParamKind,
 }
+// Built for every parameter of every signature the evaluator matches (PLAN.md step 6).
+const _: () = assert!(size_of::<VirtualParamDetails>() <= 80);
 
 // analyzer/parameterUtils.ts:57
 #[derive(Clone)]

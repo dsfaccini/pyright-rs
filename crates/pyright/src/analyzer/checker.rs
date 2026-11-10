@@ -447,7 +447,7 @@ impl ParseTreeVisitor<bool> for Checker {
                     let param_node = params
                         .iter()
                         .find(|param| {
-                            param.d().name.get().is_some_and(|n| n.d().value == *param_spec_name)
+                            param.d().name.get().is_some_and(|n| *n.d().value == **param_spec_name)
                         })
                         .copied();
                     let annotation_node =
@@ -6472,7 +6472,7 @@ impl Checker {
                 .params
                 .borrow()
                 .iter()
-                .find(|node| node.d().name.get().map(|name| name.d().value.clone()) == param.name)
+                .find(|node| node.d().name.get().map(|name| name.d().value.clone()).as_deref() == param.name.as_deref())
                 .copied();
             let annotation_node =
                 param_node.and_then(|param_node| param_node.d().annotation.get().or(param_node.d().annotation_comment.get()));

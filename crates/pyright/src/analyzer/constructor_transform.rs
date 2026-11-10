@@ -368,7 +368,7 @@ pub(crate) fn apply_partial_transform_to_function(
                 let param_info = param_list_details.params[arg_index];
                 let param_type = param_info.type_;
                 let diag = DiagnosticAddendum::new();
-                let param_name = param_info.param.name.clone().unwrap_or_default();
+                let param_name = param_info.param.name.as_deref().unwrap_or_default().to_string();
 
                 let inference_context = make_inference_context(Some(param_type), None, None);
                 let arg_type_result = evaluator.get_type_of_expression(
@@ -480,7 +480,7 @@ pub(crate) fn apply_partial_transform_to_function(
             continue;
         };
 
-        let param_name = matching_param.param.name.clone().unwrap();
+        let param_name = matching_param.param.name.as_deref().unwrap().to_string();
         let param_type = matching_param.type_;
 
         if param_map.contains_key(&param_name) {

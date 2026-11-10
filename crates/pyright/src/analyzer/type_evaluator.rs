@@ -17630,7 +17630,7 @@ impl TypeEvaluator {
         };
 
         // JavaScript string truthiness of an optional parameter name.
-        let is_truthy_name = |name: &Option<String>| name.as_deref().is_some_and(|n| !n.is_empty());
+        let is_truthy_name = |name: Option<&str>| name.is_some_and(|n| !n.is_empty());
 
         let overload = FunctionType(type_result.type_.get());
         let param_details = analyzer::parameter_utils::get_param_list_details(
@@ -17913,7 +17913,7 @@ impl TypeEvaluator {
 
             let param_info = param_details.params[param_index as usize];
             let param_type = param_info.type_;
-            let param_name = param_info.param.name.clone();
+            let param_name = param_info.param.name.as_deref().map(str::to_string);
 
             let is_param_variadic = param_info.param.category == ParamCategory::ArgsList
                 && analyzer::types::is_unpacked(param_type);
@@ -18142,7 +18142,7 @@ impl TypeEvaluator {
                 );
 
                 // Note that the parameter has received an argument.
-                if is_truthy_name(&param_name)
+                if is_truthy_name(param_name.as_deref())
                     && param_details.params[param_index as usize].param.category
                         == ParamCategory::Simple
                 {
@@ -18182,7 +18182,8 @@ impl TypeEvaluator {
                     let param_name = param_details.params[param_index as usize]
                         .param
                         .name
-                        .clone();
+                        .as_deref()
+                        .map(str::to_string);
 
                     if analyzer::types::is_unpacked_class(param_type) {
                         let first_tuple_type_arg = ClassType(param_type)
@@ -18250,7 +18251,7 @@ impl TypeEvaluator {
                 }
             } else {
                 let param_info = param_details.params[param_index as usize];
-                let param_name = param_info.param.name.clone();
+                let param_name = param_info.param.name.as_deref().map(str::to_string);
 
                 validate_arg_type_params.push(ValidateArgTypeParams {
                     param_category: param_info.param.category,
@@ -18515,7 +18516,7 @@ impl TypeEvaluator {
                                     is_default_arg: None,
                                     arg_type: None,
                                     error_node: arg.value_expression().unwrap_or(error_node),
-                                    param_name: kwargs_param.param.name.clone(),
+                                    param_name: kwargs_param.param.name.as_deref().map(str::to_string),
                                     is_param_name_synthesized: None,
                                     maps_to_var_arg_list: None,
                                     isinstance_param: None,
@@ -18687,7 +18688,8 @@ impl TypeEvaluator {
                                     param_name: param_details.params[kwargs_index as usize]
                                         .param
                                         .name
-                                        .clone(),
+                                        .as_deref()
+                        .map(str::to_string),
                                     is_param_name_synthesized: None,
                                     maps_to_var_arg_list: None,
                                     isinstance_param: None,
@@ -18905,11 +18907,11 @@ impl TypeEvaluator {
                     let param = &param_info.param;
                     if param_index as i32 >= param_details.first_position_or_keyword_index
                         && param.category == ParamCategory::Simple
-                        && is_truthy_name(&param.name)
+                        && is_truthy_name(param.name.as_deref())
                         && param_tracker.lookup_details(param_info).args_received == 0
                     {
                         let param_type = param_details.params[param_index].type_;
-                        let param_name = param.name.clone().unwrap_or_default();
+                        let param_name = param.name.as_deref().unwrap_or_default().to_string();
 
                         if unpacked_dict_key_names
                             .as_ref()
@@ -18937,7 +18939,7 @@ impl TypeEvaluator {
                                     })
                                     .and_then(|arg| arg.value_expression())
                                     .unwrap_or(error_node),
-                                param_name: param.name.clone(),
+                                param_name: param.name.as_deref().map(str::to_string),
                                 is_param_name_synthesized: Some(
                                     FunctionParam::is_name_synthesized(param),
                                 ),
@@ -18992,7 +18994,7 @@ impl TypeEvaluator {
                 // value's type if it's not provided by the caller.
                 for param_info in param_details.params.iter().copied() {
                     let param = &param_info.param;
-                    if param.category == ParamCategory::Simple && is_truthy_name(&param.name) {
+                    if param.category == ParamCategory::Simple && is_truthy_name(param.name.as_deref()) {
                         let entry = param_tracker.lookup_details(param_info);
 
                         if entry.args_needed == 0 && entry.args_received == 0 {
@@ -19024,7 +19026,7 @@ impl TypeEvaluator {
                                         is_default_arg: Some(true),
                                         arg_type: None,
                                         error_node,
-                                        param_name: param.name.clone(),
+                                        param_name: param.name.as_deref().map(str::to_string),
                                         is_param_name_synthesized: Some(
                                             FunctionParam::is_name_synthesized(param),
                                         ),
@@ -19156,7 +19158,8 @@ impl TypeEvaluator {
                             param_name: param_details.params[args_index as usize]
                                 .param
                                 .name
-                                .clone(),
+                                .as_deref()
+                        .map(str::to_string),
                             is_param_name_synthesized: Some(FunctionParam::is_name_synthesized(
                                 &param_details.params[args_index as usize].param,
                             )),
@@ -39612,8 +39615,8 @@ impl TypeEvaluator {
         recursion_count: u32,
     ) -> bool {
         // JS truthiness of an optional string: undefined and '' are falsy.
-        fn is_truthy_name(name: &Option<String>) -> bool {
-            name.as_deref().is_some_and(|name| !name.is_empty())
+        fn is_truthy_name(name: Option<&str>) -> bool {
+            name.is_some_and(|name| !name.is_empty())
         }
 
         let mut dest_type = dest_type;
@@ -39699,8 +39702,8 @@ impl TypeEvaluator {
             let src_param_type = src_param.type_;
             let dest_param_type = dest_param.type_;
 
-            let dest_param_name = dest_param.param.name.clone().unwrap_or_default();
-            let src_param_name = src_param.param.name.clone().unwrap_or_default();
+            let dest_param_name = dest_param.param.name.as_deref().unwrap_or_default().to_string();
+            let src_param_name = src_param.param.name.as_deref().unwrap_or_default().to_string();
             if !dest_param_name.is_empty() {
                 let is_dest_positional_only =
                     dest_param.kind == analyzer::parameter_utils::ParamKind::Positional || dest_param.kind == analyzer::parameter_utils::ParamKind::ExpandedArgs;
@@ -39905,7 +39908,7 @@ impl TypeEvaluator {
                     .params
                     .iter()
                     .filter(|p| {
-                        is_truthy_name(&p.param.name)
+                        is_truthy_name(p.param.name.as_deref())
                             && p.default_type.is_none()
                             && p.param.category == ParamCategory::Simple
                     })
@@ -40080,12 +40083,12 @@ impl TypeEvaluator {
             if let Some(first_keyword_only_index) = dest_param_details.first_keyword_only_index {
                 for (index, param) in dest_param_details.params.iter().enumerate() {
                     if index as i32 >= first_keyword_only_index {
-                        if is_truthy_name(&param.param.name)
+                        if is_truthy_name(param.param.name.as_deref())
                             && param.param.category == ParamCategory::Simple
                             && param.kind != analyzer::parameter_utils::ParamKind::Positional
                             && param.kind != analyzer::parameter_utils::ParamKind::ExpandedArgs
                         {
-                            dest_param_map.insert(param.param.name.clone().unwrap(), *param);
+                            dest_param_map.insert(param.param.name.as_deref().unwrap().to_string(), *param);
                         }
                     }
                 }
@@ -40108,14 +40111,14 @@ impl TypeEvaluator {
                         continue;
                     }
 
-                    if !is_truthy_name(&src_param_info.param.name)
+                    if !is_truthy_name(src_param_info.param.name.as_deref())
                         || src_param_info.param.category != ParamCategory::Simple
                         || src_param_info.kind == analyzer::parameter_utils::ParamKind::Positional
                     {
                         continue;
                     }
 
-                    let src_param_name = src_param_info.param.name.clone().unwrap();
+                    let src_param_name = src_param_info.param.name.as_deref().unwrap().to_string();
                     let dest_param_info = dest_param_map.get(&src_param_name).copied().or_else(|| {
                         dest_param_details
                             .params
@@ -40253,7 +40256,7 @@ impl TypeEvaluator {
                 .map(|(param_name, dest_param_info)| (param_name.clone(), *dest_param_info))
                 .collect();
             for (param_name, dest_param_info) in dest_param_entries {
-                if src_param_details.kwargs_index.is_some() && is_truthy_name(&dest_param_info.param.name) {
+                if src_param_details.kwargs_index.is_some() && is_truthy_name(dest_param_info.param.name.as_deref()) {
                     // Make sure the src kwargs type is compatible.
                     let src_kwargs_index = src_param_details.kwargs_index.unwrap() as usize;
                     if !self.assign_param(
@@ -40355,7 +40358,7 @@ impl TypeEvaluator {
                     .iter()
                     .enumerate()
                     .filter(|(i, p)| {
-                        if !is_truthy_name(&p.name) {
+                        if !is_truthy_name(p.name.as_deref()) {
                             return false;
                         }
 
@@ -40375,7 +40378,7 @@ impl TypeEvaluator {
                 let effective_src_params = effective_src_type.d().shared.get().parameters.get().borrow().clone();
                 for (index, p) in effective_src_params.iter().enumerate() {
                     if matched_param_count < required_match_param_count {
-                        if is_truthy_name(&p.name) {
+                        if is_truthy_name(p.name.as_deref()) {
                             matched_param_count += 1;
                         }
 

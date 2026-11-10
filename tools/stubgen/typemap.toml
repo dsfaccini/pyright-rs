@@ -247,6 +247,9 @@ interface = "analyzer/codeFlowEngine.ts:CodeFlowAnalyzer"
 "analyzer/types.ts:TypeVarDetailsPriv.scopeId" = "std::rc::Rc<str>"
 "analyzer/types.ts:TypeVarDetailsPriv.scopeName" = "std::rc::Rc<str>"
 "analyzer/types.ts:TypeVarDetailsPriv.nameWithScope" = "std::rc::Rc<str>"
+# Copied into every parameter list a function clone or specialization builds, and into each
+# VirtualParamDetails.
+"analyzer/types.ts:FunctionParam.name" = "Option<std::rc::Rc<str>>"
 # Getters that return live state their callers write to.
 "analyzer/types.ts:TypeBase.addProps.return" = "std::cell::RefMut<'static, crate::analyzer::types::TypeBaseProps>"
 # The type caches are passed by reference to the speculative type tracker, which deletes from the
