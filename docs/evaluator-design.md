@@ -269,7 +269,7 @@ An alias declared inside a function body is inlined.
 - Variables of a namespace and static fields of a class go in a module named after it: `UnboundType._instance` is `unbound_type::INSTANCE`.
 - A closure factory follows section 1. Its builder function gets no `/// Nested in the TS body:` line: its nested functions are the struct's methods.
 - A declaration in `skip` keeps only its marker (`LogWrapper`, the type of the dropped `wrapWithLogger`).
-- `[items]` defines Rust items verbatim in a file's module, for a type the mapping needs but the TypeScript does not declare (`SpeculativeCache`).
+- `[items]` defines Rust items verbatim in a file's module: a type the mapping needs but the TypeScript does not declare (`SpeculativeCache`), or an `impl` that stands in for a TypeScript object literal or spread (`TypeResult::new` sets `type_` and leaves every other field unset; `Clone for TypeResult` copies a spread, which `P::new_eval` gives its own identity; `TypeResultWithNode::new` and `TypeResultWithNode::from_type_result` build `{ type, node }` and `{ ...typeResult, node }`).
 
 ## 5. Dependency placeholders and the compile check
 
