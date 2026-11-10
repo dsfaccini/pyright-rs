@@ -52,6 +52,8 @@ pub mod source_file;
 pub mod source_file_info;
 pub mod source_mapper;
 pub mod source_mapper_utils;
+#[cfg(test)]
+mod source_mapper_utils_tests;
 pub mod static_expressions;
 pub mod symbol;
 pub mod symbol_name_utils;
