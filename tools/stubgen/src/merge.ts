@@ -1,10 +1,11 @@
-// Carries ported functions and module-variable initializers from a crate file into its regenerated
-// stub, by marker.
+// Merges a regenerated stub into a crate file that someone has started porting, by marker.
 //
-// A crate file that someone has started porting holds functions with real bodies, each under the
-// `// <file>.ts:<line>` marker its stub had. Merging replaces the stub's `todo!()` function at that
-// marker with the ported one, and adds the crate file's imports the stub lacks. Anything ported that
-// sits at no stub marker is reported as lost, so a rerun never drops work silently.
+// The crate file is the base: its header, imports, ported functions and every line outside an
+// unported item stay byte for byte. Only unported items change: a `todo!()` function or static
+// and a generated struct or enum take the stub's text, a new stub item is inserted after its
+// predecessor, and an unported item the stub no longer has is removed. A file with no ported
+// function is replaced by its stub. What the merge cannot place (stub lines outside items, a ported
+// function whose marker the stub lost) is reported, never dropped or rewritten.
 
 const MARKER = /^\s*\/\/ ([A-Za-z0-9_/.]+\.ts):(\d+)\s*$/;
 const FN_HEAD = /^\s*(pub(\([^)]*\))?\s+)?(const\s+)?(unsafe\s+)?fn\s/;
@@ -197,67 +198,139 @@ function lastName(p: string): string {
 
 export interface MergeResult {
     text: string;
+    // Markers of the ported functions kept as they are.
     kept: string[];
-    // Lines of the kept functions in the crate file, inclusive.
-    keptRanges: [number, number][];
-    // Lines of the crate file's unported `todo!()` items and generated structs and enums whose marker
-    // the stub has, inclusive: the stub regenerates them, so a changed signature or field type there
-    // is not dropped code.
-    regeneratedRanges: [number, number][];
+    // Ported functions whose marker the stub no longer has: kept as they are, reported.
     lost: string[];
+    // Unported items the stub changed, added or no longer has.
+    updated: string[];
+    inserted: string[];
+    removed: string[];
+    // Stub items or lines the merge could not place: the file's owner adds them.
+    pending: string[];
+}
+
+interface Item {
+    kind: 'fn' | 'type';
+    marker: string;
+    key: string;
+    start: number;
+    end: number;
+    ported: boolean;
+}
+
+// Top-level items under a marker: functions and statics (ported or not) and generated structs and
+// enums. A marked item inside another item (a local function in a ported body) belongs to it.
+function items(text: string): Item[] {
+    const all: Item[] = [
+        ...fnItems(text).map((f) => ({ kind: 'fn' as const, key: '', ...f })),
+        ...typeItems(text).map((t) => ({ kind: 'type' as const, key: '', ported: false, ...t })),
+    ].sort((a, b) => a.start - b.start);
+    const top = all.filter((x) => !all.some((y) => y !== x && y.start <= x.start && x.end <= y.end && (y.start < x.start || x.end < y.end)));
+    const seen = new Map<string, number>();
+    for (const x of top) {
+        const base = `${x.kind}:${x.marker}`;
+        const n = seen.get(base) ?? 0;
+        seen.set(base, n + 1);
+        x.key = `${base}#${n}`;
+    }
+    return top;
 }
 
 // `modPath` is the crate path of the module (`crate::analyzer::declaration_utils`).
 export function mergePorted(stub: string, crate: string, modPath: string): MergeResult {
-    const crateItems = fnItems(crate);
-    const ported = crateItems.filter((f) => f.ported);
-    const crateLines = crate.split('\n');
-    const stubItems = new Map(fnItems(stub).map((f) => [f.marker, f]));
-    const stubTypes = new Set(typeItems(stub).map((t) => t.marker));
-    const regeneratedRanges: [number, number][] = [
-        ...crateItems.filter((f) => !f.ported && stubItems.has(f.marker)),
-        ...typeItems(crate).filter((t) => stubTypes.has(t.marker)),
-    ].map((f) => [f.start, f.end]);
-    const lines = stub.split('\n');
-    const kept: string[] = [];
-    const keptRanges: [number, number][] = [];
-    const lost: string[] = [];
-    const replacements: { item: FnItem; with: string[] }[] = [];
-    for (const p of ported) {
-        const target = stubItems.get(p.marker);
-        if (!target) {
-            lost.push(p.marker);
+    const res: MergeResult = { text: stub, kept: [], lost: [], updated: [], inserted: [], removed: [], pending: [] };
+    const cItems = items(crate);
+    if (!cItems.some((c) => c.kind === 'fn' && c.ported)) {
+        return res;
+    }
+    const sItems = items(stub);
+    const cl = crate.split('\n');
+    const sl = stub.split('\n');
+    const sByKey = new Map(sItems.map((x) => [x.key, x]));
+    const cByKey = new Map(cItems.map((x) => [x.key, x]));
+    // Edits to the crate lines: delete `del` lines at `at`, insert `ins`; `order` keeps insertions
+    // at one line in stub order.
+    const edits: { at: number; del: number; ins: string[]; order: number }[] = [];
+    const changed: string[] = [];
+    for (const c of cItems) {
+        const s = sByKey.get(c.key);
+        if (c.kind === 'fn' && c.ported) {
+            (s ? res.kept : res.lost).push(c.marker);
             continue;
         }
-        kept.push(p.marker);
-        keptRanges.push([p.start, p.end]);
-        replacements.push({ item: target, with: crateLines.slice(p.start, p.end + 1) });
+        if (!s) {
+            // With the blank line before it, or else the one after it, so no blank line is left over.
+            const before = c.start > 0 && cl[c.start - 1].trim() === '';
+            const after = !before && c.end + 1 < cl.length && cl[c.end + 1].trim() === '';
+            const from = before ? c.start - 1 : c.start;
+            edits.push({ at: from, del: c.end - from + 1 + (after ? 1 : 0), ins: [], order: 0 });
+            res.removed.push(c.marker);
+            continue;
+        }
+        const text = sl.slice(s.start, s.end + 1);
+        if (text.join('\n') !== cl.slice(c.start, c.end + 1).join('\n')) {
+            edits.push({ at: c.start, del: c.end - c.start + 1, ins: text, order: 0 });
+            changed.push(text.join('\n'));
+            res.updated.push(c.marker);
+        }
     }
-    replacements.sort((a, b) => b.item.start - a.item.start);
-    for (const r of replacements) {
-        lines.splice(r.item.start, r.item.end - r.item.start + 1, ...r.with);
+    // A new stub item goes after its predecessor when only blank lines separate them in the stub,
+    // so it lands in the same block; a chain of new items follows the first one.
+    const placedAfter = new Map<string, number>();
+    sItems.forEach((s, i) => {
+        if (cByKey.has(s.key)) {
+            return;
+        }
+        const prev = i > 0 ? sItems[i - 1] : undefined;
+        const anchor = prev ? (cByKey.get(prev.key)?.end ?? placedAfter.get(prev.key)) : undefined;
+        if (prev === undefined || anchor === undefined || !sl.slice(prev.end + 1, s.start).every((l) => l.trim() === '')) {
+            res.pending.push(`item at ${s.marker}`);
+            return;
+        }
+        const text = sl.slice(s.start, s.end + 1);
+        edits.push({ at: anchor + 1, del: 0, ins: ['', ...text], order: i });
+        placedAfter.set(s.key, anchor);
+        changed.push(text.join('\n'));
+        res.inserted.push(s.marker);
+    });
+    // Stub lines outside items that appear nowhere in the crate file: generated code the merge
+    // does not own (impl headers, accessors, [items] blocks). Reported for the owner.
+    const inItem = new Set<number>();
+    for (const s of sItems) {
+        for (let i = s.start; i <= s.end; i++) {
+            inItem.add(i);
+        }
     }
-    // Imports the ported functions need that the stub lacks, by imported name.
-    const have = new Set(importPaths(stub, modPath).map(lastName));
+    // The header and imports, everything before the first marker, are the file's own.
+    const stubBody = sl.findIndex((l) => MARKER.test(l));
+    const crateLines = new Set(cl.map((l) => l.trim()));
+    const missing = sl.filter((l, i) => i >= stubBody && !inItem.has(i) && l.trim() !== '' && !crateLines.has(l.trim()));
+    if (missing.length) {
+        res.pending.push(`${missing.length} stub line(s) outside items, first: \`${missing[0].trim()}\``);
+    }
+    // Imports a changed or inserted item names that the crate file lacks, from the stub's imports.
+    const have = new Set(importPaths(crate, modPath).map(lastName));
     const add: string[] = [];
-    for (const p of importPaths(crate, modPath)) {
+    const words = new Set(changed.join('\n').match(/[A-Za-z_][A-Za-z0-9_]*/g) ?? []);
+    for (const p of importPaths(stub, modPath)) {
         const n = lastName(p);
-        if (!have.has(n) && n !== '*') {
+        if (n !== '*' && !have.has(n) && words.has(n)) {
             have.add(n);
             add.push(`use ${p};`);
         }
     }
     if (add.length) {
-        let at = lines.findIndex((l) => /^use /.test(l));
-        if (at < 0) {
-            at = lines.findIndex((l) => !/^(\/\/!|#!\[|\s|\)\]|$)/.test(l));
-        }
-        lines.splice(Math.max(at, 0), 0, ...add);
+        // After the file's last import, which comes before its first marker.
+        const firstItem = cl.findIndex((l) => MARKER.test(l));
+        const lastUse = cl.reduce((at, l, i) => ((firstItem < 0 || i < firstItem) && (/^use\s[^;]*;\s*$/.test(l) || /^\};\s*$/.test(l)) ? i : at), -1);
+        edits.push({ at: lastUse + 1, del: 0, ins: add, order: -1 });
     }
-    // A ported file that dropped the stub's blanket `#![allow(..)]` keeps it dropped, so clippy sees the port.
-    let text = lines.join('\n');
-    if (!crate.includes('#![allow(')) {
-        text = text.replace(/^#!\[allow\([^\]]*\)\]\n/m, '');
+    edits.sort((a, b) => b.at - a.at || b.order - a.order);
+    const out = [...cl];
+    for (const e of edits) {
+        out.splice(e.at, e.del, ...e.ins);
     }
-    return { text, kept, keptRanges, regeneratedRanges, lost };
+    res.text = out.join('\n');
+    return res;
 }
