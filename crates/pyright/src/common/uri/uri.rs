@@ -289,6 +289,20 @@ impl Uri {
         P::ptr_eq(a.0, b.0)
     }
 
+    /// `a === b` on `Uri | undefined`.
+    pub fn ptr_eq_opt(a: Option<Uri>, b: Option<Uri>) -> bool {
+        match (a, b) {
+            (None, None) => true,
+            (Some(a), Some(b)) => Uri::ptr_eq(a, b),
+            _ => false,
+        }
+    }
+
+    /// The object's address, for identity-keyed sets (a JS `Set` of Uris).
+    pub fn object_id(self) -> usize {
+        std::ptr::from_ref(self.0.get()) as usize
+    }
+
     /// `equals(other)`.
     pub fn equals(&self, other: Option<Uri>) -> bool {
         match other {

@@ -39,12 +39,12 @@ struct MappedEntry {
 }
 
 // fileSystemMapping.ts:49
-/// `originalUriCache` is a `WeakMap` keyed by Uri object in pyright; here it is
-/// keyed by Uri, which only changes how often the cache hits.
+/// `originalUriCache` is a `WeakMap` keyed by the Uri object, so it is keyed
+/// by `Uri::object_id`: an equal Uri that is another object misses, as in pyright.
 struct MappingData {
     entry_map: RefCell<JsMap<Uri, P<MappedEntry>>>,
     reverse_entry_map: RefCell<JsMap<Uri, P<MappedEntry>>>,
-    original_uri_cache: RefCell<FxHashMap<Uri, CachedOriginalUriResolution>>,
+    original_uri_cache: RefCell<FxHashMap<usize, CachedOriginalUriResolution>>,
 }
 
 // fileSystemMapping.ts:55
@@ -276,7 +276,7 @@ impl FileSystemMappingImpl {
 
     // fileSystemMapping.ts:212
     fn _get_internal_original_uri(&self, uri: Uri) -> Uri {
-        let cached = self._data.original_uri_cache.borrow().get(&uri).copied();
+        let cached = self._data.original_uri_cache.borrow().get(&uri.object_id()).copied();
         let resolution = match cached {
             Some(resolution) => resolution,
             None => {
@@ -285,7 +285,7 @@ impl FileSystemMappingImpl {
                     self._data
                         .original_uri_cache
                         .borrow_mut()
-                        .insert(uri, CachedOriginalUriResolution::NoOriginalUriResolution);
+                        .insert(uri.object_id(), CachedOriginalUriResolution::NoOriginalUriResolution);
                     return uri;
                 };
 
@@ -298,7 +298,7 @@ impl FileSystemMappingImpl {
                 self._data
                     .original_uri_cache
                     .borrow_mut()
-                    .insert(uri, resolution);
+                    .insert(uri.object_id(), resolution);
                 resolution
             }
         };
