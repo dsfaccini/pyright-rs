@@ -1,0 +1,1100 @@
+diff --git a/packages/pyright-internal/src/analyzer/program.ts b/packages/pyright-internal/src/analyzer/program.ts
+index d93743b13..7bdb24455 100644
+--- a/packages/pyright-internal/src/analyzer/program.ts
++++ b/packages/pyright-internal/src/analyzer/program.ts
+@@ -50,6 +50,7 @@ import { Symbol, SymbolTable } from './symbol';
+ import { createTracePrinter } from './tracePrinter';
+ import { PrintTypeOptions, TypeEvaluator } from './typeEvaluatorTypes';
+ import { createTypeEvaluatorWithTracker } from './typeEvaluatorWithTracker';
++import { oracleNoteCacheEmptied } from '../oracle/oracleDumper';
+ import { getPrintTypeFlags } from './typePrinter';
+ import { Type } from './types';
+ 
+@@ -1154,6 +1155,7 @@ export class Program {
+ 
+     // Discards any cached information associated with this program.
+     emptyCache() {
++        oracleNoteCacheEmptied();
+         this._createNewEvaluator();
+         this._discardCachedParseResults();
+         this._parsedFileCount = 0;
+diff --git a/packages/pyright-internal/src/analyzer/sourceFile.ts b/packages/pyright-internal/src/analyzer/sourceFile.ts
+index 0832d1a07..b251b9c5d 100644
+--- a/packages/pyright-internal/src/analyzer/sourceFile.ts
++++ b/packages/pyright-internal/src/analyzer/sourceFile.ts
+@@ -39,6 +39,7 @@ import { getParserStringAnnotationInfo, ModuleNode, ParseNode } from '../parser/
+ import { ModuleImport, ParseFileResults, ParseOptions, Parser, ParserOutput } from '../parser/parser';
+ import { IgnoreComment, Tokenizer, TokenizerOutput } from '../parser/tokenizer';
+ import { Token } from '../parser/tokenizerTypes';
++import { OracleDiagnosticLists, oracleDumpBind, oracleDumpParse } from '../oracle/oracleDumper';
+ import { AnalyzerFileInfo, ImportLookup } from './analyzerFileInfo';
+ import * as AnalyzerNodeInfo from './analyzerNodeInfo';
+ import { Binder } from './binder';
+@@ -393,6 +394,17 @@ export class SourceFile {
+         return this._writableData.accumulatedDiagnostics;
+     }
+ 
++    getOracleDiagnosticLists(): OracleDiagnosticLists {
++        return {
++            parse: this._writableData.parseDiagnostics,
++            comment: this._writableData.commentDiagnostics,
++            bind: this._writableData.bindDiagnostics,
++            checker: this._writableData.checkerDiagnostics,
++            taskList: this._writableData.taskListDiagnostics,
++            final: this._writableData.accumulatedDiagnostics,
++        };
++    }
++
+     getDiagnosticsWithoutFileIgnore(): Diagnostic[] {
+         return this._writableData.diagnosticsWithoutFileIgnore;
+     }
+@@ -769,6 +781,7 @@ export class SourceFile {
+                 );
+ 
+                 assert(parseFileResults !== undefined && parseFileResults.tokenizerOutput !== undefined);
++                oracleDumpParse(this._uri, parseFileResults);
+                 this._writableData.parserOutput = parseFileResults.parserOutput;
+                 this._writableData.tokenizerLines = parseFileResults.tokenizerOutput.lines;
+                 this._writableData.parsedFileContents = fileContents;
+@@ -939,6 +952,7 @@ export class SourceFile {
+                     assert(moduleScope !== undefined, 'Module scope not returned by binder');
+ 
+                     nodeInfoContext.publish(bindingSession);
++                    oracleDumpBind(this._uri, parseTree, nodeInfoContext);
+                     this._writableData.moduleSymbolTable = moduleScope.symbolTable;
+                     this._writableData.bindDiagnostics = bindDiagnostics;
+ 
+diff --git a/packages/pyright-internal/src/analyzer/typeEvaluator.ts b/packages/pyright-internal/src/analyzer/typeEvaluator.ts
+index b7e8a3b69..4dd4cf184 100644
+--- a/packages/pyright-internal/src/analyzer/typeEvaluator.ts
++++ b/packages/pyright-internal/src/analyzer/typeEvaluator.ts
+@@ -227,6 +227,7 @@ import {
+     Reachability,
+     ResolveAliasOptions,
+     SolveConstraintsOptions,
++    OracleTypeCacheEntry,
+     SymbolDeclInfo,
+     TypeEvaluator,
+     TypeResult,
+@@ -1088,6 +1089,25 @@ export function createTypeEvaluator(
+     }
+ 
+     // Reads the type of the node from the cache.
++    // Reads the main type cache without evaluating anything. Function return
++    // types that are not already known print as Unknown.
++    function oracleReadTypeCacheEntry(node: ParseNode): OracleTypeCacheEntry | undefined {
++        const cacheEntry = typeCache.get(node.id);
++        if (!cacheEntry) {
++            return undefined;
++        }
++
++        return {
++            printedType: TypePrinter.printType(
++                cacheEntry.typeResult.type,
++                evaluatorOptions.printTypeFlags,
++                (type) => FunctionType.getEffectiveReturnType(type) ?? UnknownType.create()
++            ),
++            isIncomplete: !!cacheEntry.typeResult.isIncomplete,
++            flags: cacheEntry.flags,
++        };
++    }
++
+     function getCachedType(node: ExpressionNode | DecoratorNode): Type | undefined {
+         // Prefer the ordinary runtime type when both caches contain an entry for this node.
+         // Fall back to the contextual cache so TypeForm-only evaluations remain discoverable.
+@@ -30481,6 +30501,7 @@ export function createTypeEvaluator(
+         getTypeResult,
+         getTypeResultForDecorator,
+         getCachedType,
++        oracleReadTypeCacheEntry,
+         getTypeOfExpression,
+         getTypeOfAnnotation,
+         getTypeOfClass,
+diff --git a/packages/pyright-internal/src/analyzer/typeEvaluatorTypes.ts b/packages/pyright-internal/src/analyzer/typeEvaluatorTypes.ts
+index 2733db66f..9c0f07de0 100644
+--- a/packages/pyright-internal/src/analyzer/typeEvaluatorTypes.ts
++++ b/packages/pyright-internal/src/analyzer/typeEvaluatorTypes.ts
+@@ -651,6 +651,13 @@ export const enum AssignTypeFlags {
+     DisallowExtraKwargsForTd = 1 << 17,
+ }
+ 
++// A type cache entry as printed by the pyright-rs oracle dumper.
++export interface OracleTypeCacheEntry {
++    printedType: string;
++    isIncomplete: boolean;
++    flags: EvalFlags | undefined;
++}
++
+ export interface TypeEvaluator {
+     runWithCancellationToken<T>(token: CancellationToken, callback: () => T): T;
+     runWithCancellationToken<T>(token: CancellationToken, callback: () => Promise<T>): Promise<T>;
+@@ -660,6 +667,7 @@ export interface TypeEvaluator {
+     getTypeResult: (node: ExpressionNode) => TypeResult | undefined;
+     getTypeResultForDecorator: (node: DecoratorNode) => TypeResult | undefined;
+     getCachedType: (node: ExpressionNode) => Type | undefined;
++    oracleReadTypeCacheEntry: (node: ParseNode) => OracleTypeCacheEntry | undefined;
+     getTypeOfExpression: (node: ExpressionNode, flags?: EvalFlags, context?: InferenceContext) => TypeResult;
+     getTypeOfAnnotation: (node: ExpressionNode, options?: ExpectedTypeOptions) => Type;
+     getTypeOfClass: (node: ClassNode) => ClassTypeResult | undefined;
+diff --git a/packages/pyright-internal/src/oracle/oracleDumper.ts b/packages/pyright-internal/src/oracle/oracleDumper.ts
+new file mode 100644
+index 000000000..edfced8d4
+--- /dev/null
++++ b/packages/pyright-internal/src/oracle/oracleDumper.ts
+@@ -0,0 +1,935 @@
++/*
++ * oracleDumper.ts
++ *
++ * Writes per-file text dumps of pyright's internal state for the
++ * pyright-rs port to compare against. Inactive unless the environment
++ * variable PYRIGHT_ORACLE_DUMP names an output directory.
++ * The format is specified in pyright-rs `oracle/FORMAT.md`.
++ */
++
++import * as fs from 'fs';
++import * as path from 'path';
++
++import * as AnalyzerNodeInfo from '../analyzer/analyzerNodeInfo';
++import { Scope } from '../analyzer/scope';
++import type { SourceFile } from '../analyzer/sourceFile';
++import type { TypeEvaluator } from '../analyzer/typeEvaluatorTypes';
++import { Diagnostic } from '../common/diagnostic';
++import { TextRangeCollection } from '../common/textRangeCollection';
++import { BaseUri } from '../common/uri/baseUri';
++import { Uri } from '../common/uri/uri';
++import { getParserStringAnnotation, ParseNode, ParseNodeType } from '../parser/parseNodes';
++import { getChildNodes, StringAnnotationProvider } from '../parser/parseTreeUtils';
++import { ParseFileResults } from '../parser/parser';
++import { TokenType } from '../parser/tokenizerTypes';
++
++type Stage = 'tokens' | 'tree' | 'bind' | 'flow' | 'types' | 'diag';
++
++const allStages: Stage[] = ['tokens', 'tree', 'bind', 'flow', 'types', 'diag'];
++
++interface OracleState {
++    dir: string;
++    stages: Set<Stage>;
++    written: Set<string>;
++    events: string[];
++    cacheEmptyCount: number;
++    finished: boolean;
++}
++
++const state: OracleState | undefined = createState();
++
++function createState(): OracleState | undefined {
++    const dir = process.env.PYRIGHT_ORACLE_DUMP;
++    if (!dir) {
++        return undefined;
++    }
++
++    const stages = new Set<Stage>();
++    const stageList = process.env.PYRIGHT_ORACLE_STAGES;
++    if (stageList) {
++        for (const name of stageList.split(',')) {
++            const stage = allStages.find((s) => s === name.trim());
++            if (!stage) {
++                fatal(`unknown stage "${name}" in PYRIGHT_ORACLE_STAGES`);
++            } else {
++                stages.add(stage);
++            }
++        }
++    } else {
++        allStages.forEach((s) => stages.add(s));
++    }
++
++    return { dir: path.resolve(dir), stages, written: new Set(), events: [], cacheEmptyCount: 0, finished: false };
++}
++
++function fatal(message: string): never {
++    process.stderr.write(`pyright oracle: ${message}\n`);
++    process.exit(70);
++}
++
++function guarded(what: string, callback: () => void) {
++    try {
++        callback();
++    } catch (e: unknown) {
++        const detail = e instanceof Error ? e.stack ?? e.message : String(e);
++        fatal(`${what} failed: ${detail}`);
++    }
++}
++
++// ---------------------------------------------------------------------------
++// Hooks called from pyright.
++
++export function isOracleEnabled(): boolean {
++    return state !== undefined;
++}
++
++// Called by SourceFile.parse right after the parser returns.
++export function oracleDumpParse(uri: Uri, results: ParseFileResults) {
++    const s = state;
++    if (!s) {
++        return;
++    }
++
++    guarded(`parse dump of ${uri.key}`, () => {
++        if (s.stages.has('tokens')) {
++            writeDump(s, 'tokens', uri, dumpTokens(results));
++        }
++        if (s.stages.has('tree')) {
++            writeDump(s, 'tree', uri, dumpTree(results));
++        }
++    });
++}
++
++// Called by SourceFile.bind right after the binder's results are published.
++export function oracleDumpBind(uri: Uri, root: ParseNode, reader: AnalyzerNodeInfo.AnalyzerNodeInfoReader) {
++    const s = state;
++    if (!s) {
++        return;
++    }
++
++    guarded(`bind dump of ${uri.key}`, () => {
++        if (!s.stages.has('bind') && !s.stages.has('flow')) {
++            return;
++        }
++
++        const walk = walkTree(root, getParserStringAnnotation);
++        const scopes = numberScopes(walk, reader);
++        if (s.stages.has('bind')) {
++            writeDump(s, 'bind', uri, dumpBind(walk, scopes, reader));
++        }
++        if (s.stages.has('flow')) {
++            writeDump(s, 'flow', uri, dumpFlow(walk, scopes, reader));
++        }
++    });
++}
++
++// Called by Program.emptyCache. A run that empties the cache is not a valid reference.
++export function oracleNoteCacheEmptied() {
++    if (state) {
++        state.cacheEmptyCount++;
++    }
++}
++
++export interface OracleProgram {
++    getSourceFileInfoList(): readonly { readonly sourceFile: SourceFile }[];
++    readonly evaluator: TypeEvaluator | undefined;
++    readonly analyzerNodeInfoReader: AnalyzerNodeInfo.AnalyzerNodeInfoReader;
++}
++
++// Called once by the CLI when analysis is complete, before it reports.
++export function oracleDumpFinal(program: OracleProgram) {
++    const s = state;
++    if (!s || s.finished) {
++        return;
++    }
++    s.finished = true;
++
++    guarded('final dump', () => {
++        const reader = program.analyzerNodeInfoReader;
++        for (const fileInfo of program.getSourceFileInfoList()) {
++            const sourceFile = fileInfo.sourceFile;
++            if (sourceFile.isParseRequired()) {
++                continue;
++            }
++
++            const parserOutput = sourceFile.getParserOutput();
++            if (!parserOutput) {
++                continue;
++            }
++
++            const uri = sourceFile.getUri();
++            if (s.stages.has('types') && program.evaluator) {
++                writeDump(s, 'types', uri, dumpTypes(parserOutput.parseTree, program.evaluator, reader));
++            }
++            if (s.stages.has('diag')) {
++                writeDump(s, 'diag', uri, dumpDiagnostics(sourceFile.getOracleDiagnosticLists()));
++            }
++        }
++
++        const run = [
++            `cacheEmptyCount: ${s.cacheEmptyCount}`,
++            `events: [${s.events.length}]`,
++            ...s.events.map((e, i) => `  [${i}]: ${e}`),
++            `stages: ${allStages.filter((st) => s.stages.has(st)).join(',')}`,
++        ];
++        fs.mkdirSync(s.dir, { recursive: true });
++        fs.writeFileSync(path.join(s.dir, 'oracle-run.txt'), run.join('\n') + '\n');
++    });
++}
++
++// ---------------------------------------------------------------------------
++// Output files.
++
++const typeshedSegment = '/typeshed-fallback/';
++
++// Maps a file path to the path used in dump file names and Uri values.
++export function oracleMapPath(filePath: string): string {
++    const index = filePath.indexOf(typeshedSegment);
++    if (index >= 0) {
++        return 'typeshed/' + filePath.slice(index + typeshedSegment.length);
++    }
++    if (filePath.startsWith('/')) {
++        return 'fs' + filePath;
++    }
++    return 'other/' + filePath;
++}
++
++function writeDump(s: OracleState, stage: Stage, uri: Uri, lines: string[]) {
++    const relPath = `${stage}/${oracleMapPath(uri.getFilePath())}.txt`;
++    if (s.written.has(relPath)) {
++        s.events.push(`rewritten ${JSON.stringify(relPath)}`);
++    }
++    s.written.add(relPath);
++
++    const fullPath = path.join(s.dir, relPath);
++    fs.mkdirSync(path.dirname(fullPath), { recursive: true });
++    fs.writeFileSync(fullPath, lines.length > 0 ? lines.join('\n') + '\n' : '');
++}
++
++// ---------------------------------------------------------------------------
++// Names.
++
++const nodeTypeNames: Record<ParseNodeType, string> = {
++    [ParseNodeType.Error]: 'Error',
++    [ParseNodeType.Argument]: 'Argument',
++    [ParseNodeType.Assert]: 'Assert',
++    [ParseNodeType.Assignment]: 'Assignment',
++    [ParseNodeType.AssignmentExpression]: 'AssignmentExpression',
++    [ParseNodeType.AugmentedAssignment]: 'AugmentedAssignment',
++    [ParseNodeType.Await]: 'Await',
++    [ParseNodeType.BinaryOperation]: 'BinaryOperation',
++    [ParseNodeType.Break]: 'Break',
++    [ParseNodeType.Call]: 'Call',
++    [ParseNodeType.Class]: 'Class',
++    [ParseNodeType.Comprehension]: 'Comprehension',
++    [ParseNodeType.ComprehensionFor]: 'ComprehensionFor',
++    [ParseNodeType.ComprehensionIf]: 'ComprehensionIf',
++    [ParseNodeType.Constant]: 'Constant',
++    [ParseNodeType.Continue]: 'Continue',
++    [ParseNodeType.Decorator]: 'Decorator',
++    [ParseNodeType.Del]: 'Del',
++    [ParseNodeType.Dictionary]: 'Dictionary',
++    [ParseNodeType.DictionaryExpandEntry]: 'DictionaryExpandEntry',
++    [ParseNodeType.DictionaryKeyEntry]: 'DictionaryKeyEntry',
++    [ParseNodeType.Ellipsis]: 'Ellipsis',
++    [ParseNodeType.If]: 'If',
++    [ParseNodeType.Import]: 'Import',
++    [ParseNodeType.ImportAs]: 'ImportAs',
++    [ParseNodeType.ImportFrom]: 'ImportFrom',
++    [ParseNodeType.ImportFromAs]: 'ImportFromAs',
++    [ParseNodeType.Index]: 'Index',
++    [ParseNodeType.Except]: 'Except',
++    [ParseNodeType.For]: 'For',
++    [ParseNodeType.FormatString]: 'FormatString',
++    [ParseNodeType.Function]: 'Function',
++    [ParseNodeType.Global]: 'Global',
++    [ParseNodeType.Lambda]: 'Lambda',
++    [ParseNodeType.List]: 'List',
++    [ParseNodeType.MemberAccess]: 'MemberAccess',
++    [ParseNodeType.Module]: 'Module',
++    [ParseNodeType.ModuleName]: 'ModuleName',
++    [ParseNodeType.Name]: 'Name',
++    [ParseNodeType.Nonlocal]: 'Nonlocal',
++    [ParseNodeType.Number]: 'Number',
++    [ParseNodeType.Parameter]: 'Parameter',
++    [ParseNodeType.Pass]: 'Pass',
++    [ParseNodeType.Raise]: 'Raise',
++    [ParseNodeType.Return]: 'Return',
++    [ParseNodeType.Set]: 'Set',
++    [ParseNodeType.Slice]: 'Slice',
++    [ParseNodeType.StatementList]: 'StatementList',
++    [ParseNodeType.StringList]: 'StringList',
++    [ParseNodeType.String]: 'String',
++    [ParseNodeType.Suite]: 'Suite',
++    [ParseNodeType.Ternary]: 'Ternary',
++    [ParseNodeType.Tuple]: 'Tuple',
++    [ParseNodeType.Try]: 'Try',
++    [ParseNodeType.TypeAnnotation]: 'TypeAnnotation',
++    [ParseNodeType.UnaryOperation]: 'UnaryOperation',
++    [ParseNodeType.Unpack]: 'Unpack',
++    [ParseNodeType.While]: 'While',
++    [ParseNodeType.With]: 'With',
++    [ParseNodeType.WithItem]: 'WithItem',
++    [ParseNodeType.Yield]: 'Yield',
++    [ParseNodeType.YieldFrom]: 'YieldFrom',
++    [ParseNodeType.FunctionAnnotation]: 'FunctionAnnotation',
++    [ParseNodeType.Match]: 'Match',
++    [ParseNodeType.Case]: 'Case',
++    [ParseNodeType.PatternSequence]: 'PatternSequence',
++    [ParseNodeType.PatternAs]: 'PatternAs',
++    [ParseNodeType.PatternLiteral]: 'PatternLiteral',
++    [ParseNodeType.PatternClass]: 'PatternClass',
++    [ParseNodeType.PatternCapture]: 'PatternCapture',
++    [ParseNodeType.PatternMapping]: 'PatternMapping',
++    [ParseNodeType.PatternMappingKeyEntry]: 'PatternMappingKeyEntry',
++    [ParseNodeType.PatternMappingExpandEntry]: 'PatternMappingExpandEntry',
++    [ParseNodeType.PatternValue]: 'PatternValue',
++    [ParseNodeType.PatternClassArgument]: 'PatternClassArgument',
++    [ParseNodeType.TypeParameter]: 'TypeParameter',
++    [ParseNodeType.TypeParameterList]: 'TypeParameterList',
++    [ParseNodeType.TypeAlias]: 'TypeAlias',
++};
++
++const tokenTypeNames: Record<TokenType, string> = {
++    [TokenType.Invalid]: 'Invalid',
++    [TokenType.EndOfStream]: 'EndOfStream',
++    [TokenType.NewLine]: 'NewLine',
++    [TokenType.Indent]: 'Indent',
++    [TokenType.Dedent]: 'Dedent',
++    [TokenType.String]: 'String',
++    [TokenType.Number]: 'Number',
++    [TokenType.Identifier]: 'Identifier',
++    [TokenType.Keyword]: 'Keyword',
++    [TokenType.Operator]: 'Operator',
++    [TokenType.Colon]: 'Colon',
++    [TokenType.Semicolon]: 'Semicolon',
++    [TokenType.Comma]: 'Comma',
++    [TokenType.OpenParenthesis]: 'OpenParenthesis',
++    [TokenType.CloseParenthesis]: 'CloseParenthesis',
++    [TokenType.OpenBracket]: 'OpenBracket',
++    [TokenType.CloseBracket]: 'CloseBracket',
++    [TokenType.OpenCurlyBrace]: 'OpenCurlyBrace',
++    [TokenType.CloseCurlyBrace]: 'CloseCurlyBrace',
++    [TokenType.Ellipsis]: 'Ellipsis',
++    [TokenType.Dot]: 'Dot',
++    [TokenType.Arrow]: 'Arrow',
++    [TokenType.Backtick]: 'Backtick',
++    [TokenType.ExclamationMark]: 'ExclamationMark',
++    [TokenType.FStringStart]: 'FStringStart',
++    [TokenType.FStringMiddle]: 'FStringMiddle',
++    [TokenType.FStringEnd]: 'FStringEnd',
++};
++
++function nodeTypeName(nodeType: ParseNodeType): string {
++    return nodeTypeNames[nodeType] ?? `?${nodeType}`;
++}
++
++const tokenTypeNameByNumber = new Map<number, string>(
++    Object.entries(tokenTypeNames).map(([key, name]) => [Number(key), name])
++);
++
++function tokenTypeName(tokenType: number): string {
++    return tokenTypeNameByNumber.get(tokenType) ?? `?${tokenType}`;
++}
++
++export function oracleNodeRef(node: ParseNode): string {
++    return `${nodeTypeName(node.nodeType)}@${node.start}+${node.length}`;
++}
++
++// ---------------------------------------------------------------------------
++// Generic printer.
++
++function formatScalar(value: unknown): string {
++    if (value === null) {
++        return 'null';
++    }
++    switch (typeof value) {
++        case 'undefined':
++            return 'undefined';
++        case 'string':
++            return JSON.stringify(value);
++        case 'number':
++            return String(value);
++        case 'bigint':
++            return `${String(value)}n`;
++        case 'boolean':
++            return value ? 'true' : 'false';
++        case 'function':
++            return '<function>';
++        case 'symbol':
++            return '<symbol>';
++        default:
++            return '<object>';
++    }
++}
++
++function isScalar(value: unknown): boolean {
++    return typeof value !== 'object' || value === null;
++}
++
++// Never printed: global counters, and the import resolver's debug log (filled only with --verbose).
++const skippedFields = new Set(['id', 'importFailureInfo']);
++
++// Own enumerable fields, sorted by name, without skipped fields and without undefined values.
++function sortedFields(value: object): [string, unknown][] {
++    const entries: [string, unknown][] = Object.entries(value);
++    return entries
++        .filter(([key, fieldValue]) => !skippedFields.has(key) && fieldValue !== undefined)
++        .sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
++}
++
++function isParseNode(value: object): value is ParseNode {
++    return 'nodeType' in value && typeof value.nodeType === 'number' && 'd' in value;
++}
++
++interface TokenLike {
++    type: number;
++    start: number;
++    length: number;
++}
++
++function isTokenLike(value: object): value is TokenLike {
++    return (
++        !('nodeType' in value) &&
++        'type' in value &&
++        typeof value.type === 'number' &&
++        'start' in value &&
++        typeof value.start === 'number' &&
++        'length' in value &&
++        typeof value.length === 'number'
++    );
++}
++
++// Compares the printed field names (see sortedFields) with `keys`.
++function hasExactKeys(value: object, keys: string[]): boolean {
++    const own = sortedFields(value).map(([key]) => key);
++    return own.length === keys.length && keys.every((k) => own.includes(k));
++}
++
++function isTextRangeShape(value: object): value is { start: number; length: number } {
++    return (
++        hasExactKeys(value, ['start', 'length']) &&
++        'start' in value &&
++        typeof value.start === 'number' &&
++        'length' in value &&
++        typeof value.length === 'number'
++    );
++}
++
++interface PositionShape {
++    line: number;
++    character: number;
++}
++
++function isPositionShape(value: unknown): value is PositionShape {
++    return (
++        typeof value === 'object' &&
++        value !== null &&
++        hasExactKeys(value, ['line', 'character']) &&
++        'line' in value &&
++        typeof value.line === 'number' &&
++        'character' in value &&
++        typeof value.character === 'number'
++    );
++}
++
++function isRangeShape(value: object): value is { start: PositionShape; end: PositionShape } {
++    return (
++        hasExactKeys(value, ['start', 'end']) &&
++        'start' in value &&
++        isPositionShape(value.start) &&
++        'end' in value &&
++        isPositionShape(value.end)
++    );
++}
++
++function formatRange(range: { start: PositionShape; end: PositionShape }): string {
++    return `${range.start.line}:${range.start.character}-${range.end.line}:${range.end.character}`;
++}
++
++function isTypeObject(value: object): boolean {
++    return 'category' in value && typeof value.category === 'number' && 'shared' in value && 'flags' in value;
++}
++
++function formatUri(uri: BaseUri): string {
++    const text = uri.scheme === 'file' ? oracleMapPath(uri.getFilePath()) : uri.toString();
++    return `Uri(${JSON.stringify(text)})`;
++}
++
++interface PrinterHooks {
++    // Returns the one-line form of an object, or undefined to print it normally.
++    inline?: (value: object) => string | undefined;
++
++    // Returns the value text for a field, or undefined to print it normally.
++    field?: (key: string, value: unknown) => string | undefined;
++}
++
++class Printer {
++    readonly lines: string[] = [];
++
++    constructor(private readonly _hooks: PrinterHooks = {}) {}
++
++    push(indent: number, text: string) {
++        this.lines.push('  '.repeat(indent) + text);
++    }
++
++    emit(indent: number, key: string, value: unknown) {
++        const fieldText = this._hooks.field?.(key, value);
++        if (fieldText !== undefined) {
++            this.push(indent, `${key}: ${fieldText}`);
++            return;
++        }
++
++        if (typeof value !== 'object' || value === null) {
++            this.push(indent, `${key}: ${formatScalar(value)}`);
++            return;
++        }
++
++        const inlineText = this.inlineForm(value);
++        if (inlineText !== undefined) {
++            this.push(indent, `${key}: ${inlineText}`);
++            return;
++        }
++
++        if (Array.isArray(value)) {
++            this.push(indent, `${key}: [${value.length}]`);
++            value.forEach((item: unknown, i) => this.emit(indent + 1, `[${i}]`, item));
++            return;
++        }
++
++        if (value instanceof TextRangeCollection) {
++            this.push(indent, `${key}: [${value.count}]`);
++            for (let i = 0; i < value.count; i++) {
++                this.emit(indent + 1, `[${i}]`, value.getItemAt(i));
++            }
++            return;
++        }
++
++        if (value instanceof Map) {
++            this.push(indent, `${key}: Map(${value.size})`);
++            value.forEach((item: unknown, mapKey: unknown) => {
++                this.emit(indent + 1, this.keyText(mapKey), item);
++            });
++            return;
++        }
++
++        if (value instanceof Set) {
++            this.push(indent, `${key}: Set(${value.size})`);
++            let i = 0;
++            value.forEach((item: unknown) => {
++                this.emit(indent + 1, `[${i}]`, item);
++                i++;
++            });
++            return;
++        }
++
++        if (isTokenLike(value)) {
++            this.emitToken(indent, key, value);
++            return;
++        }
++
++        const fields = sortedFields(value);
++        if (fields.length === 0) {
++            this.push(indent, `${key}: {}`);
++            return;
++        }
++
++        this.push(indent, `${key}:`);
++        fields.forEach(([fieldKey, fieldValue]) => this.emit(indent + 1, fieldKey, fieldValue));
++    }
++
++    // One-line forms shared by every stage.
++    inlineForm(value: object): string | undefined {
++        const hookText = this._hooks.inline?.(value);
++        if (hookText !== undefined) {
++            return hookText;
++        }
++        if (isParseNode(value)) {
++            return oracleNodeRef(value);
++        }
++        if (value instanceof BaseUri) {
++            return formatUri(value);
++        }
++        if (isTypeObject(value)) {
++            return '<type>';
++        }
++        if (isTextRangeShape(value)) {
++            return `${value.start}+${value.length}`;
++        }
++        if (isRangeShape(value)) {
++            return formatRange(value);
++        }
++        return undefined;
++    }
++
++    keyText(mapKey: unknown): string {
++        if (typeof mapKey === 'object' && mapKey !== null) {
++            return this.inlineForm(mapKey) ?? '<object>';
++        }
++        return formatScalar(mapKey);
++    }
++
++    // `<TypeName> <start>+<length>` then scalar fields as ` name=value`;
++    // non-scalar fields (comments) nest below.
++    emitToken(indent: number, key: string, token: TokenLike) {
++        const nested: [string, unknown][] = [];
++        let text = `${key}: ${tokenTypeName(token.type)} ${token.start}+${token.length}`;
++        for (const [fieldKey, fieldValue] of sortedFields(token)) {
++            if (fieldKey === 'type' || fieldKey === 'start' || fieldKey === 'length') {
++                continue;
++            }
++            if (isScalar(fieldValue)) {
++                text += ` ${fieldKey}=${formatScalar(fieldValue)}`;
++            } else {
++                nested.push([fieldKey, fieldValue]);
++            }
++        }
++        this.push(indent, text);
++
++        for (const [fieldKey, fieldValue] of nested) {
++            if (fieldKey === 'comments' && Array.isArray(fieldValue)) {
++                this.push(indent + 1, `comments: [${fieldValue.length}]`);
++                fieldValue.forEach((comment: unknown, i) => this.emitComment(indent + 2, `[${i}]`, comment));
++            } else {
++                this.emit(indent + 1, fieldKey, fieldValue);
++            }
++        }
++    }
++
++    // `<start>+<length>` then the other fields as ` name=value`.
++    emitComment(indent: number, key: string, comment: unknown) {
++        if (typeof comment !== 'object' || comment === null || !isTokenLike(comment)) {
++            this.emit(indent, key, comment);
++            return;
++        }
++
++        let text = `${key}: ${comment.start}+${comment.length}`;
++        for (const [fieldKey, fieldValue] of sortedFields(comment)) {
++            if (fieldKey === 'start' || fieldKey === 'length') {
++                continue;
++            }
++            text += ` ${fieldKey}=${formatScalar(fieldValue)}`;
++        }
++        this.push(indent, text);
++    }
++}
++
++// ---------------------------------------------------------------------------
++// tokens stage.
++
++function dumpTokens(results: ParseFileResults): string[] {
++    const printer = new Printer();
++    sortedFields(results.tokenizerOutput).forEach(([key, value]) => printer.emit(0, key, value));
++    return printer.lines;
++}
++
++// ---------------------------------------------------------------------------
++// tree stage.
++
++const parseNodeBaseFields = new Set(['nodeType', 'start', 'length', 'id', 'parent', 'a', 'd']);
++
++class TreePrinter extends Printer {
++    emitNode(indent: number, key: string, node: ParseNode, holder: ParseNode | undefined) {
++        let header = `${key}: ${nodeTypeName(node.nodeType)} ${node.start}+${node.length}`;
++        if (holder !== undefined && node.parent !== holder) {
++            header += ` !parent=${node.parent ? oracleNodeRef(node.parent) : 'undefined'}`;
++        }
++        this.push(indent, header);
++
++        const children = new Set<ParseNode | undefined>(getChildNodes(node, getParserStringAnnotation));
++        for (const [fieldKey, fieldValue] of sortedFields(node.d)) {
++            this.emitDetail(indent + 1, fieldKey, fieldValue, node, children);
++        }
++
++        for (const [fieldKey, fieldValue] of sortedFields(node)) {
++            if (parseNodeBaseFields.has(fieldKey)) {
++                continue;
++            }
++            if (node.nodeType === ParseNodeType.Module && fieldKey === 'stringAnnotations') {
++                continue;
++            }
++            this.emit(indent + 1, `+${fieldKey}`, fieldValue);
++        }
++
++        if (node.nodeType === ParseNodeType.StringList) {
++            const annotation = getParserStringAnnotation(node);
++            if (annotation) {
++                this.emitNode(indent + 1, '(annotation)', annotation, node);
++            }
++        }
++    }
++
++    emitDetail(indent: number, key: string, value: unknown, holder: ParseNode, children: Set<ParseNode | undefined>) {
++        if (typeof value === 'object' && value !== null) {
++            if (Array.isArray(value)) {
++                this.push(indent, `${key}: [${value.length}]`);
++                value.forEach((item: unknown, i) => this.emitDetail(indent + 1, `[${i}]`, item, holder, children));
++                return;
++            }
++
++            if (isParseNode(value)) {
++                if (children.has(value)) {
++                    this.emitNode(indent, key, value, holder);
++                } else {
++                    this.push(indent, `${key}: ${oracleNodeRef(value)}`);
++                }
++                return;
++            }
++        }
++
++        this.emit(indent, key, value);
++    }
++}
++
++function dumpTree(results: ParseFileResults): string[] {
++    const printer = new TreePrinter();
++    for (const [key, value] of sortedFields(results.parserOutput)) {
++        if (key === 'lines' || key === 'stringAnnotations') {
++            continue;
++        }
++        if (key === 'parseTree' && typeof value === 'object' && value !== null && isParseNode(value)) {
++            printer.emitNode(0, key, value, undefined);
++        } else {
++            printer.emit(0, key, value);
++        }
++    }
++    return printer.lines;
++}
++
++// ---------------------------------------------------------------------------
++// Tree walk shared by the bind, flow and types stages: pre-order, children in
++// getChildNodes order, with the given string annotation provider.
++
++function walkTree(root: ParseNode, getStringAnnotation: StringAnnotationProvider): ParseNode[] {
++    const result: ParseNode[] = [];
++    const stack: ParseNode[] = [root];
++    while (stack.length > 0) {
++        const node = stack.pop()!;
++        result.push(node);
++        const children = getChildNodes(node, getStringAnnotation);
++        for (let i = children.length - 1; i >= 0; i--) {
++            const child = children[i];
++            if (child) {
++                stack.push(child);
++            }
++        }
++    }
++    return result;
++}
++
++// ---------------------------------------------------------------------------
++// bind stage.
++
++interface ScopeNumbering {
++    numbers: Map<Scope, number>;
++    scopes: Scope[];
++}
++
++function numberScopes(walk: ParseNode[], reader: AnalyzerNodeInfo.AnalyzerNodeInfoReader): ScopeNumbering {
++    const numbering: ScopeNumbering = { numbers: new Map(), scopes: [] };
++    for (const node of walk) {
++        const scope = AnalyzerNodeInfo.getScope(node, reader);
++        if (scope && !numbering.numbers.has(scope)) {
++            numbering.numbers.set(scope, numbering.scopes.length);
++            numbering.scopes.push(scope);
++        }
++    }
++    return numbering;
++}
++
++function scopeRef(numbering: ScopeNumbering, scope: Scope): string {
++    const index = numbering.numbers.get(scope);
++    return index === undefined ? 'external' : `#${index}`;
++}
++
++const bindExcludedInfoFields = new Set(['flowNode', 'afterFlowNode', 'stringAnnotations']);
++
++function dumpBind(walk: ParseNode[], numbering: ScopeNumbering, reader: AnalyzerNodeInfo.AnalyzerNodeInfoReader) {
++    const printer = new Printer({
++        inline: (value) => (value instanceof Scope ? scopeRef(numbering, value) : undefined),
++    });
++
++    printer.push(0, 'nodes:');
++    for (const node of walk) {
++        const info = reader.get(node);
++        if (!info) {
++            continue;
++        }
++        const fields = sortedFields(info).filter(([key]) => !bindExcludedInfoFields.has(key));
++        if (fields.length === 0) {
++            continue;
++        }
++        printer.push(1, `${oracleNodeRef(node)}:`);
++        fields.forEach(([key, value]) => printer.emit(2, key, value));
++    }
++
++    printer.push(0, `scopes: [${numbering.scopes.length}]`);
++    numbering.scopes.forEach((scope, i) => {
++        const fields = sortedFields(scope);
++        printer.push(1, `[${i}]:`);
++        fields.forEach(([key, value]) => printer.emit(2, key, value));
++    });
++
++    return printer.lines;
++}
++
++// ---------------------------------------------------------------------------
++// flow stage.
++
++interface FlowNodeLike {
++    flags: number;
++    id: number;
++}
++
++function isFlowNode(value: object): value is FlowNodeLike {
++    return (
++        !('nodeType' in value) &&
++        'flags' in value &&
++        typeof value.flags === 'number' &&
++        'id' in value &&
++        typeof value.id === 'number'
++    );
++}
++
++// Flow-node references held by a flow node, in printed field order.
++function flowReferences(flowNode: object): object[] {
++    const refs: object[] = [];
++    for (const [, value] of sortedFields(flowNode)) {
++        const items: unknown[] = Array.isArray(value) ? value : [value];
++        for (const item of items) {
++            if (typeof item === 'object' && item !== null && isFlowNode(item)) {
++                refs.push(item);
++            }
++        }
++    }
++    return refs;
++}
++
++function dumpFlow(walk: ParseNode[], numbering: ScopeNumbering, reader: AnalyzerNodeInfo.AnalyzerNodeInfoReader) {
++    const flowNumbers = new Map<object, number>();
++    const flowNodes: object[] = [];
++    const visit = (flowNode: object | undefined) => {
++        if (flowNode && !flowNumbers.has(flowNode)) {
++            flowNumbers.set(flowNode, flowNodes.length);
++            flowNodes.push(flowNode);
++        }
++    };
++
++    const nodeEntries: [ParseNode, [string, unknown][]][] = [];
++    for (const node of walk) {
++        const info = reader.get(node);
++        if (!info) {
++            continue;
++        }
++        const fields: [string, unknown][] = [];
++        if (info.afterFlowNode) {
++            fields.push(['afterFlowNode', info.afterFlowNode]);
++            visit(info.afterFlowNode);
++        }
++        if (info.flowNode) {
++            fields.push(['flowNode', info.flowNode]);
++            visit(info.flowNode);
++        }
++        if (fields.length > 0) {
++            nodeEntries.push([node, fields]);
++        }
++    }
++
++    for (let i = 0; i < flowNodes.length; i++) {
++        flowReferences(flowNodes[i]).forEach(visit);
++    }
++
++    const symbolNames = new Map<number, string>();
++    numbering.scopes.forEach((scope, index) => {
++        scope.symbolTable.forEach((symbol, name) => {
++            if (!symbolNames.has(symbol.id)) {
++                symbolNames.set(symbol.id, `#${index} ${JSON.stringify(name)}`);
++            }
++        });
++    });
++
++    const printer = new Printer({
++        inline: (value) => {
++            if (isFlowNode(value)) {
++                const index = flowNumbers.get(value);
++                return index === undefined ? 'F?' : `F${index}`;
++            }
++            return undefined;
++        },
++        field: (key, value) => {
++            if (key === 'targetSymbolId' && typeof value === 'number') {
++                return value === 0 ? '0' : symbolNames.get(value) ?? 'external';
++            }
++            return undefined;
++        },
++    });
++
++    printer.push(0, 'nodes:');
++    for (const [node, fields] of nodeEntries) {
++        printer.push(1, `${oracleNodeRef(node)}:`);
++        fields.forEach(([key, value]) => printer.emit(2, key, value));
++    }
++
++    printer.push(0, `flowNodes: [${flowNodes.length}]`);
++    flowNodes.forEach((flowNode, i) => {
++        printer.push(1, `[${i}]:`);
++        sortedFields(flowNode).forEach(([key, value]) => printer.emit(2, key, value));
++    });
++
++    return printer.lines;
++}
++
++// ---------------------------------------------------------------------------
++// types stage.
++
++function dumpTypes(root: ParseNode, evaluator: TypeEvaluator, reader: AnalyzerNodeInfo.AnalyzerNodeInfoReader) {
++    const lines: string[] = [];
++    const walk = walkTree(root, (node) => AnalyzerNodeInfo.getStringAnnotation(node, reader));
++    for (const node of walk) {
++        const entry = evaluator.oracleReadTypeCacheEntry(node);
++        if (!entry) {
++            continue;
++        }
++        let text = `${oracleNodeRef(node)}:`;
++        if (entry.flags !== undefined) {
++            text += ` flags=${entry.flags}`;
++        }
++        if (entry.isIncomplete) {
++            text += ' incomplete';
++        }
++        text += ` ${JSON.stringify(entry.printedType)}`;
++        lines.push(text);
++    }
++    return lines;
++}
++
++// ---------------------------------------------------------------------------
++// diag stage.
++
++export interface OracleDiagnosticLists {
++    parse: Diagnostic[];
++    comment: Diagnostic[];
++    bind: Diagnostic[];
++    checker: Diagnostic[];
++    taskList: Diagnostic[];
++    final: Diagnostic[];
++}
++
++function dumpDiagnostics(lists: OracleDiagnosticLists): string[] {
++    const lines: string[] = [];
++    const emitList = (name: string, diagnostics: Diagnostic[]) => {
++        lines.push(`${name}: [${diagnostics.length}]`);
++        diagnostics.forEach((diag, i) => {
++            const rule = diag.getRule() ?? '-';
++            lines.push(`  [${i}]: ${diag.category} ${formatRange(diag.range)} ${rule} ${JSON.stringify(diag.message)}`);
++        });
++    };
++
++    emitList('parse', lists.parse);
++    emitList('comment', lists.comment);
++    emitList('bind', lists.bind);
++    emitList('checker', lists.checker);
++    emitList('taskList', lists.taskList);
++    emitList('final', lists.final);
++    return lines;
++}
+diff --git a/packages/pyright-internal/src/pyright.ts b/packages/pyright-internal/src/pyright.ts
+index b39c13bb7..6176dd99e 100644
+--- a/packages/pyright-internal/src/pyright.ts
++++ b/packages/pyright-internal/src/pyright.ts
+@@ -51,6 +51,7 @@ import { getStdin } from './common/streamUtils';
+ import { Range, isEmptyRange } from './common/textRange';
+ import { Uri } from './common/uri/uri';
+ import { getFileSpec, tryStat } from './common/uri/uriUtils';
++import { oracleDumpFinal } from './oracle/oracleDumper';
+ import { PyrightFileSystem } from './pyrightFileSystem';
+ 
+ const toolName = 'pyright';
+@@ -484,6 +485,8 @@ async function runSingleThreaded(
+             return;
+         }
+ 
++        oracleDumpFinal(service.backgroundAnalysisProgram.program);
++
+         let errorCount = 0;
+         if (!args.createstub && !args.verifytypes) {
+             // Sort all file diagnostics by the file URI so
