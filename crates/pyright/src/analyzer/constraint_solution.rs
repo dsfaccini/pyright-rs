@@ -21,36 +21,49 @@ pub struct ConstraintSolutionSet {
 impl ConstraintSolutionSet {
     // analyzer/constraintSolution.ts:19
     pub fn new() -> P<ConstraintSolutionSet> {
-        todo!()
+        P::new_eval(ConstraintSolutionSet {
+            _type_var_map: RefCell::new(JsMap::default()),
+        })
     }
 
     // analyzer/constraintSolution.ts:23
     pub fn is_empty(&self) -> bool {
-        todo!()
+        self._type_var_map.borrow().is_empty()
     }
 
     // analyzer/constraintSolution.ts:29
     pub fn get_type(&self, type_var: TypeVarType) -> Option<P<Type>> {
-        todo!()
+        let key = TypeVarType::get_name_with_scope(type_var);
+        self._type_var_map.borrow().get(&key).copied().flatten()
     }
 
     // analyzer/constraintSolution.ts:34
-    pub fn set_type(
-        &self,
-        type_var: TypeVarType,
-        type_: Option<P<Type>>,
-    ) -> JsMap<String, Option<P<Type>>> {
-        todo!()
+    pub fn set_type(&self, type_var: TypeVarType, type_: Option<P<Type>>) {
+        let key = TypeVarType::get_name_with_scope(type_var);
+        self._type_var_map.borrow_mut().insert(key, type_);
     }
 
     // analyzer/constraintSolution.ts:39
     pub fn has_type(&self, type_var: TypeVarType) -> bool {
-        todo!()
+        let key = TypeVarType::get_name_with_scope(type_var);
+        self._type_var_map.borrow().contains_key(&key)
     }
 
     // analyzer/constraintSolution.ts:44
     pub fn do_for_each_type_var(&self, callback: &mut dyn FnMut(P<Type>, &str)) {
-        todo!()
+        // Map.forEach visits entries added during the walk; copy each entry out
+        // so the callback can reach back into this set.
+        let mut index = 0;
+        loop {
+            let (key, type_) = match self._type_var_map.borrow().get_index(index) {
+                Some((key, type_)) => (key.clone(), *type_),
+                None => break,
+            };
+            if let Some(type_) = type_ {
+                callback(type_, &key);
+            }
+            index += 1;
+        }
     }
 }
 
@@ -62,27 +75,33 @@ pub struct ConstraintSolution {
 impl ConstraintSolution {
     // analyzer/constraintSolution.ts:56
     pub fn new(solution_sets: Option<&[P<ConstraintSolutionSet>]>) -> Self {
-        todo!()
+        let _solution_sets = match solution_sets {
+            Some(solution_sets) if !solution_sets.is_empty() => solution_sets.to_vec(),
+            _ => vec![ConstraintSolutionSet::new()],
+        };
+        ConstraintSolution { _solution_sets }
     }
 
     // analyzer/constraintSolution.ts:61
     pub fn is_empty(&self) -> bool {
-        todo!()
+        self._solution_sets.iter().all(|set| set.is_empty())
     }
 
     // analyzer/constraintSolution.ts:65
     pub fn set_type(&self, type_var: TypeVarType, type_: P<Type>) {
-        todo!()
+        for set in &self._solution_sets {
+            set.set_type(type_var, Some(type_));
+        }
     }
 
     // analyzer/constraintSolution.ts:71
     pub fn get_main_solution_set(&self) -> P<ConstraintSolutionSet> {
-        todo!()
+        self.get_solution_set(0)
     }
 
     // analyzer/constraintSolution.ts:75
     pub fn get_solution_sets(&self) -> Vec<P<ConstraintSolutionSet>> {
-        todo!()
+        self._solution_sets.clone()
     }
 
     // analyzer/constraintSolution.ts:79
@@ -90,11 +109,14 @@ impl ConstraintSolution {
         &self,
         callback: &mut dyn FnMut(P<ConstraintSolutionSet>, i32),
     ) {
-        todo!()
+        for (index, set) in self.get_solution_sets().into_iter().enumerate() {
+            callback(set, index as i32);
+        }
     }
 
     // analyzer/constraintSolution.ts:85
     pub fn get_solution_set(&self, index: i32) -> P<ConstraintSolutionSet> {
-        todo!()
+        assert!(index >= 0 && (index as usize) < self._solution_sets.len());
+        self._solution_sets[index as usize]
     }
 }

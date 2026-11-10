@@ -11,10 +11,21 @@
 
 use crate::analyzer::types::{ClassType, FunctionParam, FunctionType, Type, TypeVarType};
 use jsrt::P;
+use crate::analyzer::symbol_name_utils::is_dunder_name;
+use crate::analyzer::type_utils::{do_for_each_subtype, partially_specialize_type};
+use crate::analyzer::types::{
+    AnyType, FunctionParamFlags, ParamSpecAccess, TypeSameOptions, is_any_or_unknown, is_class_instance, is_never,
+    is_param_spec, is_position_only_separator, is_type_same, is_type_var_tuple, is_unpacked_class,
+};
+use crate::parser::parse_nodes::ParamCategory;
 
 // analyzer/parameterUtils.ts:31
 pub fn is_typed_kwargs(param: &FunctionParam, effective_param_type: P<Type>) -> bool {
-    todo!()
+    param.category == ParamCategory::KwargsDict
+        && is_class_instance(effective_param_type)
+        && is_unpacked_class(effective_param_type)
+        && ClassType::is_typed_dict_class(ClassType(effective_param_type))
+        && ClassType(effective_param_type).d().shared.get().typed_dict_entries.get().is_some()
 }
 
 // analyzer/parameterUtils.ts:41
@@ -64,17 +75,461 @@ pub fn get_param_list_details(
     type_: FunctionType,
     options: Option<&ParamListDetailsOptions>,
 ) -> ParamListDetails {
-    todo!()
+    let mut result = ParamListDetails {
+        first_position_or_keyword_index: 0,
+        position_param_count: 0,
+        position_only_param_count: 0,
+        params: Vec::new(),
+        has_unpacked_type_var_tuple: false,
+        has_unpacked_typed_dict: false,
+        kwargs_index: None,
+        args_index: None,
+        first_keyword_only_index: None,
+        unpacked_kwargs_typed_dict_type: None,
+        param_spec: None,
+    };
+
+    let parameters: Vec<FunctionParam> = type_.d().shared.get().parameters.borrow().clone();
+
+    let mut position_only_index = parameters
+        .iter()
+        .position(is_position_only_separator)
+        .map_or(-1, |i| i as i32);
+
+    // Handle the old (pre Python 3.8) way of specifying positional-only
+    // parameters by naming them with "__".
+    if position_only_index < 0 {
+        for (i, p) in parameters.iter().enumerate() {
+            if p.category != ParamCategory::Simple {
+                break;
+            }
+
+            let Some(name) = &p.name else {
+                break;
+            };
+            if name.is_empty() {
+                break;
+            }
+
+            if is_dunder_name(name) || !name.starts_with("__") {
+                // We exempt "self" and "cls" in class and instance methods.
+                if i > 0 || FunctionType::is_static_method(type_) {
+                    break;
+                }
+
+                continue;
+            }
+
+            position_only_index = i as i32 + 1;
+        }
+    }
+
+    for i in 0..position_only_index {
+        if FunctionType::get_param_default_type(type_, i).is_some() {
+            break;
+        }
+
+        result.position_only_param_count += 1;
+    }
+
+    let mut saw_keyword_only_separator = false;
+
+    // The TS closure `addVirtualParam`; it reads `sawKeywordOnlySeparator` as it is at each call.
+    #[allow(clippy::too_many_arguments)]
+    fn add_virtual_param(
+        result: &mut ParamListDetails,
+        type_: FunctionType,
+        saw_keyword_only_separator: bool,
+        position_only_index: i32,
+        param: FunctionParam,
+        index: i32,
+        type_override: Option<P<Type>>,
+        default_type_override: Option<P<Type>>,
+        source_override: Option<ParamKind>,
+    ) {
+        if param.name.as_deref().is_some_and(|name| !name.is_empty()) {
+            let kind = if let Some(source_override) = source_override {
+                source_override
+            } else if param.category == ParamCategory::ArgsList {
+                ParamKind::Positional
+            } else if saw_keyword_only_separator {
+                ParamKind::Keyword
+            } else if position_only_index >= 0 && index < position_only_index {
+                ParamKind::Positional
+            } else {
+                ParamKind::Standard
+            };
+
+            result.params.push(P::new_eval(VirtualParamDetails {
+                param,
+                index,
+                type_: type_override.unwrap_or_else(|| FunctionType::get_param_type(type_, index)),
+                declared_type: FunctionType::get_declared_param_type(type_, index),
+                default_type: default_type_override.or_else(|| FunctionType::get_param_default_type(type_, index)),
+                kind,
+            }));
+        }
+    }
+
+    fn has_name(param: &FunctionParam) -> bool {
+        param.name.as_deref().is_some_and(|name| !name.is_empty())
+    }
+
+    for (index, param) in parameters.iter().enumerate() {
+        let index = index as i32;
+        if param.category == ParamCategory::ArgsList {
+            // If this is an unpacked tuple, expand the entries.
+            let param_type = FunctionType::get_param_type(type_, index);
+            let tuple_type_args = if has_name(param) && is_unpacked_class(param_type) {
+                ClassType(param_type).d().priv_.borrow().tuple_type_args.clone()
+            } else {
+                None
+            };
+            if let Some(tuple_type_args) = tuple_type_args {
+                let add_to_positional_only = index < result.position_only_param_count as i32;
+
+                for (tuple_index, tuple_arg) in tuple_type_args.iter().enumerate() {
+                    let category = if is_type_var_tuple(tuple_arg.type_) || tuple_arg.is_unbounded {
+                        ParamCategory::ArgsList
+                    } else {
+                        ParamCategory::Simple
+                    };
+
+                    if category == ParamCategory::ArgsList {
+                        result.args_index = Some(result.params.len() as i32);
+                    }
+
+                    if is_type_var_tuple(FunctionType::get_param_type(type_, index)) {
+                        result.has_unpacked_type_var_tuple = true;
+                    }
+
+                    add_virtual_param(
+                        &mut result,
+                        type_,
+                        saw_keyword_only_separator,
+                        position_only_index,
+                        FunctionParam::create(
+                            category,
+                            tuple_arg.type_,
+                            FunctionParamFlags::NameSynthesized | FunctionParamFlags::TypeDeclared,
+                            Some(&format!("{}[{}]", param.name.as_deref().unwrap_or(""), tuple_index)),
+                            None,
+                            None,
+                        ),
+                        index,
+                        Some(tuple_arg.type_),
+                        /* defaultArgTypeOverride */ None,
+                        Some(ParamKind::ExpandedArgs),
+                    );
+
+                    if category == ParamCategory::Simple {
+                        result.position_param_count += 1;
+                    }
+
+                    if tuple_index > 0 && add_to_positional_only {
+                        result.position_only_param_count += 1;
+                    }
+                }
+
+                // Normally, a VarArgList parameter (either named or as an unnamed separator)
+                // would signify the start of keyword-only parameters. However, we can construct
+                // callable signatures that defy this rule by using Callable and TypeVarTuples
+                // or unpacked tuples.
+                if !saw_keyword_only_separator && (position_only_index < 0 || index >= position_only_index) {
+                    result.first_keyword_only_index = Some(result.params.len() as i32);
+                    saw_keyword_only_separator = true;
+                }
+            } else {
+                if has_name(param) && result.args_index.is_none() {
+                    result.args_index = Some(result.params.len() as i32);
+
+                    if is_type_var_tuple(param_type) {
+                        result.has_unpacked_type_var_tuple = true;
+                    }
+                }
+
+                // Normally, a VarArgList parameter (either named or as an unnamed separator)
+                // would signify the start of keyword-only parameters. However, we can construct
+                // callable signatures that defy this rule by using Callable and TypeVarTuples
+                // or unpacked tuples.
+                if !saw_keyword_only_separator && (position_only_index < 0 || index >= position_only_index) {
+                    let mut first_keyword_only_index = result.params.len() as i32;
+                    if has_name(param) {
+                        first_keyword_only_index += 1;
+                    }
+                    result.first_keyword_only_index = Some(first_keyword_only_index);
+                    saw_keyword_only_separator = true;
+                }
+
+                add_virtual_param(
+                    &mut result,
+                    type_,
+                    saw_keyword_only_separator,
+                    position_only_index,
+                    param.clone(),
+                    index,
+                    None,
+                    None,
+                    None,
+                );
+            }
+        } else if param.category == ParamCategory::KwargsDict {
+            saw_keyword_only_separator = true;
+
+            let param_type = FunctionType::get_param_type(type_, index);
+
+            // Is this an unpacked TypedDict? If so, expand the entries.
+            let typed_dict_entries = if is_class_instance(param_type) && is_unpacked_class(param_type) {
+                ClassType(param_type).d().shared.get().typed_dict_entries.get()
+            } else {
+                None
+            };
+            if let Some(typed_dict_entries) = typed_dict_entries {
+                let param_class = ClassType(param_type);
+                if result.first_keyword_only_index.is_none() {
+                    result.first_keyword_only_index = Some(result.params.len() as i32);
+                }
+
+                let typed_dict_type = param_class;
+                let known_items = typed_dict_entries.known_items.borrow().clone();
+                for (name, entry) in known_items.iter() {
+                    let narrowed_entry = param_class
+                        .d()
+                        .priv_
+                        .borrow()
+                        .typed_dict_narrowed_entries
+                        .as_ref()
+                        .and_then(|entries| entries.get(name).cloned());
+                    let entry = narrowed_entry.unwrap_or_else(|| entry.clone());
+
+                    let specialized_param_type = partially_specialize_type(
+                        entry.value_type,
+                        typed_dict_type,
+                        /* typeClassType */ None,
+                        None,
+                    );
+
+                    let default_param_type = if !entry.is_required { Some(specialized_param_type) } else { None };
+                    add_virtual_param(
+                        &mut result,
+                        type_,
+                        saw_keyword_only_separator,
+                        position_only_index,
+                        FunctionParam::create(
+                            ParamCategory::Simple,
+                            specialized_param_type,
+                            FunctionParamFlags::TypeDeclared,
+                            Some(name),
+                            default_param_type,
+                            None,
+                        ),
+                        index,
+                        Some(specialized_param_type),
+                        default_param_type,
+                        None,
+                    );
+                }
+
+                let extra_items_type = typed_dict_entries.extra_items.borrow().as_ref().map(|entry| entry.value_type);
+
+                let add_kwargs_for_extra_items = if let Some(extra_items_type) = extra_items_type {
+                    !is_never(extra_items_type)
+                } else {
+                    !options.and_then(|options| options.disallow_extra_kwargs_for_td).unwrap_or(false)
+                };
+
+                // Unless the TypedDict is completely closed (i.e. is not allowed to
+                // have any extra items), add a virtual **kwargs parameter to represent
+                // any additional items.
+                if add_kwargs_for_extra_items {
+                    add_virtual_param(
+                        &mut result,
+                        type_,
+                        saw_keyword_only_separator,
+                        position_only_index,
+                        FunctionParam::create(
+                            ParamCategory::KwargsDict,
+                            extra_items_type.unwrap_or_else(|| AnyType::create(false).0),
+                            FunctionParamFlags::TypeDeclared,
+                            Some("kwargs"),
+                            None,
+                            None,
+                        ),
+                        index,
+                        extra_items_type,
+                        None,
+                        None,
+                    );
+
+                    result.kwargs_index = Some(result.params.len() as i32 - 1);
+                }
+
+                result.has_unpacked_typed_dict = true;
+                result.unpacked_kwargs_typed_dict_type = Some(param_class);
+            } else if has_name(param) {
+                if result.kwargs_index.is_none() {
+                    result.kwargs_index = Some(result.params.len() as i32);
+                }
+
+                if result.first_keyword_only_index.is_none() {
+                    result.first_keyword_only_index = Some(result.params.len() as i32);
+                }
+
+                add_virtual_param(
+                    &mut result,
+                    type_,
+                    saw_keyword_only_separator,
+                    position_only_index,
+                    param.clone(),
+                    index,
+                    None,
+                    None,
+                    None,
+                );
+            }
+        } else if param.category == ParamCategory::Simple {
+            if has_name(param) && !saw_keyword_only_separator {
+                result.position_param_count += 1;
+            }
+
+            let default_type_override = type_.d().priv_.borrow().specialized_types.and_then(|specialized_types| {
+                specialized_types
+                    .parameter_default_types
+                    .borrow()
+                    .as_ref()
+                    .and_then(|default_types| default_types.get(index as usize).copied().flatten())
+            });
+            add_virtual_param(
+                &mut result,
+                type_,
+                saw_keyword_only_separator,
+                position_only_index,
+                param.clone(),
+                index,
+                /* typeOverride */ None,
+                default_type_override,
+                None,
+            );
+        }
+    }
+
+    // If the signature ends in `*args: P.args, **kwargs: P.kwargs`,
+    // extract the ParamSpec P.
+    result.param_spec = FunctionType::get_param_spec_from_args_kwargs(type_).map(|param_spec| TypeVarType(param_spec.0));
+
+    result.first_position_or_keyword_index = result
+        .params
+        .iter()
+        .position(|p| p.kind != ParamKind::Positional && p.kind != ParamKind::ExpandedArgs)
+        .map_or(-1, |i| i as i32);
+    if result.first_position_or_keyword_index < 0 {
+        result.first_position_or_keyword_index = result.params.len() as i32;
+    }
+
+    result
 }
 
 // analyzer/parameterUtils.ts:352
 pub fn is_param_spec_args(param_spec: TypeVarType, arg_type: P<Type>) -> bool {
-    todo!()
+    let mut is_compatible = true;
+
+    do_for_each_subtype(
+        arg_type,
+        &mut |arg_subtype, _, _| {
+            if is_param_spec(arg_subtype)
+                && TypeVarType(arg_subtype).d().priv_.borrow().param_spec_access == Some(ParamSpecAccess::Args)
+                && is_type_same(
+                    arg_subtype,
+                    param_spec.0,
+                    &TypeSameOptions {
+                        ignore_pseudo_generic: None,
+                        ignore_type_flags: Some(true),
+                        ignore_conditions: None,
+                        ignore_typed_dict_narrow_entries: None,
+                        honor_type_form: None,
+                        honor_is_type_arg_explicit: None,
+                        treat_any_same_as_unknown: None,
+                    },
+                    0,
+                )
+            {
+                return;
+            }
+
+            if is_class_instance(arg_subtype) {
+                let tuple_type_args = ClassType(arg_subtype).d().priv_.borrow().tuple_type_args.clone();
+                if let Some(tuple_type_args) = tuple_type_args {
+                    if tuple_type_args.len() == 1
+                        && tuple_type_args[0].is_unbounded
+                        && is_any_or_unknown(tuple_type_args[0].type_)
+                    {
+                        return;
+                    }
+                }
+            }
+
+            if is_any_or_unknown(arg_subtype) {
+                return;
+            }
+
+            is_compatible = false;
+        },
+        false,
+    );
+
+    is_compatible
 }
 
 // analyzer/parameterUtils.ts:386
 pub fn is_param_spec_kwargs(param_spec: TypeVarType, arg_type: P<Type>) -> bool {
-    todo!()
+    let mut is_compatible = true;
+
+    do_for_each_subtype(
+        arg_type,
+        &mut |arg_subtype, _, _| {
+            if is_param_spec(arg_subtype)
+                && TypeVarType(arg_subtype).d().priv_.borrow().param_spec_access == Some(ParamSpecAccess::Kwargs)
+                && is_type_same(
+                    arg_subtype,
+                    param_spec.0,
+                    &TypeSameOptions {
+                        ignore_pseudo_generic: None,
+                        ignore_type_flags: Some(true),
+                        ignore_conditions: None,
+                        ignore_typed_dict_narrow_entries: None,
+                        honor_type_form: None,
+                        honor_is_type_arg_explicit: None,
+                        treat_any_same_as_unknown: None,
+                    },
+                    0,
+                )
+            {
+                return;
+            }
+
+            if is_class_instance(arg_subtype) && ClassType::is_built_in(ClassType(arg_subtype), Some(&["dict".to_string()])) {
+                let type_args = ClassType(arg_subtype).d().priv_.borrow().type_args.clone();
+                if let Some(type_args) = type_args {
+                    if type_args.len() == 2
+                        && is_class_instance(type_args[0])
+                        && ClassType::is_built_in(ClassType(type_args[0]), Some(&["str".to_string()]))
+                        && is_any_or_unknown(type_args[1])
+                    {
+                        return;
+                    }
+                }
+            }
+
+            if is_any_or_unknown(arg_subtype) {
+                return;
+            }
+
+            is_compatible = false;
+        },
+        false,
+    );
+
+    is_compatible
 }
 
 // analyzer/parameterUtils.ts:420
@@ -94,31 +549,75 @@ pub struct ParamAssignmentTracker {
 impl ParamAssignmentTracker {
     // analyzer/parameterUtils.ts:432
     pub fn new(param_infos: &[P<VirtualParamDetails>]) -> Self {
-        todo!()
+        let params = param_infos
+            .iter()
+            .map(|&p| {
+                let args_needed = if p.default_type.is_some() || p.param.category != ParamCategory::Simple { 0 } else { 1 };
+                ParamAssignmentInfo {
+                    param_details: p,
+                    keyword_name: None,
+                    args_needed,
+                    args_received: 0,
+                }
+            })
+            .collect();
+        ParamAssignmentTracker { params }
     }
 
     // analyzer/parameterUtils.ts:442
     pub fn add_keyword_param(&mut self, name: &str, info: P<VirtualParamDetails>) {
-        todo!()
+        self.params.push(ParamAssignmentInfo {
+            param_details: info,
+            keyword_name: Some(name.to_string()),
+            args_needed: 1,
+            args_received: 1,
+        });
     }
 
     // analyzer/parameterUtils.ts:451
-    pub fn lookup_name(&mut self, name: &str) -> Option<ParamAssignmentInfo> {
-        todo!()
+    pub fn lookup_name(&mut self, name: &str) -> Option<&mut ParamAssignmentInfo> {
+        self.params.iter_mut().find(|p| {
+            // Don't return positional parameters because their names are irrelevant.
+            let kind = p.param_details.kind;
+            if kind == ParamKind::Positional || kind == ParamKind::ExpandedArgs {
+                return false;
+            }
+
+            let effective_name = p.keyword_name.as_deref().or(p.param_details.param.name.as_deref());
+            effective_name == Some(name)
+        })
     }
 
     // analyzer/parameterUtils.ts:464
-    pub fn lookup_details(&mut self, param_info: P<VirtualParamDetails>) -> ParamAssignmentInfo {
-        todo!()
+    pub fn lookup_details(
+        &mut self,
+        param_info: P<VirtualParamDetails>,
+    ) -> &mut ParamAssignmentInfo {
+        let info = self.params.iter_mut().find(|p| p.param_details == param_info);
+        info.expect("lookupDetails: the parameter is tracked")
     }
 
     // analyzer/parameterUtils.ts:470
     pub fn mark_arg_received(&mut self, param_info: P<VirtualParamDetails>) {
-        todo!()
+        let entry = self.lookup_details(param_info);
+        entry.args_received += 1;
     }
 
     // analyzer/parameterUtils.ts:477
     pub fn get_unassigned_params(&mut self) -> Vec<String> {
-        todo!()
+        let mut unassigned_params: Vec<String> = Vec::new();
+        for p in &self.params {
+            let Some(name) = p.param_details.param.name.as_deref().filter(|name| !name.is_empty()) else {
+                continue;
+            };
+
+            if p.args_received >= p.args_needed {
+                continue;
+            }
+
+            unassigned_params.push(name.to_string());
+        }
+
+        unassigned_params
     }
 }

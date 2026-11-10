@@ -35,11 +35,7 @@ impl ConstraintSolutionSet {
     }
 
     // analyzer/constraintSolution.ts:34
-    pub fn set_type(
-        &self,
-        type_var: TypeVarType,
-        type_: Option<P<Type>>,
-    ) -> JsMap<String, Option<P<Type>>> {
+    pub fn set_type(&self, type_var: TypeVarType, type_: Option<P<Type>>) {
         todo!()
     }
 

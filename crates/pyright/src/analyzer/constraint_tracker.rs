@@ -9,7 +9,8 @@
     clippy::all
 )]
 
-use crate::analyzer::types::{Type, TypeVarType};
+use crate::analyzer::type_complexity::get_complexity_score_for_type;
+use crate::analyzer::types::{Type, TypeSameOptions, TypeVarType, is_type_same};
 use jsrt::{JsMap, JsSet, P};
 use std::cell::RefCell;
 
@@ -34,28 +35,102 @@ pub struct ConstraintSet {
 impl ConstraintSet {
     // analyzer/constraintTracker.ts:53
     pub fn new() -> P<ConstraintSet> {
-        todo!()
+        P::new_eval(ConstraintSet {
+            _type_var_map: RefCell::new(JsMap::default()),
+            _scope_ids: RefCell::new(None),
+        })
     }
 
     // analyzer/constraintTracker.ts:57
     pub fn clone(&self) -> P<ConstraintSet> {
-        todo!()
+        let constraint_set = ConstraintSet::new();
+
+        let entries: Vec<TypeVarConstraints> = self._type_var_map.borrow().values().cloned().collect();
+        for value in entries {
+            constraint_set.set_bounds(value.type_var, value.lower_bound, value.upper_bound, value.retain_literals);
+        }
+
+        let scope_ids = self._scope_ids.borrow().clone();
+        if let Some(scope_ids) = scope_ids {
+            for scope_id in scope_ids.iter() {
+                constraint_set.add_scope_id(scope_id);
+            }
+        }
+
+        constraint_set
     }
 
     // analyzer/constraintTracker.ts:71
     /// Nested in the TS body: typesMatch (:76).
     pub fn is_same(&self, other: P<ConstraintSet>) -> bool {
-        todo!()
+        if self._type_var_map.borrow().len() != other._type_var_map.borrow().len() {
+            return false;
+        }
+
+        fn types_match(type1: Option<P<Type>>, type2: Option<P<Type>>) -> bool {
+            let (Some(type1), Some(type2)) = (type1, type2) else {
+                return type1 == type2;
+            };
+
+            is_type_same(
+                type1,
+                type2,
+                &TypeSameOptions {
+                    ignore_pseudo_generic: None,
+                    ignore_type_flags: None,
+                    ignore_conditions: None,
+                    ignore_typed_dict_narrow_entries: None,
+                    honor_type_form: Some(true),
+                    honor_is_type_arg_explicit: Some(true),
+                    treat_any_same_as_unknown: None,
+                },
+                0,
+            )
+        }
+
+        let mut is_same = true;
+        let entries: Vec<(String, TypeVarConstraints)> =
+            self._type_var_map.borrow().iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+        for (key, value) in entries {
+            let other_value = other._type_var_map.borrow().get(&key).cloned();
+            match other_value {
+                Some(other_value)
+                    if types_match(value.lower_bound, other_value.lower_bound)
+                        && types_match(value.upper_bound, other_value.upper_bound) => {}
+                _ => {
+                    is_same = false;
+                }
+            }
+        }
+
+        is_same
     }
 
     // analyzer/constraintTracker.ts:99
     pub fn is_empty(&self) -> bool {
-        todo!()
+        self._type_var_map.borrow().is_empty()
     }
 
     // analyzer/constraintTracker.ts:105
     pub fn get_score(&self) -> f64 {
-        todo!()
+        let mut score = 0.0;
+
+        // Sum the scores for the defined type vars.
+        let entries: Vec<TypeVarConstraints> = self._type_var_map.borrow().values().cloned().collect();
+        for entry in entries {
+            // Add 1 to the score for each type variable defined.
+            score += 1.0;
+
+            // Add a fractional amount based on the simplicity of the definition.
+            // The more complex, the lower the score. In the spirit of Occam's
+            // Razor, we always want to favor simple answers.
+            let type_var_type = entry.lower_bound.or(entry.upper_bound);
+            if let Some(type_var_type) = type_var_type {
+                score += 1.0 - get_complexity_score_for_type(type_var_type, 0);
+            }
+        }
+
+        score
     }
 
     // analyzer/constraintTracker.ts:125
@@ -66,42 +141,84 @@ impl ConstraintSet {
         upper_bound: Option<P<Type>>,
         retain_literals: Option<bool>,
     ) {
-        todo!()
+        let key = TypeVarType::get_name_with_scope(type_var);
+        self._type_var_map.borrow_mut().insert(
+            key,
+            TypeVarConstraints {
+                type_var,
+                lower_bound,
+                upper_bound,
+                retain_literals,
+            },
+        );
     }
 
     // analyzer/constraintTracker.ts:135
     pub fn do_for_each_type_var(&self, cb: &mut dyn FnMut(&TypeVarConstraints)) {
-        todo!()
+        // Map.forEach visits entries added during the walk; copy each entry out
+        // so the callback can reach back into this set.
+        let mut index = 0;
+        loop {
+            let entry = match self._type_var_map.borrow().get_index(index) {
+                Some((_, entry)) => entry.clone(),
+                None => break,
+            };
+            cb(&entry);
+            index += 1;
+        }
     }
 
     // analyzer/constraintTracker.ts:139
     pub fn get_type_var(&self, type_var: TypeVarType) -> Option<TypeVarConstraints> {
-        todo!()
+        let key = TypeVarType::get_name_with_scope(type_var);
+        self._type_var_map.borrow().get(&key).cloned()
     }
 
     // analyzer/constraintTracker.ts:144
     pub fn get_type_vars(&self) -> Vec<TypeVarConstraints> {
-        todo!()
+        let mut entries: Vec<TypeVarConstraints> = Vec::new();
+
+        for entry in self._type_var_map.borrow().values() {
+            entries.push(entry.clone());
+        }
+
+        entries
     }
 
     // analyzer/constraintTracker.ts:154
     pub fn add_scope_id(&self, scope_id: &str) {
-        todo!()
+        let mut scope_ids = self._scope_ids.borrow_mut();
+        if scope_ids.is_none() {
+            *scope_ids = Some(JsSet::default());
+        }
+
+        scope_ids.as_mut().unwrap().insert(scope_id.to_string());
     }
 
     // analyzer/constraintTracker.ts:162
     pub fn has_scope_id(&self, scope_id: &str) -> bool {
-        todo!()
+        match &*self._scope_ids.borrow() {
+            None => false,
+            Some(scope_ids) => scope_ids.contains(scope_id),
+        }
     }
 
     // analyzer/constraintTracker.ts:170
     pub fn get_scope_ids(&self) -> JsSet<String> {
-        todo!()
+        // `new Set(undefined)` is an empty set.
+        self._scope_ids.borrow().clone().unwrap_or_default()
     }
 
     // analyzer/constraintTracker.ts:174
     pub fn has_unification_vars(&self) -> bool {
-        todo!()
+        let entries: Vec<TypeVarConstraints> = self._type_var_map.borrow().values().cloned().collect();
+        for entry in entries {
+            if TypeVarType::is_unification(entry.type_var).unwrap_or(false) {
+                return true;
+            }
+        }
+
+        false
     }
 }
 
@@ -113,42 +230,87 @@ pub struct ConstraintTracker {
 impl ConstraintTracker {
     // analyzer/constraintTracker.ts:188
     pub fn new() -> P<ConstraintTracker> {
-        todo!()
+        P::new_eval(ConstraintTracker {
+            _constraint_sets: RefCell::new(vec![ConstraintSet::new()]),
+        })
     }
 
     // analyzer/constraintTracker.ts:192
     pub fn clone(&self) -> P<ConstraintTracker> {
-        todo!()
+        let new_type_var_map = ConstraintTracker::new();
+
+        let sets: Vec<P<ConstraintSet>> = self._constraint_sets.borrow().iter().map(|set| ConstraintSet::clone(set)).collect();
+        *new_type_var_map._constraint_sets.borrow_mut() = sets;
+
+        new_type_var_map
     }
 
     // analyzer/constraintTracker.ts:200
     pub fn clone_with_signature(&self, scope_id: &str) -> P<ConstraintTracker> {
-        todo!()
+        let cloned = self.clone();
+
+        if !scope_id.is_empty() {
+            let filtered_sets: Vec<P<ConstraintSet>> = self
+                ._constraint_sets
+                .borrow()
+                .iter()
+                .copied()
+                .filter(|context| context.has_scope_id(scope_id))
+                .collect();
+
+            if !filtered_sets.is_empty() {
+                *cloned._constraint_sets.borrow_mut() = filtered_sets;
+            } else {
+                let sets = cloned._constraint_sets.borrow().clone();
+                for context in sets {
+                    context.add_scope_id(scope_id);
+                }
+            }
+        }
+
+        cloned
     }
 
     // analyzer/constraintTracker.ts:219
     pub fn copy_from_clone(&self, clone: P<ConstraintTracker>) {
-        todo!()
+        let sets: Vec<P<ConstraintSet>> = clone._constraint_sets.borrow().iter().map(|context| ConstraintSet::clone(context)).collect();
+        *self._constraint_sets.borrow_mut() = sets;
     }
 
     // analyzer/constraintTracker.ts:223
     pub fn copy_bounds(&self, entry: &TypeVarConstraints) {
-        todo!()
+        let sets = self._constraint_sets.borrow().clone();
+        for set in sets {
+            set.set_bounds(entry.type_var, entry.lower_bound, entry.upper_bound, entry.retain_literals);
+        }
     }
 
     // analyzer/constraintTracker.ts:230
     pub fn add_constraint_sets(&self, contexts: &[P<ConstraintSet>]) {
-        todo!()
+        assert!(!contexts.is_empty());
+
+        // Limit the number of constraint sets. There are rare circumstances
+        // where this can grow to unbounded numbers and exhaust memory.
+        if (contexts.len() as u32) < MAX_CONSTRAINT_SET_COUNT {
+            *self._constraint_sets.borrow_mut() = contexts.to_vec();
+        }
     }
 
     // analyzer/constraintTracker.ts:240
     pub fn is_same(&self, other: P<ConstraintTracker>) -> bool {
-        todo!()
+        let sets = self._constraint_sets.borrow().clone();
+        let other_sets = other._constraint_sets.borrow().clone();
+        if other_sets.len() != sets.len() {
+            return false;
+        }
+
+        sets.iter().enumerate().all(|(index, set)| set.is_same(other_sets[index]))
     }
 
     // analyzer/constraintTracker.ts:248
     pub fn is_empty(&self) -> bool {
-        todo!()
+        let sets = self._constraint_sets.borrow().clone();
+        sets.iter().all(|set| set.is_empty())
     }
 
     // analyzer/constraintTracker.ts:252
@@ -159,31 +321,47 @@ impl ConstraintTracker {
         upper_bound: Option<P<Type>>,
         retain_literals: Option<bool>,
     ) {
-        todo!()
+        let sets = self._constraint_sets.borrow().clone();
+        for set in sets {
+            set.set_bounds(type_var, lower_bound, upper_bound, retain_literals);
+        }
     }
 
     // analyzer/constraintTracker.ts:258
     pub fn get_score(&self) -> f64 {
-        todo!()
+        let mut total = 0.0;
+
+        let sets = self._constraint_sets.borrow().clone();
+        for set in &sets {
+            total += set.get_score();
+        }
+
+        // Return the average score among all constraint sets.
+        total / sets.len() as f64
     }
 
     // analyzer/constraintTracker.ts:269
     pub fn get_main_constraint_set(&self) -> P<ConstraintSet> {
-        todo!()
+        self._constraint_sets.borrow()[0]
     }
 
     // analyzer/constraintTracker.ts:273
     pub fn get_constraint_sets(&self) -> Vec<P<ConstraintSet>> {
-        todo!()
+        self._constraint_sets.borrow().clone()
     }
 
     // analyzer/constraintTracker.ts:277
     pub fn do_for_each_constraint_set(&self, callback: &mut dyn FnMut(P<ConstraintSet>, i32)) {
-        todo!()
+        let sets = self.get_constraint_sets();
+        for (index, set) in sets.into_iter().enumerate() {
+            callback(set, index as i32);
+        }
     }
 
     // analyzer/constraintTracker.ts:283
     pub fn get_constraint_set(&self, index: i32) -> P<ConstraintSet> {
-        todo!()
+        let sets = self._constraint_sets.borrow();
+        assert!(index >= 0 && (index as usize) < sets.len());
+        sets[index as usize]
     }
 }
