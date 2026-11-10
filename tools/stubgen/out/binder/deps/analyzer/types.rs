@@ -346,7 +346,7 @@ pub struct ClassDetailsShared {
     pub module_name: String,
     pub file_uri: Uri,
     pub flags: Cell<ClassTypeFlags>,
-    pub type_source_id: u32,
+    pub type_source_id: i32,
     pub base_classes: RefCell<Vec<P<Type>>>,
     pub mro: RefCell<Vec<P<Type>>>,
     pub declaration: Cell<Option<P<Declaration>>>,

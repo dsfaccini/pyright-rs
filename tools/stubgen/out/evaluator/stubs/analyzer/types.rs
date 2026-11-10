@@ -118,7 +118,7 @@ pub enum LiteralValue {
 }
 
 // analyzer/types.ts:110
-pub type TypeSourceId = u32;
+pub type TypeSourceId = i32;
 
 // analyzer/types.ts:119
 pub const MAX_TYPE_RECURSION_COUNT: u32 = 20;
@@ -563,7 +563,7 @@ pub struct ClassDetailsShared {
     pub module_name: String,
     pub file_uri: Uri,
     pub flags: Cell<ClassTypeFlags>,
-    pub type_source_id: u32,
+    pub type_source_id: i32,
     pub base_classes: RefCell<Vec<P<Type>>>,
     pub mro: RefCell<Vec<P<Type>>>,
     pub declaration: Cell<Option<P<Declaration>>>,
@@ -671,7 +671,7 @@ impl ClassType {
         module_name: &str,
         file_uri: &Uri,
         flags: ClassTypeFlags,
-        type_source_id: u32,
+        type_source_id: i32,
         declared_metaclass: Option<P<Type>>,
         effective_metaclass: Option<P<Type>>,
         doc_string: Option<&str>,
@@ -910,7 +910,7 @@ impl ClassType {
     pub fn is_defined_at_source(
         class_type: ClassType,
         file_uri: &Uri,
-        type_source_id: u32,
+        type_source_id: i32,
     ) -> bool {
         todo!()
     }
@@ -1725,7 +1725,7 @@ impl TypeCondition {
     }
 
     // analyzer/types.ts:2602
-    pub(crate) fn _compare(c1: &TypeCondition, c2: &TypeCondition) -> f64 {
+    pub(crate) fn _compare(c1: &TypeCondition, c2: &TypeCondition) -> i32 /*? 0 | 1 | -1 */ {
         todo!()
     }
 

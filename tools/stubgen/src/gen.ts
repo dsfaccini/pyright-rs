@@ -577,6 +577,10 @@ export class Gen {
         if (parts.every((p) => ts.isLiteralTypeNode(p) && ts.isStringLiteral(p.literal))) {
             return wrap(STR);
         }
+        // `-1 | 0 | 1`: one number site.
+        if (parts.every((p) => ts.isLiteralTypeNode(p) && (ts.isNumericLiteral(p.literal) || ts.isPrefixUnaryExpression(p.literal)))) {
+            return wrap(this.numberAt(site));
+        }
         const fam = this.familyOfParts(parts);
         if (fam) {
             return wrap(this.familyRootIR(fam));

@@ -264,6 +264,9 @@ export class NumberTable {
         this.seen.add(`${file}\0${site}`);
         const found = sites.get(site);
         if (found) {
+            if (!found.reviewed) {
+                found.note = guess()[1];
+            }
             return found.rust;
         }
         const [rust, note] = guess();
@@ -296,15 +299,21 @@ export class NumberTable {
         return lines.join('\n');
     }
 
-    unreviewed(): number {
-        let n = 0;
+    // Unreviewed sites this run mapped, in the given files and in all others.
+    unreviewed(files: Set<string>): [number, number] {
+        let inFiles = 0;
+        let other = 0;
         for (const [file, sites] of this.entries) {
             for (const [site, e] of sites) {
                 if (!e.reviewed && this.seen.has(`${file}\0${site}`)) {
-                    n++;
+                    if (files.has(file)) {
+                        inFiles++;
+                    } else {
+                        other++;
+                    }
                 }
             }
         }
-        return n;
+        return [inFiles, other];
     }
 }

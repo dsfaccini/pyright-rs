@@ -13,6 +13,7 @@ import { NumberTable, Run, loadRuns, loadTable } from './table.ts';
 import { Writes } from './writes.ts';
 import { checkRun } from './check.ts';
 import { coverage } from './coverage.ts';
+import { ifaceCheck } from './ifacecheck.ts';
 
 const here = path.dirname(path.dirname(new URL(import.meta.url).pathname));
 const repoRoot = path.resolve(here, '../..');
@@ -121,6 +122,14 @@ function generate(gen: Gen, run: Run, outDir: string) {
     if (cov.missing) {
         console.error(`coverage: ${cov.missing} declarations have no marker (see REPORT.md)`);
     }
+    for (const f of gen.table.factories) {
+        if (!run.files.includes(f.file) || !f.iface) {
+            continue;
+        }
+        const r = ifaceCheck(path.join(gen.loaded.srcRoot, gen.fileOfKey(f.iface)), gen.nameOfKey(f.iface), path.join(outDir, 'stubs', modulePathOf(f.file) + '.rs'), f.name);
+        cov.lines.push(r.line);
+        cov.missing += r.missing.length;
+    }
     writeFileSync(path.join(outDir, 'REPORT.md'), report(gen, run, wanted, notes, cov.lines));
     const rs: string[] = [];
     const collect = (dir: string) => {
@@ -145,12 +154,13 @@ function report(gen: Gen, run: Run, deps: Map<string, Set<string>>, notes: strin
     for (const f of run.files) {
         lines.push(`- \`stubs/${modulePathOf(f)}.rs\` from \`${f}\``);
     }
-    lines.push('', 'Every function, method and type of each stubbed file has a `// <file>:<line>` marker:', '', ...cov);
+    lines.push('', 'Coverage: markers for every TypeScript function, method and type of each stubbed file, and methods for every member of each factory interface:', '', ...cov);
     lines.push('', 'Dependency placeholders (compile check only):', '');
     for (const [f, names] of [...deps].sort()) {
         lines.push(`- \`deps/${modulePathOf(f)}.rs\`: ${[...names].sort().join(', ')}`);
     }
-    lines.push('', `Number sites without a reviewed type: ${gen.numbers.unreviewed()} (see numbers.toml, values ending in "?").`, '');
+    const [stubSites, depSites] = gen.numbers.unreviewed(new Set(run.files));
+    lines.push('', `Number sites without a reviewed type (numbers.toml, values ending in "?"): ${stubSites} in the stubbed files, ${depSites} in placeholders.`, '');
     const unmapped = [...gen.unmapped].sort((a, b) => b[1].length - a[1].length);
     lines.push(`Unmapped TypeScript types (rendered with a \`/*? ... */\` marker): ${unmapped.length} distinct.`, '');
     for (const [ts, sites] of unmapped) {

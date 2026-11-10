@@ -234,7 +234,7 @@ pub(crate) const VERIFY_TYPE_CACHE_EVALUATOR_FLAGS: bool = false;
 pub(crate) const PRINT_EXPRESSION_TYPES: bool = false;
 
 // analyzer/typeEvaluator.ts:614
-pub const MAX_CODE_COMPLEXITY: u32 = 768;
+pub const MAX_CODE_COMPLEXITY: f64 = 768.0;
 
 // analyzer/typeEvaluator.ts:616
 #[derive(Clone)]

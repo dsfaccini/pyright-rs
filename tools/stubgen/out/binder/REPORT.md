@@ -12,7 +12,7 @@ Stubs (copy candidates for `crates/pyright/src`):
 - `stubs/analyzer/parse_tree_utils.rs` from `analyzer/parseTreeUtils.ts`
 - `stubs/analyzer/static_expressions.rs` from `analyzer/staticExpressions.ts`
 
-Every function, method and type of each stubbed file has a `// <file>:<line>` marker:
+Coverage: markers for every TypeScript function, method and type of each stubbed file, and methods for every member of each factory interface:
 
 - `analyzer/binder.ts`: 132/132 declarations have a marker
 - `analyzer/scope.ts`: 19/19 declarations have a marker
@@ -47,7 +47,7 @@ Dependency placeholders (compile check only):
 - `deps/parser/tokenizer.rs`: IgnoreComment, IgnoreCommentRule, TokenizerOutput
 - `deps/parser/tokenizer_types.rs`: Comment, CommentType, FStringMiddleToken, FStringStartToken, IdentifierToken, KeywordToken, KeywordType, NewLineType, OperatorType, StringToken, StringTokenFlags, TokenBase, TokenType
 
-Number sites without a reviewed type: 80 (see numbers.toml, values ending in "?").
+Number sites without a reviewed type (numbers.toml, values ending in "?"): 0 in the stubbed files, 31 in placeholders.
 
 Unmapped TypeScript types (rendered with a `/*? ... */` marker): 8 distinct.
 

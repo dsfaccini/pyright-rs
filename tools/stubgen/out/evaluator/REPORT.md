@@ -5,10 +5,11 @@ Stubs (copy candidates for `crates/pyright/src`):
 - `stubs/analyzer/type_evaluator.rs` from `analyzer/typeEvaluator.ts`
 - `stubs/analyzer/types.rs` from `analyzer/types.ts`
 
-Every function, method and type of each stubbed file has a `// <file>:<line>` marker:
+Coverage: markers for every TypeScript function, method and type of each stubbed file, and methods for every member of each factory interface:
 
 - `analyzer/typeEvaluator.ts`: 416/416 declarations have a marker
 - `analyzer/types.ts`: 289/289 declarations have a marker
+- `TypeEvaluator`: 112/112 members are `pub` methods of `TypeEvaluator`
 
 Dependency placeholders (compile check only):
 
@@ -41,9 +42,9 @@ Dependency placeholders (compile check only):
 - `deps/parser/parse_nodes.rs`: ArgCategory, ArgumentNode, AssertNode, AssignmentExpressionNode, AssignmentNode, AugmentedAssignmentNode, AwaitNode, BinaryOperationNode, BreakNode, CallNode, CaseNode, ClassNode, ComprehensionForIfNode, ComprehensionForNode, ComprehensionIfNode, ComprehensionNode, ConstantNode, ContinueNode, DecoratorNode, DelNode, DictionaryEntryNode, DictionaryExpandEntryNode, DictionaryKeyEntryNode, DictionaryNode, EllipsisNode, ErrorExpressionCategory, ErrorNode, ExceptNode, ExecutionScopeNode, ExpressionNode, ForNode, FormatStringNode, FunctionAnnotationNode, FunctionNode, GlobalNode, IfNode, ImportAsNode, ImportFromAsNode, ImportFromNode, ImportNode, IndexNode, LambdaNode, ListNode, MatchNode, MemberAccessNode, ModuleNameNode, ModuleNode, NameNode, NonlocalNode, NumberNode, ParamCategory, ParameterNode, ParseNodeBase, ParseNodeType, PassNode, PatternAsNode, PatternAtomNode, PatternCaptureNode, PatternClassArgumentNode, PatternClassNode, PatternLiteralNode, PatternMappingEntryNode, PatternMappingExpandEntryNode, PatternMappingKeyEntryNode, PatternMappingNode, PatternSequenceNode, PatternValueNode, RaiseNode, ReturnNode, SetNode, SliceNode, StatementListNode, StatementNode, StringListNode, StringNode, SuiteNode, TernaryNode, TryNode, TupleNode, TypeAliasNode, TypeAnnotationNode, TypeParamKind, TypeParameterListNode, TypeParameterNode, UnaryOperationNode, UnpackNode, WhileNode, WithItemNode, WithNode, YieldFromNode, YieldNode
 - `deps/parser/tokenizer_types.rs`: Comment, CommentType, FStringMiddleToken, FStringStartToken, IdentifierToken, KeywordToken, KeywordType, NewLineType, OperatorType, StringToken, StringTokenFlags, TokenBase, TokenType
 
-Number sites without a reviewed type: 154 (see numbers.toml, values ending in "?").
+Number sites without a reviewed type (numbers.toml, values ending in "?"): 0 in the stubbed files, 53 in placeholders.
 
-Unmapped TypeScript types (rendered with a `/*? ... */` marker): 6 distinct.
+Unmapped TypeScript types (rendered with a `/*? ... */` marker): 7 distinct.
 
 - `any` x12: analyzer/typeEvaluator.ts:LogWrapper, common/diagnostic.ts:Diagnostic._data, analyzer/typeCacheUtils.ts:SpeculativeEntry.cache, ...
 - `Uri | AbsoluteModuleDescriptor` x4: analyzer/analyzerFileInfo.ts:ImportLookup
@@ -51,6 +52,7 @@ Unmapped TypeScript types (rendered with a `/*? ... */` marker): 6 distinct.
 - `Parameters<T>` x1: analyzer/typeEvaluator.ts:LogWrapper
 - `ReturnType<T>` x1: analyzer/typeEvaluator.ts:LogWrapper
 - `object` x1: analyzer/types.ts:ClassDetailsShared.protocolCompatibility
+- `0 | 1 | -1` x1: analyzer/types.ts:TypeCondition._compare.return
 
 Interfaces held as `P<T>` by the default rule (a field is written after construction); set [modes] to override:
 

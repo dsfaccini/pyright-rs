@@ -85,7 +85,7 @@ pub fn get_class_full_name(
 }
 
 // analyzer/parseTreeUtils.ts:199
-pub fn get_type_source_id(node: P<ParseNode>) -> u32 {
+pub fn get_type_source_id(node: P<ParseNode>) -> i32 {
     todo!()
 }
 
@@ -332,7 +332,7 @@ pub struct NameNodeWalker {
     pub(crate) _annotation_node_info: Option<&'static dyn AnalyzerNodeInfoReader>,
     pub(crate) _subscript_index: Option<i32>,
     pub(crate) _base_expression: Option<ExpressionNode>,
-    pub(crate) _callback: Rc<dyn Fn(NameNode, Option<f64>, Option<ExpressionNode>)>,
+    pub(crate) _callback: Rc<dyn Fn(NameNode, Option<i32>, Option<ExpressionNode>)>,
 }
 
 impl ParseTreeWalker for NameNodeWalker {
@@ -363,7 +363,7 @@ impl ParseTreeVisitor<bool> for NameNodeWalker {
 
 impl NameNodeWalker {
     // analyzer/parseTreeUtils.ts:1710
-    pub fn new(_callback: &mut dyn FnMut(NameNode, Option<f64>, Option<ExpressionNode>)) -> Self {
+    pub fn new(_callback: &mut dyn FnMut(NameNode, Option<i32>, Option<ExpressionNode>)) -> Self {
         todo!()
     }
 }
