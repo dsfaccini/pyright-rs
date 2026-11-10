@@ -6,11 +6,12 @@ None.
 
 ## Shared-file edits
 
+- `crates/jsrt` (approved by the main session): `array::slice`, JS `Array.prototype.slice` on a Rust slice, with the `arrays` section of `fixtures/gen.mjs`, `fixtures/arrays.json`, `tests/arrays.rs` and a README row. `string::slice_range` became `pub(crate)` so both share one index rule. `adjustSourceParamDetailsForDestVariadic` uses it for its slices, whose end index can be negative.
 - `crates/pyright/src/analyzer/type_printer.rs` (share G's file): the body of `FunctionReturnTypeCallback::call`, marker `typeEvaluator.ts:30313`, which share E owns (`docs/step5-shares.md`).
 
 ## Needs from others
 
-- `jsrt` owner: an `Array.prototype.slice` helper (negative indexes count from the end, both clamp). `adjustSourceParamDetailsForDestVariadic` slices with an end index that can be negative; until a helper exists it uses a local closure with those semantics.
+None.
 
 ## Doubts
 

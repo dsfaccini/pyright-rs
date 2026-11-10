@@ -25463,19 +25463,6 @@ impl TypeEvaluator {
         src_details: &mut ParamListDetails,
         dest_details: &ParamListDetails,
     ) {
-        // `Array.prototype.slice(start, end)`: a negative index counts from the end,
-        // and both indexes clamp to the array.
-        let js_slice = |params: &[P<analyzer::parameter_utils::VirtualParamDetails>], start: i32, end: i32| {
-            let len = params.len() as i32;
-            let start = if start < 0 { (len + start).max(0) } else { start.min(len) };
-            let end = if end < 0 { (len + end).max(0) } else { end.min(len) };
-            if start < end {
-                params[start as usize..end as usize].to_vec()
-            } else {
-                Vec::new()
-            }
-        };
-
         // If there is no *args parameter in the dest, we have nothing to do.
         let Some(dest_args_index) = dest_details.args_index else {
             return;
@@ -25519,7 +25506,7 @@ impl TypeEvaluator {
             .unwrap_or(dest_details.params.len() as i32);
         let suffix_length = dest_first_non_positional - dest_args_index - 1;
         let src_positionals_to_pack =
-            js_slice(&src_details.params, dest_args_index, src_last_to_pack_index - suffix_length);
+            jsrt::array::slice(&src_details.params, dest_args_index, src_last_to_pack_index - suffix_length).to_vec();
         let mut src_tuple_types: Vec<TupleTypeArg> = Vec::new();
         for entry in &src_positionals_to_pack {
             if entry.param.category == ParamCategory::ArgsList {
@@ -25550,7 +25537,7 @@ impl TypeEvaluator {
             // Snip out the portion of the source positionals that map to the variadic
             // dest parameter and replace it with a single parameter that is typed as a
             // tuple containing the individual types of the replaced parameters.
-            let mut new_params = js_slice(&src_details.params, 0, dest_args_index);
+            let mut new_params = jsrt::array::slice(&src_details.params, 0, dest_args_index).to_vec();
             new_params.push(P::new_eval(analyzer::parameter_utils::VirtualParamDetails {
                 param: FunctionParam::create(
                     ParamCategory::ArgsList,
@@ -25567,7 +25554,7 @@ impl TypeEvaluator {
                 index: -1,
                 kind: analyzer::parameter_utils::ParamKind::Positional,
             }));
-            new_params.extend(js_slice(
+            new_params.extend_from_slice(jsrt::array::slice(
                 &src_details.params,
                 dest_args_index + src_positionals_to_pack.len() as i32,
                 src_details.params.len() as i32,
