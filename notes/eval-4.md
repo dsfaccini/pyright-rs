@@ -10,7 +10,6 @@ None.
 
 ## Needs from others
 
-- Shares B and F: `get_code_flow_engine` takes `SpeculativeTypeTracker` by value, and `CodeFlowEngine.speculative_type_tracker` holds that copy. In TypeScript `createTypeEvaluator` hands its one `speculativeTypeTracker` object to `getCodeFlowEngine`, so the evaluator and the code-flow engine share speculative state. Two copies diverge as soon as `use_speculative_mode` enters a context. It needs a shared handle on both sides.
 
 ## Doubts
 
