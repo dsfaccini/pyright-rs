@@ -1465,7 +1465,19 @@ impl TypeEvaluator {
         type_: TypeVarTupleType,
         node: P<ParseNode>,
     ) -> bool {
-        todo!()
+        if !type_.d().priv_.borrow().is_unpacked.unwrap_or(false) {
+            let name = type_.d().shared.get().name.borrow().clone();
+            self.add_diagnostic(
+                DiagnosticRule::reportInvalidTypeForm,
+                &crate::localization::localize::LocMessage::unpacked_type_var_tuple_expected()
+                    .format(&[("name1", &name), ("name2", &name)]),
+                node,
+                None,
+            );
+            return false;
+        }
+
+        true
     }
 
     // analyzer/typeEvaluator.ts:7697
@@ -1474,12 +1486,134 @@ impl TypeEvaluator {
         type_: P<Type>,
         error_node: Option<ExpressionNode>,
     ) -> P<Type> {
-        todo!()
+        let mut type_ = type_;
+
+        // Is this a type alias?
+        let Some(alias_info) = type_
+            .props
+            .borrow()
+            .as_ref()
+            .and_then(|p| p.type_alias_info.clone())
+        else {
+            return type_;
+        };
+
+        // Is this a generic type alias that needs specializing?
+        let type_params = alias_info.shared.type_params.borrow().clone();
+        let Some(type_params) = type_params else {
+            return type_;
+        };
+        if type_params.is_empty() || alias_info.type_args.is_some() {
+            return type_;
+        }
+
+        let mut report_diag = false;
+        let mut default_type_args: Vec<P<Type>> = Vec::new();
+        let constraints = ConstraintTracker::new();
+
+        for param in type_params.iter().copied() {
+            if !param.d().shared.get().is_default_explicit.get() {
+                report_diag = true;
+            }
+
+            let default_type: P<Type>;
+            if param.d().shared.get().is_default_explicit.get()
+                || analyzer::types::is_param_spec(param.0)
+            {
+                default_type = self.solve_and_apply_constraints(
+                    param.0,
+                    constraints,
+                    Some(&ApplyTypeVarOptions {
+                        type_class_type: None,
+                        replace_unsolved: Some(
+                            analyzer::type_utils::ApplyTypeVarOptionsReplaceUnsolved {
+                                scope_ids: vec![alias_info.shared.type_var_scope_id.clone()],
+                                tuple_class_type: self.get_tuple_class_type(),
+                                unsolved_exempt_type_vars: None,
+                                use_unknown: None,
+                                eliminate_unsolved_in_unions: None,
+                            },
+                        ),
+                    }),
+                    None,
+                );
+            } else if analyzer::types::is_type_var_tuple(param.0)
+                && self
+                    .prefetched
+                    .borrow()
+                    .as_ref()
+                    .and_then(|p| p.tuple_class)
+                    .is_some_and(analyzer::types::is_instantiable_class)
+            {
+                default_type = analyzer::tuples::make_tuple_object(
+                    self,
+                    &[TupleTypeArg {
+                        type_: analyzer::types::UnknownType::create(false).0,
+                        is_unbounded: true,
+                        is_optional: None,
+                    }],
+                    /* isUnpacked */ true,
+                );
+            } else {
+                default_type = analyzer::types::UnknownType::create(false).0;
+            }
+
+            default_type_args.push(default_type);
+            constraints.set_bounds(param, Some(default_type), None, None);
+        }
+
+        if report_diag {
+            if let Some(error_node) = error_node {
+                self.add_diagnostic(
+                    DiagnosticRule::reportMissingTypeArgument,
+                    &crate::localization::localize::LocMessage::type_args_missing_for_alias()
+                        .format(&[("name", &alias_info.shared.name)]),
+                    error_node,
+                    None,
+                );
+            }
+        }
+
+        type_ = analyzer::types::TypeBase::clone_for_type_alias(
+            self.solve_and_apply_constraints(
+                type_,
+                constraints,
+                Some(&ApplyTypeVarOptions {
+                    type_class_type: None,
+                    replace_unsolved: Some(
+                        analyzer::type_utils::ApplyTypeVarOptionsReplaceUnsolved {
+                            scope_ids: vec![alias_info.shared.type_var_scope_id.clone()],
+                            tuple_class_type: self.get_tuple_class_type(),
+                            unsolved_exempt_type_vars: None,
+                            use_unknown: None,
+                            eliminate_unsolved_in_unions: None,
+                        },
+                    ),
+                }),
+                None,
+            ),
+            &TypeAliasInfo {
+                type_args: Some(default_type_args),
+                ..alias_info
+            },
+        );
+
+        type_
     }
 
     // analyzer/typeEvaluator.ts:7763
     pub(crate) fn convert_type_arg_to_instance(&self, type_: P<Type>, flags: EvalFlags) -> P<Type> {
-        todo!()
+        let contextual_type = if flags.any(EvalFlags::TypeFormArg) {
+            type_
+                .props
+                .borrow()
+                .as_ref()
+                .and_then(|p| p.type_form)
+                .unwrap_or(type_)
+        } else {
+            type_
+        };
+        analyzer::type_utils::convert_to_instance(contextual_type, true)
     }
 
     // analyzer/typeEvaluator.ts:7770
@@ -1489,7 +1623,415 @@ impl TypeEvaluator {
         base_type: P<Type>,
         flags: EvalFlags,
     ) -> Option<TypeResultWithNode> {
-        todo!()
+        let mut alias_info = base_type
+            .props
+            .borrow()
+            .as_ref()
+            .and_then(|p| p.type_alias_info.clone());
+        let mut alias_base_type = base_type;
+
+        if alias_info.is_none() {
+            let type_form = base_type.props.borrow().as_ref().and_then(|p| p.type_form);
+            if let Some(type_form) = type_form {
+                alias_info = type_form
+                    .props
+                    .borrow()
+                    .as_ref()
+                    .and_then(|p| p.type_alias_info.clone());
+                alias_base_type = analyzer::type_utils::convert_to_instantiable(type_form, true);
+            }
+        }
+
+        let Some(alias_info) = alias_info else {
+            return None;
+        };
+        let Some(type_params) = alias_info.shared.type_params.borrow().clone() else {
+            return None;
+        };
+        if type_params.is_empty() && alias_info.type_args.is_some() {
+            return None;
+        }
+
+        // If this is not instantiable, then the index expression isn't a specialization.
+        if !analyzer::types::TypeBase::is_instantiable(alias_base_type) {
+            return None;
+        }
+
+        // If this is already specialized, the index expression isn't a specialization.
+        if alias_info.type_args.is_some() {
+            return None;
+        }
+
+        self.infer_variance_for_type_alias(base_type);
+
+        let mut type_args: Option<Vec<TypeResultWithNode>>;
+        let mut raw_type_args = self.get_type_args(node, flags, None);
+        type_args = Some(self.adjust_type_args_for_type_var_tuple(
+            &mut raw_type_args,
+            &type_params,
+            node.0,
+        ));
+        let mut reported_error = false;
+
+        type_args =
+            self.transform_type_args_for_param_spec(&type_params, type_args.as_deref(), node.0);
+        let type_args = match type_args {
+            Some(type_args) => type_args,
+            None => {
+                reported_error = true;
+                Vec::new()
+            }
+        };
+
+        let mut min_type_arg_count = type_params.len();
+        let first_default_param_index = type_params
+            .iter()
+            .position(|param| param.d().shared.get().is_default_explicit.get());
+        if let Some(first_default_param_index) = first_default_param_index {
+            min_type_arg_count = first_default_param_index;
+        }
+
+        if type_args.len() > type_params.len() {
+            self.add_diagnostic(
+                DiagnosticRule::reportInvalidTypeForm,
+                &crate::localization::localize::LocMessage::type_args_too_many().format(&[
+                    ("name", &self.print_type(alias_base_type, None)),
+                    ("expected", &type_params.len().to_string()),
+                    ("received", &type_args.len().to_string()),
+                ]),
+                type_args[type_params.len()].node,
+                None,
+            );
+            reported_error = true;
+        } else if type_args.len() < min_type_arg_count {
+            let items = node.d().items.borrow().clone();
+            self.add_diagnostic(
+                DiagnosticRule::reportInvalidTypeForm,
+                &crate::localization::localize::LocMessage::type_args_too_few().format(&[
+                    ("name", &self.print_type(alias_base_type, None)),
+                    ("expected", &type_params.len().to_string()),
+                    ("received", &type_args.len().to_string()),
+                ]),
+                items[items.len() - 1].0,
+                None,
+            );
+            reported_error = true;
+        }
+
+        // Handle the mypy_extensions.FlexibleAlias type specially.
+        if let Some(alias_base_class) = ClassType::cast(alias_base_type) {
+            if analyzer::types::is_instantiable_class(alias_base_type)
+                && alias_base_class.d().shared.get().full_name == "mypy_extensions.FlexibleAlias"
+                && !type_args.is_empty()
+            {
+                return Some(TypeResultWithNode::new(type_args[0].type_, node.0));
+            }
+        }
+
+        let constraints = ConstraintTracker::new();
+        let diag = DiagnosticAddendum::new();
+
+        for (index, param) in type_params.iter().copied().enumerate() {
+            if analyzer::types::is_param_spec(param.0) && index < type_args.len() {
+                let type_arg_type = type_args[index].type_;
+                let type_list = type_args[index].type_list.as_ref();
+
+                if let Some(type_list) = type_list {
+                    let function_type = FunctionType::create_synthesized_instance(
+                        "",
+                        FunctionTypeFlags::ParamSpecValue,
+                    );
+                    for (param_index, param_type_result) in type_list.iter().enumerate() {
+                        let mut param_type = param_type_result.type_;
+
+                        if !self.validate_type_arg(param_type_result, None) {
+                            param_type = analyzer::types::UnknownType::create(false).0;
+                        }
+
+                        FunctionType::add_param(
+                            function_type,
+                            &FunctionParam::create(
+                                ParamCategory::Simple,
+                                analyzer::type_utils::convert_to_instance(param_type, true),
+                                analyzer::types::FunctionParamFlags::NameSynthesized
+                                    | analyzer::types::FunctionParamFlags::TypeDeclared,
+                                Some(&format!("__p{param_index}")),
+                                None,
+                                None,
+                            ),
+                        );
+                    }
+
+                    if !type_list.is_empty() {
+                        FunctionType::add_position_only_param_separator(function_type);
+                    }
+
+                    analyzer::constraint_solver::assign_type_var(
+                        self,
+                        param,
+                        function_type.0,
+                        Some(diag),
+                        Some(constraints),
+                        AssignTypeFlags::RetainLiteralsForTypeVar,
+                        0,
+                    );
+                } else if analyzer::types::is_param_spec(type_arg_type) {
+                    analyzer::constraint_solver::assign_type_var(
+                        self,
+                        param,
+                        analyzer::type_utils::convert_to_instance(type_arg_type, true),
+                        Some(diag),
+                        Some(constraints),
+                        AssignTypeFlags::RetainLiteralsForTypeVar,
+                        0,
+                    );
+                } else if analyzer::types::is_instantiable_class(type_arg_type)
+                    && ClassType::is_built_in(
+                        ClassType(type_arg_type),
+                        Some(&["Concatenate".to_string()]),
+                    )
+                {
+                    let concat_type_args = ClassType(type_arg_type)
+                        .d()
+                        .priv_
+                        .borrow()
+                        .type_args
+                        .clone();
+                    let function_type =
+                        FunctionType::create_instance("", "", "", FunctionTypeFlags::None, None);
+
+                    if let Some(concat_type_args) =
+                        concat_type_args.as_ref().filter(|a| !a.is_empty())
+                    {
+                        for (index, type_arg) in concat_type_args.iter().copied().enumerate() {
+                            if index == concat_type_args.len() - 1 {
+                                FunctionType::add_position_only_param_separator(function_type);
+
+                                if analyzer::types::is_param_spec(type_arg) {
+                                    FunctionType::add_param_spec_variadics(
+                                        function_type,
+                                        ParamSpecType(type_arg),
+                                    );
+                                } else if analyzer::type_utils::is_ellipsis_type(type_arg) {
+                                    FunctionType::add_default_params(function_type, false);
+                                    let shared = function_type.d().shared.get();
+                                    shared.flags.set(
+                                        shared.flags.get() | FunctionTypeFlags::GradualCallableForm,
+                                    );
+                                }
+                            } else {
+                                FunctionType::add_param(
+                                    function_type,
+                                    &FunctionParam::create(
+                                        ParamCategory::Simple,
+                                        type_arg,
+                                        analyzer::types::FunctionParamFlags::NameSynthesized
+                                            | analyzer::types::FunctionParamFlags::TypeDeclared,
+                                        Some(&format!("__p{index}")),
+                                        None,
+                                        None,
+                                    ),
+                                );
+                            }
+                        }
+                    }
+
+                    analyzer::constraint_solver::assign_type_var(
+                        self,
+                        param,
+                        function_type.0,
+                        Some(diag),
+                        Some(constraints),
+                        AssignTypeFlags::RetainLiteralsForTypeVar,
+                        0,
+                    );
+                } else if analyzer::type_utils::is_ellipsis_type(type_arg_type) {
+                    let function_type = FunctionType::create_synthesized_instance(
+                        "",
+                        FunctionTypeFlags::ParamSpecValue | FunctionTypeFlags::GradualCallableForm,
+                    );
+                    FunctionType::add_default_params(function_type, false);
+                    analyzer::constraint_solver::assign_type_var(
+                        self,
+                        param,
+                        function_type.0,
+                        Some(diag),
+                        Some(constraints),
+                        AssignTypeFlags::Default,
+                        0,
+                    );
+                } else {
+                    self.add_diagnostic(
+                        DiagnosticRule::reportInvalidTypeForm,
+                        &crate::localization::localize::LocMessage::type_arg_list_expected(),
+                        type_args[index].node,
+                        None,
+                    );
+                    reported_error = true;
+                }
+            } else {
+                if index < type_args.len() && type_args[index].type_list.is_some() {
+                    self.add_diagnostic(
+                        DiagnosticRule::reportInvalidTypeForm,
+                        &crate::localization::localize::LocMessage::type_arg_list_not_allowed(),
+                        type_args[index].node,
+                        None,
+                    );
+                    reported_error = true;
+                }
+
+                let mut type_arg_type: P<Type>;
+                if index < type_args.len() {
+                    type_arg_type =
+                        self.convert_type_arg_to_instance(type_args[index].type_, flags);
+                } else if param.d().shared.get().is_default_explicit.get() {
+                    type_arg_type = self.solve_and_apply_constraints(
+                        param.0,
+                        constraints,
+                        Some(&ApplyTypeVarOptions {
+                            type_class_type: None,
+                            replace_unsolved: Some(
+                                analyzer::type_utils::ApplyTypeVarOptionsReplaceUnsolved {
+                                    scope_ids: vec![alias_info.shared.type_var_scope_id.clone()],
+                                    tuple_class_type: self.get_tuple_class_type(),
+                                    unsolved_exempt_type_vars: None,
+                                    use_unknown: None,
+                                    eliminate_unsolved_in_unions: None,
+                                },
+                            ),
+                        }),
+                        None,
+                    );
+                } else {
+                    type_arg_type = analyzer::types::UnknownType::create(false).0;
+                }
+
+                if flags.any(EvalFlags::EnforceVarianceConsistency) {
+                    let usage_variances = self.infer_variance_for_type_alias(alias_base_type);
+                    if let Some(usage_variances) = usage_variances {
+                        if index < usage_variances.len() {
+                            let usage_variance = usage_variances[index];
+
+                            if !analyzer::type_utils::is_variance_of_type_arg_compatible(
+                                type_arg_type,
+                                usage_variance,
+                            ) {
+                                let message_diag = diag.create_addendum();
+                                message_diag.add_message(
+                            crate::localization::localize::LocAddendum::variance_mismatch_for_type_alias().format(&[
+                                ("typeVarName", &self.print_type(type_arg_type, None)),
+                                ("typeAliasParam", &self.print_type(type_params[index].0, None)),
+                            ]),
+                        );
+                                message_diag.add_text_range(
+                                    common::text_range::HasTextRange::text_range(
+                                        &*type_args[index].node,
+                                    ),
+                                );
+                            }
+                        }
+                    }
+                }
+
+                if analyzer::types::is_unpacked(type_arg_type)
+                    && !analyzer::types::is_type_var_tuple(param.0)
+                {
+                    let message_diag = diag.create_addendum();
+                    message_diag.add_message(
+                        crate::localization::localize::LocMessage::unpacked_arg_in_type_argument(),
+                    );
+                    message_diag.add_text_range(common::text_range::HasTextRange::text_range(
+                        &*type_args[index].node,
+                    ));
+                    type_arg_type = analyzer::types::UnknownType::create(false).0;
+                }
+
+                analyzer::constraint_solver::assign_type_var(
+                    self,
+                    param,
+                    type_arg_type,
+                    Some(diag),
+                    Some(constraints),
+                    AssignTypeFlags::RetainLiteralsForTypeVar,
+                    0,
+                );
+            }
+        }
+
+        if !diag.is_empty() {
+            let range = diag
+                .get_effective_text_range()
+                .unwrap_or_else(|| common::text_range::HasTextRange::text_range(&*node));
+            self.add_diagnostic(
+                DiagnosticRule::reportInvalidTypeForm,
+                &(crate::localization::localize::LocMessage::type_not_specializable()
+                    .format(&[("type", &self.print_type(alias_base_type, None))])
+                    + &diag.get_string(
+                        common::diagnostic::DEFAULT_MAX_DIAGNOSTIC_DEPTH,
+                        common::diagnostic::DEFAULT_MAX_DIAGNOSTIC_LINE_COUNT,
+                    )),
+                node.0,
+                Some(&range),
+            );
+            reported_error = true;
+        }
+
+        let solution_set = analyzer::constraint_solver::solve_constraints(self, constraints, None)
+            .get_main_solution_set();
+        let mut alias_type_args: Vec<P<Type>> = Vec::new();
+
+        let type_params_now = alias_info.shared.type_params.borrow().clone();
+        if let Some(type_params_now) = type_params_now {
+            for type_param in type_params_now {
+                let mut type_var_type = solution_set.get_type(type_param);
+
+                // Fill in any unsolved type arguments with unknown.
+                if type_var_type.is_none() {
+                    let unknown = analyzer::type_utils::get_unknown_for_type_var(
+                        type_param,
+                        self.get_tuple_class_type(),
+                    );
+                    constraints.set_bounds(type_param, Some(unknown), None, None);
+                    type_var_type = Some(unknown);
+                }
+
+                alias_type_args.push(type_var_type.unwrap());
+            }
+        }
+
+        let mut type_ = analyzer::types::TypeBase::clone_for_type_alias(
+            self.solve_and_apply_constraints(alias_base_type, constraints, None, None),
+            &TypeAliasInfo {
+                type_args: Some(alias_type_args),
+                ..alias_info
+            },
+        );
+
+        type_ = analyzer::types::TypeBase::clone_with_type_form(
+            type_,
+            if reported_error {
+                None
+            } else {
+                Some(analyzer::type_utils::convert_to_instance(type_, true))
+            },
+        );
+
+        if base_type
+            .props
+            .borrow()
+            .as_ref()
+            .is_some_and(|p| p.type_alias_info.is_some())
+        {
+            return Some(TypeResultWithNode::new(type_, node.0));
+        }
+
+        Some(TypeResultWithNode::new(
+            analyzer::types::TypeBase::clone_with_type_form(
+                base_type,
+                Some(analyzer::type_utils::convert_to_instance(type_, true)),
+            ),
+            node.0,
+        ))
     }
 
     // analyzer/typeEvaluator.ts:8049
