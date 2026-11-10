@@ -456,4 +456,74 @@ flowNodes: [26]
     targetSymbolId: #0 "os"
 ```
 
-Sections for the diag and types stages follow in later commits.
+## diag stage
+
+Written at the end of the run from the `SourceFile`'s diagnostic lists, in this fixed order:
+
+```
+parse: [<n>]
+  [<i>]: <diagnostic>
+comment: [<n>]
+bind: [<n>]
+checker: [<n>]
+taskList: [<n>]
+final: [<n>]
+```
+
+| list | `SourceFile` field |
+|---|---|
+| parse | `parseDiagnostics` |
+| comment | `commentDiagnostics` |
+| bind | `bindDiagnostics` |
+| checker | `checkerDiagnostics` |
+| taskList | `taskListDiagnostics` |
+| final | `accumulatedDiagnostics`, the list `getDiagnostics` returns after ignore comments, rule levels and unnecessary-ignore checks |
+
+Each list keeps pyright's order. A diagnostic prints on one line:
+
+```
+[<i>]: <category> <range> <rule> <message>
+```
+
+- `<category>`: the `DiagnosticCategory` number: Error 0, Warning 1, Information 2, UnusedCode 3, UnreachableCode 4, Deprecated 5, TaskItem 6.
+- `<range>`: the Range form, `<start.line>:<start.character>-<end.line>:<end.character>`, zero-based, characters in UTF-16 code units.
+- `<rule>`: `getRule()`, for example `reportAttributeAccessIssue`, or `-` when it has none.
+- `<message>`: the escaped message string.
+
+Example:
+
+```
+parse: [0]
+comment: [0]
+bind: [0]
+checker: [1]
+  [0]: 3 0:7-0:9 - "\"os\" is not accessed"
+taskList: [0]
+final: [1]
+  [0]: 3 0:7-0:9 - "\"os\" is not accessed"
+```
+
+## types stage
+
+Written at the end of the run. For each node in walk order (all string annotations, see "tree walk") that has an entry in the evaluator's main type cache, one line at depth 0:
+
+```
+<NodeRef>:[ flags=<flags>][ incomplete] <type>
+```
+
+- The main type cache is `typeCache` in `createTypeEvaluator`, keyed by node id. The speculative, TypeForm, expected-type and return-type-inference caches are not read. Reading never evaluates anything.
+- `flags=<flags>`: the entry's `flags` (`EvalFlags` number), omitted when undefined.
+- `incomplete`: present when the entry's `typeResult.isIncomplete` is true.
+- `<type>`: the escaped string of `TypePrinter.printType(type, getPrintTypeFlags(configOptions), returnTypeCallback)`. The callback returns `FunctionType.getEffectiveReturnType(functionType)` (specialized, then declared, then already-inferred return type), or `Unknown` when that is undefined, so printing never runs return type inference.
+
+Any node type can have an entry, not only expressions: statements such as `Assignment`, `Suite` and `Match`, and `Class`, `Function`, `ImportAs` and `ImportFromAs` nodes.
+
+Example:
+
+```
+Name@35+1: flags=0 "List[int]"
+StringList@38+11: flags=33277 "type[List[int]]"
+Number@53+1: flags=268435456 "Literal[1]"
+Function@76+65: flags=0 "(a: Unknown, b: int = 3) -> int"
+Name@4615+6: flags=239206813 incomplete "type[object]"
+```
