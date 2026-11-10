@@ -1,0 +1,33 @@
+[package]
+name = "pyright"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+jsrt = { version = "0.1.0", path = "../jsrt" }
+
+[[bin]]
+name = "pyright-rs"
+path = "src/main.rs"
+
+# Lints that fight a line-by-line port of TypeScript.
+[lints.rust]
+non_upper_case_globals = "allow"
+
+[lints.clippy]
+bool_comparison = "allow"
+collapsible_else_if = "allow"
+collapsible_if = "allow"
+comparison_chain = "allow"
+if_same_then_else = "allow"
+len_zero = "allow"
+manual_range_contains = "allow"
+match_like_matches_macro = "allow"
+module_inception = "allow"
+needless_range_loop = "allow"
+needless_return = "allow"
+new_without_default = "allow"
+nonminimal_bool = "allow"
+single_match = "allow"
+too_many_arguments = "allow"
+type_complexity = "allow"

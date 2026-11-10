@@ -13,6 +13,7 @@ Port pyright's quirks too, even where pyright's output looks wrong.
 Mirror pyright's layout: write one `.rs` file per ported `.ts` file.
 Mark each ported function with `// <file>.ts:<line>` of its TypeScript original.
 The markers keep each Rust function reviewable next to its original when upstream changes.
+Follow `docs/porting.md` for every ported file. It maps TypeScript types, strings, numbers and collections to Rust.
 
 ## scope
 
