@@ -34,12 +34,12 @@ impl Comparison {
     }
 }
 
-// common/core.ts:46
+// common/core.ts:42
 pub fn to_lower_case(x: &str) -> String {
     x.js_to_lower_case()
 }
 
-// common/core.ts:54
+// common/core.ts:52
 /// The string overload: `<` on JS strings compares UTF-16 code units.
 pub fn compare_comparable_values_str(a: Option<&str>, b: Option<&str>) -> Comparison {
     match (a, b) {
@@ -51,7 +51,7 @@ pub fn compare_comparable_values_str(a: Option<&str>, b: Option<&str>) -> Compar
     }
 }
 
-// common/core.ts:54
+// common/core.ts:52
 /// The number overload.
 pub fn compare_comparable_values_num(a: Option<f64>, b: Option<f64>) -> Comparison {
     match (a, b) {
@@ -63,12 +63,12 @@ pub fn compare_comparable_values_num(a: Option<f64>, b: Option<f64>) -> Comparis
     }
 }
 
-// common/core.ts:73
+// common/core.ts:68
 pub fn compare_values(a: Option<f64>, b: Option<f64>) -> Comparison {
     compare_comparable_values_num(a, b)
 }
 
-// common/core.ts:118
+// common/core.ts:122
 pub fn to_boolean(true_or_false: &str) -> bool {
     let normalized = true_or_false.js_trim().js_to_upper_case();
     if normalized == "TRUE" {
@@ -78,13 +78,13 @@ pub fn to_boolean(true_or_false: &str) -> bool {
     false
 }
 
-// common/core.ts:134
+// common/core.ts:138
 /// The CLI never runs under a Node inspector.
 pub fn is_debug_mode() -> bool {
     false
 }
 
-// common/core.ts:174
+// common/core.ts:178
 pub fn contains_only_whitespace(text: &str, start: Option<i32>, end: Option<i32>) -> bool {
     let text = match start {
         Some(start) => text.js_substring(start, end).into_owned(),

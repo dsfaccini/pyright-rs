@@ -13,16 +13,19 @@
 
 - `crates/jsrt/src/node_path.rs` (new): Node `path.posix` (normalize, resolve, basename, extname, dirname), fuzzed against node 26.
 - `crates/jsrt/src/vscode_uri.rs` (new): npm `vscode-uri` 3.1.0 `URI.file`, `URI.parse`, `toString`, `fsPath`, `Utils.resolvePath`.
-- `crates/jsrt/src/infra_shims.rs` (new): JS `String(n)` for numbers. Move to jsrt's number module when it lands.
-- `crates/jsrt/src/lib.rs`: declares the three modules above.
-- `crates/pyright/src/common/text_range.rs`, `text_range_collection.rs`, `position_utils.rs`: SHIMS with the frontend branch's signatures. Take the frontend version wholesale on merge.
+- `crates/jsrt/src/lib.rs`: declares the two modules above.
+- Switched to `jsrt::number` (main 8a4b41e): deleted `crates/jsrt/src/infra_shims.rs` (`number_to_string` had no callers left); `python_version.rs` parses with `jsrt::number::parse_int`.
 
 ## Needs from others
 
-- jsrt: JS `String(n)` for numbers (`infra_shims::number_to_string` until then).
-- frontend: `TextRange`, `Position`, `Range`, `TextRangeCollection<TextRange>`, `convert_offsets_to_range`, `is_empty_range(&Range)` with the signatures the shims use.
+- frontend: `Tokenizer.isPythonIdentifier`, the parser entry point and `ParseFileResults`.
+- binder: `symbolNameUtils` (`isDunderName`, `isPrivateOrProtectedName`) and `Binder.bindModule`.
 
 ## Doubts
+
+- Zip and egg archives on an import path are not read: pyright treats a `.zip`/`.egg` file with zip magic as a directory.
+- `getModulePath()` is `PYRIGHT_RS_MODULE_PATH` or the executable's directory; `typeshed-fallback` must sit there (or one level up). How typeshed ships is open.
+- Config `_convertBoolean`/`_convertDiagnosticLevel` print through Node's global `console.log`, i.e. to stdout even under `--outputjson`; ported as stdout.
 
 - Only English messages ship. pyright picks a translation only when the locale is a known key (`de`, `de-DE`, `VSCODE_NLS_CONFIG`); `LANG=de_DE.UTF-8` stays English. `load_strings_for_locale` panics for a non-English pick.
 - POSIX host only: `path.sep` is `/`, no drive-letter or backslash handling beyond what pyright does on Linux.

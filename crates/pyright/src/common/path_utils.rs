@@ -21,14 +21,14 @@ pub struct FileSpec {
     pub has_directory_wildcard: bool,
 }
 
-// common/pathUtils.ts:73
+// common/pathUtils.ts:71
 pub fn get_directory_path(path_string: &str) -> String {
     let last = path_string.rfind(SEP).map_or(-1, |i| i as isize);
     let end = (get_root_length(path_string) as isize).max(last) as usize;
     path_string[..end.min(path_string.len())].to_string()
 }
 
-// common/pathUtils.ts:80
+// common/pathUtils.ts:78
 pub fn get_root_length(path_string: &str) -> usize {
     let b = path_string.as_bytes();
     if b.first() == Some(&(SEP as u8)) {
@@ -52,12 +52,12 @@ pub fn get_root_length(path_string: &str) -> usize {
     0
 }
 
-// common/pathUtils.ts:104
+// common/pathUtils.ts:101
 pub fn get_path_separator(_path_string: &str) -> &'static str {
     "/"
 }
 
-// common/pathUtils.ts:108
+// common/pathUtils.ts:105
 pub fn get_path_components(path_string: &str) -> Vec<String> {
     let normalized_path = normalize_slashes(path_string);
     let root_length = get_root_length(&normalized_path);
@@ -75,7 +75,7 @@ pub fn get_path_components(path_string: &str) -> Vec<String> {
     reduce_path_components(&components)
 }
 
-// common/pathUtils.ts:122
+// common/pathUtils.ts:118
 pub fn reduce_path_components(components: &[String]) -> Vec<String> {
     if components.is_empty() {
         return Vec::new();
@@ -103,7 +103,7 @@ pub fn reduce_path_components(components: &[String]) -> Vec<String> {
     reduced
 }
 
-// common/pathUtils.ts:151
+// common/pathUtils.ts:148
 pub fn combine_path_components(components: &[String]) -> String {
     if components.is_empty() {
         return String::new();
@@ -117,7 +117,7 @@ pub fn combine_path_components(components: &[String]) -> String {
     normalize_slashes(&(root + &components[1..].join("/")))
 }
 
-// common/pathUtils.ts:161
+// common/pathUtils.ts:158
 pub fn get_relative_path(dir_path: &str, relative_to: &str) -> Option<String> {
     if !dir_path.starts_with(&ensure_trailing_directory_separator(relative_to)) {
         return None;
@@ -135,7 +135,7 @@ pub fn get_relative_path(dir_path: &str, relative_to: &str) -> Option<String> {
     Some(relative_path)
 }
 
-// common/pathUtils.ts:180
+// common/pathUtils.ts:177
 pub fn normalize_slashes(path_string: &str) -> String {
     if path_string.contains('\\') {
         return path_string.replace('\\', "/");
@@ -144,7 +144,7 @@ pub fn normalize_slashes(path_string: &str) -> String {
     path_string.to_string()
 }
 
-// common/pathUtils.ts:199
+// common/pathUtils.ts:195
 pub fn resolve_paths(path: &str, paths: &[&str]) -> String {
     normalize_path(&if !paths.is_empty() {
         combine_paths(path, paths)
@@ -153,7 +153,7 @@ pub fn resolve_paths(path: &str, paths: &[&str]) -> String {
     })
 }
 
-// common/pathUtils.ts:203
+// common/pathUtils.ts:199
 pub fn combine_paths(path_string: &str, paths: &[&str]) -> String {
     let mut path_string = if !path_string.is_empty() {
         normalize_slashes(path_string)
@@ -178,7 +178,7 @@ pub fn combine_paths(path_string: &str, paths: &[&str]) -> String {
     path_string
 }
 
-// common/pathUtils.ts:230
+// common/pathUtils.ts:226
 pub fn contains_path(parent: &str, child: &str, ignore_case: bool) -> bool {
     if parent == child {
         return true;
@@ -210,7 +210,7 @@ pub fn contains_path(parent: &str, child: &str, ignore_case: bool) -> bool {
     true
 }
 
-// common/pathUtils.ts:279
+// common/pathUtils.ts:277
 pub fn change_any_extension(path: &str, ext: &str) -> String {
     let path_ext = get_any_extension_from_path(path);
     if path_ext.is_empty() {
@@ -224,7 +224,7 @@ pub fn change_any_extension(path: &str, ext: &str) -> String {
     }
 }
 
-// common/pathUtils.ts:319
+// common/pathUtils.ts:317
 pub fn get_any_extension_from_path(path: &str) -> String {
     let base_file_name = get_base_file_name(path);
     match base_file_name.rfind('.') {
@@ -233,7 +233,7 @@ pub fn get_any_extension_from_path(path: &str) -> String {
     }
 }
 
-// common/pathUtils.ts:371
+// common/pathUtils.ts:373
 pub fn get_base_file_name(path_string: &str) -> String {
     let path_string = normalize_slashes(path_string);
 
@@ -248,7 +248,7 @@ pub fn get_base_file_name(path_string: &str) -> String {
     path_string[start..].to_string()
 }
 
-// common/pathUtils.ts:427
+// common/pathUtils.ts:442
 pub fn ensure_trailing_directory_separator(path_string: &str) -> String {
     if !has_trailing_directory_separator(path_string) {
         return format!("{path_string}/");
@@ -257,12 +257,12 @@ pub fn ensure_trailing_directory_separator(path_string: &str) -> String {
     path_string.to_string()
 }
 
-// common/pathUtils.ts:436
+// common/pathUtils.ts:451
 pub fn has_trailing_directory_separator(path_string: &str) -> bool {
     matches!(path_string.as_bytes().last(), Some(b'/' | b'\\'))
 }
 
-// common/pathUtils.ts:445
+// common/pathUtils.ts:460
 pub fn strip_trailing_directory_separator(path_string: &str) -> &str {
     if !has_trailing_directory_separator(path_string) {
         return path_string;
@@ -270,7 +270,7 @@ pub fn strip_trailing_directory_separator(path_string: &str) -> &str {
     &path_string[..path_string.len() - 1]
 }
 
-// common/pathUtils.ts:452
+// common/pathUtils.ts:467
 pub fn get_file_extension(file_name: &str, multi_dot_extension: bool) -> String {
     if !multi_dot_extension {
         return node_path::extname(file_name).to_string();
@@ -285,12 +285,12 @@ pub fn get_file_extension(file_name: &str, multi_dot_extension: bool) -> String 
     }
 }
 
-// common/pathUtils.ts:462
+// common/pathUtils.ts:477
 pub fn get_file_name(path_string: &str) -> &str {
     node_path::basename(path_string)
 }
 
-// common/pathUtils.ts:466
+// common/pathUtils.ts:481
 pub fn get_shortened_file_name(path_string: &str, max_dir_length: i32) -> String {
     let file_name = get_file_name(path_string);
     let dir_name = get_directory_path(path_string);
@@ -302,7 +302,7 @@ pub fn get_shortened_file_name(path_string: &str, max_dir_length: i32) -> String
     path_string.to_string()
 }
 
-// common/pathUtils.ts:475
+// common/pathUtils.ts:490
 pub fn strip_file_extension(file_name: &str, multi_dot_extension: bool) -> String {
     let ext = get_file_extension(file_name, multi_dot_extension);
     file_name
@@ -310,12 +310,12 @@ pub fn strip_file_extension(file_name: &str, multi_dot_extension: bool) -> Strin
         .into_owned()
 }
 
-// common/pathUtils.ts:480
+// common/pathUtils.ts:495
 pub fn normalize_path(path_string: &str) -> String {
     normalize_slashes(&node_path::normalize(path_string))
 }
 
-// common/pathUtils.ts:484
+// common/pathUtils.ts:502
 /// Returns the pattern as pyright builds it, as JS regex source, and the
 /// equivalent pattern in `regex` crate syntax.
 pub fn get_wildcard_regex_pattern(root_path: &str, file_spec: &str) -> String {
@@ -382,7 +382,7 @@ fn js_identity_escape(c: char) -> String {
     }
 }
 
-// common/pathUtils.ts:543
+// common/pathUtils.ts:553
 pub fn is_directory_wildcard_pattern_present(file_spec: &str) -> bool {
     let path = normalize_path(file_spec);
     let path_components = get_path_components(&path);
@@ -396,7 +396,7 @@ pub fn is_directory_wildcard_pattern_present(file_spec: &str) -> bool {
     false
 }
 
-// common/pathUtils.ts:556
+// common/pathUtils.ts:567
 pub fn get_wildcard_root(root_path: &str, file_spec: &str) -> String {
     let mut absolute_path = normalize_path(&combine_paths(root_path, &[file_spec]));
     if !has_python_extension(&absolute_path) {
@@ -437,22 +437,22 @@ pub fn get_wildcard_root(root_path: &str, file_spec: &str) -> String {
     wildcard_root
 }
 
-// common/pathUtils.ts:597
+// common/pathUtils.ts:608
 pub fn has_python_extension(path: &str) -> bool {
     path.ends_with(".py") || path.ends_with(".pyi")
 }
 
-// common/pathUtils.ts:601
+// common/pathUtils.ts:612
 pub fn get_regex_escaped_separator() -> &'static str {
     "/"
 }
 
-// common/pathUtils.ts:609
+// common/pathUtils.ts:621
 pub fn is_rooted_disk_path(path: &str) -> bool {
     get_root_length(path) > 0
 }
 
-// common/pathUtils.ts:616
+// common/pathUtils.ts:628
 pub fn is_disk_path_root(path: &str) -> bool {
     let root_length = get_root_length(path);
     root_length > 0 && root_length == path.len()

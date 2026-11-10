@@ -9,6 +9,7 @@ pub mod doc_string_utils;
 pub mod import_resolver;
 pub mod import_resolver_file_system;
 pub mod import_resolver_types;
+pub mod import_logger;
 pub mod import_result;
 pub mod parent_directory_cache;
 pub mod parse_tree_utils;

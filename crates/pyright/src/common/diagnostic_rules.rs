@@ -1,6 +1,6 @@
 //! Port of `packages/pyright-internal/src/common/diagnosticRules.ts`.
 
-// common/diagnosticRules.ts:12
+// common/diagnosticRules.ts:13
 /// A TypeScript string enum: each variant prints as its own name.
 #[allow(non_camel_case_types, clippy::enum_variant_names)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]

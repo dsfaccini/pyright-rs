@@ -3,7 +3,7 @@
 //! A failed assertion is a pyright crash. The port does not reproduce the
 //! crash output, so `fail` panics: per `docs/porting.md`, a panic is a port bug.
 
-// common/debug.ts:13
+// common/debug.ts:12
 #[track_caller]
 pub fn assert(expression: bool, message: Option<&str>) {
     if !expression {
@@ -14,7 +14,7 @@ pub fn assert(expression: bool, message: Option<&str>) {
     }
 }
 
-// common/debug.ts:29
+// common/debug.ts:28
 #[track_caller]
 pub fn fail(message: Option<&str>) -> ! {
     match message {
@@ -23,7 +23,7 @@ pub fn fail(message: Option<&str>) -> ! {
     }
 }
 
-// common/debug.ts:38
+// common/debug.ts:37
 #[track_caller]
 pub fn assert_defined<T>(value: Option<T>, message: Option<&str>) -> T {
     match value {
@@ -32,7 +32,7 @@ pub fn assert_defined<T>(value: Option<T>, message: Option<&str>) -> T {
     }
 }
 
-// common/debug.ts:58
+// common/debug.ts:57
 #[track_caller]
 pub fn assert_never(member: impl std::fmt::Debug, message: Option<&str>) -> ! {
     let message = message.unwrap_or("Illegal value:");

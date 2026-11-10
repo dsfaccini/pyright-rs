@@ -63,7 +63,7 @@ impl UriData {
     }
 }
 
-// common/uri/uri.ts:40
+// common/uri/uri.ts:32
 /// A Uri handle. `==` is `Uri.equals`: key equality for file Uris, identity
 /// for constant Uris. Hashing uses the key, so a `Uri` can stand in for the
 /// `uri.key` strings pyright uses as map keys.
@@ -104,7 +104,7 @@ pub fn process_cwd() -> String {
         .unwrap_or_else(|_| "/".to_string())
 }
 
-// common/uri/uri.ts:43
+// common/uri/uri.ts:38
 fn get_file_path(uri: &URI) -> String {
     let mut file_path = if !uri.authority.is_empty() && uri.path == "/" {
         format!("//{}{}", uri.authority, uri.path)
@@ -121,7 +121,7 @@ fn get_file_path(uri: &URI) -> String {
     file_path
 }
 
-// common/uri/uri.ts:63
+// common/uri/uri.ts:69
 fn normalize_uri(parsed: URI) -> (URI, String) {
     let final_uri = if !parsed.path.is_empty() {
         vscode_uri::resolve_path(&parsed)
@@ -132,7 +132,7 @@ fn normalize_uri(parsed: URI) -> (URI, String) {
     (final_uri, final_string)
 }
 
-// common/uri/uri.ts:73
+// common/uri/uri.ts:89
 fn maybe_uri(value: &str) -> bool {
     // /^[a-zA-Z][a-zA-Z0-9+.-]*:\/?\/?/ and not /^[a-zA-Z]:\\?/
     let b = value.as_bytes();
@@ -149,7 +149,7 @@ fn maybe_uri(value: &str) -> bool {
 }
 
 impl Uri {
-    // common/uri/uri.ts:92
+    // common/uri/uri.ts:93
     pub fn create(
         value: &str,
         detector: &dyn CaseSensitivityDetector,
@@ -162,7 +162,7 @@ impl Uri {
         Uri::file(value, detector, check_relative)
     }
 
-    // common/uri/uri.ts:107
+    // common/uri/uri.ts:109
     pub fn file(path: &str, detector: &dyn CaseSensitivityDetector, check_relative: bool) -> Uri {
         let path = if check_relative && !is_rooted_disk_path(path) {
             combine_paths(&process_cwd(), &[path])
@@ -186,7 +186,7 @@ impl Uri {
         )
     }
 
-    // common/uri/uri.ts:127
+    // common/uri/uri.ts:133
     pub fn parse(uri_str: Option<&str>, detector: &dyn CaseSensitivityDetector) -> Uri {
         let Some(uri_str) = uri_str.filter(|s| !s.is_empty()) else {
             return Uri::empty();
@@ -208,7 +208,7 @@ impl Uri {
         panic!("non-file Uri is not supported: {uri_str}");
     }
 
-    // common/uri/uri.ts:160
+    // common/uri/uri.ts:166
     pub fn constant(marker_name: &str) -> Uri {
         Uri(P::new(UriData::new(
             marker_name.to_string(),
@@ -216,25 +216,25 @@ impl Uri {
         )))
     }
 
-    // common/uri/uri.ts:164
+    // common/uri/uri.ts:170
     pub fn empty() -> Uri {
         EMPTY.with(|e| *e)
     }
 
-    // common/uri/uri.ts:168
+    // common/uri/uri.ts:176
     pub const DEFAULT_WORKSPACE_ROOT_COMPONENT: &'static str = "<default workspace root>";
 
-    // common/uri/uri.ts:173
+    // common/uri/uri.ts:179
     pub fn default_workspace(detector: &dyn CaseSensitivityDetector) -> Uri {
         Uri::file("/<default workspace root>", detector, false)
     }
 
-    // common/uri/uri.ts:203
+    // common/uri/uri.ts:211
     pub fn is_empty_opt(uri: Option<Uri>) -> bool {
         uri.is_none_or(|u| u.is_empty())
     }
 
-    // common/uri/uri.ts:207
+    // common/uri/uri.ts:215
     pub fn equals_opt(a: Option<Uri>, b: Option<Uri>) -> bool {
         match (a, b) {
             (Some(a), Some(b)) => a.equals(Some(b)),
@@ -243,7 +243,7 @@ impl Uri {
         }
     }
 
-    // common/uri/uri.ts:215
+    // common/uri/uri.ts:223
     pub fn is_default_workspace(uri: Uri) -> bool {
         uri.file_name()
             .contains(Uri::DEFAULT_WORKSPACE_ROOT_COMPONENT)
