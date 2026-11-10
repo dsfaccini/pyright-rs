@@ -642,7 +642,7 @@ pub(crate) fn apply_partial_transform_to_function(
 
     // Create a new __call__ method that uses the remaining parameters.
     let partial_shared = partial_call_member_type.d().shared.get();
-    let specialized_doc_string = specialized_shared.doc_string.borrow().clone();
+    let specialized_doc_string = specialized_shared.cold().doc_string.clone();
     let new_call_member_type = FunctionType::create_instance(
         &partial_shared.name,
         &partial_shared.full_name,
@@ -665,8 +665,7 @@ pub(crate) fn apply_partial_transform_to_function(
             FunctionType::get_effective_return_type(specialized_function_type, true)
         } else {
             specialized_shared
-                .inferred_return_type
-                .borrow()
+                .cold().inferred_return_type
                 .as_ref()
                 .map(|inferred_return_type| inferred_return_type.type_)
         },

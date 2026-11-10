@@ -100,22 +100,80 @@ pub struct PrefetchedTypes {
 pub struct TypeResult {
     pub type_: Cell<P<Type>>,
     pub is_incomplete: Cell<Option<bool>>,
-    pub bind_to_self_type: Option<P<Type>>,
-    pub unpacked_type: Option<P<Type>>,
-    pub type_list: Option<Box<Vec<TypeResultWithNode>>>,
     pub type_errors: Cell<Option<bool>>,
-    pub inlined_type_dict: Option<ClassType>,
     pub class_type: Option<P<Type>>,
-    pub is_empty_tuple_shorthand: Option<bool>,
-    pub expected_type_diag_addendum: Cell<Option<P<DiagnosticAddendum>>>,
     pub is_asymmetric_accessor: Option<bool>,
-    pub narrowed_type_for_set: Option<P<Type>>,
     pub is_required: Option<bool>,
     pub is_not_required: Option<bool>,
     pub is_read_only: Option<bool>,
-    pub overloads_used_for_call: RefCell<Option<Box<Vec<FunctionType>>>>,
-    pub member_access_deprecation_info: Option<Box<MemberAccessDeprecationInfo>>,
-    pub magic_method_deprecation_info: Option<Box<MagicMethodDeprecationInfo>>,
+    // Fields few objects set ([cold] in tools/stubgen/typemap.toml): read with `cold()`, write with `cold_mut()`.
+    pub cold: RefCell<Option<Box<TypeResultCold>>>,
+}
+
+// analyzer/typeEvaluatorTypes.ts:228
+#[derive(Clone, Default)]
+pub struct TypeResultCold {
+    pub bind_to_self_type: Option<P<Type>>,
+    pub unpacked_type: Option<P<Type>>,
+    pub type_list: Option<Vec<TypeResultWithNode>>,
+    pub inlined_type_dict: Option<ClassType>,
+    pub is_empty_tuple_shorthand: Option<bool>,
+    pub expected_type_diag_addendum: Option<P<DiagnosticAddendum>>,
+    pub narrowed_type_for_set: Option<P<Type>>,
+    pub overloads_used_for_call: Option<Vec<FunctionType>>,
+    pub member_access_deprecation_info: Option<MemberAccessDeprecationInfo>,
+    pub magic_method_deprecation_info: Option<MagicMethodDeprecationInfo>,
+}
+
+impl TypeResultCold {
+    const EMPTY: TypeResultCold = TypeResultCold {
+        bind_to_self_type: None,
+        unpacked_type: None,
+        type_list: None,
+        inlined_type_dict: None,
+        is_empty_tuple_shorthand: None,
+        expected_type_diag_addendum: None,
+        narrowed_type_for_set: None,
+        overloads_used_for_call: None,
+        member_access_deprecation_info: None,
+        magic_method_deprecation_info: None,
+    };
+
+    /// The `cold` field that holds these fields: unallocated while every one is unset.
+    pub fn into_cold(self) -> RefCell<Option<Box<TypeResultCold>>> {
+        let unset = self.bind_to_self_type.is_none()
+            && self.unpacked_type.is_none()
+            && self.type_list.is_none()
+            && self.inlined_type_dict.is_none()
+            && self.is_empty_tuple_shorthand.is_none()
+            && self.expected_type_diag_addendum.is_none()
+            && self.narrowed_type_for_set.is_none()
+            && self.overloads_used_for_call.is_none()
+            && self.member_access_deprecation_info.is_none()
+            && self.magic_method_deprecation_info.is_none();
+        RefCell::new((!unset).then(|| Box::new(self)))
+    }
+}
+
+impl TypeResult {
+    pub fn cold(&self) -> std::cell::Ref<'_, TypeResultCold> {
+        std::cell::Ref::map(self.cold.borrow(), |cold| {
+            cold.as_deref().unwrap_or(&TypeResultCold::EMPTY)
+        })
+    }
+
+    pub fn cold_mut(&self) -> std::cell::RefMut<'_, TypeResultCold> {
+        std::cell::RefMut::map(self.cold.borrow_mut(), |cold| {
+            &mut **cold.get_or_insert_with(Default::default)
+        })
+    }
+
+    /// `field = value`, without allocating the cold half to hold a `None`.
+    pub fn set_cold<T>(&self, field: fn(&mut TypeResultCold) -> &mut Option<T>, value: Option<T>) {
+        if value.is_some() || self.cold.borrow().is_some() {
+            *field(&mut self.cold_mut()) = value;
+        }
+    }
 }
 
 // analyzer/typeEvaluatorTypes.ts:289
@@ -537,22 +595,13 @@ impl TypeResult {
         TypeResult {
             type_: Cell::new(type_),
             is_incomplete: Cell::new(None),
-            bind_to_self_type: None,
-            unpacked_type: None,
-            type_list: None,
             type_errors: Cell::new(None),
-            inlined_type_dict: None,
             class_type: None,
-            is_empty_tuple_shorthand: None,
-            expected_type_diag_addendum: Cell::new(None),
             is_asymmetric_accessor: None,
-            narrowed_type_for_set: None,
             is_required: None,
             is_not_required: None,
             is_read_only: None,
-            overloads_used_for_call: RefCell::new(None),
-            member_access_deprecation_info: None,
-            magic_method_deprecation_info: None,
+            cold: RefCell::new(None),
         }
     }
 }
@@ -564,22 +613,13 @@ impl Clone for TypeResult {
         TypeResult {
             type_: self.type_.clone(),
             is_incomplete: self.is_incomplete.clone(),
-            bind_to_self_type: self.bind_to_self_type,
-            unpacked_type: self.unpacked_type,
-            type_list: self.type_list.clone(),
             type_errors: self.type_errors.clone(),
-            inlined_type_dict: self.inlined_type_dict,
             class_type: self.class_type,
-            is_empty_tuple_shorthand: self.is_empty_tuple_shorthand,
-            expected_type_diag_addendum: self.expected_type_diag_addendum.clone(),
             is_asymmetric_accessor: self.is_asymmetric_accessor,
-            narrowed_type_for_set: self.narrowed_type_for_set,
             is_required: self.is_required,
             is_not_required: self.is_not_required,
             is_read_only: self.is_read_only,
-            overloads_used_for_call: self.overloads_used_for_call.clone(),
-            member_access_deprecation_info: self.member_access_deprecation_info.clone(),
-            magic_method_deprecation_info: self.magic_method_deprecation_info.clone(),
+            cold: self.cold.clone(),
         }
     }
 }
@@ -613,35 +653,26 @@ impl TypeResultWithNode {
 
     /// `{ ...typeResult, node }`: every field of `type_result`, plus `node`.
     pub fn from_type_result(type_result: &TypeResult, node: P<ParseNode>) -> TypeResultWithNode {
+        let cold = type_result.cold();
         TypeResultWithNode {
             type_: type_result.type_.get(),
             is_incomplete: type_result.is_incomplete.get(),
-            bind_to_self_type: type_result.bind_to_self_type,
-            unpacked_type: type_result.unpacked_type,
-            type_list: type_result.type_list.as_deref().cloned(),
+            bind_to_self_type: cold.bind_to_self_type,
+            unpacked_type: cold.unpacked_type,
+            type_list: cold.type_list.clone(),
             type_errors: type_result.type_errors.get(),
-            inlined_type_dict: type_result.inlined_type_dict,
+            inlined_type_dict: cold.inlined_type_dict,
             class_type: type_result.class_type,
-            is_empty_tuple_shorthand: type_result.is_empty_tuple_shorthand,
-            expected_type_diag_addendum: type_result.expected_type_diag_addendum.get(),
+            is_empty_tuple_shorthand: cold.is_empty_tuple_shorthand,
+            expected_type_diag_addendum: cold.expected_type_diag_addendum,
             is_asymmetric_accessor: type_result.is_asymmetric_accessor,
-            narrowed_type_for_set: type_result.narrowed_type_for_set,
+            narrowed_type_for_set: cold.narrowed_type_for_set,
             is_required: type_result.is_required,
             is_not_required: type_result.is_not_required,
             is_read_only: type_result.is_read_only,
-            overloads_used_for_call: type_result
-                .overloads_used_for_call
-                .borrow()
-                .as_deref()
-                .cloned(),
-            member_access_deprecation_info: type_result
-                .member_access_deprecation_info
-                .as_deref()
-                .cloned(),
-            magic_method_deprecation_info: type_result
-                .magic_method_deprecation_info
-                .as_deref()
-                .cloned(),
+            overloads_used_for_call: cold.overloads_used_for_call.clone(),
+            member_access_deprecation_info: cold.member_access_deprecation_info.clone(),
+            magic_method_deprecation_info: cold.magic_method_deprecation_info.clone(),
             node,
         }
     }

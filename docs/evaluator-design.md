@@ -206,9 +206,13 @@ Then:
 
 ### cold fields
 
-`[cold]` names, per value struct, the fields few of its objects set. They move into `<Struct>Cold`, which the struct holds as `pub cold: Option<Box<<Struct>Cold>>`, allocated on the first write. `cold()` reads them, returning a shared empty `<Struct>Cold` while none is allocated; `cold_mut()` allocates and writes. Every cold field is optional, so an unset field reads the same either way. The struct's other fields and its copy semantics stay as they were: cloning the struct clones its cold half.
+`[cold]` names, per value or handle struct, the fields few of its objects set. They move into `<Struct>Cold`, allocated on the first write: a value struct holds it as `pub cold: Option<Box<<Struct>Cold>>`, a handle struct as `pub cold: RefCell<Option<Box<<Struct>Cold>>>` with plain fields inside. Every cold field is optional, so an unset field reads the same either way. The struct's other fields and its copy semantics stay as they were: cloning the struct clones its cold half.
 
-Pick cold fields by measurement: count, at the end of a run, how many objects set each field. `ClassDetailsPriv` moves the fields fewer than 1% of class types set (python-chess and samples, 2026-11-10). A record or map pyright creates on first write (`props`, `cached`, the union literal maps) is boxed through `[sites]` instead, as `Option<Box<T>>`.
+- `cold()` reads, returning a shared empty `<Struct>Cold` while none is allocated. On a handle it returns a `Ref`: copy the value out (`let x = r.cold().f.clone();`) before an `if let`, `match` or loop whose body can reach the same object, since the borrow lives as long as the scrutinee.
+- `cold_mut()` allocates and writes. `set_cold(|cold| &mut cold.f, value)` writes a value that may be `None` without allocating.
+- `<Struct>Cold { f: v, ..Default::default() }.into_cold()` builds the `cold` field in a struct literal; it stays unallocated when every field is unset.
+
+Pick cold fields by measurement: count, at the end of a run, how many objects set each field. `ClassDetailsPriv`, `TypeResult` and `FunctionDetailsShared` move the fields fewer than 1% of their objects set (python-chess and samples, 2026-11-10). A record or map pyright creates on first write (`props`, `cached`, the union literal maps) is boxed through `[sites]` instead, as `Option<Box<T>>`.
 
 ### families: unions discriminated by a kind field
 

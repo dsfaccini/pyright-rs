@@ -3276,7 +3276,7 @@ pub fn contains_any_or_unknown(type_: P<Type>, recurse: bool) -> Option<P<Type>>
 
                 if !self._is_walk_canceled() && !FunctionType::is_param_spec_value(type_) {
                     let return_type = shared.declared_return_type.get().or_else(|| {
-                        shared.inferred_return_type.borrow().as_ref().map(|inferred| inferred.type_)
+                        shared.cold().inferred_return_type.as_ref().map(|inferred| inferred.type_)
                     });
                     if let Some(return_type) = return_type {
                         self.walk(return_type);
@@ -3798,7 +3798,7 @@ pub(crate) fn _requires_specialization(
                     return true;
                 }
             } else {
-                let inferred_return_type = shared.inferred_return_type.borrow().as_ref().map(|inferred| inferred.type_);
+                let inferred_return_type = shared.cold().inferred_return_type.as_ref().map(|inferred| inferred.type_);
                 if let Some(inferred_return_type) = inferred_return_type {
                     if requires_specialization(inferred_return_type, options, recursion_count) {
                         return true;
@@ -4228,7 +4228,7 @@ pub fn convert_type_to_param_spec_value(type_: P<Type>) -> FunctionType {
         }
 
         let shared = function_type.d().shared.get();
-        let doc_string = shared.doc_string.borrow().clone();
+        let doc_string = shared.cold().doc_string.clone();
         let new_function = FunctionType::create_instance(
             "",
             "",
@@ -4237,7 +4237,8 @@ pub fn convert_type_to_param_spec_value(type_: P<Type>) -> FunctionType {
             doc_string.as_deref(),
         );
 
-        *new_function.d().shared.get().deprecated_message.borrow_mut() = shared.deprecated_message.borrow().clone();
+        let deprecated_message = shared.cold().deprecated_message.clone();
+        new_function.d().shared.get().set_cold(|cold| &mut cold.deprecated_message, deprecated_message);
 
         let parameters = shared.parameters.get().borrow().clone();
         for (index, param) in parameters.iter().enumerate() {
@@ -5175,7 +5176,7 @@ pub trait TypeVarTransformer {
             }
 
             let inferred_return_type_of = |function_type: FunctionType| {
-                function_type.d().shared.get().inferred_return_type.borrow().as_ref().map(|inferred| inferred.type_)
+                function_type.d().shared.get().cold().inferred_return_type.as_ref().map(|inferred| inferred.type_)
             };
             if let Some(inferred_return_type) = inferred_return_type_of(function_type) {
                 let specialized_inferred_return_type = this.apply(inferred_return_type, recursion_count);

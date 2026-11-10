@@ -12,7 +12,7 @@ use crate::analyzer::type_evaluator::TypeEvaluator;
 use crate::analyzer::type_evaluator_types::{
     AssignTypeFlags, MagicMethodDeprecationInfo, MapSubtypesOptions, TypeResultWithNode,
 };
-use crate::analyzer::type_evaluator_types::{EvalFlags, TypeResult};
+use crate::analyzer::type_evaluator_types::{EvalFlags, TypeResult, TypeResultCold};
 use crate::analyzer::type_utils::InferenceContext;
 use crate::analyzer::type_utils::{
     MemberAccessFlags, convert_to_instantiable, get_literal_type_class_name, get_type_condition,
@@ -167,8 +167,9 @@ pub fn validate_binary_operation(
                 diag,
             );
 
-            if let Some(info) = &result.magic_method_deprecation_info {
-                deprecated_info = Some((**info).clone());
+            let info = result.cold().magic_method_deprecation_info.clone();
+            if let Some(info) = &info {
+                deprecated_info = Some(info.clone());
             }
 
             let result_type = result.type_.get();
@@ -230,8 +231,9 @@ pub fn validate_binary_operation(
                 options,
             );
 
-            if let Some(info) = &result.magic_method_deprecation_info {
-                deprecated_info = Some((**info).clone());
+            let info = result.cold().magic_method_deprecation_info.clone();
+            if let Some(info) = &info {
+                deprecated_info = Some(info.clone());
             }
 
             type_ = Some(result.type_.get());
@@ -239,7 +241,11 @@ pub fn validate_binary_operation(
     }
 
     P::new_eval(TypeResult {
-        magic_method_deprecation_info: deprecated_info.map(Box::new),
+        cold: TypeResultCold {
+            magic_method_deprecation_info: deprecated_info,
+            ..Default::default()
+        }
+        .into_cold(),
         ..TypeResult::new(type_.unwrap_or_else(|| UnknownType::create(is_incomplete).0))
     })
 }
@@ -531,7 +537,11 @@ pub fn get_type_of_binary_operation(
     P::new_eval(TypeResult {
         is_incomplete: Cell::new(Some(is_incomplete)),
         type_errors: Cell::new(Some(type_errors)),
-        magic_method_deprecation_info: type_result.magic_method_deprecation_info.clone(),
+        cold: TypeResultCold {
+            magic_method_deprecation_info: type_result.cold().magic_method_deprecation_info.clone(),
+            ..Default::default()
+        }
+        .into_cold(),
         ..TypeResult::new(type_result.type_.get())
     })
 }
@@ -696,7 +706,7 @@ pub fn get_type_of_augmented_assignment(
                         }
 
                         if let Some(info) = return_type_result
-                            .and_then(|result| result.magic_method_deprecation_info.as_deref().cloned())
+                            .and_then(|result| result.cold().magic_method_deprecation_info.clone())
                         {
                             deprecated_info = Some(info);
                         }
@@ -731,7 +741,11 @@ pub fn get_type_of_augmented_assignment(
 
         P::new_eval(TypeResult {
             is_incomplete: Cell::new(Some(is_incomplete)),
-            magic_method_deprecation_info: deprecated_info.map(Box::new),
+            cold: TypeResultCold {
+                magic_method_deprecation_info: deprecated_info,
+                ..Default::default()
+            }
+            .into_cold(),
             ..TypeResult::new(type_)
         })
     };
@@ -841,7 +855,7 @@ pub fn get_type_of_unary_operation(
                     }
 
                     if let Some(info) =
-                        type_result.and_then(|result| result.magic_method_deprecation_info.as_deref().cloned())
+                        type_result.and_then(|result| result.cold().magic_method_deprecation_info.clone())
                     {
                         deprecated_info = Some(info);
                     }
@@ -902,7 +916,11 @@ pub fn get_type_of_unary_operation(
 
     P::new_eval(TypeResult {
         is_incomplete: Cell::new(is_incomplete),
-        magic_method_deprecation_info: deprecated_info.map(Box::new),
+        cold: TypeResultCold {
+            magic_method_deprecation_info: deprecated_info,
+            ..Default::default()
+        }
+        .into_cold(),
         ..TypeResult::new(type_.unwrap())
     })
 }
@@ -1592,7 +1610,7 @@ pub(crate) fn validate_containment_operation(
                     }
 
                     if let Some(info) = return_type_result
-                        .and_then(|result| result.magic_method_deprecation_info.as_deref().cloned())
+                        .and_then(|result| result.cold().magic_method_deprecation_info.clone())
                     {
                         deprecated_info = Some(info);
                     }
@@ -1609,7 +1627,11 @@ pub(crate) fn validate_containment_operation(
     );
 
     P::new_eval(TypeResult {
-        magic_method_deprecation_info: deprecated_info.map(Box::new),
+        cold: TypeResultCold {
+            magic_method_deprecation_info: deprecated_info,
+            ..Default::default()
+        }
+        .into_cold(),
         ..TypeResult::new(type_)
     })
 }
@@ -1834,7 +1856,7 @@ pub(crate) fn validate_arithmetic_operation(
                     }
 
                     if let Some(info) = result_type_result
-                        .and_then(|result| result.magic_method_deprecation_info.as_deref().cloned())
+                        .and_then(|result| result.cold().magic_method_deprecation_info.clone())
                     {
                         deprecated_info = Some(info);
                     }
@@ -1851,7 +1873,11 @@ pub(crate) fn validate_arithmetic_operation(
     );
 
     P::new_eval(TypeResult {
-        magic_method_deprecation_info: deprecated_info.map(Box::new),
+        cold: TypeResultCold {
+            magic_method_deprecation_info: deprecated_info,
+            ..Default::default()
+        }
+        .into_cold(),
         ..TypeResult::new(type_)
     })
 }

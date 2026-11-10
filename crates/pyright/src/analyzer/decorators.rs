@@ -17,6 +17,7 @@ use crate::analyzer::type_evaluator::TypeEvaluator;
 use crate::analyzer::type_evaluator_types::Arg;
 use crate::analyzer::type_evaluator_types::ArgWithType;
 use crate::analyzer::type_evaluator_types::EvalFlags;
+use crate::analyzer::type_evaluator_types::TypeResultCold;
 use crate::analyzer::type_evaluator_types::TypeResult;
 use crate::analyzer::type_utils::is_partly_unknown;
 use crate::analyzer::type_utils::is_property;
@@ -43,7 +44,6 @@ use crate::parser::parse_nodes::{CallNode, DecoratorNode, FunctionNode};
 use jsrt::JsString;
 use jsrt::P;
 use std::cell::Cell;
-use std::cell::RefCell;
 
 // analyzer/decorators.ts:49
 #[derive(Clone)]
@@ -243,8 +243,7 @@ pub fn apply_function_decorator(
                     .d()
                     .shared
                     .get()
-                    .decorator_data_class_behaviors
-                    .set(validate_data_class_transform_decorator(
+                    .set_cold(|cold| &mut cold.decorator_data_class_behaviors, validate_data_class_transform_decorator(
                         evaluator, call_node, node_info,
                     ));
                 return input_function_type;
@@ -444,8 +443,7 @@ pub fn apply_function_decorator(
         // Copy the docstrings from the input function type if the
         // decorator didn't have its own docstring.
         if return_shared
-            .doc_string
-            .borrow()
+            .cold().doc_string
             .as_ref()
             .is_none_or(|doc_string| doc_string.is_empty())
         {
@@ -453,10 +451,9 @@ pub fn apply_function_decorator(
                 .d()
                 .shared
                 .get()
-                .doc_string
-                .borrow()
+                .cold().doc_string
                 .clone();
-            *return_shared.doc_string.borrow_mut() = doc_string;
+            return_shared.set_cold(|cold| &mut cold.doc_string, doc_string);
         }
     }
 
@@ -712,7 +709,11 @@ pub(crate) fn get_type_of_decorator(
     evaluator.set_type_result_for_node(
         node.0,
         P::new_eval(TypeResult {
-            overloads_used_for_call: RefCell::new(call_type_result.overloads_used_for_call.clone().map(Box::new)),
+            cold: TypeResultCold {
+                overloads_used_for_call: call_type_result.overloads_used_for_call.clone(),
+                ..Default::default()
+            }
+            .into_cold(),
             is_incomplete: Cell::new(call_type_result.is_type_incomplete),
             ..TypeResult::new(node_type_result_type)
         }),
@@ -881,8 +882,7 @@ pub fn add_overloads_to_function_type(
                     .d()
                     .shared
                     .get()
-                    .doc_string
-                    .borrow()
+                    .cold().doc_string
                     .clone();
                 if let Some(doc_string) = implementation_doc_string
                     && !doc_string.is_empty()
@@ -895,8 +895,7 @@ pub fn add_overloads_to_function_type(
                                     .d()
                                     .shared
                                     .get()
-                                    .doc_string
-                                    .borrow()
+                                    .cold().doc_string
                                     .as_ref()
                                     .is_none_or(|overload_doc| overload_doc.is_empty())
                             {
@@ -921,8 +920,7 @@ pub fn add_overloads_to_function_type(
                     .d()
                     .shared
                     .get()
-                    .deprecated_message
-                    .borrow()
+                    .cold().deprecated_message
                     .clone();
                 if let Some(deprecation_message) = implementation_deprecated_message {
                     overloaded_types = overloaded_types
@@ -933,8 +931,7 @@ pub fn add_overloads_to_function_type(
                                     .d()
                                     .shared
                                     .get()
-                                    .deprecated_message
-                                    .borrow()
+                                    .cold().deprecated_message
                                     .is_none()
                             {
                                 return FunctionType::clone_with_deprecated_message(

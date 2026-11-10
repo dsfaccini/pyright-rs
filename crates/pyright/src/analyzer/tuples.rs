@@ -8,7 +8,7 @@ use crate::analyzer::constraint_tracker::ConstraintTracker;
 use crate::analyzer::parse_tree_utils::get_type_var_scopes_for_node;
 use crate::analyzer::type_evaluator::TypeEvaluator;
 use crate::analyzer::type_evaluator_types::MAX_INFERRED_CONTAINER_DEPTH;
-use crate::analyzer::type_evaluator_types::{AssignTypeFlags, EvalFlags, TypeResult};
+use crate::analyzer::type_evaluator_types::{AssignTypeFlags, EvalFlags, TypeResult, TypeResultCold};
 use crate::analyzer::type_utils::InferenceContext;
 use crate::analyzer::type_utils::convert_to_instance;
 use crate::analyzer::type_utils::do_for_each_subtype;
@@ -110,7 +110,11 @@ pub fn get_type_of_tuple(
         && inference_context.is_none()
     {
         return P::new_eval(TypeResult {
-            is_empty_tuple_shorthand: Some(true),
+            cold: TypeResultCold {
+                is_empty_tuple_shorthand: Some(true),
+                ..Default::default()
+            }
+            .into_cold(),
             ..TypeResult::new(make_tuple_object(evaluator, &[], false))
         });
     }
@@ -188,7 +192,7 @@ pub fn get_type_of_tuple(
         }
 
         expected_type_diag_addendum =
-            result.and_then(|result| result.expected_type_diag_addendum.get());
+            result.and_then(|result| result.cold().expected_type_diag_addendum);
     }
 
     let type_result = get_type_of_tuple_inferred(evaluator, node, flags);
@@ -201,8 +205,7 @@ pub fn get_type_of_tuple(
 
     let result = (*type_result).clone();
     result
-        .expected_type_diag_addendum
-        .set(expected_type_diag_addendum);
+        .set_cold(|cold| &mut cold.expected_type_diag_addendum, expected_type_diag_addendum);
     P::new_eval(result)
 }
 
@@ -299,11 +302,12 @@ pub fn get_type_of_tuple_with_context(
     let mut expected_type_diag_addendum: Option<P<DiagnosticAddendum>> = None;
     if entry_type_results
         .iter()
-        .any(|result| result.expected_type_diag_addendum.get().is_some())
+        .any(|result| result.cold().expected_type_diag_addendum.is_some())
     {
         let addendum = DiagnosticAddendum::new();
         for result in &entry_type_results {
-            if let Some(result_addendum) = result.expected_type_diag_addendum.get() {
+            let result_addendum = result.cold().expected_type_diag_addendum;
+            if let Some(result_addendum) = result_addendum {
                 addendum.add_addendum(result_addendum);
             }
         }
@@ -340,7 +344,11 @@ pub fn get_type_of_tuple_with_context(
     };
 
     Some(P::new_eval(TypeResult {
-        expected_type_diag_addendum: Cell::new(expected_type_diag_addendum),
+        cold: TypeResultCold {
+            expected_type_diag_addendum,
+            ..Default::default()
+        }
+        .into_cold(),
         is_incomplete: Cell::new(Some(is_incomplete)),
         ..TypeResult::new(type_)
     }))

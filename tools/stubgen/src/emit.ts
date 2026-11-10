@@ -241,16 +241,18 @@ export class FileEmitter {
         const used = new Set<string>();
         const key = `${this.file}:${name}`;
         const coldNames = new Set(this.gen.table.cold.get(key) ?? []);
-        if (coldNames.size && mode !== 'value') {
-            throw new Error(`[cold] ${key}: only a value struct can hold cold fields`);
+        if (coldNames.size && mode !== 'value' && mode !== 'handle') {
+            throw new Error(`[cold] ${key}: only a value or handle struct can hold cold fields`);
         }
         const coldFields: string[] = [];
         for (const p of props) {
             if (this.gen.accessorOf(p.node)?.drop) {
                 continue;
             }
-            const f = this.field(p.node, name, mode === 'handle', false, p.subst);
-            if (f && coldNames.delete(memberName(p.node) ?? '')) {
+            // A handle's cold half sits in one RefCell, so its fields are plain.
+            const cold = coldNames.delete(memberName(p.node) ?? '');
+            const f = this.field(p.node, name, mode === 'handle' && !cold, false, p.subst);
+            if (f && cold) {
                 coldFields.push(f);
             } else if (f) {
                 fields.push(f);
@@ -299,19 +301,26 @@ export class FileEmitter {
         }
         if (coldFields.length) {
             fields.push(`    // Fields few objects set ([cold] in tools/stubgen/typemap.toml): read with \`cold()\`, write with \`cold_mut()\`.`);
-            fields.push(`    pub cold: Option<Box<${name}Cold>>,`);
+            if (mode === 'handle') {
+                this.uses.add(['std::cell::RefCell']);
+                fields.push(`    pub cold: RefCell<Option<Box<${name}Cold>>>,`);
+            } else {
+                fields.push(`    pub cold: Option<Box<${name}Cold>>,`);
+            }
         }
         // A value is copied where the TypeScript spreads it or reads it out of a container.
         const derive = mode === 'value' ? [valueDerive(fields)] : [];
         this.out.push(this.marker(decl), ...derive, `pub struct ${name}${generics} {`, ...fields, '}', '');
         if (coldFields.length) {
-            this.coldStruct(decl, name, coldFields);
+            this.coldStruct(decl, name, coldFields, mode === 'handle');
         }
     }
 
     // The cold half of a [cold] struct: allocated on the first write through `cold_mut()`, so an
-    // object that never sets one of its fields pays one pointer. `cold()` reads an empty one.
-    private coldStruct(decl: ts.InterfaceDeclaration | ts.ClassDeclaration, name: string, coldFields: string[]) {
+    // object that never sets one of its fields pays one pointer. `cold()` reads an empty one. A
+    // handle's cold half sits in a RefCell, so its accessors borrow it: never hold one across a
+    // call that can reach the same object.
+    private coldStruct(decl: ts.InterfaceDeclaration | ts.ClassDeclaration, name: string, coldFields: string[], handle: boolean) {
         const cold = `${name}Cold`;
         if (!coldFields.every((f) => /^\s*pub(\(crate\))? \w+: Option</.test(f))) {
             throw new Error(`[cold] ${this.file}:${name}: every cold field must be optional`);
@@ -328,16 +337,48 @@ export class FileEmitter {
             `    const EMPTY: ${cold} = ${cold} {`,
             ...empties,
             '    };',
+            '',
+            '    /// The `cold` field that holds these fields: unallocated while every one is unset.',
+            handle ? `    pub fn into_cold(self) -> RefCell<Option<Box<${cold}>>> {` : `    pub fn into_cold(self) -> Option<Box<${cold}>> {`,
+            `        let unset = ${coldFields.map((f) => f.replace(/^\s*pub(\(crate\))? (\w+): .*$/, 'self.$2.is_none()')).join(' && ')};`,
+            handle ? '        RefCell::new((!unset).then(|| Box::new(self)))' : '        (!unset).then(|| Box::new(self))',
+            '    }',
             '}',
             '',
             `impl ${name} {`,
-            `    pub fn cold(&self) -> &${cold} {`,
-            `        self.cold.as_deref().unwrap_or(&${cold}::EMPTY)`,
-            '    }',
-            '',
-            `    pub fn cold_mut(&mut self) -> &mut ${cold} {`,
-            '        self.cold.get_or_insert_with(Default::default)',
-            '    }',
+            ...(handle
+                ? [
+                      `    pub fn cold(&self) -> std::cell::Ref<'_, ${cold}> {`,
+                      `        std::cell::Ref::map(self.cold.borrow(), |cold| cold.as_deref().unwrap_or(&${cold}::EMPTY))`,
+                      '    }',
+                      '',
+                      `    pub fn cold_mut(&self) -> std::cell::RefMut<'_, ${cold}> {`,
+                      '        std::cell::RefMut::map(self.cold.borrow_mut(), |cold| &mut **cold.get_or_insert_with(Default::default))',
+                      '    }',
+                      '',
+                      '    /// `field = value`, without allocating the cold half to hold a `None`.',
+                      `    pub fn set_cold<T>(&self, field: fn(&mut ${cold}) -> &mut Option<T>, value: Option<T>) {`,
+                      '        if value.is_some() || self.cold.borrow().is_some() {',
+                      '            *field(&mut self.cold_mut()) = value;',
+                      '        }',
+                      '    }',
+                  ]
+                : [
+                      `    pub fn cold(&self) -> &${cold} {`,
+                      `        self.cold.as_deref().unwrap_or(&${cold}::EMPTY)`,
+                      '    }',
+                      '',
+                      `    pub fn cold_mut(&mut self) -> &mut ${cold} {`,
+                      '        self.cold.get_or_insert_with(Default::default)',
+                      '    }',
+                      '',
+                      '    /// `field = value`, without allocating the cold half to hold a `None`.',
+                      `    pub fn set_cold<T>(&mut self, field: fn(&mut ${cold}) -> &mut Option<T>, value: Option<T>) {`,
+                      '        if value.is_some() || self.cold.is_some() {',
+                      '            *field(self.cold_mut()) = value;',
+                      '        }',
+                      '    }',
+                  ]),
             '}',
             ''
         );

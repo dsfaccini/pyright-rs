@@ -462,8 +462,8 @@ pub(crate) fn add_get_method_to_property_symbol_table(
     get_function1_shared
         .declaration
         .set(fget_shared.declaration.get());
-    let deprecated_message = fget_shared.deprecated_message.borrow().clone();
-    *get_function1_shared.deprecated_message.borrow_mut() = deprecated_message;
+    let deprecated_message = fget_shared.cold().deprecated_message.clone();
+    get_function1_shared.set_cold(|cold| &mut cold.deprecated_message, deprecated_message);
     get_function1_shared
         .method_class
         .set(fget_shared.method_class.get());
@@ -524,8 +524,8 @@ pub(crate) fn add_get_method_to_property_symbol_table(
     get_function2_shared
         .declaration
         .set(fget_shared.declaration.get());
-    let deprecated_message = fget_shared.deprecated_message.borrow().clone();
-    *get_function2_shared.deprecated_message.borrow_mut() = deprecated_message;
+    let deprecated_message = fget_shared.cold().deprecated_message.clone();
+    get_function2_shared.set_cold(|cold| &mut cold.deprecated_message, deprecated_message);
     get_function2_shared
         .method_class
         .set(fget_shared.method_class.get());
@@ -591,8 +591,7 @@ pub(crate) fn combine_setter_overloads(
             .d()
             .shared
             .get()
-            .deprecated_message
-            .borrow()
+            .cold().deprecated_message
             .clone();
         if let Some(deprecation_message) = new_setter_deprecated_message {
             overloads = overloads
@@ -602,8 +601,7 @@ pub(crate) fn combine_setter_overloads(
                         .d()
                         .shared
                         .get()
-                        .deprecated_message
-                        .borrow()
+                        .cold().deprecated_message
                         .is_none()
                     {
                         FunctionType::clone_with_deprecated_message(
@@ -713,8 +711,8 @@ pub(crate) fn create_set_method_from_setter(
     // TypeVars that need to be solved.
     let type_var_scope_id = get_type_var_scope_id(fset.0);
     *set_function_shared.type_var_scope_id.borrow_mut() = type_var_scope_id;
-    let deprecated_message = fset_shared.deprecated_message.borrow().clone();
-    *set_function_shared.deprecated_message.borrow_mut() = deprecated_message;
+    let deprecated_message = fset_shared.cold().deprecated_message.clone();
+    set_function_shared.set_cold(|cold| &mut cold.deprecated_message, deprecated_message);
     set_function_shared
         .method_class
         .set(fset_shared.method_class.get());
@@ -777,8 +775,8 @@ pub(crate) fn add_del_method_to_property_symbol_table(
     let fdel_shared = fdel.d().shared.get();
     let type_var_scope_id = get_type_var_scope_id(fdel.0);
     *del_function_shared.type_var_scope_id.borrow_mut() = type_var_scope_id;
-    let deprecated_message = fdel_shared.deprecated_message.borrow().clone();
-    *del_function_shared.deprecated_message.borrow_mut() = deprecated_message;
+    let deprecated_message = fdel_shared.cold().deprecated_message.clone();
+    del_function_shared.set_cold(|cold| &mut cold.deprecated_message, deprecated_message);
     del_function_shared
         .method_class
         .set(fdel_shared.method_class.get());

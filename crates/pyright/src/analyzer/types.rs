@@ -960,6 +960,21 @@ impl ClassDetailsPrivCold {
         deprecated_instance_message: None,
         partial_call_type: None,
     };
+
+    /// The `cold` field that holds these fields: unallocated while every one is unset.
+    pub fn into_cold(self) -> Option<Box<ClassDetailsPrivCold>> {
+        let unset = self.alias_name.is_none()
+            && self.typed_dict_narrowed_entries.is_none()
+            && self.is_typed_dict_partial.is_none()
+            && self.is_asymmetric_descriptor.is_none()
+            && self.is_asymmetric_attribute_accessor.is_none()
+            && self.fget_info.is_none()
+            && self.fset_info.is_none()
+            && self.fdel_info.is_none()
+            && self.deprecated_instance_message.is_none()
+            && self.partial_call_type.is_none();
+        (!unset).then(|| Box::new(self))
+    }
 }
 
 impl ClassDetailsPriv {
@@ -969,6 +984,17 @@ impl ClassDetailsPriv {
 
     pub fn cold_mut(&mut self) -> &mut ClassDetailsPrivCold {
         self.cold.get_or_insert_with(Default::default)
+    }
+
+    /// `field = value`, without allocating the cold half to hold a `None`.
+    pub fn set_cold<T>(
+        &mut self,
+        field: fn(&mut ClassDetailsPrivCold) -> &mut Option<T>,
+        value: Option<T>,
+    ) {
+        if value.is_some() || self.cold.is_some() {
+            *field(self.cold_mut()) = value;
+        }
     }
 }
 
@@ -2329,11 +2355,63 @@ pub struct FunctionDetailsShared {
     pub declared_return_type: Cell<Option<P<Type>>>,
     pub declaration: Cell<Option<P<Declaration>>>,
     pub type_var_scope_id: RefCell<Option<String>>,
-    pub doc_string: RefCell<Option<String>>,
-    pub deprecated_message: RefCell<Option<String>>,
     pub method_class: Cell<Option<ClassType>>,
-    pub decorator_data_class_behaviors: Cell<Option<P<DataClassBehaviors>>>,
-    pub inferred_return_type: RefCell<Option<FunctionDetailsSharedInferredReturnType>>,
+    // Fields few objects set ([cold] in tools/stubgen/typemap.toml): read with `cold()`, write with `cold_mut()`.
+    pub cold: RefCell<Option<Box<FunctionDetailsSharedCold>>>,
+}
+// Copied by every FunctionType clone that changes it; rare fields live in the cold half (PLAN.md step 6).
+const _: () = assert!(size_of::<FunctionDetailsShared>() <= 192);
+
+// analyzer/types.ts:1729
+#[derive(Clone, Default)]
+pub struct FunctionDetailsSharedCold {
+    pub doc_string: Option<String>,
+    pub deprecated_message: Option<String>,
+    pub decorator_data_class_behaviors: Option<P<DataClassBehaviors>>,
+    pub inferred_return_type: Option<FunctionDetailsSharedInferredReturnType>,
+}
+
+impl FunctionDetailsSharedCold {
+    const EMPTY: FunctionDetailsSharedCold = FunctionDetailsSharedCold {
+        doc_string: None,
+        deprecated_message: None,
+        decorator_data_class_behaviors: None,
+        inferred_return_type: None,
+    };
+
+    /// The `cold` field that holds these fields: unallocated while every one is unset.
+    pub fn into_cold(self) -> RefCell<Option<Box<FunctionDetailsSharedCold>>> {
+        let unset = self.doc_string.is_none()
+            && self.deprecated_message.is_none()
+            && self.decorator_data_class_behaviors.is_none()
+            && self.inferred_return_type.is_none();
+        RefCell::new((!unset).then(|| Box::new(self)))
+    }
+}
+
+impl FunctionDetailsShared {
+    pub fn cold(&self) -> std::cell::Ref<'_, FunctionDetailsSharedCold> {
+        std::cell::Ref::map(self.cold.borrow(), |cold| {
+            cold.as_deref().unwrap_or(&FunctionDetailsSharedCold::EMPTY)
+        })
+    }
+
+    pub fn cold_mut(&self) -> std::cell::RefMut<'_, FunctionDetailsSharedCold> {
+        std::cell::RefMut::map(self.cold.borrow_mut(), |cold| {
+            &mut **cold.get_or_insert_with(Default::default)
+        })
+    }
+
+    /// `field = value`, without allocating the cold half to hold a `None`.
+    pub fn set_cold<T>(
+        &self,
+        field: fn(&mut FunctionDetailsSharedCold) -> &mut Option<T>,
+        value: Option<T>,
+    ) {
+        if value.is_some() || self.cold.borrow().is_some() {
+            *field(&mut self.cold_mut()) = value;
+        }
+    }
 }
 
 // analyzer/types.ts:1757
@@ -2480,11 +2558,15 @@ impl FunctionType {
                     declared_return_type: Cell::new(None),
                     declaration: Cell::new(None),
                     type_var_scope_id: RefCell::new(None),
-                    doc_string: RefCell::new(doc_string.map(str::to_string)),
-                    deprecated_message: RefCell::new(None),
+                    cold: FunctionDetailsSharedCold {
+                        doc_string: doc_string.map(str::to_string),
+                        deprecated_message: None,
+                        decorator_data_class_behaviors: None,
+                        inferred_return_type: None,
+                        ..Default::default()
+                    }
+                    .into_cold(),
                     method_class: Cell::new(None),
-                    decorator_data_class_behaviors: Cell::new(None),
-                    inferred_return_type: RefCell::new(None),
                 })),
                 priv_: RefCell::new(FunctionDetailsPriv::default()),
             }),
@@ -2603,8 +2685,8 @@ impl FunctionType {
                 }));
         }
 
-        let inferred_return_type = type_shared.inferred_return_type.borrow().clone();
-        *new_shared.inferred_return_type.borrow_mut() = inferred_return_type;
+        let inferred_return_type = type_shared.cold().inferred_return_type.clone();
+        new_shared.set_cold(|cold| &mut cold.inferred_return_type, inferred_return_type);
 
         new_function
     }
@@ -2720,14 +2802,14 @@ impl FunctionType {
             .parameters
             .set(P::new_eval(RefCell::new(new_params)));
 
-        if new_shared.doc_string.borrow().is_none() {
-            let doc_string = param_spec_value_shared.doc_string.borrow().clone();
-            *new_shared.doc_string.borrow_mut() = doc_string;
+        if new_shared.cold().doc_string.is_none() {
+            let doc_string = param_spec_value_shared.cold().doc_string.clone();
+            new_shared.set_cold(|cold| &mut cold.doc_string, doc_string);
         }
 
-        if new_shared.deprecated_message.borrow().is_none() {
-            let deprecated_message = param_spec_value_shared.deprecated_message.borrow().clone();
-            *new_shared.deprecated_message.borrow_mut() = deprecated_message;
+        if new_shared.cold().deprecated_message.is_none() {
+            let deprecated_message = param_spec_value_shared.cold().deprecated_message.clone();
+            new_shared.set_cold(|cold| &mut cold.deprecated_message, deprecated_message);
         }
 
         let type_shared = type_.d().shared.get();
@@ -2853,7 +2935,7 @@ impl FunctionType {
         let new_shared = P::new_eval(FunctionDetailsShared::clone(&type_.d().shared.get()));
         new_function.d().shared.set(new_shared);
 
-        *new_shared.doc_string.borrow_mut() = doc_string;
+        new_shared.set_cold(|cold| &mut cold.doc_string, doc_string);
 
         new_function
     }
@@ -2869,7 +2951,7 @@ impl FunctionType {
         let new_shared = P::new_eval(FunctionDetailsShared::clone(&type_.d().shared.get()));
         new_function.d().shared.set(new_shared);
 
-        *new_shared.deprecated_message.borrow_mut() = deprecated_message;
+        new_shared.set_cold(|cold| &mut cold.deprecated_message, deprecated_message);
 
         new_function
     }
@@ -2965,9 +3047,9 @@ impl FunctionType {
                 }));
         }
 
-        let inferred_return_type = type_shared.inferred_return_type.borrow().clone();
+        let inferred_return_type = type_shared.cold().inferred_return_type.clone();
         if inferred_return_type.is_some() {
-            *details.inferred_return_type.borrow_mut() = inferred_return_type;
+            details.set_cold(|cold| &mut cold.inferred_return_type, inferred_return_type);
         }
 
         new_function
@@ -3454,8 +3536,7 @@ impl FunctionType {
 
         if include_inferred {
             return shared
-                .inferred_return_type
-                .borrow()
+                .cold().inferred_return_type
                 .as_ref()
                 .map(|inferred| inferred.type_);
         }
@@ -5256,7 +5337,8 @@ pub fn is_type_same(
                 return1_type = Some(return_type);
             }
             if return1_type.is_none() {
-                if let Some(inferred) = shared1.inferred_return_type.borrow().as_ref() {
+                let inferred = shared1.cold().inferred_return_type.clone();
+                if let Some(inferred) = inferred.as_ref() {
                     return1_type = Some(inferred.type_);
                 }
             }
@@ -5268,7 +5350,8 @@ pub fn is_type_same(
                 return2_type = Some(return_type);
             }
             if return2_type.is_none() {
-                if let Some(inferred) = shared2.inferred_return_type.borrow().as_ref() {
+                let inferred = shared2.cold().inferred_return_type.clone();
+                if let Some(inferred) = inferred.as_ref() {
                     return2_type = Some(inferred.type_);
                 }
             }
@@ -6085,11 +6168,8 @@ impl Clone for FunctionDetailsShared {
             declared_return_type: self.declared_return_type.clone(),
             declaration: self.declaration.clone(),
             type_var_scope_id: self.type_var_scope_id.clone(),
-            doc_string: self.doc_string.clone(),
-            deprecated_message: self.deprecated_message.clone(),
             method_class: self.method_class.clone(),
-            decorator_data_class_behaviors: self.decorator_data_class_behaviors.clone(),
-            inferred_return_type: self.inferred_return_type.clone(),
+            cold: self.cold.clone(),
         }
     }
 }
