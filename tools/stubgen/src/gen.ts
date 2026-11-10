@@ -299,10 +299,21 @@ export class Gen {
             return this.traitAncestors(key).length > 0 ? 'owned' : 'handle';
         }
         const iface = decls.find(ts.isInterfaceDeclaration);
-        if (iface && this.interfaceFieldsWritten(key)) {
+        if (iface && (this.interfaceFieldsWritten(key) || this.identityComparedAt(key) !== undefined)) {
             return 'handle';
         }
         return 'value';
+    }
+
+    // Where code compares two objects of this type with `===`, if anywhere.
+    identityComparedAt(key: string): string | undefined {
+        for (const d of this.decls.get(key) ?? []) {
+            const at = this.writes.identityCompared.get(d);
+            if (at) {
+                return at;
+            }
+        }
+        return undefined;
     }
 
     private interfaceFieldsWritten(key: string): boolean {
@@ -376,7 +387,7 @@ export class Gen {
                 this.quiet++;
                 try {
                     const c = this.mapNode(tp.constraint, { file: '', key: '', count: 0 }, new Map());
-                    if (c.k !== 'unmapped') {
+                    if (c.k !== 'unmapped' && isCopy(c)) {
                         erased.set(tp.name.text, c);
                         return;
                     }
@@ -420,7 +431,9 @@ export class Gen {
             return undefined;
         }
         const text = shortenPaths(override);
-        return { k: 'raw', text, param: text, copy: false, uses: usesOf(override) };
+        // Handles and options of handles are Copy, so a written field holding one is a Cell.
+        const copy = /^(Option<)?P</.test(text);
+        return { k: 'raw', text, param: text, copy, uses: usesOf(override) };
     }
 
     mapDecl(typeNode: ts.TypeNode | undefined, node: ts.Node, site: Site, subst?: Map<string, IR>): IR {
@@ -662,11 +675,18 @@ export class Gen {
     // (`T extends Type` becomes `P<Type>`), and kept as Rust generics otherwise.
     private mapTypeParam(sym: ts.Symbol, site: Site): IR {
         const decl = sym.declarations?.find(ts.isTypeParameterDeclaration);
+        // A type parameter of a function type (`<T>(func: T) => ..`) has no Rust generic to bind
+        // to: use its constraint.
+        const bindable = decl !== undefined && (ts.isFunctionLike(decl.parent) ? !ts.isFunctionTypeNode(decl.parent) && !ts.isCallSignatureDeclaration(decl.parent) : true);
         if (decl?.constraint) {
+            // Only a handle constraint can stand for its subtypes: a caller casts the handle back.
             const c = this.mapNode(decl.constraint, site, new Map());
-            if (c.k !== 'unmapped') {
+            if (c.k !== 'unmapped' && (isCopy(c) || !bindable)) {
                 return c;
             }
+        }
+        if (!bindable) {
+            return this.unmappedAt(`unbound type parameter ${sym.getName()}`, undefined, site);
         }
         return { k: 'generic', name: sym.getName() };
     }

@@ -34,6 +34,7 @@ pub enum NameBindingType {
 }
 
 // analyzer/scope.ts:46
+#[derive(Clone)]
 pub struct SymbolWithScope {
     pub symbol: P<Symbol>,
     pub scope: P<Scope>,
@@ -44,6 +45,7 @@ pub struct SymbolWithScope {
 }
 
 // analyzer/scope.ts:85
+#[derive(Clone)]
 pub struct ChainedModuleLevelLookupContext {
     pub is_outside_caller_module: Option<bool>,
     pub is_beyond_execution_scope: Option<bool>,

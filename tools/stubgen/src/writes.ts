@@ -26,17 +26,31 @@ export class Writes {
     // Params and locals assigned after their declaration.
     readonly reassigned = new Set<ts.Node>();
     readonly where = new Map<ts.Node, string>();
+    // Interface and class declarations whose objects some code compares with `===` or `!==`.
+    readonly identityCompared = new Map<ts.Node, string>();
+    // Parameters of an interface member that a closure factory implements, mapped to the parameters
+    // of the nested function behind it: a call through `evaluator.getTypeOfExpression(..)` reaches
+    // `getTypeOfExpression` in `createTypeEvaluator`.
+    readonly implParams = new Map<ts.SignatureDeclaration, readonly ts.ParameterDeclaration[]>();
 
     constructor(private readonly checker: ts.TypeChecker) {}
 
     analyze(files: readonly ts.SourceFile[]) {
-        // Two passes: the second sees which params the first found mutated, so passing a field to
-        // such a param counts as mutating the field.
-        for (let pass = 0; pass < 2; pass++) {
+        // Repeat until nothing grows: passing a field to a parameter that a callee mutates mutates
+        // the field, and the callee's own parameters may only be known as mutated after a pass.
+        for (let pass = 0; pass < 20; pass++) {
+            const before = this.size();
             for (const sf of files) {
                 this.visit(sf);
             }
+            if (this.size() === before) {
+                break;
+            }
         }
+    }
+
+    private size(): number {
+        return this.written.size + this.mutated.size + this.writtenThrough.size + this.reassigned.size;
     }
 
     isWritten(decl: ts.Node): boolean {
@@ -142,6 +156,9 @@ export class Writes {
     }
 
     private visit(node: ts.Node) {
+        if (ts.isBinaryExpression(node) && isIdentityOperator(node.operatorToken.kind)) {
+            this.onIdentity(node);
+        }
         if (ts.isBinaryExpression(node) && isAssignmentOperator(node.operatorToken.kind)) {
             this.onAssign(node.left, node);
         } else if (
@@ -168,14 +185,40 @@ export class Writes {
         ts.forEachChild(node, (child) => this.visit(child));
     }
 
+    // `a === b` on two objects of one pyright interface or class: that type needs identity.
+    private onIdentity(node: ts.BinaryExpression) {
+        // The interface and class declarations an operand's type can be; a union gives each member.
+        const declsOf = (e: ts.Expression): ts.Node[] => {
+            const t = this.checker.getNonNullableType(this.checker.getTypeAtLocation(e));
+            const parts = t.isUnion() ? t.types : [t];
+            const out: ts.Node[] = [];
+            for (const p of parts) {
+                const d = p.flags & ts.TypeFlags.Object ? p.getSymbol()?.declarations?.[0] : undefined;
+                if (d && (ts.isInterfaceDeclaration(d) || ts.isClassDeclaration(d)) && !d.getSourceFile().isDeclarationFile) {
+                    out.push(d);
+                }
+            }
+            return out;
+        };
+        const right = new Set(declsOf(node.right));
+        for (const d of declsOf(node.left)) {
+            if (right.has(d) && !this.identityCompared.has(d)) {
+                const sf = node.getSourceFile();
+                const line = sf.getLineAndCharacterOfPosition(node.getStart(sf)).line + 1;
+                this.identityCompared.set(d, `${sf.fileName.replace(/.*\/src\//, '')}:${line}`);
+            }
+        }
+    }
+
     // Passing a field or param to a parameter that the callee changes in place changes it too.
     private onCallArgs(call: ts.CallExpression) {
         const decl = this.checker.getResolvedSignature(call)?.getDeclaration();
         if (!decl || !ts.isFunctionLike(decl)) {
             return;
         }
+        const params = this.implParams.get(decl) ?? decl.parameters;
         call.arguments.forEach((arg, i) => {
-            const param = decl.parameters[Math.min(i, decl.parameters.length - 1)];
+            const param = params[Math.min(i, params.length - 1)];
             if (!param) {
                 return;
             }
@@ -195,6 +238,15 @@ export function skipParens(e: ts.Expression): ts.Expression {
         x = x.expression;
     }
     return x;
+}
+
+function isIdentityOperator(kind: ts.SyntaxKind): boolean {
+    return (
+        kind === ts.SyntaxKind.EqualsEqualsEqualsToken ||
+        kind === ts.SyntaxKind.ExclamationEqualsEqualsToken ||
+        kind === ts.SyntaxKind.EqualsEqualsToken ||
+        kind === ts.SyntaxKind.ExclamationEqualsToken
+    );
 }
 
 function isAssignmentOperator(kind: ts.SyntaxKind): boolean {

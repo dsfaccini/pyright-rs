@@ -11,6 +11,7 @@
 use crate::common::uri::uri::Uri;
 
 // analyzer/pyTypedUtils.ts:14
+#[derive(Clone)]
 pub struct PyTypedInfo {
     pub py_typed_path: Uri,
     pub is_partially_typed: bool,

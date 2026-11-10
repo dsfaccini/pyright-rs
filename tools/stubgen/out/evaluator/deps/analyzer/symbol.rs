@@ -40,6 +40,7 @@ impl SymbolFlags {
 flag_ops!(SymbolFlags);
 
 // analyzer/symbol.ts:88
+#[derive(Clone)]
 pub struct SynthesizedTypeInfo {
     pub type_: P<Type>,
     pub node: Option<NameNode>,

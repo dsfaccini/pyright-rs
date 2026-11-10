@@ -10,6 +10,7 @@
 
 use crate::analyzer::types::{ClassType, FunctionParam, Type, TypeVarType};
 use jsrt::P;
+use std::cell::{Cell, RefCell};
 
 // analyzer/parameterUtils.ts:41
 #[repr(i32)]
@@ -33,15 +34,15 @@ pub struct VirtualParamDetails {
 
 // analyzer/parameterUtils.ts:57
 pub struct ParamListDetails {
-    pub params: Vec<VirtualParamDetails>,
-    pub position_only_param_count: u32,
-    pub position_param_count: u32,
-    pub kwargs_index: Option<i32>,
-    pub args_index: Option<i32>,
-    pub first_keyword_only_index: Option<i32>,
-    pub first_position_or_keyword_index: i32,
-    pub has_unpacked_type_var_tuple: bool,
-    pub has_unpacked_typed_dict: bool,
-    pub unpacked_kwargs_typed_dict_type: Option<ClassType>,
-    pub param_spec: Option<TypeVarType>,
+    pub params: RefCell<Vec<P<VirtualParamDetails>>>,
+    pub position_only_param_count: Cell<u32>,
+    pub position_param_count: Cell<u32>,
+    pub kwargs_index: Cell<Option<i32>>,
+    pub args_index: Cell<Option<i32>>,
+    pub first_keyword_only_index: Cell<Option<i32>>,
+    pub first_position_or_keyword_index: Cell<i32>,
+    pub has_unpacked_type_var_tuple: Cell<bool>,
+    pub has_unpacked_typed_dict: Cell<bool>,
+    pub unpacked_kwargs_typed_dict_type: Cell<Option<ClassType>>,
+    pub param_spec: Cell<Option<TypeVarType>>,
 }

@@ -83,7 +83,7 @@ pub enum FlowNodeDetails {
 // analyzer/codeFlowTypes.ts:72
 pub struct FlowLabelDetails {
     pub antecedents: RefCell<Vec<P<FlowNode>>>,
-    pub affected_expressions: RefCell<Option<P<RefCell<JsSet<String>>>>>,
+    pub affected_expressions: Cell<Option<P<RefCell<JsSet<String>>>>>,
 }
 
 // analyzer/codeFlowTypes.ts:72

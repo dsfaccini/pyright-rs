@@ -73,7 +73,11 @@ Interfaces held as `P<T>` by the default rule (a field is written after construc
 - `analyzer/types.ts:DataClassEntry`: hasDefault at analyzer/dataClasses.ts:591
 - `analyzer/types.ts:FunctionDetailsShared`: flags at analyzer/types.ts:2002
 - `analyzer/types.ts:LiteralTypes`: literalStrMap at analyzer/types.ts:2734
+- `analyzer/types.ts:SpecializedFunctionTypes`: parameterTypes at analyzer/types.ts:2143
 - `analyzer/types.ts:TypeAliasSharedInfo`: typeParams at analyzer/typeEvaluator.ts:18021
 - `analyzer/types.ts:TypeVarDetailsShared`: name at analyzer/types.ts:2998
 - `analyzer/types.ts:TypedDictEntries`: knownItems at analyzer/typedDicts.ts:1138
 - `common/configOptions.ts:DiagnosticRuleSet`: analyzeUnannotatedFunctions at analyzer/service.ts:1160
+
+[modes] values that some code compares by identity (porting.md wants a handle): 0.
+

@@ -39,6 +39,7 @@ impl PrintExpressionFlags {
 flag_ops!(PrintExpressionFlags);
 
 // analyzer/parseTreeUtils.ts:66
+#[derive(Clone)]
 pub struct EvaluationScopeInfo {
     pub node: EvaluationScopeNode,
     pub use_proxy_scope: Option<bool>,
@@ -362,7 +363,7 @@ impl ParseTreeVisitor<bool> for NameNodeWalker {
 
 impl NameNodeWalker {
     // analyzer/parseTreeUtils.ts:1710
-    pub fn new(_callback: &mut dyn FnMut(NameNode, Option<i32>, Option<ExpressionNode>)) -> Self {
+    pub fn new(_callback: Rc<dyn Fn(NameNode, Option<i32>, Option<ExpressionNode>)>) -> Self {
         todo!()
     }
 }
@@ -398,7 +399,7 @@ impl ParseTreeVisitor<bool> for CallNodeWalker {
 
 impl CallNodeWalker {
     // analyzer/parseTreeUtils.ts:1745
-    pub fn new(_callback: &mut dyn FnMut(CallNode)) -> Self {
+    pub fn new(_callback: Rc<dyn Fn(CallNode)>) -> Self {
         todo!()
     }
 }
@@ -740,6 +741,7 @@ pub fn get_next_matching_token(
 }
 
 // Inline object type at getCallNodeAndActiveParamIndex.return.
+#[derive(Clone)]
 pub struct GetCallNodeAndActiveParamIndexReturn {
     pub call_node: CallNode,
     pub active_index: i32,
@@ -747,6 +749,7 @@ pub struct GetCallNodeAndActiveParamIndexReturn {
 }
 
 // Inline object type at getFullStatementRange.options.
+#[derive(Clone)]
 pub struct GetFullStatementRangeOptions {
     pub include_trailing_blank_lines: bool,
 }

@@ -11,7 +11,7 @@
 use crate::analyzer::symbol::Symbol;
 use crate::analyzer::types::{ClassType, SignatureWithOffsets, Type, TypeVarType};
 use jsrt::{P, flag_ops};
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 
 // analyzer/typeUtils.ts:78
 pub struct ClassMember {
@@ -19,7 +19,7 @@ pub struct ClassMember {
     pub class_type: P<Type>,
     pub unspecialized_class_type: P<Type>,
     pub is_instance_member: bool,
-    pub is_class_member: bool,
+    pub is_class_member: Cell<bool>,
     pub is_slots_member: bool,
     pub is_class_var: bool,
     pub is_read_only: bool,
@@ -52,12 +52,13 @@ flag_ops!(MemberAccessFlags);
 
 // analyzer/typeUtils.ts:189
 pub struct InferenceContext {
-    pub expected_type: P<Type>,
+    pub expected_type: Cell<P<Type>>,
     pub is_type_incomplete: Option<bool>,
     pub return_type_override: Option<P<Type>>,
 }
 
 // analyzer/typeUtils.ts:220
+#[derive(Clone)]
 pub struct ApplyTypeVarOptions {
     pub type_class_type: Option<ClassType>,
     pub replace_unsolved: Option<ApplyTypeVarOptionsReplaceUnsolved>,
@@ -69,6 +70,7 @@ pub struct UniqueSignatureTracker {
 }
 
 // Inline object type at ApplyTypeVarOptions.replaceUnsolved.
+#[derive(Clone)]
 pub struct ApplyTypeVarOptionsReplaceUnsolved {
     pub scope_ids: Vec<String>,
     pub tuple_class_type: Option<ClassType>,

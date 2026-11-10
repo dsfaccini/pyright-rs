@@ -9,18 +9,21 @@
 )]
 
 // common/textRange.ts:12
+#[derive(Clone)]
 pub struct TextRange {
     pub start: i32,
     pub length: i32,
 }
 
 // common/textRange.ts:93
+#[derive(Clone)]
 pub struct Position {
     pub line: i32,
     pub character: i32,
 }
 
 // common/textRange.ts:105
+#[derive(Clone)]
 pub struct Range {
     pub start: Position,
     pub end: Position,

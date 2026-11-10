@@ -14,7 +14,7 @@ use crate::analyzer::type_evaluator::TypeEvaluator;
 use crate::analyzer::type_evaluator_types::{Reachability, TypeResult};
 use crate::analyzer::types::Type;
 use jsrt::{JsMap, JsSet, P};
-use std::cell::{Cell, RefCell};
+use std::cell::{Cell, OnceCell, RefCell};
 
 // analyzer/codeFlowEngine.ts:81
 pub struct FlowNodeTypeResult {
@@ -25,17 +25,19 @@ pub struct FlowNodeTypeResult {
 }
 
 // analyzer/codeFlowEngine.ts:104
+#[derive(Clone)]
 pub struct FlowNodeTypeOptions {
     pub target_symbol_id: Option<u32>,
-    pub type_at_start: Option<TypeResult>,
+    pub type_at_start: Option<P<TypeResult>>,
     pub skip_conditional_narrowing: Option<bool>,
 }
 
-// CodeFlowAnalyzer: the struct `CodeFlowAnalyzer` built by `getCodeFlowEngine.createCodeFlowAnalyzer` in analyzer/codeFlowEngine.ts.
+// analyzer/codeFlowEngine.ts:110: `CodeFlowAnalyzer` is the struct `CodeFlowAnalyzer` that `getCodeFlowEngine.createCodeFlowAnalyzer` builds in analyzer/codeFlowEngine.ts.
 
-// CodeFlowEngine: the struct `CodeFlowEngine` built by `getCodeFlowEngine` in analyzer/codeFlowEngine.ts.
+// analyzer/codeFlowEngine.ts:118: `CodeFlowEngine` is the struct `CodeFlowEngine` that `getCodeFlowEngine` builds in analyzer/codeFlowEngine.ts.
 
 // analyzer/codeFlowEngine.ts:130
+#[derive(Clone)]
 pub struct IncompleteSubtypeInfo {
     pub type_: P<Type>,
     pub is_incomplete: bool,
@@ -59,6 +61,7 @@ pub struct ReachabilityCacheEntry {
 }
 
 // analyzer/codeFlowEngine.ts:168
+#[derive(Clone)]
 pub enum CachedType {
     Type(P<Type>),
     IncompleteType(P<IncompleteType>),
@@ -95,6 +98,8 @@ pub struct CodeFlowEngine {
     pub(crate) context_manager_analysis_depth: Cell<u32>,
     // analyzer/codeFlowEngine.ts:215
     pub(crate) max_convergence_limit_hit: Cell<bool>,
+    // This struct's own handle, set once it is in the arena: a nested factory stores it.
+    pub(crate) handle: OnceCell<P<CodeFlowEngine>>,
 }
 
 // analyzer/codeFlowEngine.ts:220

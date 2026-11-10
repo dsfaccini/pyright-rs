@@ -15,7 +15,7 @@ use crate::parser::parse_nodes::{
     ArgumentNode, ExpressionNode, NameNode, ParamCategory, TypeAnnotationNode,
 };
 use jsrt::{JsBigInt, JsMap, JsSet, NumberValue, P, flag_ops};
-use std::cell::{Cell, RefCell};
+use std::cell::{Cell, RefCell, RefMut};
 use std::ops::Deref;
 use std::rc::Rc;
 
@@ -72,9 +72,9 @@ pub struct EnumLiteral {
 impl EnumLiteral {
     // analyzer/types.ts:87
     pub fn new(
-        class_full_name: &str,
-        class_name: &str,
-        item_name: &str,
+        class_full_name: String,
+        class_name: String,
+        item_name: String,
         item_type: P<Type>,
         is_repr_enum: bool,
     ) -> P<EnumLiteral> {
@@ -95,7 +95,7 @@ pub struct SentinelLiteral {
 
 impl SentinelLiteral {
     // analyzer/types.ts:101
-    pub fn new(class_full_name: &str, class_name: &str) -> P<SentinelLiteral> {
+    pub fn new(class_full_name: String, class_name: String) -> P<SentinelLiteral> {
         todo!()
     }
 
@@ -106,6 +106,7 @@ impl SentinelLiteral {
 }
 
 // analyzer/types.ts:108
+#[derive(Clone)]
 pub enum LiteralValue {
     Number(f64),
     Bigint(JsBigInt),
@@ -125,6 +126,7 @@ pub const MAX_TYPE_RECURSION_COUNT: u32 = 20;
 pub type InheritanceChain = Vec<P<Type>>;
 
 // analyzer/types.ts:124
+#[derive(Clone)]
 pub struct TypeSameOptions {
     pub ignore_pseudo_generic: Option<bool>,
     pub ignore_type_flags: Option<bool>,
@@ -148,12 +150,14 @@ pub struct TypeAliasSharedInfo {
 }
 
 // analyzer/types.ts:153
+#[derive(Clone)]
 pub struct TypeAliasInfo {
     pub shared: P<TypeAliasSharedInfo>,
     pub type_args: Option<Vec<P<Type>>>,
 }
 
 // analyzer/types.ts:160
+#[derive(Clone)]
 pub struct CachedTypeInfo {
     pub instantiable_type: Option<P<Type>>,
     pub instance_type: Option<P<Type>>,
@@ -163,6 +167,7 @@ pub struct CachedTypeInfo {
 }
 
 // analyzer/types.ts:174
+#[derive(Clone)]
 pub struct TypeBaseProps {
     pub instantiable_depth: Option<u32>,
     pub special_form: Option<ClassType>,
@@ -215,7 +220,7 @@ impl TypeBase {
     }
 
     // analyzer/types.ts:229
-    pub fn add_props(type_: P<Type>) -> TypeBaseProps {
+    pub fn add_props(type_: P<Type>) -> RefMut<'static, TypeBaseProps> {
         todo!()
     }
 
@@ -235,7 +240,7 @@ impl TypeBase {
     }
 
     // analyzer/types.ts:254
-    pub fn set_type_alias_info(type_: P<Type>, type_alias_info: Option<&TypeAliasInfo>) {
+    pub fn set_type_alias_info(type_: P<Type>, type_alias_info: Option<TypeAliasInfo>) {
         todo!()
     }
 
@@ -245,7 +250,7 @@ impl TypeBase {
     }
 
     // analyzer/types.ts:262
-    pub fn set_condition(type_: P<Type>, condition: Option<&[TypeCondition]>) {
+    pub fn set_condition(type_: P<Type>, condition: Option<Vec<TypeCondition>>) {
         todo!()
     }
 
@@ -344,6 +349,7 @@ pub mod unbound_type {
 }
 
 // analyzer/types.ts:412
+#[derive(Clone)]
 pub struct UnknownDetailsPriv {
     pub is_incomplete: bool,
     pub possible_type: Option<P<Type>>,
@@ -416,6 +422,7 @@ pub mod unknown_type {
 }
 
 // analyzer/types.ts:478
+#[derive(Clone)]
 pub struct ModuleDetailsPriv {
     pub fields: JsMap<String, P<Symbol>>,
     pub doc_string: Option<String>,
@@ -493,6 +500,7 @@ pub struct DataClassEntry {
 }
 
 // analyzer/types.ts:561
+#[derive(Clone)]
 pub struct TypedDictEntry {
     pub value_type: P<Type>,
     pub is_required: bool,
@@ -593,6 +601,7 @@ pub struct ClassDetailsShared {
 }
 
 // analyzer/types.ts:757
+#[derive(Clone)]
 pub struct TupleTypeArg {
     pub type_: P<Type>,
     pub is_unbounded: bool,
@@ -600,12 +609,14 @@ pub struct TupleTypeArg {
 }
 
 // analyzer/types.ts:770
+#[derive(Clone)]
 pub struct PropertyMethodInfo {
     pub method_type: P<Type>,
     pub class_type: Option<ClassType>,
 }
 
 // analyzer/types.ts:780
+#[derive(Clone)]
 pub struct ClassDetailsPriv {
     pub type_args: Option<Vec<P<Type>>>,
     pub is_empty_container: Option<bool>,
@@ -709,27 +720,27 @@ impl ClassType {
     }
 
     // analyzer/types.ts:982
-    pub fn clone_with_literal(class_type: ClassType, value: Option<&LiteralValue>) -> ClassType {
+    pub fn clone_with_literal(class_type: ClassType, value: Option<LiteralValue>) -> ClassType {
         todo!()
     }
 
     // analyzer/types.ts:995
     pub fn clone_for_deprecated_instance(
         type_: ClassType,
-        deprecated_message: Option<&str>,
+        deprecated_message: Option<String>,
     ) -> ClassType {
         todo!()
     }
 
     // analyzer/types.ts:1001
-    pub fn clone_for_typing_alias(class_type: ClassType, alias_name: &str) -> ClassType {
+    pub fn clone_for_typing_alias(class_type: ClassType, alias_name: String) -> ClassType {
         todo!()
     }
 
     // analyzer/types.ts:1007
     pub fn clone_for_narrowed_typed_dict_entries(
         class_type: ClassType,
-        narrowed_entries: Option<&JsMap<String, TypedDictEntry>>,
+        narrowed_entries: Option<JsMap<String, TypedDictEntry>>,
     ) -> ClassType {
         todo!()
     }
@@ -790,7 +801,7 @@ impl ClassType {
     }
 
     // analyzer/types.ts:1167
-    pub fn is_built_in(class_type: ClassType, class_name: Option<&[&str]>) -> bool {
+    pub fn is_built_in(class_type: ClassType, class_name: Option<&[String]>) -> bool {
         todo!()
     }
 
@@ -999,7 +1010,7 @@ impl ClassType {
     }
 
     // analyzer/types.ts:1379
-    pub fn get_symbol_table(class_type: ClassType) -> JsMap<String, P<Symbol>> {
+    pub fn get_symbol_table(class_type: ClassType) -> &'static RefCell<JsMap<String, P<Symbol>>> {
         todo!()
     }
 
@@ -1057,6 +1068,7 @@ impl FunctionParamFlags {
 flag_ops!(FunctionParamFlags);
 
 // analyzer/types.ts:1602
+#[derive(Clone)]
 pub struct FunctionParam {
     pub category: ParamCategory,
     pub flags: FunctionParamFlags,
@@ -1156,12 +1168,13 @@ pub struct FunctionDetailsShared {
 
 // analyzer/types.ts:1757
 pub struct SpecializedFunctionTypes {
-    pub parameter_types: Vec<P<Type>>,
-    pub parameter_default_types: Option<Vec<Option<P<Type>>>>,
-    pub return_type: Option<P<Type>>,
+    pub parameter_types: RefCell<Vec<P<Type>>>,
+    pub parameter_default_types: RefCell<Option<Vec<Option<P<Type>>>>>,
+    pub return_type: Cell<Option<P<Type>>>,
 }
 
 // analyzer/types.ts:1772
+#[derive(Clone)]
 pub struct CallSiteInferenceTypeCacheEntry {
     pub param_types: Vec<P<Type>>,
     pub return_type: P<Type>,
@@ -1174,9 +1187,10 @@ pub struct SignatureWithOffsets {
 }
 
 // analyzer/types.ts:1782
+#[derive(Clone)]
 pub struct FunctionDetailsPriv {
     pub constructor_type_var_scope_id: Option<String>,
-    pub specialized_types: Option<SpecializedFunctionTypes>,
+    pub specialized_types: Option<P<SpecializedFunctionTypes>>,
     pub call_site_return_type_cache: Option<Vec<CallSiteInferenceTypeCacheEntry>>,
     pub stripped_first_param_type: Option<P<Type>>,
     pub bound_to_type: Option<ClassType>,
@@ -1283,7 +1297,7 @@ impl FunctionType {
     // analyzer/types.ts:1953
     pub fn specialize(
         type_: FunctionType,
-        specialized_types: &SpecializedFunctionTypes,
+        specialized_types: P<SpecializedFunctionTypes>,
     ) -> FunctionType {
         todo!()
     }
@@ -1304,22 +1318,22 @@ impl FunctionType {
     // analyzer/types.ts:2057
     pub fn clone_with_new_type_var_scope_id(
         type_: FunctionType,
-        new_scope_id: Option<&str>,
-        new_constructor_scope_id: Option<&str>,
-        type_params: &[TypeVarType],
+        new_scope_id: Option<String>,
+        new_constructor_scope_id: Option<String>,
+        type_params: Vec<TypeVarType>,
     ) -> FunctionType {
         todo!()
     }
 
     // analyzer/types.ts:2074
-    pub fn clone_with_doc_string(type_: FunctionType, doc_string: Option<&str>) -> FunctionType {
+    pub fn clone_with_doc_string(type_: FunctionType, doc_string: Option<String>) -> FunctionType {
         todo!()
     }
 
     // analyzer/types.ts:2085
     pub fn clone_with_deprecated_message(
         type_: FunctionType,
-        deprecated_message: Option<&str>,
+        deprecated_message: Option<String>,
     ) -> FunctionType {
         todo!()
     }
@@ -1456,7 +1470,7 @@ impl FunctionType {
     }
 
     // analyzer/types.ts:2346
-    pub fn is_built_in(type_: FunctionType, name: Option<&[&str]>) -> bool {
+    pub fn is_built_in(type_: FunctionType, name: Option<&[String]>) -> bool {
         todo!()
     }
 
@@ -1501,6 +1515,7 @@ impl FunctionType {
 }
 
 // analyzer/types.ts:2422
+#[derive(Clone)]
 pub struct OverloadedDetailsPriv {
     pub _overloads: Vec<FunctionType>,
     pub _implementation: Option<P<Type>>,
@@ -1562,6 +1577,7 @@ impl OverloadedType {
 }
 
 // analyzer/types.ts:2474
+#[derive(Clone)]
 pub struct NeverDetailsPriv {
     pub is_no_return: bool,
 }
@@ -1632,6 +1648,7 @@ pub mod never_type {
 }
 
 // analyzer/types.ts:2519
+#[derive(Clone)]
 pub struct AnyDetailsPriv {
     pub is_ellipsis: bool,
 }
@@ -1710,6 +1727,7 @@ impl AnyType {
 }
 
 // analyzer/types.ts:2572
+#[derive(Clone)]
 pub struct TypeCondition {
     pub type_var: TypeVarType,
     pub constraint_index: i32,
@@ -1754,6 +1772,7 @@ pub struct LiteralTypes {
 }
 
 // analyzer/types.ts:2674
+#[derive(Clone)]
 pub struct UnionDetailsPriv {
     pub subtypes: Vec<UnionableType>,
     pub literal_instances: P<LiteralTypes>,
@@ -1837,6 +1856,7 @@ pub enum Variance {
 }
 
 // analyzer/types.ts:2829
+#[derive(Clone)]
 pub struct RecursiveAliasInfo {
     pub name: String,
     pub scope_id: String,
@@ -1896,6 +1916,7 @@ pub enum TypeVarScopeType {
 }
 
 // analyzer/types.ts:2876
+#[derive(Clone)]
 pub struct TypeVarDetailsPriv {
     pub scope_id: Option<String>,
     pub scope_name: Option<String>,
@@ -2024,15 +2045,15 @@ impl TypeVarType {
     }
 
     // analyzer/types.ts:2995
-    pub fn clone_for_new_name(type_: TypeVarType, name: &str) -> TypeVarType {
+    pub fn clone_for_new_name(type_: TypeVarType, name: String) -> TypeVarType {
         todo!()
     }
 
     // analyzer/types.ts:3011
     pub fn clone_for_scope_id(
         type_: TypeVarType,
-        scope_id: &str,
-        scope_name: Option<&str>,
+        scope_id: String,
+        scope_name: Option<String>,
         scope_type: Option<TypeVarScopeType>,
     ) -> TypeVarType {
         todo!()
@@ -2305,6 +2326,7 @@ pub fn find_subtype(type_: P<Type>, filter: &mut dyn FnMut(P<Type>) -> bool) -> 
 }
 
 // analyzer/types.ts:3836
+#[derive(Clone)]
 pub struct CombineTypesOptions {
     pub skip_elide_redundant_literals: Option<bool>,
     pub max_subtype_count: Option<u32>,
@@ -2330,6 +2352,7 @@ pub(crate) fn _add_type_if_unique(
 }
 
 // Inline object type at FunctionDetailsShared.inferredReturnType.
+#[derive(Clone)]
 pub struct FunctionDetailsSharedInferredReturnType {
     pub type_: P<Type>,
     pub is_incomplete: Option<bool>,

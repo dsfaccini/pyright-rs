@@ -20,6 +20,7 @@ use jsrt::{JsMap, JsSet, P};
 use std::cell::{Cell, RefCell};
 
 // analyzer/analyzerNodeInfo.ts:34
+#[derive(Clone)]
 pub struct DunderAllInfo {
     pub names: Vec<String>,
     pub string_nodes: Vec<StringNode>,
@@ -33,7 +34,7 @@ pub struct AnalyzerNodeInfo {
     pub declaration: Cell<Option<P<Declaration>>>,
     pub flow_node: Cell<Option<P<FlowNode>>>,
     pub after_flow_node: Cell<Option<P<FlowNode>>>,
-    pub code_flow_expressions: RefCell<Option<P<RefCell<JsSet<String>>>>>,
+    pub code_flow_expressions: Cell<Option<P<RefCell<JsSet<String>>>>>,
     pub code_flow_complexity: Cell<Option<f64>>,
     pub static_condition_value: Cell<Option<bool>>,
     pub dunder_all_info: RefCell<Option<DunderAllInfo>>,

@@ -9,6 +9,7 @@
 )]
 
 // common/stringUtils.ts:113
+#[derive(Clone)]
 pub struct StringFingerprint {
     pub primary: f64,
     pub secondary: f64,

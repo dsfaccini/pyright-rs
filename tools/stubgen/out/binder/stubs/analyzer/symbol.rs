@@ -53,6 +53,7 @@ pub(crate) fn get_unique_symbol_id() -> u32 {
 pub const INDETERMINATE_SYMBOL_ID: u32 = 0;
 
 // analyzer/symbol.ts:88
+#[derive(Clone)]
 pub struct SynthesizedTypeInfo {
     pub type_: P<Type>,
     pub node: Option<NameNode>,
@@ -218,7 +219,7 @@ impl Symbol {
     }
 
     // analyzer/symbol.ts:238
-    pub fn set_typing_symbol_alias(&self, aliased_name: &str) {
+    pub fn set_typing_symbol_alias(&self, aliased_name: String) {
         todo!()
     }
 

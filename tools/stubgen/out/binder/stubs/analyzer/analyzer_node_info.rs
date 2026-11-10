@@ -22,6 +22,7 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 // analyzer/analyzerNodeInfo.ts:34
+#[derive(Clone)]
 pub struct DunderAllInfo {
     pub names: Vec<String>,
     pub string_nodes: Vec<StringNode>,
@@ -35,7 +36,7 @@ pub struct AnalyzerNodeInfo {
     pub declaration: Cell<Option<P<Declaration>>>,
     pub flow_node: Cell<Option<P<FlowNode>>>,
     pub after_flow_node: Cell<Option<P<FlowNode>>>,
-    pub code_flow_expressions: RefCell<Option<P<RefCell<JsSet<String>>>>>,
+    pub code_flow_expressions: Cell<Option<P<RefCell<JsSet<String>>>>>,
     pub code_flow_complexity: Cell<Option<f64>>,
     pub static_condition_value: Cell<Option<bool>>,
     pub dunder_all_info: RefCell<Option<DunderAllInfo>>,
@@ -53,11 +54,13 @@ pub trait AnalyzerNodeInfoReader {
 }
 
 // analyzer/analyzerNodeInfo.ts:87
+#[derive(Clone)]
 pub struct AnalyzerNodeInfoReaderPropertyProvider {
     pub analyzer_node_info_reader: &'static dyn AnalyzerNodeInfoReader,
 }
 
 // analyzer/analyzerNodeInfo.ts:91
+#[derive(Clone)]
 pub struct AnalyzerNodeInfoReaderMethodProvider {
     pub get_analyzer_node_info_reader: Rc<dyn Fn() -> &'static dyn AnalyzerNodeInfoReader>,
 }
@@ -160,6 +163,7 @@ thread_local! {
 }
 
 // analyzer/analyzerNodeInfo.ts:169
+#[derive(Clone)]
 pub struct RetiredAnalyzerNodeInfoHost {}
 
 // analyzer/analyzerNodeInfo.ts:173
@@ -354,8 +358,8 @@ impl AnalyzerNodeInfoReader for AnalyzerNodeInfoAccessor {
 impl AnalyzerNodeInfoAccessor {
     // analyzer/analyzerNodeInfo.ts:428
     pub fn new(
-        _reader: &dyn AnalyzerNodeInfoReader,
-        _writer: Option<&dyn AnalyzerNodeInfoWriter>,
+        _reader: &'static dyn AnalyzerNodeInfoReader,
+        _writer: Option<&'static dyn AnalyzerNodeInfoWriter>,
     ) -> P<AnalyzerNodeInfoAccessor> {
         todo!()
     }
@@ -689,7 +693,7 @@ pub fn get_dunder_all_info(
 // analyzer/analyzerNodeInfo.ts:701
 pub fn set_dunder_all_info(
     node: ModuleNode,
-    names: Option<&DunderAllInfo>,
+    names: Option<DunderAllInfo>,
     writer: &dyn AnalyzerNodeInfoWriter,
 ) {
     todo!()

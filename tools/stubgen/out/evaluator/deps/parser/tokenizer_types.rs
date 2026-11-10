@@ -183,6 +183,7 @@ pub enum CommentType {
 }
 
 // parser/tokenizerTypes.ts:195
+#[derive(Clone)]
 pub struct Comment {
     pub start: i32,
     pub length: i32,

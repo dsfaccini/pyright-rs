@@ -14,6 +14,7 @@ use crate::parser::tokenizer_types::Token;
 use jsrt::{JsMap, P};
 
 // parser/tokenizer.ts:574
+#[derive(Clone)]
 pub struct TokenizerOutput {
     pub tokens: TextRangeCollection<P<Token>>,
     pub lines: TextRangeCollection<TextRange>,
@@ -27,12 +28,14 @@ pub struct TokenizerOutput {
 }
 
 // parser/tokenizer.ts:617
+#[derive(Clone)]
 pub struct IgnoreCommentRule {
     pub text: String,
     pub range: TextRange,
 }
 
 // parser/tokenizer.ts:622
+#[derive(Clone)]
 pub struct IgnoreComment {
     pub range: TextRange,
     pub rules_list: Option<Vec<IgnoreCommentRule>>,

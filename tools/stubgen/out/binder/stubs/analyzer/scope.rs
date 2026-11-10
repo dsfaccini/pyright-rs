@@ -34,6 +34,7 @@ pub enum NameBindingType {
 }
 
 // analyzer/scope.ts:46
+#[derive(Clone)]
 pub struct SymbolWithScope {
     pub symbol: P<Symbol>,
     pub scope: P<Scope>,
@@ -44,12 +45,14 @@ pub struct SymbolWithScope {
 }
 
 // analyzer/scope.ts:71
+#[derive(Clone)]
 pub struct GlobalScopeResult {
     pub scope: P<Scope>,
     pub is_beyond_execution_scope: bool,
 }
 
 // analyzer/scope.ts:76
+#[derive(Clone)]
 pub struct LookupSymbolOptions {
     pub is_outside_caller_module: Option<bool>,
     pub is_beyond_execution_scope: Option<bool>,
@@ -60,6 +63,7 @@ pub struct LookupSymbolOptions {
 }
 
 // analyzer/scope.ts:85
+#[derive(Clone)]
 pub struct ChainedModuleLevelLookupContext {
     pub is_outside_caller_module: Option<bool>,
     pub is_beyond_execution_scope: Option<bool>,
@@ -90,7 +94,7 @@ impl Scope {
         type_: ScopeType,
         parent: Option<P<Scope>>,
         proxy: Option<P<Scope>>,
-        chained_module_level_scope_lookup: Option<&ScopeChainedModuleLevelLookup>,
+        chained_module_level_scope_lookup: Option<ScopeChainedModuleLevelLookup>,
     ) -> P<Scope> {
         todo!()
     }
@@ -139,7 +143,7 @@ impl Scope {
     }
 
     // analyzer/scope.ts:269
-    pub fn set_slots_names(&self, names: &[String]) {
+    pub fn set_slots_names(&self, names: Vec<String>) {
         todo!()
     }
 

@@ -21,12 +21,14 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 // analyzer/analyzerFileInfo.ts:22
+#[derive(Clone)]
 pub struct AbsoluteModuleDescriptor {
     pub importing_file_uri: Uri,
     pub name_parts: Vec<String>,
 }
 
 // analyzer/analyzerFileInfo.ts:27
+#[derive(Clone)]
 pub struct LookupImportOptions {
     pub skip_file_needed_check: bool,
     pub skip_parsing: Option<bool>,
@@ -41,6 +43,7 @@ pub type ImportLookup = Rc<
 >;
 
 // analyzer/analyzerFileInfo.ts:37
+#[derive(Clone)]
 pub struct ImportLookupResult {
     pub symbol_table: JsMap<String, P<Symbol>>,
     pub dunder_all_names: Option<Vec<String>>,

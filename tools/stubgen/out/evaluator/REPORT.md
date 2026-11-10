@@ -65,13 +65,19 @@ Interfaces held as `P<T>` by the default rule (a field is written after construc
 - `analyzer/declaration.ts:ModuleLoaderActions`: uri at analyzer/binder.ts:3019
 - `analyzer/importResult.ts:ImplicitImport`: isNativeLib at analyzer/importResolver.ts:812
 - `analyzer/importResult.ts:ImportResult`: isRelative at analyzer/importResolver.ts:925
+- `analyzer/parameterUtils.ts:ParamListDetails`: params at analyzer/typeEvaluator.ts:28147
 - `analyzer/typeCacheUtils.ts:SpeculativeContext`: entriesToUndo at analyzer/typeCacheUtils.ts:162
 - `analyzer/typeCacheUtils.ts:SpeculativeEntry`: cache at analyzer/typeCacheUtils.ts:134
 - `analyzer/typeCacheUtils.ts:SpeculativeTypeEntry`: dependentTypes at analyzer/typeCacheUtils.ts:198
 - `analyzer/typeEvaluator.ts:DeferredClassCompletion`: classesToComplete at analyzer/typeEvaluator.ts:19914
 - `analyzer/typeEvaluator.ts:ExpectedTypeCacheEntry`: type at analyzer/typeEvaluator.ts:1159
-- `analyzer/typeEvaluator.ts:SuppressedNodeStackEntry`: suppressedDiags at analyzer/typeEvaluator.ts:3866
-- `analyzer/typeEvaluator.ts:SymbolResolutionStackEntry`: isResultValid at analyzer/typeEvaluator.ts:981
+- `analyzer/typeEvaluatorTypes.ts:CallResult`: returnType at analyzer/typeEvaluator.ts:11896
+- `analyzer/typeEvaluatorTypes.ts:EffectiveTypeResult`: type at analyzer/typeEvaluator.ts:25503
+- `analyzer/typeEvaluatorTypes.ts:ExpectedTypeOptions`: notParsed at analyzer/typeEvaluator.ts:2132
+- `analyzer/typeEvaluatorTypes.ts:PrefetchedTypes`: noneTypeClass at analyzer/typeEvaluator.ts:27032
+- `analyzer/typeEvaluatorTypes.ts:TypeResult`: type at analyzer/tuples.ts:146
+- `analyzer/typeUtils.ts:ClassMember`: isClassMember at analyzer/typeUtils.ts:1784
+- `analyzer/typeUtils.ts:InferenceContext`: expectedType at analyzer/typeEvaluator.ts:1369
 - `analyzer/types.ts:ClassDetailsShared`: flags at analyzer/types.ts:1063
 - `analyzer/types.ts:DataClassBehaviors`: skipGenerateInit at analyzer/dataClasses.ts:1643
 - `analyzer/types.ts:DataClassEntry`: hasDefault at analyzer/dataClasses.ts:591
@@ -79,8 +85,12 @@ Interfaces held as `P<T>` by the default rule (a field is written after construc
 - `analyzer/types.ts:LiteralTypes`: literalStrMap at analyzer/types.ts:2734
 - `analyzer/types.ts:ParamSpecDetailsPriv`: paramSpecAccess at analyzer/types.ts:3081
 - `analyzer/types.ts:SignatureWithOffsets`: expressionOffsets at analyzer/typeUtils.ts:287
+- `analyzer/types.ts:SpecializedFunctionTypes`: parameterTypes at analyzer/types.ts:2143
 - `analyzer/types.ts:TypeAliasSharedInfo`: typeParams at analyzer/typeEvaluator.ts:18021
 - `analyzer/types.ts:TypeVarDetailsShared`: name at analyzer/types.ts:2998
 - `analyzer/types.ts:TypeVarTupleDetailsPriv`: isInUnion at analyzer/types.ts:3030
 - `analyzer/types.ts:TypedDictEntries`: knownItems at analyzer/typedDicts.ts:1138
 - `common/configOptions.ts:DiagnosticRuleSet`: analyzeUnannotatedFunctions at analyzer/service.ts:1160
+
+[modes] values that some code compares by identity (porting.md wants a handle): 0.
+

@@ -17,6 +17,7 @@ use crate::parser::tokenizer::TokenizerOutput;
 use jsrt::{JsMap, JsSet};
 
 // parser/parser.ts:189
+#[derive(Clone)]
 pub struct ParserOutput {
     pub parse_tree: ModuleNode,
     pub string_annotations: StringAnnotationInfo,
@@ -29,6 +30,7 @@ pub struct ParserOutput {
 }
 
 // parser/parser.ts:200
+#[derive(Clone)]
 pub struct ParseFileResults {
     pub text: String,
     pub content_hash: StringFingerprint,
@@ -37,6 +39,7 @@ pub struct ParseFileResults {
 }
 
 // parser/parser.ts:214
+#[derive(Clone)]
 pub struct ModuleImport {
     pub name_node: ModuleNameNode,
     pub leading_dots: f64,

@@ -36,10 +36,11 @@ use crate::parser::parse_nodes::{
     TypeParameterListNode, UnaryOperationNode, WhileNode, WithNode, YieldFromNode, YieldNode,
 };
 use jsrt::{JsMap, JsSet, P};
-use std::cell::{Cell, RefCell};
+use std::cell::RefCell;
 use std::rc::Rc;
 
 // analyzer/binder.ts:138
+#[derive(Clone)]
 pub struct MemberAccessInfo {
     pub class_node: ClassNode,
     pub method_node: FunctionNode,
@@ -55,18 +56,21 @@ pub struct DeferredBindingTask {
 }
 
 // analyzer/binder.ts:151
+#[derive(Clone)]
 pub struct FinalInfo {
     pub is_final: bool,
     pub final_type_node: Option<ExpressionNode>,
 }
 
 // analyzer/binder.ts:156
+#[derive(Clone)]
 pub struct ClassVarInfo {
     pub is_class_var: bool,
     pub class_var_type_node: Option<ExpressionNode>,
 }
 
 // analyzer/binder.ts:161
+#[derive(Clone)]
 pub struct NarrowExprOptions {
     pub filter_for_never_narrowing: Option<bool>,
     pub is_complex_expression: Option<bool>,
@@ -371,7 +375,7 @@ impl Binder {
     pub fn new(
         file_info: P<AnalyzerFileInfo>,
         _module_symbol_only: Option<bool>,
-        _cell_chain_index: Option<&dyn CellChainIndexProvider>,
+        _cell_chain_index: Option<&'static dyn CellChainIndexProvider>,
         node_info: P<AnalyzerNodeInfoAccessor>,
     ) -> Self {
         todo!()
@@ -425,7 +429,7 @@ impl Binder {
     // analyzer/binder.ts:2821
     pub(crate) fn _use_except_targets(
         &mut self,
-        targets: &[FlowLabel],
+        targets: Vec<FlowLabel>,
         callback: &mut dyn FnMut(&mut Binder),
     ) {
         todo!()
@@ -906,12 +910,12 @@ pub mod binder {
 
     thread_local! {
         // analyzer/binder.ts:336
-        pub(crate) static UNREACHABLE_STATIC_CONDITION_FLOW_NODE: Cell<P<FlowNode>> = todo!();
+        pub(crate) static UNREACHABLE_STATIC_CONDITION_FLOW_NODE: P<FlowNode> = todo!();
     }
 
     thread_local! {
         // analyzer/binder.ts:341
-        pub(crate) static UNREACHABLE_STRUCTURAL_FLOW_NODE: Cell<P<FlowNode>> = todo!();
+        pub(crate) static UNREACHABLE_STRUCTURAL_FLOW_NODE: P<FlowNode> = todo!();
     }
 }
 

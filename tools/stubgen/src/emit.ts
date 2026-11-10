@@ -38,6 +38,10 @@ interface FnShape {
     // In a `&mut self` class, callback parameters get the receiver as their first argument
     // (`&mut dyn FnMut(&mut Binder)`): a closure cannot capture `self` while the method holds it.
     ownerArg?: string;
+    // Every parameter is stored (a closure factory's parameters live in its struct).
+    storesParams?: boolean;
+    // Leave out the `/// Nested in the TS body:` line (a factory's nested functions are methods).
+    noNestedDoc?: boolean;
 }
 
 export class FileEmitter {
@@ -162,7 +166,7 @@ export class FileEmitter {
         }
         if (this.gen.factoryByIface.has(key)) {
             const f = this.gen.factoryByIface.get(key);
-            this.out.push(`// ${name}: the struct \`${f?.name}\` built by \`${f?.func}\` in ${f?.file}.`, '');
+            this.out.push(`${this.marker(decl)}: \`${name}\` is the struct \`${f?.name}\` that \`${f?.func}\` builds in ${f?.file}.`, '');
             return;
         }
         const merged = this.gen.table.merge.get(key);
@@ -256,9 +260,8 @@ export class FileEmitter {
             this.uses.add(['std::marker::PhantomData']);
             fields.push(`    pub _phantom: PhantomData<(${unused.join(', ')}${unused.length === 1 ? ',' : ''})>,`);
         }
-        // Structs derive nothing: a derive would require every field type, ported or not, to
-        // implement the trait. Porters add `Clone` where the TypeScript copies a value.
-        const derive: string[] = [];
+        // A value is copied where the TypeScript spreads it or reads it out of a container.
+        const derive = mode === 'value' ? ['#[derive(Clone)]'] : [];
         this.out.push(this.marker(decl), ...derive, `pub struct ${name}${generics} {`, ...fields, '}', '');
     }
 
@@ -795,7 +798,9 @@ export class FileEmitter {
             if (n === undefined || this.mode !== 'stubs') {
                 return undefined;
             }
-            this.classStatics.push(...this.moduleVariable(m, n, cls, m.initializer, m.type, hasModifier(m, ts.SyntaxKind.ReadonlyKeyword)));
+            const w = this.gen.writes;
+            const neverWritten = !w.written.has(m) && !w.reassigned.has(m);
+            this.classStatics.push(...this.moduleVariable(m, n, cls, m.initializer, m.type, hasModifier(m, ts.SyntaxKind.ReadonlyKeyword) || neverWritten));
             return undefined;
         }
         return undefined;
@@ -844,7 +849,10 @@ export class FileEmitter {
             }
             const w = this.gen.writes;
             const mutated = w.mutated.has(p) || (w.writtenThrough.has(p) && !isCopy(t));
-            params.push(`${rustIdent(snake(pname))}: ${render(t, 'param', this.uses, mutated)}`);
+            // A parameter the function stores takes the form of the field that keeps it: by value,
+            // `P<T>` for a factory struct, `&'static dyn T` for a trait.
+            const stored = s.storesParams || storesParam(decl, p);
+            params.push(`${rustIdent(snake(pname))}: ${render(t, stored ? 'field' : 'param', this.uses, mutated)}`);
         });
         let ret = retOverride ?? '';
         if (!retOverride) {
@@ -859,7 +867,7 @@ export class FileEmitter {
         if (defaults.length) {
             doc.push(`/// TS defaults: ${defaults.join(', ')}.`);
         }
-        const nested = nestedFunctions(decl);
+        const nested = s.noNestedDoc ? [] : nestedFunctions(decl);
         if (nested.length) {
             doc.push(`/// Nested in the TS body: ${nested.join(', ')}.`);
         }
@@ -1119,7 +1127,7 @@ export class FileEmitter {
         if (shape === 'struct' && ts.isTypeLiteralNode(a.type)) {
             this.emittedStructs.add(name);
             const fields = a.type.members.map((m) => this.field(m, name, false)).filter((f): f is string => f !== undefined);
-            this.out.push(this.marker(a), `pub struct ${name}${generics} {`, ...fields, '}', '');
+            this.out.push(this.marker(a), '#[derive(Clone)]', `pub struct ${name}${generics} {`, ...fields, '}', '');
             return;
         }
         if (shape === 'enum' && ts.isUnionTypeNode(a.type)) {
@@ -1155,7 +1163,7 @@ export class FileEmitter {
                 used.add(v);
                 variants.push(`    ${v}(${render(t, 'elem', this.uses)}),`);
             });
-            this.out.push(this.marker(a), `pub enum ${name}${generics} {`, ...variants, '}', '');
+            this.out.push(this.marker(a), '#[derive(Clone)]', `pub enum ${name}${generics} {`, ...variants, '}', '');
             return;
         }
         const t = this.gen.mapNode(a.type, site, new Map());
@@ -1193,7 +1201,7 @@ export class FileEmitter {
                         fields.push(`    pub ${fieldName(p.getName())}: ${render(t, 'field', this.uses)},`);
                     }
                 }
-                this.out.push(`// Inline object type at ${a.site}.`, `pub struct ${a.name} {`, ...fields, '}', '');
+                this.out.push(`// Inline object type at ${a.site}.`, '#[derive(Clone)]', `pub struct ${a.name} {`, ...fields, '}', '');
             }
             if (!added) {
                 break;
@@ -1284,6 +1292,21 @@ export class FileEmitter {
                 fields.push(`    ${this.marker(d)}${why ? ` ${why.trim()}` : ''}`, `    pub(crate) ${fieldName(n)}: ${ty},`);
             }
         }
+        // A factory that returns an object literal directly: `return { createCodeFlowAnalyzer, .. }`.
+        if (!ifaceObject) {
+            for (const st of body.statements) {
+                if (ts.isReturnStatement(st) && st.expression && ts.isObjectLiteralExpression(skipParens(st.expression))) {
+                    const e = skipParens(st.expression);
+                    ifaceObject = ts.isObjectLiteralExpression(e) ? e : undefined;
+                }
+            }
+        }
+        // A nested factory stores a handle to this struct, which `&self` cannot produce: keep one.
+        const hasNested = methods.some((m) => this.gen.factoryByFunc.has(`${this.file}:${f.func}.${m.name?.text}`));
+        if (hasNested && !selfSeen) {
+            this.uses.add(['jsrt::P', 'std::cell::OnceCell']);
+            fields.push(`    // This struct's own handle, set once it is in the arena: a nested factory stores it.`, `    pub(crate) handle: OnceCell<P<${name}>>,`);
+        }
         if (this.mode === 'stubs' || this.wants(name)) {
             this.out.push(this.marker(fn), `pub struct ${name} {`, ...fields, '}', '');
         }
@@ -1304,7 +1327,19 @@ export class FileEmitter {
             this.uses.add(['jsrt::P']);
             this.out.push(
                 ...this.fnStub(
-                    { name: f.func, vis, receiver: undefined, decl: fn, site: f.func, outerGenerics: new Set(), body: true, params, doc: [`/// Builds the ${name}. Dropped parameters: ${f.dropParams.join(', ') || 'none'}.`] },
+                    {
+                        name: f.func,
+                        vis,
+                        receiver: undefined,
+                        decl: fn,
+                        site: f.func,
+                        outerGenerics: new Set(),
+                        body: true,
+                        params,
+                        doc: [`/// Builds the ${name}. Dropped parameters: ${f.dropParams.join(', ') || 'none'}.`],
+                        storesParams: true,
+                        noNestedDoc: true,
+                    },
                     '',
                     `P<${name}>`
                 )
@@ -1399,6 +1434,38 @@ export class FileEmitter {
 }
 
 // ---- helpers ------------------------------------------------------------------------------
+
+// A constructor parameter property, or a parameter the body assigns to a property as is
+// (`this._x = x`, `entry.x = x`).
+function storesParam(decl: ts.SignatureDeclaration, p: ts.ParameterDeclaration): boolean {
+    if (ts.isConstructorDeclaration(decl) && ts.isParameterPropertyDeclaration(p, decl)) {
+        return true;
+    }
+    const name = ts.isIdentifier(p.name) ? p.name.text : undefined;
+    const body = 'body' in decl && decl.body ? decl.body : undefined;
+    if (name === undefined || !body) {
+        return false;
+    }
+    let found = false;
+    const visit = (n: ts.Node) => {
+        if (found) {
+            return;
+        }
+        if (
+            ts.isBinaryExpression(n) &&
+            n.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+            (ts.isPropertyAccessExpression(n.left) || ts.isElementAccessExpression(n.left)) &&
+            ts.isIdentifier(n.right) &&
+            n.right.text === name
+        ) {
+            found = true;
+            return;
+        }
+        ts.forEachChild(n, visit);
+    };
+    visit(body);
+    return found;
+}
 
 function withOwnerArg(t: IR, owner: string): IR {
     const ownerIR: IR = { k: 'raw', text: `&mut ${owner}`, param: `&mut ${owner}`, copy: false, uses: [] };

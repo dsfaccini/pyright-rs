@@ -13,7 +13,7 @@ bigint = { rust = "jsrt::JsBigInt" }
 # porting.md "numbers": a Python number literal is NumberValue.
 "bigint | number" = { rust = "NumberValue", use = "jsrt::NumberValue" }
 # A class name or a list of class names.
-"string | string[]" = { rust = "Vec<String>", param = "&[&str]" }
+"string | string[]" = { rust = "Vec<String>", param = "&[String]" }
 # The CLI check runs to completion: nothing cancels it and nothing on the check path awaits.
 CancellationToken = { rust = "()", copy = true }
 Promise = "$0"
@@ -43,21 +43,15 @@ Promise = "$0"
 "analyzer/types.ts:OverloadedDetailsPriv" = "value"
 "analyzer/types.ts:TypeVarDetailsPriv" = "value"
 "analyzer/types.ts:UnionDetailsPriv" = "value"
-# Copied with a spread before every write.
-"analyzer/types.ts:SpecializedFunctionTypes" = "value"
+# Copied with a spread before every write, and never compared with `===`.
 "analyzer/types.ts:TypedDictEntry" = "value"
 "analyzer/typeEvaluatorTypes.ts:ValidateArgTypeParams" = "value"
 "analyzer/typeEvaluator.ts:MatchArgsToParamsResult" = "value"
-# Results and option bags written only by the function that builds them, or by a callee that takes
-# them as `&mut` (the write analysis marks those parameters).
-"analyzer/typeEvaluatorTypes.ts:TypeResult" = "value"
-"analyzer/typeEvaluatorTypes.ts:CallResult" = "value"
-"analyzer/typeEvaluatorTypes.ts:EffectiveTypeResult" = "value"
-"analyzer/typeEvaluatorTypes.ts:ExpectedTypeOptions" = "value"
-"analyzer/typeEvaluatorTypes.ts:PrefetchedTypes" = "value"
-"analyzer/typeUtils.ts:ClassMember" = "value"
-"analyzer/typeUtils.ts:InferenceContext" = "value"
-"analyzer/parameterUtils.ts:ParamListDetails" = "value"
+# Held only by their stack; written through an index into it.
+"analyzer/typeEvaluator.ts:SymbolResolutionStackEntry" = "value"
+"analyzer/typeEvaluator.ts:SuppressedNodeStackEntry" = "value"
+# TypeResult, EffectiveTypeResult and other results keep the default (handle): the evaluator
+# caches the object and writes it after storing it (typeEvaluator.ts:1348-1353, 24668, 25483).
 # Rewritten from behavior (PLAN.md): one Rust type, its shape chosen by whoever ports common/uri.
 "common/uri/uri.ts:Uri" = "opaque"
 
@@ -158,6 +152,16 @@ interface = "analyzer/codeFlowEngine.ts:CodeFlowAnalyzer"
 "analyzer/analyzerNodeInfo.ts:AnalyzerNodeInfoAccessor.setCodeFlowExpressions.expressions" = "jsrt::P<std::cell::RefCell<jsrt::JsSet<String>>>"
 "analyzer/analyzerNodeInfo.ts:getCodeFlowExpressions.return" = "Option<jsrt::P<std::cell::RefCell<jsrt::JsSet<String>>>>"
 "analyzer/analyzerNodeInfo.ts:setCodeFlowExpressions.expressions" = "jsrt::P<std::cell::RefCell<jsrt::JsSet<String>>>"
+# Getters that return live state their callers write to.
+"analyzer/types.ts:ClassType.getSymbolTable.return" = "&'static std::cell::RefCell<jsrt::JsMap<String, jsrt::P<crate::analyzer::symbol::Symbol>>>"
+"analyzer/types.ts:TypeBase.addProps.return" = "std::cell::RefMut<'static, crate::analyzer::types::TypeBaseProps>"
+# The type caches are passed by reference to the speculative type tracker, which deletes from the
+# very map it was given (typeCacheUtils.ts:133); the return-inference ones are swapped per call.
+"analyzer/typeEvaluator.ts:createTypeEvaluator.typeCache" = "jsrt::P<std::cell::RefCell<jsrt::JsMap<u32, crate::analyzer::type_evaluator::TypeCacheEntry>>>"
+"analyzer/typeEvaluator.ts:createTypeEvaluator.typeFormTypeCache" = "jsrt::P<std::cell::RefCell<jsrt::JsMap<u32, Vec<crate::analyzer::type_evaluator::TypeFormTypeCacheEntry>>>>"
+"analyzer/typeEvaluator.ts:createTypeEvaluator.returnTypeInferenceTypeCache" = "Option<jsrt::P<std::cell::RefCell<jsrt::JsMap<u32, crate::analyzer::type_evaluator::TypeCacheEntry>>>>"
+"analyzer/typeEvaluator.ts:createTypeEvaluator.returnTypeInferenceTypeFormTypeCache" = "Option<jsrt::P<std::cell::RefCell<jsrt::JsMap<u32, Vec<crate::analyzer::type_evaluator::TypeFormTypeCacheEntry>>>>>"
+"analyzer/typeEvaluator.ts:createTypeEvaluator.getTypeFormTypeCache.return" = "jsrt::P<std::cell::RefCell<jsrt::JsMap<u32, Vec<crate::analyzer::type_evaluator::TypeFormTypeCacheEntry>>>>"
 # Stores keyed by a parse tree key (`node.a`): the module node.
 "analyzer/analyzerNodeInfo.ts:AnalyzerNodeInfoStore._infoByTree" = "jsrt::JsMap<jsrt::P<crate::parser::parse_nodes::ParseNode>, jsrt::JsMap<jsrt::P<crate::parser::parse_nodes::ParseNode>, jsrt::P<crate::analyzer::analyzer_node_info::AnalyzerNodeInfo>>>"
 "analyzer/analyzerNodeInfo.ts:AnalyzerNodeInfoStore._fileInfoByTree" = "jsrt::JsMap<jsrt::P<crate::parser::parse_nodes::ParseNode>, jsrt::P<crate::analyzer::analyzer_file_info::AnalyzerFileInfo>>"

@@ -12,6 +12,7 @@ use crate::parser::parse_nodes::{ExpressionNode, StringListNode};
 use std::rc::Rc;
 
 // parser/stringAnnotationInfo.ts:3
+#[derive(Clone)]
 pub struct StringAnnotationInfo {
     pub size: u32,
     pub get: Rc<dyn Fn(StringListNode) -> Option<ExpressionNode>>,

@@ -8,11 +8,10 @@
     clippy::all
 )]
 
-use crate::common::text_range::TextRange;
 use std::cell::Cell;
 
 // common/textRangeCollection.ts:17
-pub struct TextRangeCollection {
-    pub(crate) _items: Vec<TextRange>,
+pub struct TextRangeCollection<T> {
+    pub(crate) _items: Vec<T>,
     pub(crate) _last_hit_index: Cell<i32>,
 }

@@ -59,6 +59,7 @@ use std::cell::{Cell, OnceCell, RefCell};
 use std::rc::Rc;
 
 // analyzer/typeEvaluator.ts:391
+#[derive(Clone)]
 pub struct GetTypeArgsOptions {
     pub is_annotated_class: Option<bool>,
     pub has_custom_class_get_item: Option<bool>,
@@ -68,6 +69,7 @@ pub struct GetTypeArgsOptions {
 }
 
 // analyzer/typeEvaluator.ts:399
+#[derive(Clone)]
 pub struct MatchArgsToParamsResult {
     pub overload: FunctionType,
     pub overload_index: i32,
@@ -83,6 +85,7 @@ pub struct MatchArgsToParamsResult {
 }
 
 // analyzer/typeEvaluator.ts:423
+#[derive(Clone)]
 pub struct MemberAccessTypeResult {
     pub type_: P<Type>,
     pub is_descriptor_applied: Option<bool>,
@@ -92,6 +95,7 @@ pub struct MemberAccessTypeResult {
 }
 
 // analyzer/typeEvaluator.ts:431
+#[derive(Clone)]
 pub struct ScopedTypeVarResult {
     pub type_: TypeVarType,
     pub scope_node: Option<P<ParseNode>>,
@@ -99,6 +103,7 @@ pub struct ScopedTypeVarResult {
 }
 
 // analyzer/typeEvaluator.ts:437
+#[derive(Clone)]
 pub struct AliasMapEntry {
     pub alias: String,
     pub module: String,
@@ -109,12 +114,14 @@ pub struct AliasMapEntry {
 }
 
 // analyzer/typeEvaluator.ts:446
+#[derive(Clone)]
 pub struct AssignClassToSelfInfo {
     pub class: ClassType,
     pub assumed_variance: Variance,
 }
 
 // analyzer/typeEvaluator.ts:451
+#[derive(Clone)]
 pub struct MatchedOverloadInfo {
     pub overload: FunctionType,
     pub match_results: MatchArgsToParamsResult,
@@ -125,6 +132,7 @@ pub struct MatchedOverloadInfo {
 }
 
 // analyzer/typeEvaluator.ts:460
+#[derive(Clone)]
 pub struct ValidateArgTypeOptions {
     pub skip_unknown_arg_check: Option<bool>,
     pub is_arg_first_pass: Option<bool>,
@@ -133,11 +141,13 @@ pub struct ValidateArgTypeOptions {
 }
 
 // analyzer/typeEvaluator.ts:467
+#[derive(Clone)]
 pub struct EffectiveReturnTypeOptions {
     pub call_site_info: Option<CallSiteEvaluationInfo>,
 }
 
 // analyzer/typeEvaluator.ts:471
+#[derive(Clone)]
 pub struct SignatureTrackerStackEntry {
     pub tracker: P<UniqueSignatureTracker>,
     pub root_node: P<ParseNode>,
@@ -154,20 +164,23 @@ thread_local! {
 }
 
 // analyzer/typeEvaluator.ts:507
+#[derive(Clone)]
 pub struct SymbolResolutionStackEntry {
     pub symbol_id: u32,
     pub declaration: P<Declaration>,
-    pub is_result_valid: Cell<bool>,
-    pub partial_type: Cell<Option<P<Type>>>,
+    pub is_result_valid: bool,
+    pub partial_type: Option<P<Type>>,
 }
 
 // analyzer/typeEvaluator.ts:521
+#[derive(Clone)]
 pub struct ReturnTypeInferenceContext {
     pub function_node: FunctionNode,
     pub code_flow_analyzer: P<CodeFlowAnalyzer>,
 }
 
 // analyzer/typeEvaluator.ts:526
+#[derive(Clone)]
 pub struct ParamSpecArgResult {
     pub argument_errors: bool,
     pub constraint_trackers: Vec<Option<P<ConstraintTracker>>>,
@@ -180,10 +193,10 @@ pub(crate) const MAX_RETURN_TYPE_INFERENCE_STACK_SIZE: u32 = 2;
 pub(crate) const MAX_RETURN_TYPE_INFERENCE_ARG_COUNT: u32 = 6;
 
 // analyzer/typeEvaluator.ts:547
-pub(crate) const MAX_RETURN_TYPE_INFERENCE_CODE_FLOW_COMPLEXITY: u32 = 32;
+pub(crate) const MAX_RETURN_TYPE_INFERENCE_CODE_FLOW_COMPLEXITY: f64 = 32.0;
 
 // analyzer/typeEvaluator.ts:552
-pub(crate) const MAX_RETURN_CALL_SITE_TYPE_INFERENCE_CODE_FLOW_COMPLEXITY: u32 = 8;
+pub(crate) const MAX_RETURN_CALL_SITE_TYPE_INFERENCE_CODE_FLOW_COMPLEXITY: f64 = 8.0;
 
 // analyzer/typeEvaluator.ts:556
 pub(crate) const MAX_CALL_SITE_RETURN_TYPE_CACHE_SIZE: u32 = 8;
@@ -225,6 +238,7 @@ pub(crate) const PRINT_EXPRESSION_TYPES: bool = false;
 pub const MAX_CODE_COMPLEXITY: f64 = 768.0;
 
 // analyzer/typeEvaluator.ts:616
+#[derive(Clone)]
 pub struct EvaluatorOptions {
     pub print_type_flags: PrintTypeFlags,
     pub log_calls: bool,
@@ -241,27 +255,31 @@ pub struct DeferredClassCompletion {
 }
 
 // analyzer/typeEvaluator.ts:634
+#[derive(Clone)]
 pub struct TypeCacheEntry {
-    pub type_result: TypeResult,
+    pub type_result: P<TypeResult>,
     pub incomplete_gen_count: u32,
     pub flags: Option<EvalFlags>,
 }
 
 // analyzer/typeEvaluator.ts:640
+#[derive(Clone)]
 pub struct TypeFormTypeCacheEntry {
-    pub type_result: TypeResult,
+    pub type_result: P<TypeResult>,
     pub incomplete_gen_count: u32,
     pub flags: Option<EvalFlags>,
     pub expected_type: Option<P<Type>>,
 }
 
 // analyzer/typeEvaluator.ts:642
+#[derive(Clone)]
 pub struct CodeFlowAnalyzerCacheEntry {
-    pub type_at_start: Option<TypeResult>,
+    pub type_at_start: Option<P<TypeResult>>,
     pub code_flow_analyzer: P<CodeFlowAnalyzer>,
 }
 
 // analyzer/typeEvaluator.ts:647
+#[derive(Clone)]
 pub struct FunctionRecursionInfo {
     pub caller_node: Option<ExpressionNode>,
 }
@@ -274,9 +292,10 @@ pub type LogWrapper = Rc<
 >;
 
 // analyzer/typeEvaluator.ts:653
+#[derive(Clone)]
 pub struct SuppressedNodeStackEntry {
     pub node: P<ParseNode>,
-    pub suppressed_diags: RefCell<Option<Vec<String>>>,
+    pub suppressed_diags: Option<Vec<String>>,
 }
 
 // analyzer/typeEvaluator.ts:658
@@ -294,11 +313,11 @@ pub struct TypeEvaluator {
     // analyzer/typeEvaluator.ts:668
     pub(crate) node_info: P<AnalyzerNodeInfoAccessor>,
     // analyzer/typeEvaluator.ts:669
-    pub(crate) symbol_resolution_stack: RefCell<Vec<P<SymbolResolutionStackEntry>>>,
+    pub(crate) symbol_resolution_stack: RefCell<Vec<SymbolResolutionStackEntry>>,
     // analyzer/typeEvaluator.ts:670
     pub(crate) speculative_type_tracker: P<SpeculativeTypeTracker>,
     // analyzer/typeEvaluator.ts:671
-    pub(crate) suppressed_node_stack: RefCell<Vec<P<SuppressedNodeStackEntry>>>,
+    pub(crate) suppressed_node_stack: RefCell<Vec<SuppressedNodeStackEntry>>,
     // analyzer/typeEvaluator.ts:672
     pub(crate) assign_class_to_self_stack: RefCell<Vec<AssignClassToSelfInfo>>,
     // analyzer/typeEvaluator.ts:674
@@ -306,11 +325,11 @@ pub struct TypeEvaluator {
     // analyzer/typeEvaluator.ts:675
     pub(crate) code_flow_analyzer_cache: RefCell<JsMap<u32, Vec<CodeFlowAnalyzerCacheEntry>>>,
     // analyzer/typeEvaluator.ts:676
-    pub(crate) type_cache: RefCell<JsMap<u32, TypeCacheEntry>>,
+    pub(crate) type_cache: Cell<P<RefCell<JsMap<u32, TypeCacheEntry>>>>,
     // analyzer/typeEvaluator.ts:677
-    pub(crate) type_form_type_cache: RefCell<JsMap<u32, Vec<TypeFormTypeCacheEntry>>>,
+    pub(crate) type_form_type_cache: Cell<P<RefCell<JsMap<u32, Vec<TypeFormTypeCacheEntry>>>>>,
     // analyzer/typeEvaluator.ts:678
-    pub(crate) effective_type_cache: RefCell<JsMap<u32, JsMap<String, EffectiveTypeResult>>>,
+    pub(crate) effective_type_cache: RefCell<JsMap<u32, JsMap<String, P<EffectiveTypeResult>>>>,
     // analyzer/typeEvaluator.ts:679
     pub(crate) expected_type_cache: RefCell<JsMap<u32, P<ExpectedTypeCacheEntry>>>,
     // analyzer/typeEvaluator.ts:680
@@ -326,10 +345,11 @@ pub struct TypeEvaluator {
     // analyzer/typeEvaluator.ts:685
     pub(crate) return_type_inference_context_stack: RefCell<Vec<ReturnTypeInferenceContext>>,
     // analyzer/typeEvaluator.ts:686
-    pub(crate) return_type_inference_type_cache: RefCell<Option<JsMap<u32, TypeCacheEntry>>>,
+    pub(crate) return_type_inference_type_cache:
+        Cell<Option<P<RefCell<JsMap<u32, TypeCacheEntry>>>>>,
     // analyzer/typeEvaluator.ts:687
     pub(crate) return_type_inference_type_form_type_cache:
-        RefCell<Option<JsMap<u32, Vec<TypeFormTypeCacheEntry>>>>,
+        Cell<Option<P<RefCell<JsMap<u32, Vec<TypeFormTypeCacheEntry>>>>>>,
     // analyzer/typeEvaluator.ts:688
     pub(crate) signature_tracker_stack: RefCell<Vec<SignatureTrackerStackEntry>>,
     // analyzer/typeEvaluator.ts:689
@@ -346,10 +366,9 @@ pub struct TypeEvaluator {
 
 // analyzer/typeEvaluator.ts:663
 /// Builds the TypeEvaluator. Dropped parameters: wrapWithLogger.
-/// Nested in the TS body: getScopeForNode (:691), getScopeHierarchy (:695), findTopNodeInScope (:699), getScopeIdForNode (:703), getTypeVarScopesForNode (:707), runWithCancellationToken (:711), runWithCancellationToken (:712), runWithCancellationToken (:713), checkForCancellation (:735), getTypeCacheEntryCount (:741), disposeEvaluator (:751), readTypeCacheEntry (:761), getTypeFormTypeCache (:771), readTypeFormTypeCacheEntry (:779), readContextualTypeCacheEntryForNode (:788), updateIncompleteGenerationCount (:806), isTypeCached (:814), isTypeFormTypeCached (:820), isTypeCacheEntryValid (:824), readTypeCache (:832), writeTypeCache (:863), setTypeResultForNode (:924), setAsymmetricDescriptorAssignment (:928), isAsymmetricAccessorAssignment (:936), isNodeInReturnTypeInferenceContext (:944), getCodeFlowAnalyzerForReturnTypeInferenceContext (:963), getIndexOfSymbolResolution (:970), pushSymbolResolution (:976), popSymbolResolution (:994), setSymbolResolutionPartialType (:1005), getSymbolResolutionPartialType (:1012), getType (:1024), getTypeResult (:1078), getTypeResultForDecorator (:1084), getCachedType (:1091), getExpectedType (:1105), addExpectedTypeCacheEntry (:1149), initializePrefetchedTypes (:1165), getTypeOfExpression (:1244), getTypeOfExpressionCore (:1400), reportUseOfTypeCheckOnly (:1621), validateTypeIsInstantiable (:1646), getTypeOfAwaitOperator (:1691), getTypeOfEllipsis (:1720), getTypeOfNumber (:1736), getTypeOfUnpackOperator (:1747), getTypeOfStringList (:1794), getTypeOfStringListAsType (:1931), getTypeOfString (:1999), stripLiteralValue (:2070), getTypeOfParamAnnotation (:2103), getTypeOfAnnotation (:2111), canBeFalsy (:2154), canBeTruthy (:2272), removeTruthinessFromType (:2362), removeFalsinessFromType (:2416), stripTypeGuard (:2472), solveAndApplyConstraints (:2482), getTypeOfBoundMember (:2497), getBoundMagicMethod (:2683), getCallSignatureInfo (:2736), expandTypedKwargs (:2900), isDeclaredTypeAlias (:2984), resolveDeclaredMemberType (:3006), getDeclaredTypeForExpression (:3053), getTypeOfAwaitable (:3335), getTypeOfIterator (:3390), getTypeOfIterable (:3540), isTypeHashable (:3586), getTypedDictClassType (:3632), getTupleClassType (:3638), getDictClassType (:3642), getStrClassType (:3646), getObjectType (:3650), getNoneType (:3654), getUnionClassType (:3658), getTypeClassType (:3662), getTypingType (:3669), getTypeCheckerInternalsType (:3675), getTypesType (:3679), getTypeshedType (:3683), getTypeOfModule (:3687), checkCodeFlowTooComplex (:3703), isNodeReachable (:3730), isAfterNodeReachable (:3734), getNodeReachability (:3738), getAfterNodeReachability (:3756), isFlowNodeReachableUsingNeverNarrowing (:3781), isFlowPathBetweenNodes (:3796), addInformation (:3816), addUnreachableCode (:3820), addDeprecated (:3846), addDiagnosticWithSuppressionCheck (:3853), isDiagnosticSuppressedForNode (:3879), canSkipDiagnosticForNode (:3892), addDiagnostic (:3908), addDiagnosticForTextRange (:3953), assignTypeToNameNode (:3973), assignTypeToMemberAccessNode (:4107), assignTypeToMemberVariable (:4203), assignTypeToTupleOrListNode (:4331), expandPromotionTypes (:4472), makeTopLevelTypeVarsConcrete (:4511), mapSubtypesExpandTypeVars (:4643), applyConditionFilterToType (:4734), markNamesAccessed (:4798), assignTypeToExpression (:4812), isClassVarAllowedForAssignmentTarget (:4950), isFinalAllowedForAssignmentTarget (:4961), isInTypedDictOrNamedTuple (:4972), verifyRaiseExceptionType (:4981), verifyDeleteExpression (:5063), setSymbolAccessed (:5121), getTypeOfName (:5127), rejectBareSpecialFormInTypeForm (:5345), addTypeFormForSymbol (:5356), isSymbolValidTypeExpression (:5424), validateSymbolIsTypeExpression (:5453), convertSpecialFormToRuntimeValue (:5472), getCodeFlowTypeForCapturedVariable (:5517), validateTypeVarUsage (:5627), assignTypeVarScopeId (:5667), enforceClassTypeVarScope (:5791), reportMissingTypeArgs (:5819), findScopedTypeVar (:5855), getTypeOfMemberAccess (:5981), getTypeOfMemberAccessWithBaseType (:6110), getTypeOfClassMemberName (:6610), applyDescriptorAccessMethod (:6946), bindMethodForMemberAccess (:7196), isAsymmetricDescriptorClass (:7245), isClassWithAsymmetricAttributeAccessor (:7304), applyAttributeAccessOverride (:7343), getTypeOfIndex (:7433), adjustTypeArgsForTypeVarTuple (:7534), validateTypeVarTupleIsUnpacked (:7678), specializeTypeAliasWithDefaults (:7697), convertTypeArgToInstance (:7763), createSpecializedTypeAlias (:7770), getTypeOfIndexWithBaseType (:8049), inferVarianceForTypeAlias (:8355), updateUsageVariancesRecursive (:8387), getIndexAccessMagicMethodName (:8484), getTypeOfIndexedObjectOrClass (:8495), getTypeArgs (:8719), applyUnpackToTupleLike (:8868), getTypeArg (:8901), buildTupleTypesList (:8956), getTypeOfCall (:9008), getTypeOfLambdaForCall (:9164), getTypeOfTypeForm (:9220), expandEnumTypeForLiteralComparison (:9245), containsTopLevelLiteralEnum (:9273), expandEnumTypeForLiteralClasses (:9285), collectLiteralEnumClasses (:9308), normalizeEnumTypes (:9374), getTypeOfAssertType (:9468), convertNodeToArg (:9530), getTypeOfRevealType (:9538), getTypeOfRevealLocals (:9625), getTypeOfSuperCall (:9666), getSpeculativeNodeForCall (:9993), validateOverloadsWithExpandedTypes (:10019), filterOverloadMatchesForUnpackedArgs (:10307), getAnyOrUnknownInInvariantPosition (:10323), getEffectiveOverloadReturnType (:10376), getEffectiveInitSelfType (:10380), getOverloadArgParamPairs (:10397), combineMaterializationCoverage (:10431), areAllMaterializationsEquivalent (:10439), areAllMaterializationsAssignable (:10521), filterOverloadMatchesForAnyArgs (:10656), getBestOverloadForArgs (:10766), validateOverloadedArgTypes (:10817), expandArgTypes (:11025), expandArgType (:11073), validateCallArgs (:11106), validateCallArgsForSubtype (:11196), validateCallForFunction (:11322), getAbstractSymbolInfo (:11416), validateCallForOverloaded (:11514), validateCallForInstantiableClass (:11573), validateCallForClassInstance (:11924), evaluateCastCall (:11989), expandArgList (:12030), matchArgsToParams (:12085), validateArgTypesWithContext (:13132), validateArgTypesWithExpectedType (:13246), validateArgTypes (:13297), getUnknownExemptTypeVarsForReturnType (:13594), adjustCallableReturnType (:13630), validateArgs (:13683), validateArgTypesForParamSpec (:13746), validateArgTypesForParamSpecSignature (:13797), validateArgType (:13878), createTypeVarType (:14179), verifyTypeVarDefaultIsCompatible (:14369), createTypeVarTupleType (:14420), getTypeVarTupleDefaultType (:14494), createParamSpecType (:14512), getParamSpecDefaultType (:14585), createTypeAliasType (:14656), getBooleanValue (:14787), getFunctionFullName (:14800), createNewType (:14821), getBaseClassesFromTypeCall (:14959), createClassFromMetaclass (:14971), getTypeOfConstant (:15012), getTypeOfMagicMethodCall (:15045), getTypeOfDictionary (:15167), getTypeOfDictionaryWithContext (:15242), getTypeOfDictionaryInferred (:15402), getKeyAndValueTypesFromDictionary (:15489), getTypeOfListOrSet (:15777), getTypeOfListOrSetWithContext (:15849), getExpectedEntryTypeForIterable (:15935), getTypeOfListOrSetInferred (:15979), verifySetEntryOrDictKeyIsHashable (:16067), inferTypeArgFromExpectedEntryType (:16079), getTypeOfYield (:16138), getTypeOfYieldFrom (:16176), getTypeOfLambda (:16207), getTypeOfLambdaWithExpectedType (:16255), getTypeOfComprehension (:16445), reportPossibleUnknownAssignment (:16502), evaluateComprehensionForIf (:16545), getElementTypeFromComprehension (:16577), getTypeOfSlice (:16653), validateTypeArg (:16696), createCallableType (:16759), createOptionalType (:16914), cloneBuiltinObjectWithLiteral (:16961), cloneBuiltinClassWithLiteral (:16970), createLiteralType (:16987), createClassVarType (:17133), createTypeFormType (:17169), createTypeGuardType (:17216), createSelfType (:17247), createRequiredOrReadOnlyType (:17343), createUnpackType (:17441), createFinalType (:17497), createConcatenateType (:17521), createAnnotatedType (:17573), validateAnnotatedMetadata (:17619), validateTypeMetadata (:17632), createSpecialType (:17641), createUnionType (:17780), createGenericType (:17866), transformTypeForTypeAlias (:17920), createSpecialBuiltInClass (:18045), handleTypingStubTypeAnnotation (:18139), handleTypingStubAssignment (:18244), cachedAssignmentTargetMayHaveDeclaredType (:18284), evaluateTypesForAssignmentStatement (:18311), synthesizeTypeAliasPlaceholder (:18508), getTypeOfTypeAlias (:18532), getTypeOfTypeAliasCommon (:18550), evaluateTypesForAugmentedAssignment (:18636), getPseudoGenericTypeVarName (:18646), createSubclass (:18651), getTypeOfClass (:18701), buildTypeParamsFromTypeArgs (:19633), validateTypeParamDefault (:19656), inferVarianceForClass (:19700), evaluateTypeParamList (:19788), computeEffectiveMetaclass (:19811), verifyGenericTypeParams (:19879), registerDeferredClassCompletion (:19907), runDeferredClassCompletions (:19928), completeClassTypeDeferred (:19948), validateInitSubclassArgs (:19958), getTypeOfFunction (:20132), getTypeOfFunctionPredecorated (:20228), markParamAccessed (:20672), adjustParamAnnotatedType (:20685), inferParamType (:20703), inferParamTypeFromDefaultValue (:20792), transformVariadicParamType (:20848), createAsyncFunction (:20890), createAwaitableReturnType (:20919), inferFunctionReturnType (:20976), methodAlwaysRaisesNotImplemented (:21217), evaluateTypesForForStatement (:21251), evaluateTypesForExceptStatement (:21269), evaluateTypesForWithStatement (:21346), evaluateTypesForImportAs (:21482), evaluateTypesForImportFromAs (:21519), evaluateTypesForMatchStatement (:21604), evaluateTypesForCaseStatement (:21628), evaluateTypesForImportFrom (:21680), evaluateTypesForTypeAnnotationNode (:21749), getAliasedSymbolTypeForName (:21766), evaluateTypesForExpressionInContext (:21851), evaluateTypeOfParam (:22172), evaluateTypesForStatement (:22256), evaluateTypeForSubnode (:22379), evaluateContextualTypeForSubnode (:22383), evaluateTypeForSubnodeWithCache (:22387), getCodeFlowAnalyzerForNode (:22420), getFlowTypeOfReference (:22462), createSpecializedClassType (:22513), transformTypeArgsForParamSpec (:23041), getTypeOfArg (:23107), getTypeOfArgExpectingType (:23127), getTypeOfExpressionExpectingType (:23138), getBuiltInType (:23221), getBuiltInObject (:23234), lookUpSymbolRecursive (:23248), suppressDiagnostics (:23386), getSignatureTrackerForNode (:23408), useSignatureTracker (:23419), ensureSignatureIsUnique (:23449), useSpeculativeMode (:23466), disableSpeculativeMode (:23489), isSpeculativeModeInUse (:23506), getDeclarationFromKeywordParam (:23510), _tryAddPartialKeywordParamDecls (:23548), _shouldFallBackToClassEntryForKeywordArg (:23597), _addSymbolDeclInfo (:23605), _addClassEntryDeclsForKeywordArgIfPresent (:23633), getDeclInfoForStringNode (:23650), getAliasFromImport (:23677), getDeclInfoForNameNode (:23689), getTypeForDeclaration (:23914), getTypeOfTypeParam (:24095), getInferredTypeOfDeclaration (:24261), isUnambiguousInference (:24487), resolveAliasDeclaration (:24552), resolveAliasDeclarationWithInfo (:24564), getEffectiveTypeOfSymbol (:24579), getEffectiveTypeOfSymbolForUsage (:24587), includesVariableTypeDecl (:24639), inferTypeOfSymbolForUsage (:24659), getTypeOfSymbolForDecls (:24840), getDeclaredTypeOfSymbol (:24947), inferReturnTypeIfNecessary (:25054), getEffectiveReturnType (:25069), getInferredReturnType (:25073), getEffectiveReturnTypeResult (:25081), _getInferredReturnTypeResult (:25120), inferReturnTypeForCallSite (:25253), getDeclaredReturnType (:25431), getTypeOfMember (:25446), getTypeOfMemberInternal (:25458), assignClass (:25534), assignClassToSelf (:25758), assignClassWithTypeArgs (:25932), getGetterTypeFromProperty (:26058), assignTypeArgs (:26070), assignType (:26199), assignRecursiveTypeAliasToSelf (:27054), isTypeFormClass (:27089), isTypeFormType (:27097), classGetItemReturnsGenericAlias (:27101), expectedTypeRequiresTypeForm (:27124), expectedTypeWantsTypeForm (:27131), convertToTypeFormType (:27138), assignFromUnionType (:27188), isSpecialFormClass (:27461), setConstraintsForFreeTypeVars (:27471), isTypeSubsumedByOtherType (:27488), isProperSubtype (:27513), isTypeComparable (:27558), assignToUnionType (:27688), assignConditionalTypeToTypeVar (:27878), getCallbackProtocolType (:27949), assignParam (:28007), adjustSourceParamDetailsForDestVariadic (:28091), assignNamedParam (:28191), assignFunction (:28225), narrowTypeBasedOnAssignment (:29106), validateOverrideMethod (:29199), isOverrideMethodApplicable (:29336), validateOverrideMethodInternal (:29378), applyTypeArgToTypeVar (:29802), getAbstractSymbols (:29928), bindFunctionToClassOrObject (:29963), partiallySpecializeBoundMethod (:30050), isFinalVariable (:30162), isFinalVariableDeclaration (:30166), isExplicitTypeAliasDeclaration (:30170), isPossibleTypeAliasDeclaration (:30187), isLegalTypeAliasExpressionForm (:30201), isLegalImplicitTypeAliasType (:30247), isPossibleTypeAliasOrTypedDict (:30275), isPossibleTypeDictFactoryCall (:30279), printObjectTypeForClass (:30312), printFunctionParts (:30316), printSrcDestTypes (:30323), printType (:30345), parseStringAsTypeAnnotation (:30383), narrowConstrainedTypeVar (:30445), getPrintExpressionTypesSpaces (:30455), getLineNum (:30459), printControlFlowGraph (:30465).
 pub fn create_type_evaluator(
-    import_lookup: &ImportLookup,
-    evaluator_options: &EvaluatorOptions,
+    import_lookup: ImportLookup,
+    evaluator_options: EvaluatorOptions,
 ) -> P<TypeEvaluator> {
     todo!()
 }
@@ -417,7 +436,7 @@ impl TypeEvaluator {
     pub(crate) fn get_type_form_type_cache(
         &self,
         node: P<ParseNode>,
-    ) -> JsMap<u32, Vec<TypeFormTypeCacheEntry>> {
+    ) -> P<RefCell<JsMap<u32, Vec<TypeFormTypeCacheEntry>>>> {
         todo!()
     }
 
@@ -441,8 +460,8 @@ impl TypeEvaluator {
     // analyzer/typeEvaluator.ts:806
     pub(crate) fn update_incomplete_generation_count(
         &self,
-        type_result: &TypeResult,
-        old_type_result: Option<&TypeResult>,
+        type_result: P<TypeResult>,
+        old_type_result: Option<P<TypeResult>>,
     ) {
         todo!()
     }
@@ -480,9 +499,9 @@ impl TypeEvaluator {
     pub(crate) fn write_type_cache(
         &self,
         node: P<ParseNode>,
-        type_result: &TypeResult,
+        type_result: P<TypeResult>,
         flags: Option<EvalFlags>,
-        inference_context: Option<&InferenceContext>,
+        inference_context: Option<P<InferenceContext>>,
         allow_speculative_caching: bool,
     ) {
         todo!()
@@ -493,7 +512,7 @@ impl TypeEvaluator {
     pub fn set_type_result_for_node(
         &self,
         node: P<ParseNode>,
-        type_result: &TypeResult,
+        type_result: P<TypeResult>,
         flags: EvalFlags,
     ) {
         todo!()
@@ -569,12 +588,12 @@ impl TypeEvaluator {
     }
 
     // analyzer/typeEvaluator.ts:1078
-    pub fn get_type_result(&self, node: ExpressionNode) -> Option<TypeResult> {
+    pub fn get_type_result(&self, node: ExpressionNode) -> Option<P<TypeResult>> {
         todo!()
     }
 
     // analyzer/typeEvaluator.ts:1084
-    pub fn get_type_result_for_decorator(&self, node: DecoratorNode) -> Option<TypeResult> {
+    pub fn get_type_result_for_decorator(&self, node: DecoratorNode) -> Option<P<TypeResult>> {
         todo!()
     }
 
@@ -604,8 +623,8 @@ impl TypeEvaluator {
         &self,
         node: ExpressionNode,
         flags: EvalFlags,
-        inference_context: Option<&mut InferenceContext>,
-    ) -> TypeResult {
+        inference_context: Option<P<InferenceContext>>,
+    ) -> P<TypeResult> {
         todo!()
     }
 
@@ -615,8 +634,8 @@ impl TypeEvaluator {
         &self,
         node: ExpressionNode,
         flags: EvalFlags,
-        inference_context: Option<&mut InferenceContext>,
-    ) -> TypeResult {
+        inference_context: Option<P<InferenceContext>>,
+    ) -> P<TypeResult> {
         todo!()
     }
 
@@ -628,7 +647,7 @@ impl TypeEvaluator {
     // analyzer/typeEvaluator.ts:1646
     pub(crate) fn validate_type_is_instantiable(
         &self,
-        type_result: &mut TypeResult,
+        type_result: P<TypeResult>,
         flags: EvalFlags,
         node: ExpressionNode,
     ) {
@@ -640,8 +659,8 @@ impl TypeEvaluator {
         &self,
         node: AwaitNode,
         flags: EvalFlags,
-        inference_context: Option<&InferenceContext>,
-    ) -> TypeResult {
+        inference_context: Option<P<InferenceContext>>,
+    ) -> P<TypeResult> {
         todo!()
     }
 
@@ -649,9 +668,9 @@ impl TypeEvaluator {
     pub(crate) fn get_type_of_ellipsis(
         &self,
         flags: EvalFlags,
-        type_result: Option<&TypeResult>,
+        type_result: Option<P<TypeResult>>,
         node: ExpressionNode,
-    ) -> TypeResult {
+    ) -> P<TypeResult> {
         todo!()
     }
 
@@ -659,8 +678,8 @@ impl TypeEvaluator {
     pub(crate) fn get_type_of_number(
         &self,
         node: NumberNode,
-        type_result: Option<&TypeResult>,
-    ) -> TypeResult {
+        type_result: Option<P<TypeResult>>,
+    ) -> P<TypeResult> {
         todo!()
     }
 
@@ -669,8 +688,8 @@ impl TypeEvaluator {
         &self,
         node: UnpackNode,
         flags: EvalFlags,
-        inference_context: Option<&InferenceContext>,
-    ) -> TypeResult {
+        inference_context: Option<P<InferenceContext>>,
+    ) -> P<TypeResult> {
         todo!()
     }
 
@@ -679,8 +698,8 @@ impl TypeEvaluator {
         &self,
         node: StringListNode,
         flags: EvalFlags,
-        inference_context: Option<&InferenceContext>,
-    ) -> TypeResult {
+        inference_context: Option<P<InferenceContext>>,
+    ) -> P<TypeResult> {
         todo!()
     }
 
@@ -689,12 +708,12 @@ impl TypeEvaluator {
         &self,
         node: StringListNode,
         flags: EvalFlags,
-    ) -> TypeResult {
+    ) -> P<TypeResult> {
         todo!()
     }
 
     // analyzer/typeEvaluator.ts:1999
-    pub(crate) fn get_type_of_string(&self, node: P<ParseNode>) -> TypeResult {
+    pub(crate) fn get_type_of_string(&self, node: P<ParseNode>) -> P<TypeResult> {
         todo!()
     }
 
@@ -716,7 +735,7 @@ impl TypeEvaluator {
     pub fn get_type_of_annotation(
         &self,
         node: ExpressionNode,
-        options: Option<&ExpectedTypeOptions>,
+        options: Option<P<ExpectedTypeOptions>>,
     ) -> P<Type> {
         todo!()
     }
@@ -771,7 +790,7 @@ impl TypeEvaluator {
         flags: MemberAccessFlags,
         self_type: Option<P<Type>>,
         recursion_count: u32,
-    ) -> Option<TypeResult> {
+    ) -> Option<P<TypeResult>> {
         todo!()
     }
 
@@ -835,9 +854,9 @@ impl TypeEvaluator {
     // analyzer/typeEvaluator.ts:3335
     pub(crate) fn get_type_of_awaitable(
         &self,
-        type_result: &TypeResult,
+        type_result: P<TypeResult>,
         error_node: Option<ExpressionNode>,
-    ) -> TypeResult {
+    ) -> P<TypeResult> {
         todo!()
     }
 
@@ -845,11 +864,11 @@ impl TypeEvaluator {
     /// TS defaults: emitNotIterableError = true.
     pub fn get_type_of_iterator(
         &self,
-        type_result: &TypeResult,
+        type_result: P<TypeResult>,
         is_async: bool,
         error_node: ExpressionNode,
         emit_not_iterable_error: bool,
-    ) -> Option<TypeResult> {
+    ) -> Option<P<TypeResult>> {
         todo!()
     }
 
@@ -857,11 +876,11 @@ impl TypeEvaluator {
     /// TS defaults: emitNotIterableError = true.
     pub fn get_type_of_iterable(
         &self,
-        type_result: &TypeResult,
+        type_result: P<TypeResult>,
         is_async: bool,
         error_node: ExpressionNode,
         emit_not_iterable_error: bool,
-    ) -> Option<TypeResult> {
+    ) -> Option<P<TypeResult>> {
         todo!()
     }
 
@@ -1070,7 +1089,7 @@ impl TypeEvaluator {
     pub(crate) fn assign_type_to_name_node(
         &self,
         name_node: NameNode,
-        type_result: &TypeResult,
+        type_result: P<TypeResult>,
         ignore_empty_containers: bool,
         src_expression: Option<P<ParseNode>>,
         allow_assignment_to_final_var: bool,
@@ -1083,7 +1102,7 @@ impl TypeEvaluator {
     pub(crate) fn assign_type_to_member_access_node(
         &self,
         target: MemberAccessNode,
-        type_result: &TypeResult,
+        type_result: P<TypeResult>,
         src_expr: Option<ExpressionNode>,
         expected_type_diag_addendum: Option<P<DiagnosticAddendum>>,
     ) {
@@ -1094,7 +1113,7 @@ impl TypeEvaluator {
     pub(crate) fn assign_type_to_member_variable(
         &self,
         node: MemberAccessNode,
-        type_result: &TypeResult,
+        type_result: P<TypeResult>,
         is_instance_member: bool,
         src_expr_node: Option<ExpressionNode>,
     ) {
@@ -1105,7 +1124,7 @@ impl TypeEvaluator {
     pub(crate) fn assign_type_to_tuple_or_list_node(
         &self,
         target: P<ParseNode>,
-        type_result: &TypeResult,
+        type_result: P<TypeResult>,
         src_expr: ExpressionNode,
     ) {
         todo!()
@@ -1166,7 +1185,7 @@ impl TypeEvaluator {
     pub fn assign_type_to_expression(
         &self,
         target: ExpressionNode,
-        type_result: &TypeResult,
+        type_result: P<TypeResult>,
         src_expr: ExpressionNode,
         ignore_empty_containers: bool,
         allow_assignment_to_final_var: bool,
@@ -1217,7 +1236,7 @@ impl TypeEvaluator {
     }
 
     // analyzer/typeEvaluator.ts:5127
-    pub(crate) fn get_type_of_name(&self, node: NameNode, flags: EvalFlags) -> TypeResult {
+    pub(crate) fn get_type_of_name(&self, node: NameNode, flags: EvalFlags) -> P<TypeResult> {
         todo!()
     }
 
@@ -1334,7 +1353,7 @@ impl TypeEvaluator {
         &self,
         node: MemberAccessNode,
         flags: EvalFlags,
-    ) -> TypeResult {
+    ) -> P<TypeResult> {
         todo!()
     }
 
@@ -1343,11 +1362,11 @@ impl TypeEvaluator {
     pub(crate) fn get_type_of_member_access_with_base_type(
         &self,
         node: MemberAccessNode,
-        base_type_result: &TypeResult,
+        base_type_result: P<TypeResult>,
         usage: &EvaluatorUsage,
         flags: EvalFlags,
         allow_function_signature_assignment: bool,
-    ) -> TypeResult {
+    ) -> P<TypeResult> {
         todo!()
     }
 
@@ -1372,7 +1391,7 @@ impl TypeEvaluator {
         &self,
         member_type: P<Type>,
         concrete_member_type: ClassType,
-        member_info: Option<&ClassMember>,
+        member_info: Option<P<ClassMember>>,
         class_type: ClassType,
         self_type: Option<P<Type>>,
         flags: MemberAccessFlags,
@@ -1390,7 +1409,7 @@ impl TypeEvaluator {
         &self,
         type_: P<Type>,
         concrete_type: P<Type>,
-        member_info: Option<&ClassMember>,
+        member_info: Option<P<ClassMember>>,
         class_type: ClassType,
         self_type: Option<P<Type>>,
         flags: MemberAccessFlags,
@@ -1398,7 +1417,7 @@ impl TypeEvaluator {
         usage: &EvaluatorUsage,
         diag: Option<P<DiagnosticAddendum>>,
         recursion_count: u32,
-    ) -> TypeResult {
+    ) -> P<TypeResult> {
         todo!()
     }
 
@@ -1429,7 +1448,7 @@ impl TypeEvaluator {
 
     // analyzer/typeEvaluator.ts:7433
     /// TS defaults: flags = EvalFlags.None.
-    pub(crate) fn get_type_of_index(&self, node: IndexNode, flags: EvalFlags) -> TypeResult {
+    pub(crate) fn get_type_of_index(&self, node: IndexNode, flags: EvalFlags) -> P<TypeResult> {
         todo!()
     }
 
@@ -1480,10 +1499,10 @@ impl TypeEvaluator {
     pub(crate) fn get_type_of_index_with_base_type(
         &self,
         node: IndexNode,
-        base_type_result: &TypeResult,
+        base_type_result: P<TypeResult>,
         usage: &EvaluatorUsage,
         flags: EvalFlags,
-    ) -> TypeResult {
+    ) -> P<TypeResult> {
         todo!()
     }
 
@@ -1519,7 +1538,7 @@ impl TypeEvaluator {
         base_type: ClassType,
         self_type: Option<P<Type>>,
         usage: &EvaluatorUsage,
-    ) -> TypeResult {
+    ) -> P<TypeResult> {
         todo!()
     }
 
@@ -1551,7 +1570,7 @@ impl TypeEvaluator {
     // analyzer/typeEvaluator.ts:8956
     pub fn build_tuple_types_list(
         &self,
-        entry_type_results: &[TypeResult],
+        entry_type_results: &[P<TypeResult>],
         strip_literals: bool,
         convert_module: bool,
     ) -> Vec<TupleTypeArg> {
@@ -1563,8 +1582,8 @@ impl TypeEvaluator {
         &self,
         node: CallNode,
         flags: EvalFlags,
-        inference_context: Option<&mut InferenceContext>,
-    ) -> TypeResult {
+        inference_context: Option<P<InferenceContext>>,
+    ) -> P<TypeResult> {
         todo!()
     }
 
@@ -1573,8 +1592,8 @@ impl TypeEvaluator {
     pub(crate) fn get_type_of_lambda_for_call(
         &self,
         node: CallNode,
-        inference_context: Option<&InferenceContext>,
-    ) -> TypeResult {
+        inference_context: Option<P<InferenceContext>>,
+    ) -> P<TypeResult> {
         todo!()
     }
 
@@ -1583,7 +1602,7 @@ impl TypeEvaluator {
         &self,
         node: CallNode,
         type_form_class: ClassType,
-    ) -> TypeResult {
+    ) -> P<TypeResult> {
         todo!()
     }
 
@@ -1638,13 +1657,13 @@ impl TypeEvaluator {
     pub(crate) fn get_type_of_assert_type(
         &self,
         node: CallNode,
-        inference_context: Option<&mut InferenceContext>,
-    ) -> TypeResult {
+        inference_context: Option<P<InferenceContext>>,
+    ) -> P<TypeResult> {
         todo!()
     }
 
     // analyzer/typeEvaluator.ts:9530
-    pub fn convert_node_to_arg(&self, node: ArgumentNode) -> ArgWithExpression {
+    pub fn convert_node_to_arg(&self, node: ArgumentNode) -> P<ArgWithExpression> {
         todo!()
     }
 
@@ -1652,8 +1671,8 @@ impl TypeEvaluator {
     pub(crate) fn get_type_of_reveal_type(
         &self,
         node: CallNode,
-        inference_context: Option<&mut InferenceContext>,
-    ) -> TypeResult {
+        inference_context: Option<P<InferenceContext>>,
+    ) -> P<TypeResult> {
         todo!()
     }
 
@@ -1663,7 +1682,7 @@ impl TypeEvaluator {
     }
 
     // analyzer/typeEvaluator.ts:9666
-    pub(crate) fn get_type_of_super_call(&self, node: CallNode) -> TypeResult {
+    pub(crate) fn get_type_of_super_call(&self, node: CallNode) -> P<TypeResult> {
         todo!()
     }
 
@@ -1680,8 +1699,8 @@ impl TypeEvaluator {
         arg_param_matches: &[MatchArgsToParamsResult],
         constraints: Option<P<ConstraintTracker>>,
         skip_unknown_arg_check: Option<bool>,
-        inference_context: Option<&InferenceContext>,
-    ) -> CallResult {
+        inference_context: Option<P<InferenceContext>>,
+    ) -> P<CallResult> {
         todo!()
     }
 
@@ -1769,7 +1788,7 @@ impl TypeEvaluator {
     pub fn get_best_overload_for_args(
         &self,
         error_node: ExpressionNode,
-        type_result: &TypeResult,
+        type_result: P<TypeResult>,
         arg_list: &[Arg],
     ) -> Option<FunctionType> {
         todo!()
@@ -1781,11 +1800,11 @@ impl TypeEvaluator {
         &self,
         error_node: ExpressionNode,
         arg_list: &[Arg],
-        type_result: &TypeResult,
+        type_result: P<TypeResult>,
         constraints: Option<P<ConstraintTracker>>,
         skip_unknown_arg_check: Option<bool>,
-        inference_context: Option<&InferenceContext>,
-    ) -> CallResult {
+        inference_context: Option<P<InferenceContext>>,
+    ) -> P<CallResult> {
         todo!()
     }
 
@@ -1809,12 +1828,12 @@ impl TypeEvaluator {
         &self,
         error_node: ExpressionNode,
         arg_list: &[Arg],
-        call_type_result: &TypeResult,
+        call_type_result: P<TypeResult>,
         constraints: Option<P<ConstraintTracker>>,
         skip_unknown_arg_check: Option<bool>,
-        inference_context: Option<&InferenceContext>,
+        inference_context: Option<P<InferenceContext>>,
         recursion_count: u32,
-    ) -> CallResult {
+    ) -> P<CallResult> {
         todo!()
     }
 
@@ -1829,9 +1848,9 @@ impl TypeEvaluator {
         is_call_type_incomplete: bool,
         constraints: Option<P<ConstraintTracker>>,
         skip_unknown_arg_check: Option<bool>,
-        inference_context: Option<&InferenceContext>,
+        inference_context: Option<P<InferenceContext>>,
         recursion_count: u32,
-    ) -> CallResult {
+    ) -> P<CallResult> {
         todo!()
     }
 
@@ -1844,8 +1863,8 @@ impl TypeEvaluator {
         is_call_type_incomplete: bool,
         constraints: Option<P<ConstraintTracker>>,
         skip_unknown_arg_check: Option<bool>,
-        inference_context: Option<&InferenceContext>,
-    ) -> CallResult {
+        inference_context: Option<P<InferenceContext>>,
+    ) -> P<CallResult> {
         todo!()
     }
 
@@ -1867,8 +1886,8 @@ impl TypeEvaluator {
         is_call_type_incomplete: bool,
         constraints: Option<P<ConstraintTracker>>,
         skip_unknown_arg_check: Option<bool>,
-        inference_context: Option<&InferenceContext>,
-    ) -> CallResult {
+        inference_context: Option<P<InferenceContext>>,
+    ) -> P<CallResult> {
         todo!()
     }
 
@@ -1880,8 +1899,8 @@ impl TypeEvaluator {
         expanded_call_type: ClassType,
         unexpanded_call_type: P<Type>,
         skip_unknown_arg_check: Option<bool>,
-        inference_context: Option<&InferenceContext>,
-    ) -> CallResult {
+        inference_context: Option<P<InferenceContext>>,
+    ) -> P<CallResult> {
         todo!()
     }
 
@@ -1894,9 +1913,9 @@ impl TypeEvaluator {
         unexpanded_call_type: P<Type>,
         constraints: Option<P<ConstraintTracker>>,
         skip_unknown_arg_check: Option<bool>,
-        inference_context: Option<&InferenceContext>,
+        inference_context: Option<P<InferenceContext>>,
         recursion_count: u32,
-    ) -> CallResult {
+    ) -> P<CallResult> {
         todo!()
     }
 
@@ -1920,7 +1939,7 @@ impl TypeEvaluator {
         &self,
         error_node: ExpressionNode,
         arg_list: &[Arg],
-        type_result: &TypeResult,
+        type_result: P<TypeResult>,
         overload_index: i32,
     ) -> MatchArgsToParamsResult {
         todo!()
@@ -1934,8 +1953,8 @@ impl TypeEvaluator {
         match_results: &mut MatchArgsToParamsResult,
         constraints: P<ConstraintTracker>,
         skip_unknown_arg_check: bool,
-        inference_context: Option<&InferenceContext>,
-    ) -> CallResult {
+        inference_context: Option<P<InferenceContext>>,
+    ) -> P<CallResult> {
         todo!()
     }
 
@@ -1949,7 +1968,7 @@ impl TypeEvaluator {
         skip_unknown_arg_check: bool,
         expected_type: P<Type>,
         return_type: P<Type>,
-    ) -> CallResult {
+    ) -> P<CallResult> {
         todo!()
     }
 
@@ -1960,7 +1979,7 @@ impl TypeEvaluator {
         match_results: &mut MatchArgsToParamsResult,
         constraints: P<ConstraintTracker>,
         skip_unknown_arg_check: Option<bool>,
-    ) -> CallResult {
+    ) -> P<CallResult> {
         todo!()
     }
 
@@ -1989,11 +2008,11 @@ impl TypeEvaluator {
         &self,
         error_node: ExpressionNode,
         arg_list: &[Arg],
-        type_result: &TypeResult,
+        type_result: P<TypeResult>,
         constraints: Option<P<ConstraintTracker>>,
         skip_unknown_arg_check: bool,
-        inference_context: Option<&InferenceContext>,
-    ) -> CallResult {
+        inference_context: Option<P<InferenceContext>>,
+    ) -> P<CallResult> {
         todo!()
     }
 
@@ -2025,7 +2044,7 @@ impl TypeEvaluator {
         &self,
         arg_param: &ValidateArgTypeParams,
         constraints: P<ConstraintTracker>,
-        type_result: Option<&TypeResult>,
+        type_result: Option<P<TypeResult>>,
         options: &ValidateArgTypeOptions,
     ) -> ArgResult {
         todo!()
@@ -2140,7 +2159,11 @@ impl TypeEvaluator {
     }
 
     // analyzer/typeEvaluator.ts:15012
-    pub(crate) fn get_type_of_constant(&self, node: ConstantNode, flags: EvalFlags) -> TypeResult {
+    pub(crate) fn get_type_of_constant(
+        &self,
+        node: ConstantNode,
+        flags: EvalFlags,
+    ) -> P<TypeResult> {
         todo!()
     }
 
@@ -2149,11 +2172,11 @@ impl TypeEvaluator {
         &self,
         obj_type: P<Type>,
         method_name: &str,
-        arg_list: &[TypeResult],
+        arg_list: &[P<TypeResult>],
         error_node: ExpressionNode,
-        inference_context: Option<&InferenceContext>,
+        inference_context: Option<P<InferenceContext>>,
         diag: Option<P<DiagnosticAddendum>>,
-    ) -> Option<TypeResult> {
+    ) -> Option<P<TypeResult>> {
         todo!()
     }
 
@@ -2162,8 +2185,8 @@ impl TypeEvaluator {
         &self,
         node: DictionaryNode,
         flags: EvalFlags,
-        inference_context: Option<&InferenceContext>,
-    ) -> TypeResult {
+        inference_context: Option<P<InferenceContext>>,
+    ) -> P<TypeResult> {
         todo!()
     }
 
@@ -2172,9 +2195,9 @@ impl TypeEvaluator {
         &self,
         node: DictionaryNode,
         flags: EvalFlags,
-        inference_context: &mut InferenceContext,
+        inference_context: P<InferenceContext>,
         expected_diag_addendum: Option<P<DiagnosticAddendum>>,
-    ) -> Option<TypeResult> {
+    ) -> Option<P<TypeResult>> {
         todo!()
     }
 
@@ -2184,7 +2207,7 @@ impl TypeEvaluator {
         node: DictionaryNode,
         flags: EvalFlags,
         has_expected_type: bool,
-    ) -> TypeResult {
+    ) -> P<TypeResult> {
         todo!()
     }
 
@@ -2201,7 +2224,7 @@ impl TypeEvaluator {
         expected_value_type: Option<P<Type>>,
         expected_typed_dict_entries: Option<P<TypedDictEntries>>,
         expected_diag_addendum: Option<P<DiagnosticAddendum>>,
-    ) -> TypeResult {
+    ) -> P<TypeResult> {
         todo!()
     }
 
@@ -2210,8 +2233,8 @@ impl TypeEvaluator {
         &self,
         node: P<ParseNode>,
         flags: EvalFlags,
-        inference_context: Option<&InferenceContext>,
-    ) -> TypeResult {
+        inference_context: Option<P<InferenceContext>>,
+    ) -> P<TypeResult> {
         todo!()
     }
 
@@ -2220,8 +2243,8 @@ impl TypeEvaluator {
         &self,
         node: P<ParseNode>,
         flags: EvalFlags,
-        inference_context: &mut InferenceContext,
-    ) -> Option<TypeResult> {
+        inference_context: P<InferenceContext>,
+    ) -> Option<P<TypeResult>> {
         todo!()
     }
 
@@ -2230,7 +2253,7 @@ impl TypeEvaluator {
         &self,
         node: P<ParseNode>,
         expected_class_type: Option<P<Type>>,
-        inference_context: Option<&InferenceContext>,
+        inference_context: Option<P<InferenceContext>>,
     ) -> Option<P<Type>> {
         todo!()
     }
@@ -2241,7 +2264,7 @@ impl TypeEvaluator {
         node: P<ParseNode>,
         flags: EvalFlags,
         has_expected_type: bool,
-    ) -> TypeResult {
+    ) -> P<TypeResult> {
         todo!()
     }
 
@@ -2258,7 +2281,7 @@ impl TypeEvaluator {
     // analyzer/typeEvaluator.ts:16079
     pub(crate) fn infer_type_arg_from_expected_entry_type(
         &self,
-        inference_context: &InferenceContext,
+        inference_context: P<InferenceContext>,
         entry_types: &[P<Type>],
         is_narrowable: bool,
     ) -> Option<P<Type>> {
@@ -2266,12 +2289,12 @@ impl TypeEvaluator {
     }
 
     // analyzer/typeEvaluator.ts:16138
-    pub(crate) fn get_type_of_yield(&self, node: YieldNode) -> TypeResult {
+    pub(crate) fn get_type_of_yield(&self, node: YieldNode) -> P<TypeResult> {
         todo!()
     }
 
     // analyzer/typeEvaluator.ts:16176
-    pub(crate) fn get_type_of_yield_from(&self, node: YieldFromNode) -> TypeResult {
+    pub(crate) fn get_type_of_yield_from(&self, node: YieldFromNode) -> P<TypeResult> {
         todo!()
     }
 
@@ -2279,8 +2302,8 @@ impl TypeEvaluator {
     pub(crate) fn get_type_of_lambda(
         &self,
         node: LambdaNode,
-        inference_context: Option<&mut InferenceContext>,
-    ) -> TypeResult {
+        inference_context: Option<P<InferenceContext>>,
+    ) -> P<TypeResult> {
         todo!()
     }
 
@@ -2289,9 +2312,9 @@ impl TypeEvaluator {
         &self,
         node: LambdaNode,
         expected_type: Option<FunctionType>,
-        inference_context: Option<&mut InferenceContext>,
+        inference_context: Option<P<InferenceContext>>,
         force_speculative: bool,
-    ) -> TypeResult {
+    ) -> P<TypeResult> {
         todo!()
     }
 
@@ -2300,8 +2323,8 @@ impl TypeEvaluator {
         &self,
         node: ComprehensionNode,
         flags: EvalFlags,
-        inference_context: Option<&InferenceContext>,
-    ) -> TypeResult {
+        inference_context: Option<P<InferenceContext>>,
+    ) -> P<TypeResult> {
         todo!()
     }
 
@@ -2330,12 +2353,12 @@ impl TypeEvaluator {
         flags: EvalFlags,
         expected_value_or_element_type: Option<P<Type>>,
         expected_key_type: Option<P<Type>>,
-    ) -> TypeResult {
+    ) -> P<TypeResult> {
         todo!()
     }
 
     // analyzer/typeEvaluator.ts:16653
-    pub(crate) fn get_type_of_slice(&self, node: SliceNode) -> TypeResult {
+    pub(crate) fn get_type_of_slice(&self, node: SliceNode) -> P<TypeResult> {
         todo!()
     }
 
@@ -2450,7 +2473,7 @@ impl TypeEvaluator {
         error_node: P<ParseNode>,
         type_args: Option<&[TypeResultWithNode]>,
         flags: EvalFlags,
-    ) -> TypeResult {
+    ) -> P<TypeResult> {
         todo!()
     }
 
@@ -2494,7 +2517,7 @@ impl TypeEvaluator {
         error_node: ExpressionNode,
         type_args: Option<&[TypeResultWithNode]>,
         flags: EvalFlags,
-    ) -> TypeResult {
+    ) -> P<TypeResult> {
         todo!()
     }
 
@@ -2806,7 +2829,7 @@ impl TypeEvaluator {
         node: FunctionNode,
         is_abstract: bool,
         caller_node: Option<ExpressionNode>,
-    ) -> Option<TypeResult> {
+    ) -> Option<P<TypeResult>> {
         todo!()
     }
 
@@ -2893,7 +2916,7 @@ impl TypeEvaluator {
         &self,
         subnode: P<ParseNode>,
         callback: &mut dyn FnMut(),
-    ) -> Option<TypeResult> {
+    ) -> Option<P<TypeResult>> {
         todo!()
     }
 
@@ -2902,7 +2925,7 @@ impl TypeEvaluator {
         &self,
         subnode: P<ParseNode>,
         callback: &mut dyn FnMut(),
-    ) -> Option<TypeResult> {
+    ) -> Option<P<TypeResult>> {
         todo!()
     }
 
@@ -2912,7 +2935,7 @@ impl TypeEvaluator {
         subnode: P<ParseNode>,
         callback: &mut dyn FnMut(),
         read_cache_entry: &mut dyn FnMut(P<ParseNode>) -> Option<TypeCacheEntry>,
-    ) -> Option<TypeResult> {
+    ) -> Option<P<TypeResult>> {
         todo!()
     }
 
@@ -2920,7 +2943,7 @@ impl TypeEvaluator {
     pub(crate) fn get_code_flow_analyzer_for_node(
         &self,
         node: ExecutionScopeNode,
-        type_at_start: Option<&TypeResult>,
+        type_at_start: Option<P<TypeResult>>,
     ) -> P<CodeFlowAnalyzer> {
         todo!()
     }
@@ -2942,7 +2965,7 @@ impl TypeEvaluator {
         type_args: Option<&[TypeResultWithNode]>,
         flags: EvalFlags,
         error_node: ExpressionNode,
-    ) -> TypeResult {
+    ) -> P<TypeResult> {
         todo!()
     }
 
@@ -2960,8 +2983,8 @@ impl TypeEvaluator {
     pub fn get_type_of_arg(
         &self,
         arg: &Arg,
-        inference_context: Option<&mut InferenceContext>,
-    ) -> TypeResult {
+        inference_context: Option<P<InferenceContext>>,
+    ) -> P<TypeResult> {
         todo!()
     }
 
@@ -2969,8 +2992,8 @@ impl TypeEvaluator {
     pub(crate) fn get_type_of_arg_expecting_type(
         &self,
         arg: &Arg,
-        options: Option<&ExpectedTypeOptions>,
-    ) -> TypeResult {
+        options: Option<P<ExpectedTypeOptions>>,
+    ) -> P<TypeResult> {
         todo!()
     }
 
@@ -2978,8 +3001,8 @@ impl TypeEvaluator {
     pub fn get_type_of_expression_expecting_type(
         &self,
         node: ExpressionNode,
-        options: Option<&ExpectedTypeOptions>,
-    ) -> TypeResult {
+        options: Option<P<ExpectedTypeOptions>>,
+    ) -> P<TypeResult> {
         todo!()
     }
 
@@ -3196,7 +3219,7 @@ impl TypeEvaluator {
         symbol: P<Symbol>,
         usage_node: Option<NameNode>,
         use_last_decl: bool,
-    ) -> EffectiveTypeResult {
+    ) -> P<EffectiveTypeResult> {
         todo!()
     }
 
@@ -3213,7 +3236,7 @@ impl TypeEvaluator {
         symbol: P<Symbol>,
         usage_node: Option<NameNode>,
         use_last_decl: bool,
-    ) -> EffectiveTypeResult {
+    ) -> P<EffectiveTypeResult> {
         todo!()
     }
 
@@ -3223,7 +3246,7 @@ impl TypeEvaluator {
         symbol: P<Symbol>,
         decls: &[P<Declaration>],
         type_cache_key: &str,
-    ) -> EffectiveTypeResult {
+    ) -> P<EffectiveTypeResult> {
         todo!()
     }
 
@@ -3256,7 +3279,7 @@ impl TypeEvaluator {
         &self,
         type_: FunctionType,
         options: Option<&EffectiveReturnTypeOptions>,
-    ) -> TypeResult {
+    ) -> P<TypeResult> {
         todo!()
     }
 
@@ -3265,7 +3288,7 @@ impl TypeEvaluator {
         &self,
         type_: FunctionType,
         call_site_info: Option<&CallSiteEvaluationInfo>,
-    ) -> TypeResult {
+    ) -> P<TypeResult> {
         todo!()
     }
 
@@ -3284,7 +3307,7 @@ impl TypeEvaluator {
     }
 
     // analyzer/typeEvaluator.ts:25446
-    pub fn get_type_of_member(&self, member: &ClassMember) -> P<Type> {
+    pub fn get_type_of_member(&self, member: P<ClassMember>) -> P<Type> {
         todo!()
     }
 
@@ -3292,10 +3315,10 @@ impl TypeEvaluator {
     pub(crate) fn get_type_of_member_internal(
         &self,
         error_node: Option<ExpressionNode>,
-        member: &ClassMember,
+        member: P<ClassMember>,
         self_class: Option<P<Type>>,
         flags: MemberAccessFlags,
-    ) -> Option<TypeResult> {
+    ) -> Option<P<TypeResult>> {
         todo!()
     }
 
@@ -3531,8 +3554,8 @@ impl TypeEvaluator {
     // analyzer/typeEvaluator.ts:28091
     pub(crate) fn adjust_source_param_details_for_dest_variadic(
         &self,
-        src_details: &mut ParamListDetails,
-        dest_details: &ParamListDetails,
+        src_details: P<ParamListDetails>,
+        dest_details: P<ParamListDetails>,
     ) {
         todo!()
     }
@@ -3540,8 +3563,8 @@ impl TypeEvaluator {
     // analyzer/typeEvaluator.ts:28191
     pub(crate) fn assign_named_param(
         &self,
-        dest_details: &ParamListDetails,
-        src_details: &ParamListDetails,
+        dest_details: P<ParamListDetails>,
+        src_details: P<ParamListDetails>,
         param_index: i32,
         diag: Option<P<DiagnosticAddendum>>,
         constraints: P<ConstraintTracker>,
@@ -3568,8 +3591,8 @@ impl TypeEvaluator {
     pub(crate) fn narrow_type_based_on_assignment(
         &self,
         declared_type: P<Type>,
-        assigned_type_result: &TypeResult,
-    ) -> TypeResult {
+        assigned_type_result: P<TypeResult>,
+    ) -> P<TypeResult> {
         todo!()
     }
 
@@ -3768,7 +3791,7 @@ impl TypeEvaluator {
         &self,
         type_: FunctionType,
         call_site_info: Option<&CallSiteEvaluationInfo>,
-    ) -> TypeResult {
+    ) -> P<TypeResult> {
         todo!()
     }
 
@@ -3780,12 +3803,14 @@ impl TypeEvaluator {
 }
 
 // Inline object type at createTypeEvaluator.getOverloadArgParamPairs.return.
+#[derive(Clone)]
 pub struct CreateTypeEvaluatorGetOverloadArgParamPairsReturn {
     pub arg_type: P<Type>,
     pub param_type: P<Type>,
 }
 
 // Inline object type at createTypeEvaluator.printSrcDestTypes.return.
+#[derive(Clone)]
 pub struct CreateTypeEvaluatorPrintSrcDestTypesReturn {
     pub source_type: String,
     pub dest_type: String,
