@@ -67,6 +67,7 @@ An object prints its own enumerable properties:
 
 - sorted by property name, comparing UTF-16 code units (JavaScript's default `sort`, the same as byte order for ASCII names);
 - without a property named `id` (parse node, flow node and symbol ids are global counters);
+- without a property named `importFailureInfo` (the import resolver's debug log, filled only with `--verbose`);
 - without a property whose value is `undefined`. An absent property and a property set to `undefined` print the same: nothing. The Rust side models such fields as `Option` and omits `None`, even where it could store a default.
 
 An object with no printed fields prints `<key>: {}`.
@@ -290,4 +291,169 @@ Example (`x: "List[int]" = [1, 2]`):
 
 A `StringNode`'s `value` holds the unescaped string, so a Python `"\ud800"` prints `value: "\ud800"` (one lone surrogate) while its token prints `escapedValue="\\ud800"`.
 
-Sections for the bind, flow, diag and types stages follow in later commits.
+## tree walk
+
+The bind, flow and types stages visit parse nodes in one order, the walk order: pre-order from the module node, each node's children in `getChildNodes(node, provider)` order (`parser/parseTreeUtils.ts`), skipping `undefined` entries.
+The bind and flow stages pass the parser's string annotations (`getParserStringAnnotation`). The types stage passes all string annotations (`AnalyzerNodeInfo.getStringAnnotation`, which adds the ones the evaluator discovered).
+Either way, a `StringList`'s annotation comes before its strings.
+
+## bind stage
+
+```
+nodes:
+  <NodeRef>:
+    <field>: <value>
+scopes: [<n>]
+  [<k>]:
+    <field>: <value>
+```
+
+Every parse node inside a bind dump prints as a reference, `<NodeTypeName>@<start>+<length>`.
+
+### nodes
+
+For each node in walk order whose analyzer node info (`AnalyzerNodeInfoReader.get(node)`) has printed fields other than `afterFlowNode`, `flowNode` and `stringAnnotations`: a line `<NodeRef>:` at depth 1, then those fields at depth 2. The fields that can appear:
+
+| field | value |
+|---|---|
+| codeFlowComplexity | number, often fractional |
+| codeFlowExpressions | Set of strings |
+| declaration | declaration |
+| dunderAllInfo | object: `names` (strings), `stringNodes` (references), `usesUnsupportedDunderAllForm` |
+| importInfo | `ImportResult` |
+| scope | scope reference |
+| staticConditionValue | boolean |
+
+### scope numbering and references
+
+Scopes are numbered from 0 in walk order: a walked node whose info holds a scope (`getScope(node)`) that has no number yet gives it the next number.
+A scope prints as `#<k>` when it has a number in this file, else as `external` (for example the builtins scope that a module scope chains to).
+
+### scopes
+
+`scopes: [<n>]`, then each numbered scope `[<k>]:` at depth 1 with its printed fields at depth 2:
+
+| field | value |
+|---|---|
+| chainedModuleLevelScopeLookup | `<function>` (notebooks only; never set in a CLI run) |
+| hasNonEmptySlots | boolean |
+| hasPotentiallyDynamicSymbolTable | boolean |
+| notLocalBindings | Map of name to `NameBindingType` number |
+| parent | scope reference |
+| proxy | scope reference |
+| slotsNames | array of strings |
+| symbolTable | Map of name to symbol |
+| type | `ScopeType` number |
+
+A symbol prints its private fields: `_declarations` (array of declarations), `_flags` (`SymbolFlags` number), `_synthesizedTypeInfo` (object: `node` reference, `type` printed as `<type>`), `_typingSymbolAlias` (string).
+
+### declarations
+
+A declaration prints as an object. Its fields, by kind (`type` is the `DeclarationType` number), each only when set:
+
+- every kind: `isInExceptSuite`, `isInInlinedTypedDict`, `moduleName`, `node`, `range` (Range form), `type`, `uri` (Uri form);
+- Intrinsic (0): `intrinsicType`, `name`;
+- Variable (1): `alternativeTypeNode`, `docString`, `inferredTypeSource`, `isConstant`, `isDefinedByMemberAccess`, `isDefinedBySlots`, `isExplicitBinding`, `isFinal`, `isInferenceAllowedInPyTyped`, `isRuntimeTypeExpression`, `typeAliasName`, `typeAnnotationNode`;
+- Param (2): `inferredName`, `inferredTypeNodes`;
+- TypeAlias (4): `docString`;
+- Function (5): `isGenerator`, `isMethod`, `raiseStatements`, `returnStatements`, `yieldStatements`;
+- Alias (8): `firstNamePart`, `implicitImports` (Map of name to `ModuleLoaderActions`: `implicitImports`, `isUnresolved`, `loadSymbolsFromPath`, `uri`), `isLazy`, `isNativeLib`, `isUnresolved`, `loadSymbolsFromPath`, `submoduleFallback` (nested declaration), `symbolName`, `usesLocalName`;
+- TypeParam (3), Class (6) and SpecialBuiltInClass (7): the common fields only.
+
+All fields of one declaration print together in field order. Example:
+
+```
+      "f":
+        _declarations: [1]
+          [0]:
+            isGenerator: false
+            isInExceptSuite: false
+            isMethod: false
+            moduleName: "a"
+            node: Function@76+65
+            range: 5:4-5:5
+            returnStatements: [2]
+              [0]: Return@116+12
+              [1]: Return@133+8
+            type: 5
+            uri: Uri("fs/home/me/proj/a.py")
+        _flags: 1
+```
+
+### import results
+
+`importInfo` prints an `ImportResult` with these fields, each only when set: `filteredImplicitImports` and `implicitImports` (Maps of name to `ImplicitImport`: `isNativeLib`, `isStubFile`, `name`, `pyTypedInfo`, `uri`), `importName`, `importType`, `isImportFound`, `isInitFilePresent`, `isLocalTypingsFile`, `isNamespacePackage`, `isNativeLib`, `isPartlyResolved`, `isRelative`, `isStdlibTypeshedFile`, `isStubFile`, `isStubPackage`, `isThirdPartyTypeshedFile`, `nonStubImportResult` (nested `ImportResult`), `packageDirectory` (Uri), `pyTypedInfo` (object: `isPartiallyTyped`, `pyTypedPath` Uri), `resolvedUris` (array of Uri), `searchPath` (Uri).
+
+## flow stage
+
+```
+nodes:
+  <NodeRef>:
+    afterFlowNode: F<n>
+    flowNode: F<n>
+flowNodes: [<count>]
+  [<n>]:
+    <field>: <value>
+```
+
+### nodes
+
+For each node in walk order whose analyzer node info has `afterFlowNode` or `flowNode`: a line `<NodeRef>:` at depth 1, then `afterFlowNode` and `flowNode`, each when set, at depth 2.
+
+### flow node numbering
+
+Flow node ids are global counters, so flow nodes print as `F<n>`, numbered from 0 in first-visit order:
+
+1. In the `nodes` pass, for each node in walk order, its `afterFlowNode`, then its `flowNode`: a flow node without a number gets the next one.
+2. Then for n = 0, 1, 2, … up to the count so far: the flow references of flow node n, in printed field order and array element order, get the next number when they have none.
+
+The flow references of a flow node are the values of its `antecedent`, `antecedents` (each element), `preBranchAntecedent` and `preFinallyGate` fields.
+
+### flow nodes
+
+`flowNodes: [<count>]`, then each flow node `[<n>]:` at depth 1 with its printed fields at depth 2:
+
+| field | value |
+|---|---|
+| affectedExpressions | Set of strings |
+| antecedent | flow reference |
+| antecedents | array of flow references |
+| blockIfSwallowsExceptions | boolean |
+| expression | node reference |
+| expressions | array of node references |
+| finallyNode | node reference |
+| flags | `FlowFlags` number |
+| isAsync | boolean |
+| names | array of strings |
+| node | node reference |
+| preBranchAntecedent | flow reference |
+| preFinallyGate | flow reference |
+| reference | node reference |
+| statement | node reference |
+| subjectExpression | node reference |
+| targetSymbolId | symbol (below) |
+
+`targetSymbolId` holds a global symbol id, so it prints the symbol instead:
+
+- `#<k> "<name>"`: the lowest-numbered scope `#k` of this file (bind-stage numbering) whose symbol table holds the symbol, and its name there. The flow stage computes the numbering even when the bind stage is off.
+- `0` for `indeterminateSymbolId`.
+- `external` when no scope of this file holds the symbol.
+
+Example:
+
+```
+flowNodes: [26]
+  [0]:
+    antecedent: F22
+    flags: 1024
+    node: Call@258+30
+  [1]:
+    flags: 4
+  [2]:
+    antecedent: F1
+    flags: 32
+    node: Name@7+2
+    targetSymbolId: #0 "os"
+```
+
+Sections for the diag and types stages follow in later commits.
