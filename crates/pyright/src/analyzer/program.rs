@@ -12,6 +12,9 @@ use std::rc::Rc;
 
 use jsrt::{JsMap, JsSet, P};
 
+use crate::common::timing::Duration;
+use crate::common::timing::timing_stats;
+use jsrt::number::number_to_string;
 use crate::analyzer::analyzer_file_info::{ImportLookup, ImportLookupKey, ImportLookupResult, LookupImportOptions};
 use crate::analyzer::analyzer_node_info::{
     AnalyzerNodeInfoContext, AnalyzerNodeInfoContextImpl, AnalyzerNodeInfoReader, get_dunder_all_info, get_file_info,
@@ -355,8 +358,7 @@ impl Program {
     // analyzer/program.ts:766
     /// No cancellation token: the CLI never cancels.
     pub fn analyze(&self, max_time: Option<MaxAnalysisTime>) -> bool {
-        let elapsed_time = std::time::Instant::now();
-        let elapsed_ms = || elapsed_time.elapsed().as_secs_f64() * 1000.0;
+        let elapsed_time = Duration::new();
 
         let open_files: Vec<P<SourceFileInfo>> = self
             .get_source_file_info_list()
@@ -369,7 +371,7 @@ impl Program {
 
             // Check the open files.
             for source_file_info in open_files {
-                if self.check_types(source_file_info, false) && elapsed_ms() > effective_max_time {
+                if self.check_types(source_file_info, false) && elapsed_time.get_duration_in_milliseconds() > effective_max_time {
                     return true;
                 }
             }
@@ -397,13 +399,35 @@ impl Program {
                     continue;
                 }
 
-                if self.check_types(source_file_info, false) && elapsed_ms() > effective_max_time {
+                if self.check_types(source_file_info, false) && elapsed_time.get_duration_in_milliseconds() > effective_max_time {
                     return true;
                 }
             }
         }
 
         false
+    }
+
+    // analyzer/program.ts:898
+    /// Prints the files that have been checked and their check times,
+    /// greatest first.
+    pub fn print_detailed_analysis_times(&self) {
+        let mut sorted_files: Vec<P<SourceFileInfo>> = self
+            .get_source_file_info_list()
+            .into_iter()
+            .filter(|s| s.source_file.get_check_time().is_some())
+            .collect();
+        jsrt::sort::sort_by(&mut sorted_files, |a, b| {
+            b.source_file.get_check_time().unwrap() - a.source_file.get_check_time().unwrap()
+        });
+
+        self.console.info("");
+        self.console.info("Analysis time by file");
+
+        for sf_info in sorted_files {
+            let check_time_in_ms = sf_info.source_file.get_check_time().unwrap();
+            self.console.info(&format!("{}ms: {}", number_to_string(check_time_in_ms), sf_info.uri().to_uri_string()));
+        }
     }
 
     // analyzer/program.ts:1011
@@ -1086,8 +1110,11 @@ impl Program {
         }
 
         if source_file_info.source_file.is_binding_required() {
-            // Bind the file if it's not already bound.
-            self.bind_file(source_file_info, None, options.is_some_and(|o| o.skip_file_needed_check), false);
+            // Bind the file if it's not already bound. Don't count this time
+            // against the type checker.
+            timing_stats().type_checker_time.subtract_from_time(|| {
+                self.bind_file(source_file_info, None, options.is_some_and(|o| o.skip_file_needed_check), false);
+            });
         }
 
         let symbol_table = source_file_info.source_file.get_module_symbol_table()?;
@@ -1159,21 +1186,23 @@ impl Program {
                 self.get_imports_recursive(file_to_check, &mut closure_map, 0);
 
                 for file in closure_map.values() {
-                    let mut files_visited_map: JsMap<&'static str, P<SourceFileInfo>> = JsMap::default();
+                    timing_stats().cycle_detection_time.time_operation(|| {
+                        let mut files_visited_map: JsMap<&'static str, P<SourceFileInfo>> = JsMap::default();
 
-                    if !self.detect_and_report_import_cycles(
-                        *file,
-                        &mut files_visited_map,
-                        &mut Vec::new(),
-                        &mut JsMap::default(),
-                    ) {
-                        // If no cycles were found in any of the files we visited,
-                        // set a flag to indicates that we don't need to visit them again
-                        // on subsequent cycle checks.
-                        for source_file_info in files_visited_map.values() {
-                            source_file_info.source_file.set_no_circular_dependency_confirmed();
+                        if !self.detect_and_report_import_cycles(
+                            *file,
+                            &mut files_visited_map,
+                            &mut Vec::new(),
+                            &mut JsMap::default(),
+                        ) {
+                            // If no cycles were found in any of the files we visited,
+                            // set a flag to indicates that we don't need to visit them again
+                            // on subsequent cycle checks.
+                            for source_file_info in files_visited_map.values() {
+                                source_file_info.source_file.set_no_circular_dependency_confirmed();
+                            }
                         }
-                    }
+                    });
                 }
             }
         }

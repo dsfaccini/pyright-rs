@@ -15,6 +15,7 @@ use jsrt::{JsSet, P};
 use regex::Regex;
 use serde_json::Value;
 
+use crate::common::timing::timing_stats;
 use crate::analyzer::analysis::{AnalysisCompleteCallback, AnalysisReason, AnalysisResults};
 use crate::analyzer::background_analysis_program::BackgroundAnalysisProgram;
 use crate::analyzer::import_logger::ImportLogger;
@@ -173,6 +174,24 @@ impl AnalyzerService {
         self.apply_config_options(host);
     }
 
+    // analyzer/service.ts:427
+    pub fn print_stats(&self) {
+        let console = self.console();
+        console.info("");
+        console.info("Analysis stats");
+
+        let bound_file_count = self.program().get_file_count(false);
+        console.info(&format!("Total files parsed and bound: {bound_file_count}"));
+
+        let checked_file_count = self.program().get_user_file_count();
+        console.info(&format!("Total files checked: {checked_file_count}"));
+    }
+
+    // analyzer/service.ts:438
+    pub fn print_detailed_analysis_times(&self) {
+        self.program().print_detailed_analysis_times();
+    }
+
     // analyzer/service.ts:458
     pub fn get_config_options(&self) -> P<ConfigOptions> {
         self.config_options()
@@ -216,7 +235,9 @@ impl AnalyzerService {
             return true;
         }
 
-        let enum_results = self.source_enumerator.borrow_mut().as_mut().unwrap().enumerate(max_source_enumerator_time);
+        let enum_results = timing_stats()
+            .find_files_time
+            .time_operation(|| self.source_enumerator.borrow_mut().as_mut().unwrap().enumerate(max_source_enumerator_time));
 
         if !enum_results.is_complete {
             return false;

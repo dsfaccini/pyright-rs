@@ -23,5 +23,6 @@ pub mod service_provider;
 pub mod string_utils;
 pub mod text_range;
 pub mod text_range_collection;
+pub mod timing;
 pub mod toml_utils;
 pub mod uri;

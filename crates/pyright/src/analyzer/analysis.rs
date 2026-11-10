@@ -1,7 +1,6 @@
 //! Port of `packages/pyright-internal/src/analyzer/analysis.ts`.
 
-use std::time::Instant;
-
+use crate::common::timing::Duration;
 use crate::analyzer::program::{MaxAnalysisTime, Program, RequiringAnalysisCount};
 use crate::common::config_options::ConfigOptions;
 use crate::common::diagnostic_sink::FileDiagnostics;
@@ -37,7 +36,7 @@ pub fn analyze_program(
     config_options: &ConfigOptions,
     callback: Option<&mut AnalysisCompleteCallback>,
 ) -> bool {
-    let duration = Instant::now();
+    let duration = Duration::new();
     let more_to_analyze = program.analyze(max_time);
 
     let requiring_analysis_count = program.get_files_to_analyze_count();
@@ -48,8 +47,7 @@ pub fn analyze_program(
 
     let diagnostics = program.get_diagnostics(config_options, report_diagnostic_deltas_only);
     let diagnostic_file_count = diagnostics.len();
-    // `Duration` counts whole milliseconds, as `Date.now()` does.
-    let elapsed_time = duration.elapsed().as_millis() as f64 / 1000.0;
+    let elapsed_time = duration.get_duration_in_seconds();
 
     // Report any diagnostics or completion.
     if diagnostic_file_count > 0 || !more_to_analyze {
