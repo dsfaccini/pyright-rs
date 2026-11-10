@@ -32,7 +32,7 @@ use crate::analyzer::type_evaluator_types::{
     SolveConstraintsOptions, SymbolDeclInfo, TypeResult, TypeResultWithNode, ValidateArgTypeParams,
     ValidateTypeArgsOptions,
 };
-use crate::analyzer::type_printer::PrintTypeFlags;
+use crate::analyzer::type_printer::{FunctionReturnTypeCallback, PrintTypeFlags};
 use crate::analyzer::type_utils::{
     ApplyTypeVarOptions, ClassMember, InferenceContext, MemberAccessFlags, UniqueSignatureTracker,
 };
@@ -41972,9 +41972,10 @@ impl TypeEvaluator {
         analyzer::type_printer::print_object_type_for_class(
             type_,
             self.evaluator_options.print_type_flags,
-            &analyzer::type_printer::FunctionReturnTypeCallback {
-                type_evaluator: *self.evaluator_interface.get().unwrap(),
-            },
+            self.evaluator_interface
+                .get()
+                .unwrap()
+                .to_dyn::<dyn analyzer::type_printer::FunctionReturnTypeCallback>(|e| e),
         )
     }
 
@@ -41991,9 +41992,10 @@ impl TypeEvaluator {
         analyzer::type_printer::print_function_parts(
             type_,
             flags,
-            &analyzer::type_printer::FunctionReturnTypeCallback {
-                type_evaluator: *self.evaluator_interface.get().unwrap(),
-            },
+            self.evaluator_interface
+                .get()
+                .unwrap()
+                .to_dyn::<dyn analyzer::type_printer::FunctionReturnTypeCallback>(|e| e),
         )
     }
 
@@ -42067,9 +42069,10 @@ impl TypeEvaluator {
         analyzer::type_printer::print_type(
             type_,
             flags,
-            &analyzer::type_printer::FunctionReturnTypeCallback {
-                type_evaluator: *self.evaluator_interface.get().unwrap(),
-            },
+            self.evaluator_interface
+                .get()
+                .unwrap()
+                .to_dyn::<dyn analyzer::type_printer::FunctionReturnTypeCallback>(|e| e),
         )
     }
 
@@ -42221,6 +42224,16 @@ pub struct CreateTypeEvaluatorGetOverloadArgParamPairsReturn {
 pub struct CreateTypeEvaluatorPrintSrcDestTypesReturn {
     pub source_type: String,
     pub dest_type: String,
+}
+
+// Defined in tools/stubgen/typemap.toml [items].
+impl FunctionReturnTypeCallback for TypeEvaluator {
+    // analyzer/typeEvaluator.ts:30313
+    /// The nested `getEffectiveReturnType` that `printObjectTypeForClass`, `printFunctionParts` and
+    /// `printType` pass to the printer.
+    fn call(&self, type_: FunctionType) -> P<Type> {
+        self.get_effective_return_type(type_)
+    }
 }
 
 // Defined in tools/stubgen/typemap.toml [items].
