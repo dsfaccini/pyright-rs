@@ -10,12 +10,12 @@
 )]
 
 use crate::analyzer::types::{Type, TypeVarType};
-use jsrt::{JsMap, P};
+use jsrt::{LazyJsMap, P};
 use std::cell::RefCell;
 
 // analyzer/constraintSolution.ts:15
 pub struct ConstraintSolutionSet {
-    pub(crate) _type_var_map: RefCell<JsMap<String, Option<P<Type>>>>,
+    pub(crate) _type_var_map: RefCell<LazyJsMap<String, Option<P<Type>>>>,
 }
 
 impl ConstraintSolutionSet {

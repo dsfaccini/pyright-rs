@@ -193,10 +193,19 @@ pub fn compare_diagnostics(d1: &Diagnostic, d2: &Diagnostic) -> i32 {
 /// Shared: `createAddendum` returns a child the caller keeps writing to.
 #[derive(Default)]
 pub struct DiagnosticAddendum {
-    messages: RefCell<Vec<String>>,
-    child_addenda: RefCell<Vec<P<DiagnosticAddendum>>>,
+    // `_messages`, `_childAddenda` and `_range`, allocated on the first write: about half of all
+    // addenda stay empty (python-chess and samples corpora, 2026-11-10).
+    content: RefCell<Option<Box<AddendumContent>>>,
     nest_level: std::cell::Cell<Option<i32>>,
-    range: std::cell::Cell<Option<TextRange>>,
+}
+// The evaluator creates millions of addenda (PLAN.md step 6).
+const _: () = assert!(size_of::<DiagnosticAddendum>() <= 24);
+
+#[derive(Default)]
+struct AddendumContent {
+    messages: Vec<String>,
+    child_addenda: Vec<P<DiagnosticAddendum>>,
+    range: Option<TextRange>,
 }
 
 impl DiagnosticAddendum {
@@ -205,21 +214,27 @@ impl DiagnosticAddendum {
         P::new_eval(DiagnosticAddendum::default())
     }
 
+    fn content_mut(&self) -> std::cell::RefMut<'_, AddendumContent> {
+        std::cell::RefMut::map(self.content.borrow_mut(), |content| {
+            &mut **content.get_or_insert_with(Default::default)
+        })
+    }
+
     // common/diagnostic.ts:205
     pub fn add_message(&self, message: String) {
-        self.messages.borrow_mut().push(message);
+        self.content_mut().messages.push(message);
     }
 
     // common/diagnostic.ts:209
     pub fn add_message_multiline(&self, message: &str) {
         for line in message.split('\n') {
-            self.messages.borrow_mut().push(line.to_string());
+            self.content_mut().messages.push(line.to_string());
         }
     }
 
     // common/diagnostic.ts:215
     pub fn add_text_range(&self, range: TextRange) {
-        self.range.set(Some(range));
+        self.content_mut().range = Some(range);
     }
 
     // common/diagnostic.ts:220
@@ -256,17 +271,23 @@ impl DiagnosticAddendum {
 
     // common/diagnostic.ts:247
     pub fn add_addendum(&self, addendum: P<DiagnosticAddendum>) {
-        self.child_addenda.borrow_mut().push(addendum);
+        self.content_mut().child_addenda.push(addendum);
     }
 
     // common/diagnostic.ts:251
     pub fn get_children(&self) -> Vec<P<DiagnosticAddendum>> {
-        self.child_addenda.borrow().clone()
+        self.content
+            .borrow()
+            .as_ref()
+            .map_or_else(Vec::new, |content| content.child_addenda.clone())
     }
 
     // common/diagnostic.ts:255
     pub fn get_messages(&self) -> Vec<String> {
-        self.messages.borrow().clone()
+        self.content
+            .borrow()
+            .as_ref()
+            .map_or_else(Vec::new, |content| content.messages.clone())
     }
 
     // common/diagnostic.ts:259
@@ -309,7 +330,7 @@ impl DiagnosticAddendum {
             return Some(child_ranges[0]);
         }
 
-        self.range.get()
+        self.content.borrow().as_ref().and_then(|content| content.range)
     }
 
     // common/diagnostic.ts:303
@@ -318,7 +339,11 @@ impl DiagnosticAddendum {
             return 0;
         }
 
-        let mut message_count = self.messages.borrow().len();
+        let mut message_count = self
+            .content
+            .borrow()
+            .as_ref()
+            .map_or(0, |content| content.messages.len());
 
         for diag in self.get_children() {
             message_count += diag.get_message_count(recursion_count + 1);

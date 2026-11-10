@@ -10,7 +10,7 @@
 )]
 
 use crate::analyzer::types::{Type, TypeVarType};
-use jsrt::{JsMap, JsSet, P};
+use jsrt::{JsSet, LazyJsMap, P};
 use std::cell::RefCell;
 
 // analyzer/constraintTracker.ts:24
@@ -27,8 +27,8 @@ pub struct TypeVarConstraints {
 
 // analyzer/constraintTracker.ts:40
 pub struct ConstraintSet {
-    pub(crate) _type_var_map: RefCell<JsMap<String, TypeVarConstraints>>,
-    pub(crate) _scope_ids: RefCell<Option<JsSet<String>>>,
+    pub(crate) _type_var_map: RefCell<LazyJsMap<String, TypeVarConstraints>>,
+    pub(crate) _scope_ids: RefCell<Option<Box<JsSet<String>>>>,
 }
 
 impl ConstraintSet {
@@ -107,7 +107,7 @@ impl ConstraintSet {
 
 // analyzer/constraintTracker.ts:185
 pub struct ConstraintTracker {
-    pub(crate) _constraint_sets: RefCell<Vec<P<ConstraintSet>>>,
+    pub(crate) _constraint_sets: RefCell<Box<[P<ConstraintSet>]>>,
 }
 
 impl ConstraintTracker {

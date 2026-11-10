@@ -6,7 +6,7 @@ use crate::analyzer::type_complexity::get_complexity_score_for_type;
 use crate::analyzer::types::TypeSameOptions;
 use crate::analyzer::types::is_type_same;
 use crate::analyzer::types::{Type, TypeVarType};
-use jsrt::{JsMap, JsSet, P};
+use jsrt::{JsSet, LazyJsMap, P};
 use std::cell::RefCell;
 
 // analyzer/constraintTracker.ts:24
@@ -23,15 +23,17 @@ pub struct TypeVarConstraints {
 
 // analyzer/constraintTracker.ts:40
 pub struct ConstraintSet {
-    pub(crate) _type_var_map: RefCell<JsMap<String, TypeVarConstraints>>,
-    pub(crate) _scope_ids: RefCell<Option<JsSet<String>>>,
+    pub(crate) _type_var_map: RefCell<LazyJsMap<String, TypeVarConstraints>>,
+    pub(crate) _scope_ids: RefCell<Option<Box<JsSet<String>>>>,
 }
+// Most sets stay empty: the map and the scope ids are allocated on first insert (PLAN.md step 6).
+const _: () = assert!(size_of::<ConstraintSet>() <= 32);
 
 impl ConstraintSet {
     // analyzer/constraintTracker.ts:53
     pub fn new() -> P<ConstraintSet> {
         P::new_eval(ConstraintSet {
-            _type_var_map: RefCell::new(JsMap::default()),
+            _type_var_map: RefCell::new(LazyJsMap::default()),
             _scope_ids: RefCell::new(None),
         })
     }
@@ -191,7 +193,7 @@ impl ConstraintSet {
     pub fn add_scope_id(&self, scope_id: &str) {
         let mut scope_ids = self._scope_ids.borrow_mut();
         if scope_ids.is_none() {
-            *scope_ids = Some(JsSet::default());
+            *scope_ids = Some(Box::default());
         }
 
         scope_ids.as_mut().unwrap().insert(scope_id.to_string());
@@ -208,7 +210,7 @@ impl ConstraintSet {
     // analyzer/constraintTracker.ts:170
     pub fn get_scope_ids(&self) -> JsSet<String> {
         // `new Set(undefined)` is an empty set.
-        self._scope_ids.borrow().clone().unwrap_or_default()
+        self._scope_ids.borrow().as_deref().cloned().unwrap_or_default()
     }
 
     // analyzer/constraintTracker.ts:174
@@ -227,14 +229,15 @@ impl ConstraintSet {
 
 // analyzer/constraintTracker.ts:185
 pub struct ConstraintTracker {
-    pub(crate) _constraint_sets: RefCell<Vec<P<ConstraintSet>>>,
+    pub(crate) _constraint_sets: RefCell<Box<[P<ConstraintSet>]>>,
 }
+const _: () = assert!(size_of::<ConstraintTracker>() <= 24);
 
 impl ConstraintTracker {
     // analyzer/constraintTracker.ts:188
     pub fn new() -> P<ConstraintTracker> {
         P::new_eval(ConstraintTracker {
-            _constraint_sets: RefCell::new(vec![ConstraintSet::new()]),
+            _constraint_sets: RefCell::new(Box::new([ConstraintSet::new()])),
         })
     }
 
@@ -248,7 +251,7 @@ impl ConstraintTracker {
             .iter()
             .map(|set| ConstraintSet::clone_(set))
             .collect();
-        *new_type_var_map._constraint_sets.borrow_mut() = sets;
+        *new_type_var_map._constraint_sets.borrow_mut() = sets.into();
 
         new_type_var_map
     }
@@ -267,7 +270,7 @@ impl ConstraintTracker {
                 .collect();
 
             if !filtered_sets.is_empty() {
-                *cloned._constraint_sets.borrow_mut() = filtered_sets;
+                *cloned._constraint_sets.borrow_mut() = filtered_sets.into();
             } else {
                 let sets = cloned._constraint_sets.borrow().clone();
                 for context in sets {
@@ -287,7 +290,7 @@ impl ConstraintTracker {
             .iter()
             .map(|context| ConstraintSet::clone_(context))
             .collect();
-        *self._constraint_sets.borrow_mut() = sets;
+        *self._constraint_sets.borrow_mut() = sets.into();
     }
 
     // analyzer/constraintTracker.ts:223
@@ -310,7 +313,7 @@ impl ConstraintTracker {
         // Limit the number of constraint sets. There are rare circumstances
         // where this can grow to unbounded numbers and exhaust memory.
         if (contexts.len() as u32) < MAX_CONSTRAINT_SET_COUNT {
-            *self._constraint_sets.borrow_mut() = contexts.to_vec();
+            *self._constraint_sets.borrow_mut() = contexts.into();
         }
     }
 
@@ -367,7 +370,7 @@ impl ConstraintTracker {
 
     // analyzer/constraintTracker.ts:273
     pub fn get_constraint_sets(&self) -> Vec<P<ConstraintSet>> {
-        self._constraint_sets.borrow().clone()
+        self._constraint_sets.borrow().to_vec()
     }
 
     // analyzer/constraintTracker.ts:277

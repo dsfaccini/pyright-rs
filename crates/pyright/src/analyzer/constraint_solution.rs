@@ -3,19 +3,21 @@
 //! Evaluator code: allocate with `P::new_eval` (docs/porting.md, "memory").
 
 use crate::analyzer::types::{Type, TypeVarType};
-use jsrt::{JsMap, P};
+use jsrt::{LazyJsMap, P};
 use std::cell::RefCell;
 
 // analyzer/constraintSolution.ts:15
 pub struct ConstraintSolutionSet {
-    pub(crate) _type_var_map: RefCell<JsMap<String, Option<P<Type>>>>,
+    pub(crate) _type_var_map: RefCell<LazyJsMap<String, Option<P<Type>>>>,
 }
+// Most solution sets stay empty: the map is allocated on first insert (PLAN.md step 6).
+const _: () = assert!(size_of::<ConstraintSolutionSet>() <= 16);
 
 impl ConstraintSolutionSet {
     // analyzer/constraintSolution.ts:19
     pub fn new() -> P<ConstraintSolutionSet> {
         P::new_eval(ConstraintSolutionSet {
-            _type_var_map: RefCell::new(JsMap::default()),
+            _type_var_map: RefCell::new(LazyJsMap::default()),
         })
     }
 

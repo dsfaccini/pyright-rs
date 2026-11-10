@@ -242,6 +242,13 @@ interface = "analyzer/codeFlowEngine.ts:CodeFlowAnalyzer"
 "analyzer/typeEvaluatorTypes.ts:TypeResult.overloadsUsedForCall" = "Box<Vec<crate::analyzer::types::FunctionType>>"
 "analyzer/typeEvaluatorTypes.ts:TypeResult.memberAccessDeprecationInfo" = "Box<crate::analyzer::type_evaluator_types::MemberAccessDeprecationInfo>"
 "analyzer/typeEvaluatorTypes.ts:TypeResult.magicMethodDeprecationInfo" = "Box<crate::analyzer::type_evaluator_types::MagicMethodDeprecationInfo>"
+# Constraint maps that most sets never fill (72-85% stay empty on the python-chess and samples
+# corpora, 2026-11-10): the table is allocated on the first insert.
+"analyzer/constraintSolution.ts:ConstraintSolutionSet._typeVarMap" = "jsrt::LazyJsMap<String, Option<jsrt::P<crate::analyzer::types::Type>>>"
+"analyzer/constraintTracker.ts:ConstraintSet._typeVarMap" = "jsrt::LazyJsMap<String, crate::analyzer::constraint_tracker::TypeVarConstraints>"
+"analyzer/constraintTracker.ts:ConstraintSet._scopeIds" = "Option<Box<jsrt::JsSet<String>>>"
+# Replaced whole, cloned and indexed, never pushed to: a boxed slice.
+"analyzer/constraintTracker.ts:ConstraintTracker._constraintSets" = "Box<[jsrt::P<crate::analyzer::constraint_tracker::ConstraintSet>]>"
 # Strings copied with every clone of a type variable: an immutable shared string, as a JS string is.
 "analyzer/types.ts:TypeVarDetailsPriv.scopeId" = "std::rc::Rc<str>"
 "analyzer/types.ts:TypeVarDetailsPriv.scopeName" = "std::rc::Rc<str>"
