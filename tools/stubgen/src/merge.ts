@@ -212,5 +212,10 @@ export function mergePorted(stub: string, crate: string, modPath: string): Merge
         }
         lines.splice(Math.max(at, 0), 0, ...add);
     }
-    return { text: lines.join('\n'), kept, keptRanges, lost };
+    // A ported file that dropped the stub's blanket `#![allow(..)]` keeps it dropped, so clippy sees the port.
+    let text = lines.join('\n');
+    if (!crate.includes('#![allow(')) {
+        text = text.replace(/^#!\[allow\([^\]]*\)\]\n/m, '');
+    }
+    return { text, kept, keptRanges, lost };
 }
