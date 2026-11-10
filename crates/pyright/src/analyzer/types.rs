@@ -13,7 +13,7 @@
 use crate::{analyzer, common, parser};
 use crate::analyzer::declaration::Declaration;
 use crate::analyzer::protocols::ProtocolCompatibility;
-use crate::analyzer::symbol::Symbol;
+use crate::analyzer::symbol::{Symbol, SymbolTable};
 use crate::analyzer::type_evaluator::TypeEvaluator;
 use crate::common::uri::uri::Uri;
 use crate::parser::parse_nodes::{
@@ -429,10 +429,10 @@ pub mod unknown_type {
 // analyzer/types.ts:478
 #[derive(Clone)]
 pub struct ModuleDetailsPriv {
-    pub fields: JsMap<String, P<Symbol>>,
+    pub fields: SymbolTable,
     pub doc_string: Option<String>,
     pub not_present_field_type: Option<P<Type>>,
-    pub loader_fields: JsMap<String, P<Symbol>>,
+    pub loader_fields: SymbolTable,
     pub module_name: String,
     pub file_uri: Uri,
 }
@@ -475,7 +475,7 @@ impl ModuleType {
     pub fn create(
         module_name: &str,
         file_uri: &Uri,
-        symbol_table: Option<&JsMap<String, P<Symbol>>>,
+        symbol_table: Option<SymbolTable>,
     ) -> ModuleType {
         todo!()
     }
@@ -583,7 +583,7 @@ pub struct ClassDetailsShared {
     pub declaration: Cell<Option<P<Declaration>>>,
     pub declared_metaclass: Cell<Option<P<Type>>>,
     pub effective_metaclass: Cell<Option<P<Type>>>,
-    pub fields: RefCell<JsMap<String, P<Symbol>>>,
+    pub fields: Cell<SymbolTable>,
     pub type_params: RefCell<Vec<TypeVarType>>,
     pub type_var_scope_id: RefCell<Option<String>>,
     pub doc_string: Option<String>,
@@ -1016,7 +1016,7 @@ impl ClassType {
     }
 
     // analyzer/types.ts:1379
-    pub fn get_symbol_table(class_type: ClassType) -> &'static RefCell<JsMap<String, P<Symbol>>> {
+    pub fn get_symbol_table(class_type: ClassType) -> SymbolTable {
         todo!()
     }
 
@@ -1161,7 +1161,7 @@ pub struct FunctionDetailsShared {
     pub module_name: String,
     pub flags: Cell<FunctionTypeFlags>,
     pub type_params: RefCell<Vec<TypeVarType>>,
-    pub parameters: RefCell<Vec<FunctionParam>>,
+    pub parameters: Cell<P<RefCell<Vec<FunctionParam>>>>,
     pub declared_return_type: Cell<Option<P<Type>>>,
     pub declaration: Cell<Option<P<Declaration>>>,
     pub type_var_scope_id: RefCell<Option<String>>,
@@ -1174,8 +1174,8 @@ pub struct FunctionDetailsShared {
 
 // analyzer/types.ts:1757
 pub struct SpecializedFunctionTypes {
-    pub parameter_types: RefCell<Vec<P<Type>>>,
-    pub parameter_default_types: RefCell<Option<Vec<Option<P<Type>>>>>,
+    pub parameter_types: Cell<P<RefCell<Vec<P<Type>>>>>,
+    pub parameter_default_types: Cell<Option<P<RefCell<Vec<Option<P<Type>>>>>>>,
     pub return_type: Cell<Option<P<Type>>>,
 }
 
@@ -1530,7 +1530,7 @@ pub struct OverloadedDetailsPriv {
 
 // analyzer/types.ts:2430
 pub struct OverloadedTypeDetails {
-    pub priv_: OverloadedDetailsPriv,
+    pub priv_: RefCell<OverloadedDetailsPriv>,
 }
 
 // analyzer/types.ts:2430

@@ -8,7 +8,7 @@
     clippy::all
 )]
 
-use crate::analyzer::symbol::Symbol;
+use crate::analyzer::symbol::{Symbol, SymbolTable};
 use jsrt::{JsMap, P};
 use std::cell::{Cell, RefCell};
 
@@ -41,7 +41,7 @@ pub struct Scope {
     pub parent: Option<P<Scope>>,
     pub proxy: Option<P<Scope>>,
     pub chained_module_level_scope_lookup: Option<ScopeChainedModuleLevelLookup>,
-    pub symbol_table: RefCell<JsMap<String, P<Symbol>>>,
+    pub symbol_table: Cell<SymbolTable>,
     pub not_local_bindings: RefCell<JsMap<String, NameBindingType>>,
     pub slots_names: RefCell<Option<Vec<String>>>,
     pub has_non_empty_slots: Cell<bool>,

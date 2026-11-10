@@ -91,7 +91,7 @@ Dependency placeholders (compile check only):
 - `deps/analyzer/scope.rs`: Scope, ScopeType, SymbolWithScope
 - `deps/analyzer/source_file.rs`: SourceFile
 - `deps/analyzer/source_file_info.rs`: SourceFileInfo
-- `deps/analyzer/symbol.rs`: Symbol, SynthesizedTypeInfo
+- `deps/analyzer/symbol.rs`: Symbol, SymbolTable, SynthesizedTypeInfo
 - `deps/common/config_options.rs`: ConfigOptions, DiagnosticLevel, ExecutionEnvironment
 - `deps/common/console.rs`: ConsoleInterface
 - `deps/common/diagnostic.rs`: Diagnostic, DiagnosticAddendum
