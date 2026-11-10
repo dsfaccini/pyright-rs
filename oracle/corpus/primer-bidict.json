@@ -1,0 +1,15 @@
+{
+    "corpus": "primer-bidict",
+    "description": "mypy_primer project bidict with no dependencies installed, its own pyright config, and the mypy_primer paths.",
+    "cwd": "~/pyright-rs-data/corpus/primer/bidict",
+    "args": [
+        "--pythonpath",
+        "~/pyright-rs-data/corpus/primer/bidict-venv/bin/python",
+        "bidict"
+    ],
+    "pin": {
+        "repo": "https://github.com/jab/bidict",
+        "commit": "299fedc89f1d70d5d41cf7922564b376d3e2d435",
+        "python": "3.13"
+    }
+}

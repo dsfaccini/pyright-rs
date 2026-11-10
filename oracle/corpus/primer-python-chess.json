@@ -1,0 +1,15 @@
+{
+    "corpus": "primer-python-chess",
+    "description": "mypy_primer project python-chess with no dependencies installed, its own pyright config, and the mypy_primer paths.",
+    "cwd": "~/pyright-rs-data/corpus/primer/python-chess",
+    "args": [
+        "--pythonpath",
+        "~/pyright-rs-data/corpus/primer/python-chess-venv/bin/python",
+        "chess"
+    ],
+    "pin": {
+        "repo": "https://github.com/niklasf/python-chess",
+        "commit": "0c6bdaccfcb3b09cdbe94b0f81e948cb2a356015",
+        "python": "3.13"
+    }
+}

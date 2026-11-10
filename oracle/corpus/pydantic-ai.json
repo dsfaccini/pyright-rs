@@ -1,0 +1,11 @@
+{
+    "corpus": "pydantic-ai",
+    "description": "pydantic-ai with its own [tool.pyright] config and synced venv, as in bench/baseline.md.",
+    "cwd": "~/pydantic-ai",
+    "args": [],
+    "pin": {
+        "repo": "https://github.com/pydantic/pydantic-ai",
+        "commit": "ead5e549b69a1d2308c771f6140db666f08413bb",
+        "sync": "UV_PYTHON=3.13 UV_PYTHON_PREFERENCE=only-managed uv sync --frozen --all-extras --no-extra mcp-tasks --all-packages --group lint"
+    }
+}
