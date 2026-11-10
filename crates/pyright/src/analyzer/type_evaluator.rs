@@ -17959,7 +17959,277 @@ impl TypeEvaluator {
 
     // analyzer/typeEvaluator.ts:24095
     pub(crate) fn get_type_of_type_param(&self, node: TypeParameterNode) -> TypeVarType {
-        todo!()
+        // Is this type already cached?
+        let cached_type_var_type = self.read_type_cache(node.d().name.get().0, Some(EvalFlags::None));
+        if let Some(cached_type_var_type) = cached_type_var_type {
+            if analyzer::types::is_type_var(cached_type_var_type) {
+                return TypeVarType::cast(cached_type_var_type).unwrap();
+            }
+        }
+
+        let mut runtime_class_name = "TypeVar";
+        let mut kind = analyzer::types::TypeVarKind::TypeVar;
+        if node.d().type_param_kind.get() == parser::parse_nodes::TypeParamKind::TypeVarTuple {
+            runtime_class_name = "TypeVarTuple";
+            kind = analyzer::types::TypeVarKind::TypeVarTuple;
+        } else if node.d().type_param_kind.get() == parser::parse_nodes::TypeParamKind::ParamSpec {
+            runtime_class_name = "ParamSpec";
+            kind = analyzer::types::TypeVarKind::ParamSpec;
+        }
+        let runtime_type = self.get_typing_type(node.0, runtime_class_name);
+        let runtime_class = match runtime_type {
+            Some(runtime_type) if analyzer::types::is_instantiable_class(runtime_type) => {
+                Some(ClassType::cast(runtime_type).unwrap())
+            }
+            _ => None,
+        };
+
+        let mut type_var = TypeVarType::create_instantiable(&node.d().name.get().d().value, kind);
+        if let Some(runtime_class) = runtime_class {
+            type_var = TypeVarType::cast(analyzer::types::TypeBase::clone_as_special_form(
+                type_var.0,
+                Some(ClassType::clone_as_instance(runtime_class, true)),
+            ))
+            .unwrap();
+        }
+        type_var.d().shared.get().is_type_param_syntax.set(true);
+
+        // Cache the value before we evaluate the bound or the default type in
+        // case it refers to itself in a circular manner.
+        self.write_type_cache(node.0, P::new_eval(TypeResult::new(type_var.0)), /* flags */ None, None, false);
+        self.write_type_cache(
+            node.d().name.get().0,
+            P::new_eval(TypeResult::new(type_var.0)),
+            /* flags */ None,
+            None,
+            false,
+        );
+
+        let expected_type_options = |no_non_type_special_forms: Option<bool>| ExpectedTypeOptions {
+            allow_final: None,
+            allow_required: None,
+            allow_read_only: None,
+            allow_unpacked_tuple: None,
+            allow_unpacked_typed_dict: None,
+            allow_param_spec: None,
+            allow_class_var: None,
+            var_type_annotation: None,
+            type_var_gets_cur_scope: None,
+            allow_type_vars_without_scope_id: None,
+            enforce_class_type_var_scope: None,
+            parses_string_literal: None,
+            not_parsed: None,
+            no_non_type_special_forms,
+            type_form_arg: None,
+            forward_refs: Some(true),
+            type_expression: Some(true),
+            runtime_type_expression: None,
+            convert_ellipsis_to_any: None,
+            allow_ellipsis: None,
+        };
+
+        if let Some(bound_expr) = node.d().bound_expr.get() {
+            if let Some(bound_tuple) = parser::parse_nodes::TupleNode::cast(bound_expr) {
+                let items = bound_tuple.d().items.borrow().clone();
+                let constraints: Vec<P<Type>> = items
+                    .iter()
+                    .map(|&constraint| {
+                        let constraint_type = self
+                            .get_type_of_expression_expecting_type(constraint, Some(&expected_type_options(Some(true))))
+                            .type_
+                            .get();
+
+                        if analyzer::type_utils::requires_specialization(
+                            constraint_type,
+                            Some(&analyzer::type_utils::RequiresSpecializationOptions {
+                                ignore_pseudo_generic: Some(true),
+                                ignore_self: None,
+                                ignore_implicit_type_args: Some(true),
+                            }),
+                            0,
+                        ) {
+                            self.add_diagnostic(
+                                DiagnosticRule::reportGeneralTypeIssues,
+                                &crate::localization::localize::LocMessage::type_var_bound_generic(),
+                                constraint,
+                                None,
+                            );
+                        }
+
+                        analyzer::type_utils::convert_to_instance(constraint_type, true)
+                    })
+                    .collect();
+
+                if constraints.len() < 2 {
+                    self.add_diagnostic(
+                        DiagnosticRule::reportGeneralTypeIssues,
+                        &crate::localization::localize::LocMessage::type_var_single_constraint(),
+                        bound_expr,
+                        None,
+                    );
+                } else if node.d().type_param_kind.get() == parser::parse_nodes::TypeParamKind::TypeVar {
+                    *type_var.d().shared.get().constraints.borrow_mut() = constraints;
+                }
+            } else {
+                let bound_type = self
+                    .get_type_of_expression_expecting_type(bound_expr, Some(&expected_type_options(Some(true))))
+                    .type_
+                    .get();
+
+                if analyzer::type_utils::requires_specialization(
+                    bound_type,
+                    Some(&analyzer::type_utils::RequiresSpecializationOptions {
+                        ignore_pseudo_generic: Some(true),
+                        ignore_self: None,
+                        ignore_implicit_type_args: None,
+                    }),
+                    0,
+                ) {
+                    self.add_diagnostic(
+                        DiagnosticRule::reportGeneralTypeIssues,
+                        &crate::localization::localize::LocMessage::type_var_constraint_generic(),
+                        bound_expr,
+                        None,
+                    );
+                }
+
+                if node.d().type_param_kind.get() == parser::parse_nodes::TypeParamKind::TypeVar {
+                    type_var
+                        .d()
+                        .shared
+                        .get()
+                        .bound_type
+                        .set(Some(analyzer::type_utils::convert_to_instance(bound_type, true)));
+                }
+            }
+        }
+
+        if node.d().type_param_kind.get() == parser::parse_nodes::TypeParamKind::ParamSpec {
+            let default_type = match node.d().default_expr.get() {
+                Some(default_expr) => self.get_param_spec_default_type(default_expr, /* is_pep695_syntax */ true),
+                None => None,
+            };
+
+            if let Some(default_type) = default_type {
+                type_var.d().shared.get().default_type.set(default_type);
+                type_var.d().shared.get().is_default_explicit.set(true);
+            } else {
+                type_var.d().shared.get().default_type.set(ParamSpecType::get_unknown().0);
+            }
+        } else if node.d().type_param_kind.get() == parser::parse_nodes::TypeParamKind::TypeVarTuple {
+            let default_type = match node.d().default_expr.get() {
+                Some(default_expr) => {
+                    self.get_type_var_tuple_default_type(default_expr, /* is_pep695_syntax */ true)
+                }
+                None => None,
+            };
+
+            if let Some(default_type) = default_type {
+                type_var.d().shared.get().default_type.set(default_type);
+                type_var.d().shared.get().is_default_explicit.set(true);
+            } else {
+                type_var.d().shared.get().default_type.set(analyzer::tuples::make_tuple_object(
+                    self,
+                    &[analyzer::types::TupleTypeArg {
+                        type_: analyzer::types::UnknownType::create(false).0,
+                        is_unbounded: true,
+                        is_optional: None,
+                    }],
+                    false,
+                ));
+            }
+        } else {
+            let default_type = match node.d().default_expr.get() {
+                Some(default_expr) => Some(analyzer::type_utils::convert_to_instance(
+                    self.get_type_of_expression_expecting_type(default_expr, Some(&expected_type_options(None)))
+                        .type_
+                        .get(),
+                    true,
+                )),
+                None => None,
+            };
+
+            if let Some(default_type) = default_type {
+                type_var.d().shared.get().default_type.set(default_type);
+                type_var.d().shared.get().is_default_explicit.set(true);
+            } else {
+                type_var
+                    .d()
+                    .shared
+                    .get()
+                    .default_type
+                    .set(analyzer::types::UnknownType::create(false).0);
+            }
+        }
+
+        // If a default is provided, make sure it is compatible with the bound
+        // or constraint.
+        if type_var.d().shared.get().is_default_explicit.get() {
+            if let Some(default_expr) = node.d().default_expr.get() {
+                self.verify_type_var_default_is_compatible(type_var, default_expr);
+            }
+        }
+
+        // Associate the type variable with the owning scope.
+        let scope_node = analyzer::parse_tree_utils::get_type_var_scope_node(node.0);
+        if let Some(scope_node) = scope_node {
+            let scope_type: analyzer::types::TypeVarScopeType;
+            if scope_node.node_type == parser::parse_nodes::ParseNodeType::Class {
+                scope_type = analyzer::types::TypeVarScopeType::Class;
+
+                // Set the variance to "auto" for class-scoped TypeVars.
+                type_var.d().shared.get().declared_variance.set(
+                    if analyzer::types::is_param_spec(type_var.0) || analyzer::types::is_type_var_tuple(type_var.0) {
+                        Variance::Invariant
+                    } else {
+                        Variance::Auto
+                    },
+                );
+            } else if scope_node.node_type == parser::parse_nodes::ParseNodeType::Function {
+                scope_type = analyzer::types::TypeVarScopeType::Function;
+            } else {
+                assert!(scope_node.node_type == parser::parse_nodes::ParseNodeType::TypeAlias);
+                scope_type = analyzer::types::TypeVarScopeType::TypeAlias;
+                type_var.d().shared.get().declared_variance.set(
+                    if analyzer::types::is_param_spec(type_var.0) || analyzer::types::is_type_var_tuple(type_var.0) {
+                        Variance::Invariant
+                    } else {
+                        Variance::Auto
+                    },
+                );
+            }
+
+            let scope_name_node: NameNode = if let Some(class_node) = ClassNode::cast(scope_node) {
+                class_node.d().name.get()
+            } else if let Some(function_node) = FunctionNode::cast(scope_node) {
+                function_node.d().name.get()
+            } else {
+                TypeAliasNode::cast(scope_node).unwrap().d().name.get()
+            };
+            type_var = TypeVarType::clone_for_scope_id(
+                type_var,
+                self.get_scope_id_for_node(
+                    if scope_node.node_type == parser::parse_nodes::ParseNodeType::TypeAlias {
+                        scope_name_node.0
+                    } else {
+                        scope_node
+                    },
+                ),
+                Some(scope_name_node.d().value.clone()),
+                Some(scope_type),
+            );
+        }
+
+        self.write_type_cache(node.0, P::new_eval(TypeResult::new(type_var.0)), /* flags */ None, None, false);
+        self.write_type_cache(
+            node.d().name.get().0,
+            P::new_eval(TypeResult::new(type_var.0)),
+            /* flags */ None,
+            None,
+            false,
+        );
+
+        type_var
     }
 
     // analyzer/typeEvaluator.ts:24261
@@ -17969,7 +18239,321 @@ impl TypeEvaluator {
         symbol: P<Symbol>,
         decl: P<Declaration>,
     ) -> Option<P<Type>> {
-        todo!()
+        let resolved_decl = self.resolve_alias_declaration(
+            decl,
+            /* resolve_local_names */ true,
+            Some(&ResolveAliasOptions {
+                allow_externally_hidden_access: Some(self.node_info.get_file_info(decl.node.get()).is_stub_file),
+                skip_file_needed_check: None,
+            }),
+        );
+
+        // We couldn't resolve the alias. Substitute an unknown
+        // type in this case.
+        let Some(resolved_decl) = resolved_decl else {
+            return Some(if self.evaluator_options.evaluate_unknown_imports_as_any {
+                analyzer::types::AnyType::create(false).0
+            } else {
+                analyzer::types::UnknownType::create(false).0
+            });
+        };
+
+        // analyzer/typeEvaluator.ts:24272
+        // An `AliasDeclaration` or a `ModuleLoaderActions`: both implement
+        // `ModuleLoaderActionsLike`.
+        fn apply_loader_actions_to_module_type(
+            evaluator: &TypeEvaluator,
+            module_type: analyzer::types::ModuleType,
+            loader_actions: &dyn analyzer::declaration::ModuleLoaderActionsLike,
+            import_lookup: &ImportLookup,
+        ) -> P<Type> {
+            if !loader_actions.uri().get().is_empty() && loader_actions.load_symbols_from_path().get() {
+                let lookup_results = import_lookup(
+                    analyzer::analyzer_file_info::ImportLookupKey::Uri(loader_actions.uri().get()),
+                    None,
+                );
+                if let Some(lookup_results) = lookup_results {
+                    module_type.d().priv_.borrow_mut().fields = lookup_results.symbol_table;
+                    let doc_string = (lookup_results.doc_string)();
+                    module_type.d().priv_.borrow_mut().doc_string = doc_string;
+                } else {
+                    // Note that all module attributes that are not found in the
+                    // symbol table should be treated as Any or Unknown rather than
+                    // as an error.
+                    module_type.d().priv_.borrow_mut().not_present_field_type =
+                        Some(if evaluator.evaluator_options.evaluate_unknown_imports_as_any {
+                            analyzer::types::AnyType::create(false).0
+                        } else {
+                            analyzer::types::UnknownType::create(false).0
+                        });
+                }
+            }
+
+            if let Some(implicit_imports) = loader_actions.implicit_imports().get() {
+                // `Map.forEach`: walk by index without holding the borrow.
+                let mut index = 0;
+                loop {
+                    let entry = implicit_imports
+                        .borrow()
+                        .get_index(index)
+                        .map(|(name, implicit_import)| (name.clone(), *implicit_import));
+                    let Some((name, implicit_import)) = entry else {
+                        break;
+                    };
+                    index += 1;
+
+                    let loader_fields = module_type.d().priv_.borrow().loader_fields;
+                    let existing_loader_field = loader_fields.get(&name);
+
+                    // Recursively apply loader actions.
+                    let symbol_type: P<Type>;
+
+                    if implicit_import.is_unresolved.get().unwrap_or(false) {
+                        symbol_type = analyzer::types::UnknownType::create(false).0;
+                    } else {
+                        let imported_module_type: analyzer::types::ModuleType;
+
+                        let existing_type = existing_loader_field.and_then(|field| field.get_synthesized_type());
+                        match existing_type {
+                            Some(existing_type) if analyzer::types::is_module(existing_type.type_) => {
+                                imported_module_type = analyzer::types::ModuleType::cast(existing_type.type_).unwrap();
+                            }
+                            _ => {
+                                let parent_module_name = module_type.d().priv_.borrow().module_name.clone();
+                                let module_name = if !parent_module_name.is_empty() {
+                                    parent_module_name + "." + &name
+                                } else {
+                                    String::new()
+                                };
+                                imported_module_type = analyzer::types::ModuleType::create(
+                                    &module_name,
+                                    &implicit_import.uri.get(),
+                                    None,
+                                );
+                            }
+                        }
+
+                        symbol_type = apply_loader_actions_to_module_type(
+                            evaluator,
+                            imported_module_type,
+                            &*implicit_import,
+                            import_lookup,
+                        );
+                    }
+
+                    if existing_loader_field.is_none() {
+                        let imported_module_symbol = analyzer::symbol::Symbol::create_with_type(
+                            analyzer::symbol::SymbolFlags::None,
+                            symbol_type,
+                            None,
+                        );
+                        let loader_fields = module_type.d().priv_.borrow().loader_fields;
+                        loader_fields.set(&name, imported_module_symbol);
+                    }
+                }
+            }
+
+            module_type.0
+        }
+
+        // If the resolved declaration is still an alias, the alias
+        // is pointing at a module, and we need to synthesize a
+        // module type.
+        if resolved_decl.type_ == analyzer::declaration::DeclarationType::Alias {
+            let mut module_type: Option<analyzer::types::ModuleType> = None;
+
+            // See if this is an import that shares a ModuleType with another
+            // import statement. If so, used the cached type. This happens when
+            // multiple import statements start with the same module name, such
+            // as "import a.b" and "import a.c".
+            if let Some(import_as_node) = ImportAsNode::cast(resolved_decl.node.get()) {
+                let cached_type = self.read_type_cache(import_as_node.d().module.get().0, Some(EvalFlags::None));
+                if let Some(cached_type) = cached_type {
+                    if analyzer::types::is_module(cached_type) {
+                        module_type = analyzer::types::ModuleType::cast(cached_type);
+                    }
+                }
+            }
+
+            let module_type = match module_type {
+                Some(module_type) => module_type,
+                None => {
+                    // Build a module type that corresponds to the declaration and
+                    // its associated loader actions.
+                    let module_name = resolved_decl.module_name.borrow().clone();
+                    let module_type =
+                        analyzer::types::ModuleType::create(&module_name, &resolved_decl.uri.get(), None);
+
+                    if let Some(import_as_node) = ImportAsNode::cast(resolved_decl.node.get()) {
+                        self.write_type_cache(
+                            import_as_node.d().module.get().0,
+                            P::new_eval(TypeResult::new(module_type.0)),
+                            Some(EvalFlags::None),
+                            None,
+                            false,
+                        );
+                    }
+                    module_type
+                }
+            };
+
+            let alias = resolved_decl.alias().unwrap();
+            let has_symbol_name = alias.symbol_name.borrow().as_ref().is_some_and(|name| !name.is_empty());
+            let loader_actions = match alias.submodule_fallback.get() {
+                Some(submodule_fallback) if has_symbol_name => submodule_fallback,
+                _ => resolved_decl,
+            };
+            return Some(apply_loader_actions_to_module_type(
+                self,
+                module_type,
+                &*loader_actions,
+                &self.import_lookup,
+            ));
+        }
+
+        let declared_type = self.get_type_for_declaration(resolved_decl);
+        if let Some(declared_type) = declared_type.type_ {
+            return Some(declared_type);
+        }
+
+        // If this is part of a "py.typed" package, don't fall back on type inference
+        // unless it's marked Final, is a constant, or is a declared type alias.
+        let file_info = self.node_info.get_file_info(resolved_decl.node.get());
+        let mut is_unambiguous_type = !file_info.is_in_py_typed_package || file_info.is_stub_file;
+
+        // If this is a py.typed package, determine if this is a case where an unannotated
+        // variable is considered "unambiguous" because all type checkers are almost
+        // guaranteed to infer its type the same.
+        if !is_unambiguous_type {
+            if resolved_decl.type_ == analyzer::declaration::DeclarationType::Variable {
+                // Special-case variables within an enum class. These are effectively
+                // constants, so we'll treat them as unambiguous.
+                let enclosing_class =
+                    analyzer::parse_tree_utils::get_enclosing_class(resolved_decl.node.get(), /* stop_at_function */ true);
+                if let Some(enclosing_class) = enclosing_class {
+                    let class_type_info = self.get_type_of_class(enclosing_class);
+                    if let Some(class_type_info) = class_type_info {
+                        if ClassType::is_enum_class(class_type_info.class_type) {
+                            is_unambiguous_type = true;
+                        }
+                    }
+                }
+
+                // Special-case constants, which are treated as unambiguous.
+                let variable = resolved_decl.variable().unwrap();
+                if self.is_final_variable_declaration(resolved_decl) || variable.is_constant.get().unwrap_or(false) {
+                    is_unambiguous_type = true;
+                }
+
+                // Special-case calls to certain built-in type functions.
+                if let Some(call_node) = variable.inferred_type_source.get().and_then(CallNode::cast) {
+                    let base_type_result =
+                        self.get_type_of_expression(call_node.d().left_expr.get(), EvalFlags::CallBaseDefaults, None);
+                    let call_type = base_type_result.type_.get();
+
+                    let exempt_builtins: Vec<String> = [
+                        "TypeVar",
+                        "ParamSpec",
+                        "TypeVarTuple",
+                        "TypedDict",
+                        "NamedTuple",
+                        "NewType",
+                        "TypeAliasType",
+                    ]
+                    .iter()
+                    .map(|name| name.to_string())
+                    .collect();
+
+                    if analyzer::types::is_instantiable_class(call_type)
+                        && ClassType::is_built_in(ClassType::cast(call_type).unwrap(), Some(&exempt_builtins))
+                    {
+                        is_unambiguous_type = true;
+                    } else if analyzer::types::is_function(call_type)
+                        && exempt_builtins.iter().any(|name| {
+                            FunctionType::is_built_in(FunctionType::cast(call_type).unwrap(), Some(&[name.clone()]))
+                        })
+                    {
+                        is_unambiguous_type = true;
+                    }
+                }
+            }
+        }
+
+        // If the resolved declaration had no defined type, use the
+        // inferred type for this node.
+        if resolved_decl.type_ == analyzer::declaration::DeclarationType::Param {
+            let param_node = ParameterNode::cast(resolved_decl.node.get()).unwrap();
+            assert!(param_node.d().name.get().is_some());
+            return self
+                .evaluate_type_for_subnode(param_node.d().name.get().unwrap().0, &mut || {
+                    self.evaluate_type_of_param(param_node);
+                })
+                .map(|type_result| type_result.type_.get());
+        }
+
+        if resolved_decl.type_ == analyzer::declaration::DeclarationType::Variable {
+            let variable = resolved_decl.variable().unwrap();
+            if let Some(inferred_type_source) = variable.inferred_type_source.get() {
+                let is_type_alias = self.is_explicit_type_alias_declaration(resolved_decl)
+                    || self.is_possible_type_alias_or_typed_dict(resolved_decl);
+
+                // If this is a type alias, evaluate types for the entire assignment
+                // statement rather than just the RHS of the assignment.
+                let type_source = match inferred_type_source.parent.get() {
+                    Some(parent) if is_type_alias => parent,
+                    _ => inferred_type_source,
+                };
+                let mut inferred_type = self
+                    .evaluate_type_for_subnode(resolved_decl.node.get(), &mut || {
+                        self.evaluate_types_for_statement(type_source);
+                    })
+                    .map(|type_result| type_result.type_.get());
+
+                if let Some(inferred) = inferred_type {
+                    if is_type_alias {
+                        if let Some(type_alias_name) = variable.type_alias_name.get() {
+                            // If this was a speculative type alias, it becomes a real type alias only
+                            // in the event that its inferred type is instantiable or explicitly Any
+                            // (but not an ellipsis).
+                            if self.is_legal_implicit_type_alias_type(inferred) {
+                                let type_alias_type_var = self.synthesize_type_alias_placeholder(type_alias_name, false);
+
+                                inferred_type = Some(self.transform_type_for_type_alias(
+                                    inferred,
+                                    resolved_decl.node.get(),
+                                    type_alias_type_var,
+                                    /* is_pep695_type_var_type */ false,
+                                    None,
+                                ));
+
+                                is_unambiguous_type = true;
+                            }
+                        }
+                    }
+                }
+
+                // Determine whether we need to mark the annotation as ambiguous.
+                if let Some(inferred) = inferred_type {
+                    if file_info.is_in_py_typed_package && !file_info.is_stub_file {
+                        if !is_unambiguous_type {
+                            // See if this particular inference can be considered "unambiguous".
+                            // Any symbol that is assigned more than once is considered ambiguous.
+                            if self.is_unambiguous_inference(symbol, decl, inferred) {
+                                is_unambiguous_type = true;
+                            }
+                        }
+
+                        if !is_unambiguous_type {
+                            inferred_type = Some(analyzer::types::TypeBase::clone_for_ambiguous_type(inferred));
+                        }
+                    }
+                }
+
+                return inferred_type;
+            }
+        }
+
+        None
     }
 
     // analyzer/typeEvaluator.ts:24487
@@ -17979,7 +18563,77 @@ impl TypeEvaluator {
         decl: P<Declaration>,
         inferred_type: P<Type>,
     ) -> bool {
-        todo!()
+        let non_slots_decls: Vec<P<Declaration>> = symbol
+            .get_declarations()
+            .into_iter()
+            .filter(|decl| {
+                decl.type_ != analyzer::declaration::DeclarationType::Variable
+                    || !decl.variable().unwrap().is_inference_allowed_in_py_typed.get().unwrap_or(false)
+            })
+            .collect();
+
+        // Any symbol with more than one assignment is considered ambiguous.
+        if non_slots_decls.len() > 1 {
+            return false;
+        }
+
+        if decl.type_ != analyzer::declaration::DeclarationType::Variable {
+            return false;
+        }
+
+        // If there are no non-slots declarations, don't mark the inferred type as ambiguous.
+        if non_slots_decls.is_empty() {
+            return true;
+        }
+
+        // TypeVar definitions don't require a declaration.
+        if analyzer::types::is_type_var(inferred_type) {
+            return true;
+        }
+
+        let mut assignment_node: Option<AssignmentNode> = None;
+
+        let parent_node = decl.node.get().parent.get();
+        if let Some(parent_node) = parent_node {
+            // Is this a simple assignment (x = y) or an assignment of an instance variable (self.x = y)?
+            if parent_node.node_type == parser::parse_nodes::ParseNodeType::Assignment {
+                assignment_node = AssignmentNode::cast(parent_node);
+            } else if parent_node.node_type == parser::parse_nodes::ParseNodeType::MemberAccess
+                && parent_node
+                    .parent
+                    .get()
+                    .is_some_and(|grandparent| grandparent.node_type == parser::parse_nodes::ParseNodeType::Assignment)
+            {
+                assignment_node = AssignmentNode::cast(parent_node.parent.get().unwrap());
+            }
+        }
+
+        let Some(assignment_node) = assignment_node else {
+            return false;
+        };
+
+        let assigned_type = self
+            .get_type_of_expression(assignment_node.d().right_expr.get(), EvalFlags::None, None)
+            .type_
+            .get();
+
+        // Assume that literal values will always result in the same inferred type.
+        if analyzer::types::is_class_instance(assigned_type)
+            && analyzer::type_utils::is_literal_type(ClassType::cast(assigned_type).unwrap())
+        {
+            return true;
+        }
+
+        // If the assignment is a simple name corresponding to an unambiguous
+        // type, we'll assume the resulting variable will receive the same
+        // unambiguous type.
+        if assignment_node.d().right_expr.get().node_type == parser::parse_nodes::ParseNodeType::Name
+            && !analyzer::types::TypeBase::is_ambiguous(assigned_type)
+        {
+            return true;
+        }
+
+        false
     }
 
     // analyzer/typeEvaluator.ts:24552
@@ -17989,7 +18643,18 @@ impl TypeEvaluator {
         resolve_local_names: bool,
         options: Option<&ResolveAliasOptions>,
     ) -> Option<P<Declaration>> {
-        todo!()
+        analyzer::declaration_utils::resolve_alias_declaration(
+            &self.import_lookup,
+            declaration,
+            &analyzer::declaration_utils::ResolveAliasOptions {
+                resolve_local_names,
+                allow_externally_hidden_access: options
+                    .and_then(|options| options.allow_externally_hidden_access)
+                    .unwrap_or(false),
+                skip_file_needed_check: options.and_then(|options| options.skip_file_needed_check).unwrap_or(false),
+            },
+        )
+        .and_then(|info| info.declaration)
     }
 
     // analyzer/typeEvaluator.ts:24564
@@ -17999,12 +18664,22 @@ impl TypeEvaluator {
         resolve_local_names: bool,
         options: Option<&ResolveAliasOptions>,
     ) -> Option<ResolvedAliasInfo> {
-        todo!()
+        analyzer::declaration_utils::resolve_alias_declaration(
+            &self.import_lookup,
+            declaration,
+            &analyzer::declaration_utils::ResolveAliasOptions {
+                resolve_local_names,
+                allow_externally_hidden_access: options
+                    .and_then(|options| options.allow_externally_hidden_access)
+                    .unwrap_or(false),
+                skip_file_needed_check: options.and_then(|options| options.skip_file_needed_check).unwrap_or(false),
+            },
+        )
     }
 
     // analyzer/typeEvaluator.ts:24579
     pub fn get_effective_type_of_symbol(&self, symbol: P<Symbol>) -> P<Type> {
-        todo!()
+        self.get_effective_type_of_symbol_for_usage(symbol, None, false).type_.get()
     }
 
     // analyzer/typeEvaluator.ts:24587
@@ -18015,12 +18690,74 @@ impl TypeEvaluator {
         usage_node: Option<NameNode>,
         use_last_decl: bool,
     ) -> P<EffectiveTypeResult> {
-        todo!()
+        // If there's a declared type, it takes precedence over inferred types.
+        if symbol.has_typed_declarations() {
+            let declared_type_info = self.get_declared_type_of_symbol(symbol, usage_node);
+            let declared_type = declared_type_info.type_;
+
+            let mut is_incomplete = false;
+            if let Some(declared_type) = declared_type {
+                if analyzer::types::is_function(declared_type)
+                    && FunctionType::is_partially_evaluated(FunctionType::cast(declared_type).unwrap())
+                {
+                    is_incomplete = true;
+                } else if analyzer::types::is_class(declared_type)
+                    && ClassType::is_partially_evaluated(ClassType::cast(declared_type).unwrap())
+                {
+                    is_incomplete = true;
+                }
+            }
+
+            // If the "declared" type uses a "TypeAlias" type annotation, then
+            // we need to use the inferred type path to evaluate its type.
+            if declared_type.is_some() || !declared_type_info.is_type_alias.unwrap_or(false) {
+                let typed_decls = symbol.get_typed_declarations();
+
+                // If we received an undefined declared type, this can be caused by
+                // exceeding the max number of type declarations, speculative
+                // evaluation, or a recursive definition.
+                let is_recursive_definition = declared_type.is_none()
+                    && !declared_type_info.exceeds_max_decls.unwrap_or(false)
+                    && !self.speculative_type_tracker.borrow_mut().is_speculative(/* node */ None, false);
+
+                let result = P::new_eval(EffectiveTypeResult {
+                    type_: Cell::new(declared_type.unwrap_or_else(|| analyzer::types::UnknownType::create(false).0)),
+                    is_incomplete,
+                    includes_variable_decl: Cell::new(Some(self.includes_variable_type_decl(&typed_decls))),
+                    includes_illegal_type_alias_decl: Cell::new(Some(
+                        !typed_decls.iter().all(|&decl| self.is_possible_type_alias_declaration(decl)),
+                    )),
+                    includes_speculative_result: Some(false),
+                    is_recursive_definition: Some(is_recursive_definition),
+                    evaluation_attempts: None,
+                });
+
+                return result;
+            }
+        }
+
+        self.infer_type_of_symbol_for_usage(symbol, usage_node, use_last_decl)
     }
 
     // analyzer/typeEvaluator.ts:24639
     pub(crate) fn includes_variable_type_decl(&self, decls: &[P<Declaration>]) -> bool {
-        todo!()
+        decls.iter().any(|decl| {
+            if decl.type_ == analyzer::declaration::DeclarationType::Variable {
+                // Exempt typing.pyi and typingExtensions.pyi, which use variables to
+                // define some special forms.
+                let file_info = self.node_info.get_file_info(decl.node.get());
+
+                if !file_info.is_typing_stub_file && !file_info.is_typing_extensions_stub_file {
+                    return true;
+                }
+            }
+
+            if decl.type_ == analyzer::declaration::DeclarationType::Param {
+                return true;
+            }
+
+            false
+        })
     }
 
     // analyzer/typeEvaluator.ts:24659
@@ -18032,7 +18769,218 @@ impl TypeEvaluator {
         usage_node: Option<NameNode>,
         use_last_decl: bool,
     ) -> P<EffectiveTypeResult> {
-        todo!()
+        // Look in the inferred type cache to see if we've computed this already.
+        // `cacheEntries`: the TS holds the symbol's inner map. One that exists here stays
+        // in `effectiveTypeCache` until this call returns (only a call that started without
+        // one replaces it, and such a call is an ancestor of this one), so the flag is enough.
+        let had_cache_entries = self.effective_type_cache.borrow().contains_key(&symbol.id);
+        let usage_node_id = usage_node.map(|usage_node| usage_node.id.get());
+        let effective_type_cache_key = format!(
+            "{}{}",
+            match usage_node_id {
+                None => ".".to_owned(),
+                Some(usage_node_id) => usage_node_id.to_string(),
+            },
+            if use_last_decl { "*" } else { "" }
+        );
+        let cache_entry = self
+            .effective_type_cache
+            .borrow()
+            .get(&symbol.id)
+            .and_then(|cache_entries| cache_entries.get(&effective_type_cache_key).copied());
+
+        if let Some(cache_entry) = cache_entry {
+            if !cache_entry.is_incomplete {
+                return cache_entry;
+            }
+        }
+
+        // analyzer/typeEvaluator.ts:24828
+        let add_to_effective_type_cache = |result: P<EffectiveTypeResult>| {
+            // Add the entry to the cache so we don't need to compute it next time.
+            let mut effective_type_cache = self.effective_type_cache.borrow_mut();
+            if !had_cache_entries {
+                effective_type_cache.insert(symbol.id, JsMap::default());
+            }
+
+            effective_type_cache
+                .get_mut(&symbol.id)
+                .unwrap()
+                .insert(effective_type_cache_key.clone(), result);
+        };
+
+        // Infer the type.
+        let decls = symbol.get_declarations();
+
+        let mut decl_index_to_consider: Option<usize> = None;
+
+        // Limit the number of declarations to explore.
+        if decls.len() > MAX_DECLARATIONS_TO_USE_FOR_INFERENCE as usize {
+            let result = P::new_eval(EffectiveTypeResult {
+                type_: Cell::new(analyzer::types::UnknownType::create(false).0),
+                is_incomplete: false,
+                includes_variable_decl: Cell::new(Some(false)),
+                includes_illegal_type_alias_decl: Cell::new(Some(
+                    !decls.iter().all(|&decl| self.is_possible_type_alias_declaration(decl)),
+                )),
+                includes_speculative_result: Some(false),
+                is_recursive_definition: Some(false),
+                evaluation_attempts: None,
+            });
+
+            add_to_effective_type_cache(result);
+            return result;
+        }
+
+        // If the caller has requested that we use only the last decl, we
+        // will use only the last one, but we'll ignore decls that are in
+        // except clauses.
+        if use_last_decl {
+            for (index, decl) in decls.iter().enumerate() {
+                if !decl.is_in_except_suite.get() {
+                    decl_index_to_consider = Some(index);
+                }
+            }
+        } else {
+            // Handle the case where there are multiple imports — one of them in
+            // a try block and one or more in except blocks. In this case, we'll
+            // use the one in the try block rather than the excepts.
+            if decls.len() > 1 && decls.iter().all(|decl| decl.type_ == analyzer::declaration::DeclarationType::Alias) {
+                let non_except_decls: Vec<P<Declaration>> = decls
+                    .iter()
+                    .copied()
+                    .filter(|decl| decl.type_ == analyzer::declaration::DeclarationType::Alias && !decl.is_in_except_suite.get())
+                    .collect();
+                if non_except_decls.len() == 1 {
+                    decl_index_to_consider = decls.iter().position(|&decl| decl == non_except_decls[0]);
+                }
+            }
+        }
+
+        // Determine which declarations to use for inference.
+        let mut decls_to_consider: Vec<P<Declaration>> = Vec::new();
+        let mut includes_variable_decl = false;
+        let mut includes_illegal_type_alias_decl = false;
+
+        let mut saw_explicit_type_alias = false;
+        for (index, &decl) in decls.iter().enumerate() {
+            let resolved_decl = self
+                .resolve_alias_declaration(
+                    decl,
+                    /* resolve_local_names */ true,
+                    Some(&ResolveAliasOptions {
+                        allow_externally_hidden_access: Some(self.node_info.get_file_info(decl.node.get()).is_stub_file),
+                        skip_file_needed_check: None,
+                    }),
+                )
+                .unwrap_or(decl);
+
+            if !self.is_possible_type_alias_declaration(resolved_decl)
+                && !self.is_explicit_type_alias_declaration(resolved_decl)
+            {
+                includes_illegal_type_alias_decl = true;
+            }
+
+            if self.includes_variable_type_decl(&[resolved_decl]) {
+                includes_variable_decl = true;
+            }
+
+            if decl_index_to_consider.is_some_and(|decl_index_to_consider| decl_index_to_consider != index) {
+                continue;
+            }
+
+            // If we have already seen an explicit type alias, do not consider
+            // additional decls. This can happen if multiple TypeAlias declarations
+            // are provided -- normally an error, but it can happen in stdlib stubs
+            // if the user sets the pythonPlatform to "All".
+            if saw_explicit_type_alias {
+                continue;
+            }
+
+            // If the symbol is explicitly marked as a ClassVar, consider only the
+            // declarations that assign to it from within the class body, not through
+            // a member access expression.
+            if analyzer::symbol_utils::is_effectively_class_var(symbol, /* is_dataclass */ false)
+                && decl.type_ == analyzer::declaration::DeclarationType::Variable
+                && decl.variable().unwrap().is_defined_by_member_access.get().unwrap_or(false)
+            {
+                continue;
+            }
+
+            if let Some(usage_node) = usage_node {
+                if decl.type_ != analyzer::declaration::DeclarationType::Alias {
+                    // Is the declaration in the same execution scope as the "usageNode" node?
+                    // If so, we can skip it because code flow analysis will allow us
+                    // to determine the type in this context.
+                    let usage_scope = analyzer::parse_tree_utils::get_execution_scope_node(usage_node.0, self.node_info.reader());
+                    let decl_scope = analyzer::parse_tree_utils::get_execution_scope_node(decl.node.get(), self.node_info.reader());
+                    if usage_scope == decl_scope {
+                        // Skip declarations that appear after the usage in the source.
+                        // Such declarations are typically only reached via loop back-edges,
+                        // and including them causes circular evaluation (producing Unknown).
+                        // Declarations that textually precede the usage are retained so
+                        // that order-independent type aliases resolve correctly; for
+                        // branching constructs (if/else, try/except), a retained
+                        // declaration may be flow-unreachable at the usage site, but the
+                        // code-flow engine overrides the effective type for local
+                        // variables, so the narrowed type at the usage site is correct.
+                        // Note: for the cases filtered out here (decl after usage in same
+                        // scope), the code-flow engine handles loop-carried narrowing when
+                        // it evaluates the type at the actual usage site.
+                        if decl.node.get().start.get() >= usage_node.start.get() {
+                            continue;
+                        }
+                    }
+                }
+            }
+
+            let is_explicit_type_alias = self.is_explicit_type_alias_declaration(resolved_decl);
+            let is_type_alias = is_explicit_type_alias || self.is_possible_type_alias_or_typed_dict(resolved_decl);
+
+            if is_explicit_type_alias {
+                saw_explicit_type_alias = true;
+            }
+
+            // If this is a type alias, evaluate it outside of the recursive symbol
+            // resolution check so we can evaluate the full assignment statement.
+            if is_type_alias && resolved_decl.type_ == analyzer::declaration::DeclarationType::Variable {
+                let assignment_node = resolved_decl
+                    .variable()
+                    .unwrap()
+                    .inferred_type_source
+                    .get()
+                    .and_then(|inferred_type_source| inferred_type_source.parent.get())
+                    .and_then(AssignmentNode::cast);
+                if let Some(assignment_node) = assignment_node {
+                    self.evaluate_types_for_assignment_statement(assignment_node);
+                }
+            }
+
+            decls_to_consider.push(resolved_decl);
+        }
+
+        // If all of the decls come from augmented assignments, we won't be able to
+        // determine its type. At least one declaration must be a simple assignment.
+        if decls_to_consider.iter().all(|decl| {
+            analyzer::declaration::is_variable_declaration(decl)
+                && analyzer::parse_tree_utils::is_node_contained_within_node_type(
+                    decl.node.get(),
+                    parser::parse_nodes::ParseNodeType::AugmentedAssignment,
+                )
+        }) {
+            decls_to_consider.clear();
+        }
+
+        let result = self.get_type_of_symbol_for_decls(symbol, &decls_to_consider, &effective_type_cache_key);
+        result.includes_variable_decl.set(Some(includes_variable_decl));
+        result.includes_illegal_type_alias_decl.set(Some(includes_illegal_type_alias_decl));
+
+        // Add the result to the effective type cache if it doesn't include speculative results.
+        if !result.includes_speculative_result.unwrap_or(false) {
+            add_to_effective_type_cache(result);
+        }
+
+        result
     }
 
     // analyzer/typeEvaluator.ts:24840
@@ -18042,7 +18990,112 @@ impl TypeEvaluator {
         decls: &[P<Declaration>],
         type_cache_key: &str,
     ) -> P<EffectiveTypeResult> {
-        todo!()
+        let mut types_to_combine: Vec<P<Type>> = Vec::new();
+        let mut is_incomplete = false;
+        let mut saw_pending_evaluation = false;
+        let mut includes_speculative_result = false;
+
+        for &decl in decls {
+            if self.push_symbol_resolution(symbol, decl) {
+                // The TS catch only pops the stack before rethrowing; nothing throws on purpose here.
+                let type_ = self.get_inferred_type_of_declaration(symbol, decl);
+
+                if !self.pop_symbol_resolution(symbol) {
+                    is_incomplete = true;
+                }
+
+                if let Some(mut inferred_type) = type_ {
+                    if decl.type_ == analyzer::declaration::DeclarationType::Variable {
+                        let mut is_constant = false;
+                        if decl.type_ == analyzer::declaration::DeclarationType::Variable {
+                            if decl.variable().unwrap().is_constant.get().unwrap_or(false)
+                                || self.is_final_variable_declaration(decl)
+                            {
+                                is_constant = true;
+                            }
+                        }
+
+                        // Treat enum values declared within an enum class as though they are const even
+                        // though they may not be named as such.
+                        if analyzer::types::is_class_instance(inferred_type)
+                            && ClassType::is_enum_class(ClassType::cast(inferred_type).unwrap())
+                            && analyzer::enums::is_decl_in_enum_class(self, decl)
+                        {
+                            is_constant = true;
+                        }
+
+                        // If the symbol is constant, we can retain the literal
+                        // value and TypeForm types. Otherwise, strip literal values
+                        // and TypeForm types to widen.
+                        if analyzer::types::TypeBase::is_instance(inferred_type)
+                            && !is_constant
+                            && !self.is_explicit_type_alias_declaration(decl)
+                        {
+                            inferred_type = analyzer::type_utils::strip_type_form(self.strip_literal_value(inferred_type));
+                        }
+                    }
+
+                    types_to_combine.push(inferred_type);
+
+                    if self.is_speculative_mode_in_use(Some(decl.node.get())) {
+                        includes_speculative_result = true;
+                    }
+                } else {
+                    is_incomplete = true;
+                }
+            } else {
+                if decl.type_ == analyzer::declaration::DeclarationType::Class {
+                    let class_type_info = self.get_type_of_class(ClassNode::cast(decl.node.get()).unwrap());
+                    if let Some(class_type_info) = class_type_info {
+                        types_to_combine.push(class_type_info.decorated_type);
+                    }
+                }
+
+                is_incomplete = true;
+
+                // Note that at least one decl could not be evaluated because
+                // it was already in the process of being evaluated.
+                saw_pending_evaluation = true;
+            }
+        }
+
+        // How many times have we already attempted to evaluate this declaration already?
+        let previous_evaluation_attempts = self
+            .effective_type_cache
+            .borrow()
+            .get(&symbol.id)
+            .and_then(|cache_entries| cache_entries.get(type_cache_key).copied())
+            .and_then(|cache_entry| cache_entry.evaluation_attempts);
+        let evaluation_attempts = previous_evaluation_attempts.unwrap_or(0) + 1;
+
+        let type_: P<Type>;
+
+        if !types_to_combine.is_empty() {
+            // Ignore the pending evaluation flag if we've already attempted the
+            // type evaluation many times because this probably means there's a
+            // cyclical dependency that cannot be broken.
+            is_incomplete = saw_pending_evaluation && evaluation_attempts < MAX_EFFECTIVE_TYPE_EVALUATION_ATTEMPTS;
+
+            type_ = analyzer::types::combine_types(&types_to_combine, None);
+        } else {
+            // We can encounter this situation in the case of a bare ClassVar annotation.
+            if symbol.is_class_var() {
+                type_ = analyzer::types::UnknownType::create(false).0;
+                is_incomplete = false;
+            } else {
+                type_ = analyzer::types::UnboundType::create().0;
+            }
+        }
+
+        P::new_eval(EffectiveTypeResult {
+            type_: Cell::new(type_),
+            is_incomplete,
+            includes_variable_decl: Cell::new(None),
+            includes_illegal_type_alias_decl: Cell::new(None),
+            includes_speculative_result: Some(includes_speculative_result),
+            is_recursive_definition: None,
+            evaluation_attempts: Some(evaluation_attempts),
+        })
     }
 
     // analyzer/typeEvaluator.ts:24947
@@ -18051,22 +19104,150 @@ impl TypeEvaluator {
         symbol: P<Symbol>,
         usage_node: Option<NameNode>,
     ) -> DeclaredSymbolTypeInfo {
-        todo!()
+        let synthesized_type = symbol.get_synthesized_type().map(|info| info.type_);
+        if let Some(synthesized_type) = synthesized_type {
+            return DeclaredSymbolTypeInfo { type_: Some(synthesized_type), is_type_alias: None, exceeds_max_decls: None };
+        }
+
+        let mut typed_decls = symbol.get_typed_declarations();
+
+        if typed_decls.is_empty() {
+            // If the symbol has no type declaration but is assigned many times,
+            // treat it as though it has an explicit type annotation of "Unknown".
+            // This will avoid a pathological performance condition for unannotated
+            // code that reassigns the same variable hundreds of times. If the symbol
+            // effectively has an "Any" annotation, it won't be narrowed.
+            if symbol.get_declarations().len() > MAX_DECLARATIONS_TO_USE_FOR_INFERENCE as usize {
+                return DeclaredSymbolTypeInfo {
+                    type_: Some(analyzer::types::UnknownType::create(false).0),
+                    is_type_alias: None,
+                    exceeds_max_decls: None,
+                };
+            }
+
+            // There was no declaration with a defined type.
+            return DeclaredSymbolTypeInfo { type_: None, is_type_alias: None, exceeds_max_decls: None };
+        }
+
+        // If there is more than one typed decl, filter out any that are not
+        // reachable from the usage node (if specified). This can happen in
+        // cases where a property symbol is redefined to add a setter, deleter,
+        // etc.
+        let mut exceeds_max_decls = false;
+        if let Some(usage_node) = usage_node {
+            if typed_decls.len() > 1 {
+                if typed_decls.len() > MAX_TYPED_DECLS_PER_SYMBOL as usize {
+                    // If there are too many typed decls, don't bother filtering them
+                    // because this can be very expensive. Simply use the last one
+                    // in this case.
+                    typed_decls = vec![typed_decls[typed_decls.len() - 1]];
+                    exceeds_max_decls = true;
+                } else {
+                    let filtered_typed_decls: Vec<P<Declaration>> = typed_decls
+                        .iter()
+                        .copied()
+                        .filter(|&decl| {
+                            if decl.type_ != analyzer::declaration::DeclarationType::Alias {
+                                // Is the declaration in the same execution scope as the "usageNode" node?
+                                let usage_scope =
+                                    analyzer::parse_tree_utils::get_execution_scope_node(usage_node.0, self.node_info.reader());
+                                let decl_scope =
+                                    analyzer::parse_tree_utils::get_execution_scope_node(decl.node.get(), self.node_info.reader());
+
+                                if usage_scope == decl_scope {
+                                    // For typed declarations we use the precise flow-graph reachability
+                                    // check rather than a simple position comparison, because typed decls
+                                    // (e.g. explicit annotations) can legitimately appear after the usage
+                                    // in the source text (e.g. a class attribute annotated below a method
+                                    // that references it) and must not be excluded by position alone.
+                                    if !self.is_flow_path_between_nodes(decl.node.get(), usage_node.0, /* allow_self */ false) {
+                                        return false;
+                                    }
+                                }
+                            }
+                            true
+                        })
+                        .collect();
+
+                    if filtered_typed_decls.is_empty() {
+                        return DeclaredSymbolTypeInfo {
+                            type_: Some(analyzer::types::UnboundType::create().0),
+                            is_type_alias: None,
+                            exceeds_max_decls: None,
+                        };
+                    }
+
+                    typed_decls = filtered_typed_decls;
+                }
+            }
+        }
+
+        // Start with the last decl. If that's already being resolved,
+        // use the next-to-last decl, etc. This can happen when resolving
+        // property methods. Often the setter method is defined in reference to
+        // the initial property, which defines the getter method with the same
+        // symbol name.
+        let mut decl_index = typed_decls.len() as i32 - 1;
+        while decl_index >= 0 {
+            let decl = typed_decls[decl_index as usize];
+
+            // If there's a partially-constructed type that is allowed
+            // for recursive symbol resolution, return it as the resolved type.
+            let partial_type = self.get_symbol_resolution_partial_type(symbol, decl);
+            if let Some(partial_type) = partial_type {
+                return DeclaredSymbolTypeInfo { type_: Some(partial_type), is_type_alias: None, exceeds_max_decls: None };
+            }
+
+            if self.get_index_of_symbol_resolution(symbol, decl) < 0 {
+                if self.push_symbol_resolution(symbol, decl) {
+                    // The TS catch only pops the stack before rethrowing; nothing throws on purpose here.
+                    let declared_type_info = self.get_type_for_declaration(decl);
+
+                    // If there was recursion detected, don't use this declaration.
+                    // The exception is it's a class declaration because getTypeOfClass
+                    // handles recursion by populating a partially-created class type
+                    // in the type cache. This exception is required to handle the
+                    // circular dependency between the "type" and "object" classes in
+                    // builtins.pyi (since "object" is a "type" and "type" is an "object").
+                    if self.pop_symbol_resolution(symbol) || decl.type_ == analyzer::declaration::DeclarationType::Class {
+                        return declared_type_info;
+                    }
+                }
+            }
+
+            decl_index -= 1;
+        }
+
+        DeclaredSymbolTypeInfo { type_: None, is_type_alias: None, exceeds_max_decls: Some(exceeds_max_decls) }
     }
 
     // analyzer/typeEvaluator.ts:25054
     pub fn infer_return_type_if_necessary(&self, type_: P<Type>) {
-        todo!()
+        if analyzer::types::is_function(type_) {
+            self.get_effective_return_type(FunctionType::cast(type_).unwrap());
+        } else if analyzer::types::is_overloaded(type_) {
+            let overloaded = OverloadedType::cast(type_).unwrap();
+            for overload in OverloadedType::get_overloads(overloaded) {
+                self.get_effective_return_type(overload);
+            }
+
+            let impl_ = OverloadedType::get_implementation(overloaded);
+            if let Some(impl_) = impl_ {
+                if analyzer::types::is_function(impl_) {
+                    self.get_effective_return_type(FunctionType::cast(impl_).unwrap());
+                }
+            }
+        }
     }
 
     // analyzer/typeEvaluator.ts:25069
     pub(crate) fn get_effective_return_type(&self, type_: FunctionType) -> P<Type> {
-        todo!()
+        self.get_effective_return_type_result(type_, None).type_.get()
     }
 
     // analyzer/typeEvaluator.ts:25073
     pub fn get_inferred_return_type(&self, type_: FunctionType) -> P<Type> {
-        todo!()
+        self.get_inferred_return_type_result(type_, None).type_.get()
     }
 
     // analyzer/typeEvaluator.ts:25081
@@ -18075,7 +19256,48 @@ impl TypeEvaluator {
         type_: FunctionType,
         options: Option<&EffectiveReturnTypeOptions>,
     ) -> P<TypeResult> {
-        todo!()
+        let call_site_info = options.and_then(|options| options.call_site_info.as_ref());
+        let specialized_return_type = FunctionType::get_effective_return_type(type_, /* include_inferred */ false);
+        if let Some(specialized_return_type) = specialized_return_type {
+            if !analyzer::types::is_unknown(specialized_return_type) {
+                // A partially-unknown *inferred* return type (e.g. `Foo | Unknown`) can be
+                // cached on a specialized/bound copy of an unannotated function. Because
+                // `isUnknown` matches only a fully-unknown type, such a partial type would
+                // otherwise short-circuit here and prevent call-site return-type inference
+                // from ever running (e.g. an unannotated factory whose body narrows a
+                // parameter-derived local with `isinstance`). When a call site is available,
+                // fall through so the argument types can refine the inferred return type.
+                //
+                // NOTE: This gate intentionally mirrors a subset of the downstream call-site
+                // refinement guard in `_getInferredReturnTypeResult` (search `isPartlyUnknown(returnType)`),
+                // but tests the cached *specialized* return type here rather than the freshly-inferred
+                // one, and omits the `!isStubDefinition`/`!isPyTypedDefinition`/`!isIncomplete`
+                // conjuncts (not yet known at this point). Keep the two in sync if either is edited.
+                let can_refine_with_call_site = call_site_info.is_some()
+                    && type_.d().shared.get().declared_return_type.get().is_none()
+                    && FunctionType::has_unannotated_params(type_)
+                    && analyzer::type_utils::is_partly_unknown(specialized_return_type, 0);
+                if !can_refine_with_call_site {
+                    return P::new_eval(TypeResult::new(specialized_return_type));
+                }
+
+                // Refine the cached partly-unknown return type using the call site. If the
+                // refinement comes back incomplete -- e.g. a self- or mutually-recursive
+                // factory whose base case returns the isinstance-narrowed local -- fall back
+                // to the already-cached specialized return type rather than propagating the
+                // incomplete result. The cached type is already correct in that case, and
+                // propagating `isIncomplete` would suppress caller-side diagnostics that only
+                // fire on a complete type (for example, `reveal_type`).
+                let refined_result = self.get_inferred_return_type_result(type_, call_site_info);
+                return if refined_result.is_incomplete.get().unwrap_or(false) {
+                    P::new_eval(TypeResult::new(specialized_return_type))
+                } else {
+                    refined_result
+                };
+            }
+        }
+
+        self.get_inferred_return_type_result(type_, call_site_info)
     }
 
     // analyzer/typeEvaluator.ts:25120
@@ -18084,7 +19306,166 @@ impl TypeEvaluator {
         type_: FunctionType,
         call_site_info: Option<&CallSiteEvaluationInfo>,
     ) -> P<TypeResult> {
-        todo!()
+        let mut is_incomplete = false;
+        let analyze_unannotated_functions = true;
+
+        // Don't attempt to infer the return type for a stub file.
+        if FunctionType::is_stub_definition(type_) {
+            return P::new_eval(TypeResult::new(analyzer::types::UnknownType::create(false).0));
+        }
+
+        // Don't infer the return type for a ParamSpec value.
+        if FunctionType::is_param_spec_value(type_) {
+            return P::new_eval(TypeResult::new(analyzer::types::UnknownType::create(false).0));
+        }
+
+        // Don't infer the return type for an overloaded function (unless it's synthesized,
+        // which is needed for proper operation of the __get__ method in properties).
+        if FunctionType::is_overloaded(type_) && !FunctionType::is_synthesized_method(type_) {
+            return P::new_eval(TypeResult::new(analyzer::types::UnknownType::create(false).0));
+        }
+
+        let shared = type_.d().shared.get();
+        let inferred_return_type = shared.inferred_return_type.borrow().clone();
+        let eval_count = inferred_return_type
+            .as_ref()
+            .and_then(|inferred_return_type| inferred_return_type.evaluation_count)
+            .unwrap_or(0);
+
+        let mut return_type: P<Type>;
+
+        // If the return type has already been lazily evaluated,
+        // don't bother computing it again.
+        if let Some(inferred_return_type) =
+            inferred_return_type.filter(|inferred_return_type| !inferred_return_type.is_incomplete.unwrap_or(false))
+        {
+            return_type = inferred_return_type.type_;
+        } else if eval_count > MAX_RETURN_TYPE_INFERENCE_ATTEMPTS {
+            // Detect a case where a return type won't converge because of recursion.
+            return_type = analyzer::types::UnknownType::create(false).0;
+        } else {
+            let mut inferred: Option<P<Type>> = None;
+
+            // Don't bother inferring the return type of __init__ because it's
+            // always None.
+            if FunctionType::is_instance_method(type_) && shared.name == "__init__" {
+                inferred = Some(self.get_none_type());
+            } else if let Some(declaration) = shared.declaration.get() {
+                let function_node = FunctionNode::cast(declaration.node.get()).unwrap();
+                let skip_unannotated_function = !self
+                    .node_info
+                    .get_file_info(function_node.0)
+                    .diagnostic_rule_set
+                    .analyze_unannotated_functions
+                    && analyzer::parse_tree_utils::is_unannotated_function(function_node);
+
+                // Skip return type inference if we are in "skip unannotated function" mode.
+                if !skip_unannotated_function && !self.check_code_flow_too_complex(function_node.d().suite.get().0) {
+                    let code_flow_complexity = self.node_info.get_code_flow_complexity(function_node.0);
+
+                    // For very complex functions that have no annotated parameter types,
+                    // don't attempt to infer the return type because it can be extremely
+                    // expensive.
+                    let parameters_are_annotated = {
+                        let parameters = shared.parameters.get();
+                        let parameters = parameters.borrow();
+                        parameters.len() <= 1 || parameters.iter().any(|param| FunctionParam::is_type_declared(param))
+                    };
+
+                    if parameters_are_annotated || code_flow_complexity < MAX_RETURN_TYPE_INFERENCE_CODE_FLOW_COMPLEXITY {
+                        // Temporarily disable speculative mode while we
+                        // lazily evaluate the return type.
+                        let mut return_type_result: Option<P<TypeResult>> = None;
+                        self.disable_speculative_mode(&mut || {
+                            return_type_result = self.infer_function_return_type(
+                                function_node,
+                                FunctionType::is_abstract_method(type_),
+                                call_site_info.map(|call_site_info| call_site_info.error_node),
+                            );
+                        });
+
+                        inferred = return_type_result.map(|return_type_result| return_type_result.type_.get());
+                        if return_type_result.is_some_and(|return_type_result| {
+                            return_type_result.is_incomplete.get().unwrap_or(false)
+                        }) {
+                            is_incomplete = true;
+                        }
+                    }
+                }
+            }
+
+            return_type = inferred.unwrap_or_else(|| analyzer::types::UnknownType::create(false).0);
+
+            // Externalize any TypeVars that appear in the type.
+            let mut type_var_scopes: Vec<analyzer::types::TypeVarScopeId> = Vec::new();
+            if let Some(type_var_scope_id) = shared.type_var_scope_id.borrow().clone().filter(|id| !id.is_empty()) {
+                type_var_scopes.push(type_var_scope_id);
+            }
+            if let Some(method_class_scope_id) = shared
+                .method_class
+                .get()
+                .and_then(|method_class| method_class.d().shared.get().type_var_scope_id.borrow().clone())
+                .filter(|id| !id.is_empty())
+            {
+                type_var_scopes.push(method_class_scope_id);
+            }
+            return_type = analyzer::type_utils::make_type_vars_free(return_type, &type_var_scopes);
+
+            // Cache the type for next time.
+            *shared.inferred_return_type.borrow_mut() = Some(analyzer::types::FunctionDetailsSharedInferredReturnType {
+                type_: return_type,
+                is_incomplete: Some(is_incomplete),
+                evaluation_count: Some(eval_count + 1),
+            });
+        }
+
+        // If the type is partially unknown and the function has one or more unannotated
+        // params, try to analyze the function with the provided argument types and
+        // attempt to do a better job at inference.
+        if !is_incomplete
+            && analyze_unannotated_functions
+            && analyzer::type_utils::is_partly_unknown(return_type, 0)
+            && FunctionType::has_unannotated_params(type_)
+            && !FunctionType::is_stub_definition(type_)
+            && !FunctionType::is_py_typed_definition(type_)
+        {
+            if let Some(call_site_info) = call_site_info {
+                let mut has_decorators = false;
+                let mut is_async = false;
+                let decl_node = type_
+                    .d()
+                    .shared
+                    .get()
+                    .declaration
+                    .get()
+                    .map(|declaration| FunctionNode::cast(declaration.node.get()).unwrap());
+                if let Some(decl_node) = decl_node {
+                    if !decl_node.d().decorators.borrow().is_empty() {
+                        has_decorators = true;
+                    }
+                    if decl_node.d().is_async.get() {
+                        is_async = true;
+                    }
+                }
+
+                // We can't use this technique if decorators or async are used because they
+                // would need to be applied to the inferred return type.
+                if !has_decorators && !is_async {
+                    let contextual_return_type = self.infer_return_type_for_call_site(type_, call_site_info);
+                    if let Some(contextual_return_type) = contextual_return_type {
+                        return_type = contextual_return_type;
+
+                        if let Some(declaration) = type_.d().shared.get().declaration.get() {
+                            // Externalize any TypeVars that appear in the type.
+                            let live_scope_ids = self.get_type_var_scopes_for_node(declaration.node.get());
+                            return_type = analyzer::type_utils::make_type_vars_free(return_type, &live_scope_ids);
+                        }
+                    }
+                }
+            }
+        }
+
+        P::new_eval(TypeResult { is_incomplete: Cell::new(Some(is_incomplete)), ..TypeResult::new(return_type) })
     }
 
     // analyzer/typeEvaluator.ts:25253
@@ -18093,17 +19474,249 @@ impl TypeEvaluator {
         type_: FunctionType,
         call_site_info: &CallSiteEvaluationInfo,
     ) -> Option<P<Type>> {
-        todo!()
+        let args = &call_site_info.args;
+        let mut contextual_return_type: Option<P<Type>> = None;
+
+        let Some(declaration) = type_.d().shared.get().declaration.get() else {
+            return None;
+        };
+        let function_node = FunctionNode::cast(declaration.node.get()).unwrap();
+        let code_flow_complexity = self.node_info.get_code_flow_complexity(function_node.0);
+
+        if code_flow_complexity >= MAX_RETURN_CALL_SITE_TYPE_INFERENCE_CODE_FLOW_COMPLEXITY {
+            return None;
+        }
+
+        // If an arg hasn't been matched to a specific named parameter,
+        // it's an unpacked value that corresponds to multiple parameters.
+        // That's an edge case that we don't handle here.
+        if args.iter().any(|arg| arg.param_name.as_ref().map_or(true, |param_name| param_name.is_empty())) {
+            return None;
+        }
+
+        // Detect recurrence. If a function invokes itself either directly
+        // or indirectly, we won't attempt to infer contextual return
+        // types any further.
+        if self
+            .return_type_inference_context_stack
+            .borrow()
+            .iter()
+            .any(|context| context.function_node == function_node)
+        {
+            return None;
+        }
+
+        let Some(function_type_result) = self.get_type_of_function(function_node) else {
+            return None;
+        };
+
+        // Very complex functions with many arguments can take a long time to analyze,
+        // so we'll use a heuristic and avoiding this inference technique for any
+        // call site that involves too many arguments.
+        if args.len() > MAX_RETURN_TYPE_INFERENCE_ARG_COUNT as usize {
+            return None;
+        }
+
+        // Don't explore arbitrarily deep in the call graph.
+        if self.return_type_inference_context_stack.borrow().len() >= MAX_RETURN_TYPE_INFERENCE_STACK_SIZE as usize {
+            return None;
+        }
+
+        let mut param_types: Vec<P<Type>> = Vec::new();
+        let mut is_result_from_cache = false;
+
+        // If the call is located in a loop, don't use literal argument types
+        // for the same reason we don't do literal math in loops.
+        let strip_literal_arg_types = analyzer::parse_tree_utils::is_within_loop(call_site_info.error_node);
+
+        // Suppress diagnostics because we don't want to generate errors.
+        self.suppress_diagnostics(
+            function_node.0,
+            &mut || {
+                // Allocate a new temporary type cache for the context of just
+                // this function so we can analyze it separately without polluting
+                // the main type cache.
+                let prev_type_cache = self.return_type_inference_type_cache.get();
+                let prev_type_form_type_cache = self.return_type_inference_type_form_type_cache.get();
+                let code_flow_analyzer = self.code_flow_engine.get().unwrap().create_code_flow_analyzer();
+                self.return_type_inference_context_stack
+                    .borrow_mut()
+                    .push(ReturnTypeInferenceContext { function_node, code_flow_analyzer });
+
+                // `try` body; the `finally` block follows it.
+                self.return_type_inference_type_cache.set(Some(P::new_eval(RefCell::new(JsMap::default()))));
+                self.return_type_inference_type_form_type_cache.set(Some(P::new_eval(RefCell::new(JsMap::default()))));
+
+                let mut all_arg_types_are_unknown = true;
+                let params = function_node.d().params.borrow().clone();
+                for (index, &param) in params.iter().enumerate() {
+                    if let Some(param_name) = param.d().name.get() {
+                        let mut param_type: Option<P<Type>> = None;
+                        let arg = args
+                            .iter()
+                            .find(|arg| arg.param_name.as_deref() == Some(param_name.d().value.as_str()));
+                        let arg_value_expression = arg.and_then(|arg| match &arg.argument {
+                            Arg::ArgWithType(arg) => arg.value_expression,
+                            Arg::ArgWithExpression(arg) => Some(arg.value_expression),
+                        });
+
+                        if let Some(value_expression) = arg_value_expression {
+                            let arg_type = self.get_type_of_expression(value_expression, EvalFlags::None, None).type_.get();
+                            param_type = Some(arg_type);
+                            if !analyzer::types::is_unknown(arg_type) {
+                                all_arg_types_are_unknown = false;
+                            }
+                        } else if let Some(default_value) = param.d().default_value.get() {
+                            let default_type = self.get_type_of_expression(default_value, EvalFlags::None, None).type_.get();
+                            param_type = Some(default_type);
+                            if !analyzer::types::is_unknown(default_type) {
+                                all_arg_types_are_unknown = false;
+                            }
+                        } else if index == 0 {
+                            // If this is an instance or class method, use the implied
+                            // parameter type for the "self" or "cls" parameter.
+                            if FunctionType::is_instance_method(function_type_result.function_type)
+                                || FunctionType::is_class_method(function_type_result.function_type)
+                            {
+                                if !function_type_result.function_type.d().shared.get().parameters.get().borrow().is_empty() {
+                                    if function_node.d().params.borrow()[0].d().name.get().is_some() {
+                                        param_type = Some(FunctionType::get_param_type(function_type_result.function_type, 0));
+                                    }
+                                }
+                            }
+                        }
+
+                        let mut param_type = param_type.unwrap_or_else(|| analyzer::types::UnknownType::create(false).0);
+
+                        if strip_literal_arg_types {
+                            param_type = analyzer::type_utils::strip_type_form(self.convert_special_form_to_runtime_value(
+                                self.strip_literal_value(param_type),
+                                EvalFlags::None,
+                                /* convert_module */ true,
+                            ));
+                        }
+
+                        param_types.push(param_type);
+                        self.write_type_cache(
+                            param_name.0,
+                            P::new_eval(TypeResult::new(param_type)),
+                            Some(EvalFlags::None),
+                            None,
+                            false,
+                        );
+                    }
+                }
+
+                // Don't bother trying to determine the contextual return
+                // type if none of the argument types are known.
+                if !all_arg_types_are_unknown {
+                    // See if the return type is already cached. If so, skip the
+                    // inference step, which is potentially very expensive.
+                    let call_site_return_type_cache =
+                        function_type_result.function_type.d().priv_.borrow().call_site_return_type_cache.clone();
+                    let cache_entry = call_site_return_type_cache.and_then(|cache| {
+                        cache.into_iter().find(|entry| {
+                            entry.param_types.len() == param_types.len()
+                                && entry.param_types.iter().enumerate().all(|(i, &t)| {
+                                    analyzer::types::is_type_same(
+                                        t,
+                                        param_types[i],
+                                        &analyzer::types::TypeSameOptions {
+                                            ignore_pseudo_generic: None,
+                                            ignore_type_flags: None,
+                                            ignore_conditions: None,
+                                            ignore_typed_dict_narrow_entries: None,
+                                            honor_type_form: None,
+                                            honor_is_type_arg_explicit: None,
+                                            treat_any_same_as_unknown: None,
+                                        },
+                                        0,
+                                    )
+                                })
+                        })
+                    });
+
+                    if let Some(cache_entry) = cache_entry {
+                        contextual_return_type = Some(cache_entry.return_type);
+                        is_result_from_cache = true;
+                    } else {
+                        contextual_return_type = self
+                            .infer_function_return_type(
+                                function_node,
+                                FunctionType::is_abstract_method(type_),
+                                Some(call_site_info.error_node),
+                            )
+                            .map(|type_result| type_result.type_.get());
+                    }
+                }
+
+                // `finally` block.
+                self.return_type_inference_context_stack.borrow_mut().pop();
+                self.return_type_inference_type_cache.set(prev_type_cache);
+                self.return_type_inference_type_form_type_cache.set(prev_type_form_type_cache);
+            },
+            None,
+        );
+
+        if let Some(mut contextual_return_type) = contextual_return_type {
+            contextual_return_type = analyzer::types::remove_unbound(contextual_return_type);
+
+            if !is_result_from_cache {
+                // Cache the resulting type.
+                let mut priv_ = function_type_result.function_type.d().priv_.borrow_mut();
+                if priv_.call_site_return_type_cache.is_none() {
+                    priv_.call_site_return_type_cache = Some(Vec::new());
+                }
+                if priv_.call_site_return_type_cache.as_ref().unwrap().len() >= MAX_CALL_SITE_RETURN_TYPE_CACHE_SIZE as usize {
+                    priv_.call_site_return_type_cache =
+                        Some(priv_.call_site_return_type_cache.as_ref().unwrap()[1..].to_vec());
+                }
+                priv_
+                    .call_site_return_type_cache
+                    .as_mut()
+                    .unwrap()
+                    .push(analyzer::types::CallSiteInferenceTypeCacheEntry {
+                        param_types,
+                        return_type: contextual_return_type,
+                    });
+            }
+
+            return Some(contextual_return_type);
+        }
+
+        None
     }
 
     // analyzer/typeEvaluator.ts:25431
     pub fn get_declared_return_type(&self, node: FunctionNode) -> Option<P<Type>> {
-        todo!()
+        let function_type_info = self.get_type_of_function(node);
+        let return_type = function_type_info
+            .as_ref()
+            .and_then(|function_type_info| function_type_info.function_type.d().shared.get().declared_return_type.get());
+
+        let Some(return_type) = return_type else {
+            return None;
+        };
+
+        let function_type = function_type_info.unwrap().function_type;
+        if FunctionType::is_generator(function_type) {
+            return analyzer::type_utils::get_declared_generator_return_type(function_type);
+        }
+
+        Some(return_type)
     }
 
     // analyzer/typeEvaluator.ts:25446
     pub fn get_type_of_member(&self, member: &ClassMember) -> P<Type> {
-        todo!()
+        if analyzer::types::is_instantiable_class(member.class_type) {
+            return analyzer::type_utils::partially_specialize_type(
+                self.get_effective_type_of_symbol(member.symbol),
+                ClassType::cast(member.class_type).unwrap(),
+                self.get_type_class_type(),
+                /* self_class */ None,
+            );
+        }
+        analyzer::types::UnknownType::create(false).0
     }
 
     // analyzer/typeEvaluator.ts:25458
@@ -18114,7 +19727,101 @@ impl TypeEvaluator {
         self_class: Option<P<Type>>,
         flags: MemberAccessFlags,
     ) -> Option<P<TypeResult>> {
-        todo!()
+        if analyzer::types::is_any_or_unknown(member.class_type) {
+            return Some(P::new_eval(TypeResult {
+                is_incomplete: Cell::new(Some(false)),
+                ..TypeResult::new(member.class_type)
+            }));
+        }
+
+        if !analyzer::types::is_instantiable_class(member.class_type) {
+            return None;
+        }
+
+        // `if (!typeResult) return undefined;`: the result is never undefined.
+        let type_result = self.get_effective_type_of_symbol_for_usage(member.symbol, None, false);
+
+        // Report inappropriate use of variables in type expressions.
+        if (flags.0 & MemberAccessFlags::TypeExpression.0) != 0 {
+            if let Some(error_node) = error_node {
+                type_result.type_.set(self.validate_symbol_is_type_expression(
+                    error_node,
+                    type_result.type_.get(),
+                    type_result.includes_variable_decl.get().unwrap_or(false),
+                ));
+            }
+        }
+
+        // If the type is a function or overloaded function, infer
+        // and cache the return type if necessary. This needs to be done
+        // prior to specializing.
+        self.infer_return_type_if_necessary(type_result.type_.get());
+
+        // Check for ambiguous accesses to attributes with generic types?
+        if let (Some(error_node), Some(self_class)) = (error_node, self_class) {
+            if analyzer::types::is_class(self_class)
+                && member.is_instance_member
+                && analyzer::types::is_class(member.unspecialized_class_type)
+                && (flags.0 & MemberAccessFlags::DisallowGenericInstanceVariableAccess.0) != 0
+                && analyzer::type_utils::requires_specialization(
+                    type_result.type_.get(),
+                    Some(&analyzer::type_utils::RequiresSpecializationOptions {
+                        ignore_pseudo_generic: None,
+                        ignore_self: Some(true),
+                        ignore_implicit_type_args: Some(true),
+                    }),
+                    0,
+                )
+            {
+                let specialized_type = analyzer::type_utils::partially_specialize_type(
+                    type_result.type_.get(),
+                    ClassType::cast(member.unspecialized_class_type).unwrap(),
+                    self.get_type_class_type(),
+                    Some(
+                        analyzer::type_utils::self_specialize_class(
+                            ClassType::cast(self_class).unwrap(),
+                            Some(&analyzer::type_utils::SelfSpecializeOptions {
+                                override_type_args: Some(true),
+                                use_bound_type_vars: None,
+                            }),
+                        )
+                        .0,
+                    ),
+                );
+
+                if analyzer::types::find_subtype(specialized_type, &mut |subtype| {
+                    !analyzer::types::is_function_or_overloaded(subtype)
+                        && analyzer::type_utils::requires_specialization(
+                            subtype,
+                            Some(&analyzer::type_utils::RequiresSpecializationOptions {
+                                ignore_pseudo_generic: None,
+                                ignore_self: Some(true),
+                                ignore_implicit_type_args: Some(true),
+                            }),
+                            0,
+                        )
+                })
+                .is_some()
+                {
+                    self.add_diagnostic(
+                        DiagnosticRule::reportGeneralTypeIssues,
+                        &crate::localization::localize::LocMessage::generic_instance_variable_access(),
+                        error_node,
+                        None,
+                    );
+                }
+            }
+        }
+
+        Some(P::new_eval(TypeResult {
+            is_incomplete: Cell::new(Some(type_result.is_incomplete)),
+            ..TypeResult::new(analyzer::type_utils::partially_specialize_type(
+                type_result.type_.get(),
+                ClassType::cast(member.class_type).unwrap(),
+                self.get_type_class_type(),
+                self_class,
+            ))
+        }))
     }
 
     // analyzer/typeEvaluator.ts:25534
