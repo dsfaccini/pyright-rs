@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+# Links the packages the generator imports from the pyright checkout, so it uses the
+# same TypeScript compiler as pyright. tools/stubgen/node_modules is gitignored.
+set -euo pipefail
+here="$(cd "$(dirname "$0")" && pwd)"
+pyright="$1"
+mkdir -p "$here/node_modules/@types"
+ln -sfn "$pyright/node_modules/typescript" "$here/node_modules/typescript"
+ln -sfn "$pyright/packages/pyright-internal/node_modules/smol-toml" "$here/node_modules/smol-toml"
+ln -sfn "$pyright/node_modules/@types/node" "$here/node_modules/@types/node"

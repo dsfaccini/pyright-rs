@@ -1,0 +1,248 @@
+# Rust type of every TypeScript `number` site the stub generator has mapped.
+# Tables are TypeScript files; keys are "<Container>.<member>[.<param>|.return][#n]",
+# where #n counts the n-th number inside one site, from 0, and #0 is left out.
+# A value ending in "?" is the generator's guess. Drop the "?" once you have checked it.
+# The generator rewrites this file: it keeps every value and regenerates the comments.
+
+["analyzer/analyzerFileInfo.ts"]
+"AnalyzerFileInfo.accessedSymbolSet" = "u32?"  # Map or Set key: an id
+
+["analyzer/analyzerNodeInfo.ts"]
+"AnalyzerNodeInfo.codeFlowComplexity" = "f64"
+"AnalyzerNodeInfoAccessor.getCodeFlowComplexity.return" = "f64"
+"AnalyzerNodeInfoAccessor.setCodeFlowComplexity.complexity" = "f64"
+"getCodeFlowComplexity.return" = "f64"
+"setCodeFlowComplexity.complexity" = "f64"
+
+["analyzer/binder.ts"]
+"flowNodeComplexityContribution" = "f64"
+"Binder._codeFlowComplexity" = "f64"
+"Binder._getUniqueFlowNodeId.return" = "u32"
+
+["analyzer/codeFlowEngine.ts"]
+"FlowNodeTypeResult.generationCount" = "u32?"  # counter
+"FlowNodeTypeOptions.targetSymbolId" = "u32?"  # id
+"getCodeFlowEngine.isReachableRecursionSet" = "u32?"  # Map or Set key: an id
+"getCodeFlowEngine.reachabilityCache" = "u32?"  # Map or Set key: an id
+"getCodeFlowEngine.callIsNoReturnCache" = "u32?"  # Map or Set key: an id
+"getCodeFlowEngine.isExceptionContextManagerCache" = "u32?"  # Map or Set key: an id
+"getCodeFlowEngine.flowIncompleteGeneration" = "u32?"  # counter
+"getCodeFlowEngine.noReturnAnalysisDepth" = "u32?"  # counter
+"getCodeFlowEngine.contextManagerAnalysisDepth" = "u32?"  # counter
+"IncompleteSubtypeInfo.evaluationCount" = "u32?"  # counter
+"ReachabilityCacheEntry.reachabilityFrom" = "u32?"  # Map or Set key: an id
+"CodeFlowTypeCache.cache" = "u32?"  # Map or Set key: an id
+"CodeFlowTypeCache.pendingNodes" = "u32?"  # Map or Set key: an id
+"CodeFlowTypeCache.closedFinallyGateNodes" = "u32?"  # Map or Set key: an id
+"IncompleteType.generationCount" = "u32?"  # counter
+
+["analyzer/codeFlowTypes.ts"]
+"_nextFlowNodeId" = "u32"
+"getUniqueFlowNodeId.return" = "u32"
+"FlowNode.id" = "u32"
+"FlowAssignment.targetSymbolId" = "u32"
+
+["analyzer/parameterUtils.ts"]
+"ParamListDetails.positionOnlyParamCount" = "u32?"  # counter
+"ParamListDetails.positionParamCount" = "u32?"  # counter
+"ParamListDetails.kwargsIndex" = "i32?"  # text position or index
+"ParamListDetails.argsIndex" = "i32?"  # text position or index
+"ParamListDetails.firstKeywordOnlyIndex" = "i32?"  # text position or index
+"ParamListDetails.firstPositionOrKeywordIndex" = "i32?"  # text position or index
+"VirtualParamDetails.index" = "i32?"  # text position or index
+
+["analyzer/parseTreeUtils.ts"]
+"getNodeDepth.return" = "u32"
+"findNodeByOffset.offset" = "i32"
+"getTypeSourceId.return" = "i32"
+"NameNodeWalker._subscriptIndex" = "i32"
+"NameNodeWalker._callback" = "i32"
+"NameNodeWalker.constructor._callback" = "i32"
+"getCallNodeAndActiveParamIndex.insertionOffset" = "i32"
+"getTokenIndexAtLeft.position" = "i32"
+"getTokenIndexAtLeft.return" = "i32"
+"getTokenAtLeft.position" = "i32"
+"getTokenIndexAfter.position" = "i32"
+"getTokenIndexAfter.return" = "i32"
+"getTokenAfter.position" = "i32"
+"getTokenAtIndex.index" = "i32"
+"getTokenAt.position" = "i32"
+"getTokenOverlapping.position" = "i32"
+"getIndexOfTokenOverlapping.position" = "i32"
+"getIndexOfTokenOverlapping.return" = "i32"
+"getCommentsAtTokenIndex.index" = "i32"
+"getTypeAnnotationForParam.paramIndex" = "i32"
+"isBlankLine.line" = "i32"
+"_getStartPositionIfMultipleStatementsAreOnSameLine.tokenPosition" = "i32"
+"_getEndPositionIfMultipleStatementsAreOnSameLine.tokenPosition" = "i32"
+"getPreviousNonWhitespaceToken.offset" = "i32"
+"getNextNonWhitespaceToken.offset" = "i32"
+"getNextMatchingToken.offset" = "i32"
+"getCallNodeAndActiveParamIndex.return.activeIndex" = "i32"
+
+["analyzer/symbol.ts"]
+"nextSymbolId" = "u32"
+"getUniqueSymbolId.return" = "u32"
+"indeterminateSymbolId" = "u32"
+"Symbol.id" = "u32"
+
+["analyzer/typeCacheUtils.ts"]
+"SpeculativeTypeTracker._speculativeTypeCache" = "u32?"  # Map or Set key: an id
+"SpeculativeTypeEntry.incompleteGenerationCount" = "u32?"  # counter
+"SpeculativeEntry.cache" = "u32?"  # Map or Set key: an id
+"SpeculativeEntry.id" = "u32?"  # id
+
+["analyzer/typeEvaluator.ts"]
+"MatchArgsToParamsResult.overloadIndex" = "i32"
+"MatchArgsToParamsResult.argumentMatchScore" = "f64"
+"SymbolResolutionStackEntry.symbolId" = "u32"
+"maxReturnTypeInferenceStackSize" = "u32"
+"maxReturnTypeInferenceArgCount" = "u32"
+"maxReturnTypeInferenceCodeFlowComplexity" = "f64"
+"maxReturnCallSiteTypeInferenceCodeFlowComplexity" = "f64"
+"maxCallSiteReturnTypeCacheSize" = "u32"
+"maxEntriesToUseForInference" = "u32"
+"maxReturnTypeInferenceAttempts" = "u32"
+"maxDeclarationsToUseForInference" = "u32"
+"maxEffectiveTypeEvaluationAttempts" = "u32"
+"maxTotalOverloadArgTypeExpansionCount" = "u32"
+"maxSingleOverloadArgTypeExpansionCount" = "u32"
+"maxInferFunctionReturnRecursionCount" = "u32"
+"maxRecursiveTypeAliasRecursionCount" = "u32"
+"maxTypedDeclsPerSymbol" = "u32"
+"maxCodeComplexity" = "f64"
+"EvaluatorOptions.minimumLoggingThreshold" = "f64"
+"TypeCacheEntry.incompleteGenCount" = "u32"
+"TypeFormTypeCacheEntry.incompleteGenCount" = "u32"
+"createTypeEvaluator.functionRecursionMap" = "u32"
+"createTypeEvaluator.codeFlowAnalyzerCache" = "u32"
+"createTypeEvaluator.typeCache" = "u32"
+"createTypeEvaluator.typeFormTypeCache" = "u32"
+"createTypeEvaluator.effectiveTypeCache" = "u32"
+"createTypeEvaluator.expectedTypeCache" = "u32"
+"createTypeEvaluator.asymmetricAccessorAssignmentCache" = "u32"
+"createTypeEvaluator.printExpressionSpaceCount" = "u32"
+"createTypeEvaluator.incompleteGenCount" = "u32"
+"createTypeEvaluator.returnTypeInferenceTypeCache" = "u32"
+"createTypeEvaluator.returnTypeInferenceTypeFormTypeCache" = "u32"
+"createTypeEvaluator.getTypeCacheEntryCount.return" = "u32"
+"createTypeEvaluator.getTypeFormTypeCache.return" = "u32"
+"createTypeEvaluator.getIndexOfSymbolResolution.return" = "i32"
+"createTypeEvaluator.canBeFalsy.recursionCount" = "u32"
+"createTypeEvaluator.canBeTruthy.recursionCount" = "u32"
+"createTypeEvaluator.getTypeOfBoundMember.recursionCount" = "u32"
+"createTypeEvaluator.getBoundMagicMethod.recursionCount" = "u32"
+"createTypeEvaluator.getCallSignatureInfo.activeIndex" = "i32"
+"createTypeEvaluator.mapSubtypesExpandTypeVars.recursionCount" = "u32"
+"createTypeEvaluator.applyConditionFilterToType.recursionCount" = "u32"
+"createTypeEvaluator.getTypeOfClassMemberName.recursionCount" = "u32"
+"createTypeEvaluator.bindMethodForMemberAccess.recursionCount" = "u32"
+"createTypeEvaluator.updateUsageVariancesRecursive.recursionCount" = "u32"
+"createTypeEvaluator.collectLiteralEnumClasses.recursionCount" = "u32"
+"createTypeEvaluator.normalizeEnumTypes.recursionCount" = "u32"
+"createTypeEvaluator.getAnyOrUnknownInInvariantPosition.recursionCount" = "u32"
+"createTypeEvaluator.areAllMaterializationsEquivalent.recursionCount" = "u32"
+"createTypeEvaluator.areAllMaterializationsAssignable.recursionCount" = "u32"
+"createTypeEvaluator.validateCallArgs.recursionCount" = "u32"
+"createTypeEvaluator.validateCallArgsForSubtype.recursionCount" = "u32"
+"createTypeEvaluator.validateCallForClassInstance.recursionCount" = "u32"
+"createTypeEvaluator.matchArgsToParams.overloadIndex" = "i32"
+"createTypeEvaluator.createSpecialType.paramLimit" = "u32"
+"createTypeEvaluator.inferParamType.paramIndex" = "i32"
+"createTypeEvaluator.assignClass.recursionCount" = "u32"
+"createTypeEvaluator.assignClassToSelf.recursionCount" = "u32"
+"createTypeEvaluator.assignClassWithTypeArgs.recursionCount" = "u32"
+"createTypeEvaluator.assignTypeArgs.recursionCount" = "u32"
+"createTypeEvaluator.assignType.recursionCount" = "u32"
+"createTypeEvaluator.assignRecursiveTypeAliasToSelf.recursionCount" = "u32"
+"createTypeEvaluator.assignFromUnionType.recursionCount" = "u32"
+"createTypeEvaluator.isTypeSubsumedByOtherType.recursionCount" = "u32"
+"createTypeEvaluator.isProperSubtype.recursionCount" = "u32"
+"createTypeEvaluator.assignToUnionType.recursionCount" = "u32"
+"createTypeEvaluator.assignConditionalTypeToTypeVar.recursionCount" = "u32"
+"createTypeEvaluator.getCallbackProtocolType.recursionCount" = "u32"
+"createTypeEvaluator.assignParam.paramIndex" = "i32"
+"createTypeEvaluator.assignParam.recursionCount" = "u32"
+"createTypeEvaluator.assignNamedParam.paramIndex" = "i32"
+"createTypeEvaluator.assignNamedParam.recursionCount" = "u32"
+"createTypeEvaluator.assignFunction.recursionCount" = "u32"
+"createTypeEvaluator.bindFunctionToClassOrObject.recursionCount" = "u32"
+"createTypeEvaluator.partiallySpecializeBoundMethod.recursionCount" = "u32"
+
+["analyzer/typeEvaluatorTypes.ts"]
+"EffectiveTypeResult.evaluationAttempts" = "u32?"  # counter
+
+["analyzer/types.ts"]
+"TypeBaseProps.instantiableDepth" = "u32"
+"TypeSourceId" = "i32"
+"TypeVarDetailsShared.synthesizedIndex" = "i32"
+"FunctionDetailsShared.inferredReturnType.evaluationCount" = "u32"
+"LiteralValue#0" = "f64"
+"TypeCondition.constraintIndex" = "i32"
+"maxTypeRecursionCount" = "u32"
+"TypeBase.getInstantiableDepth.return" = "u32"
+"TypeBase.setInstantiableDepth.depth" = "u32"
+"ClassType.isSameGenericClass.recursionCount" = "u32"
+"SignatureWithOffsets.expressionOffsets" = "i32"
+"FunctionType.getDeclaredParamType.index" = "i32"
+"FunctionType.getParamType.index" = "i32"
+"FunctionType.getParamDefaultType.index" = "i32"
+"TypeCondition._compare.return" = "i32"
+"UnionType.containsType.exclusionSet" = "u32"
+"UnionType.containsType.recursionCount" = "u32"
+"TypeVarType.cloneAsUnificationVar.usageOffset" = "i32"
+"isTypeSame.recursionCount" = "u32"
+"CombineTypesOptions.maxSubtypeCount" = "u32"
+"TypeCondition._compare.return#1" = "f64"
+"TypeCondition._compare.return#2" = "f64"
+
+["common/diagnostic.ts"]
+"DiagnosticAddendum._nestLevel" = "u32?"  # counter
+
+["common/pythonVersion.ts"]
+"PythonVersion.major" = "f64?"  # no rule matched
+"PythonVersion.minor" = "f64?"  # no rule matched
+"PythonVersion.micro" = "f64?"  # no rule matched
+"PythonVersion.serial" = "f64?"  # no rule matched
+
+["common/stringUtils.ts"]
+"StringFingerprint.primary" = "f64?"
+"StringFingerprint.secondary" = "f64?"
+
+["common/textRange.ts"]
+"TextRange.start" = "i32?"  # text position or index
+"TextRange.length" = "i32?"  # text position or index
+"Position.line" = "i32?"  # text position or index
+"Position.character" = "i32?"  # text position or index
+
+["common/textRangeCollection.ts"]
+"TextRangeCollection._lastHitIndex" = "i32?"  # text position or index
+
+["parser/parseNodes.ts"]
+"ParseNode.start" = "i32?"  # text position or index
+"ParseNode.length" = "i32?"  # text position or index
+"ParseNode.id" = "u32?"  # id
+"ModuleNameNode.d.leadingDots" = "f64?"  # no rule matched
+"PatternSequenceNode.d.starEntryIndex" = "i32?"  # text position or index
+
+["parser/parser.ts"]
+"ModuleImport.leadingDots" = "f64?"
+
+["parser/stringAnnotationInfo.ts"]
+"StringAnnotationInfo.size" = "u32?"
+
+["parser/tokenizer.ts"]
+"TokenizerOutput.typeIgnoreLines" = "u32?"
+"TokenizerOutput.pyrightIgnoreLines" = "u32?"
+
+["parser/tokenizerTypes.ts"]
+"Comment.start" = "i32?"  # text position or index
+"Comment.length" = "i32?"  # text position or index
+"Token.start" = "i32?"  # text position or index
+"Token.length" = "i32?"  # text position or index
+"IndentToken.indentAmount" = "i32?"  # text position or index
+"DedentToken.indentAmount" = "i32?"  # text position or index
+"StringToken.prefixLength" = "i32?"  # text position or index
+"StringToken.quoteMarkLength" = "i32?"  # text position or index
+"FStringStartToken.prefixLength" = "i32?"  # text position or index
+"FStringStartToken.quoteMarkLength" = "i32?"  # text position or index
