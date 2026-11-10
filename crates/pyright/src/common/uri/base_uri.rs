@@ -2,6 +2,7 @@
 
 use crate::common::path_utils::{get_root_length, get_shortened_file_name};
 use crate::common::uri::uri::Uri;
+use jsrt::JsStr;
 
 impl Uri {
     // common/uri/baseUri.ts:33
@@ -15,27 +16,47 @@ impl Uri {
 
     // common/uri/baseUri.ts:47
     pub fn package_uri(&self) -> Uri {
-        *self.0.get().package_uri.get_or_init(|| self.add_extension(".py"))
+        *self
+            .0
+            .get()
+            .package_uri
+            .get_or_init(|| self.add_extension(".py"))
     }
 
     // common/uri/baseUri.ts:52
     pub fn package_stub_uri(&self) -> Uri {
-        *self.0.get().package_stub_uri.get_or_init(|| self.add_extension(".pyi"))
+        *self
+            .0
+            .get()
+            .package_stub_uri
+            .get_or_init(|| self.add_extension(".pyi"))
     }
 
     // common/uri/baseUri.ts:57
     pub fn init_py_uri(&self) -> Uri {
-        *self.0.get().init_py_uri.get_or_init(|| self.combine_paths_unsafe(&["__init__.py"]))
+        *self
+            .0
+            .get()
+            .init_py_uri
+            .get_or_init(|| self.combine_paths_unsafe(&["__init__.py"]))
     }
 
     // common/uri/baseUri.ts:62
     pub fn init_pyi_uri(&self) -> Uri {
-        *self.0.get().init_pyi_uri.get_or_init(|| self.combine_paths_unsafe(&["__init__.pyi"]))
+        *self
+            .0
+            .get()
+            .init_pyi_uri
+            .get_or_init(|| self.combine_paths_unsafe(&["__init__.pyi"]))
     }
 
     // common/uri/baseUri.ts:67
     pub fn pytyped_uri(&self) -> Uri {
-        *self.0.get().pytyped_uri.get_or_init(|| self.combine_paths_unsafe(&["py.typed"]))
+        *self
+            .0
+            .get()
+            .pytyped_uri
+            .get_or_init(|| self.combine_paths_unsafe(&["py.typed"]))
     }
 
     // common/uri/baseUri.ts:93
@@ -56,7 +77,7 @@ impl Uri {
         if self.is_case_sensitive() {
             self.last_extension() == ext
         } else {
-            jsrt::infra_shims::to_lower_case(self.last_extension()) == jsrt::infra_shims::to_lower_case(ext)
+            self.last_extension().js_to_lower_case() == ext.js_to_lower_case()
         }
     }
 
@@ -77,7 +98,7 @@ impl Uri {
             if self.is_case_sensitive() {
                 *e == ext
             } else {
-                jsrt::infra_shims::to_lower_case(e) == jsrt::infra_shims::to_lower_case(ext)
+                e.js_to_lower_case() == ext.js_to_lower_case()
             }
         })
     }
@@ -142,7 +163,7 @@ impl Uri {
             let matched = if self.is_case_sensitive() {
                 from_component == to_component
             } else {
-                jsrt::infra_shims::to_lower_case(from_component) == jsrt::infra_shims::to_lower_case(to_component)
+                from_component.js_to_lower_case() == to_component.js_to_lower_case()
             };
 
             if !matched {
@@ -166,7 +187,7 @@ impl Uri {
     }
 
     // common/uri/baseUri.ts:220
-    pub fn get_shortened_file_name(&self, max_dir_length: usize) -> String {
+    pub fn get_shortened_file_name(&self, max_dir_length: i32) -> String {
         get_shortened_file_name(self.get_path(), max_dir_length)
     }
 }

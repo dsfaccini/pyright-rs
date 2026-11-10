@@ -32,7 +32,13 @@ impl URI {
     fn new(scheme: &str, authority: String, path: String, query: String, fragment: String) -> URI {
         let scheme = if scheme.is_empty() { "file" } else { scheme };
         let path = reference_resolution(scheme, path);
-        URI { scheme: scheme.to_string(), authority, path, query, fragment }
+        URI {
+            scheme: scheme.to_string(),
+            authority,
+            path,
+            query,
+            fragment,
+        }
     }
 
     /// `URI.file(path)`.
@@ -49,7 +55,11 @@ impl URI {
                     let idx = idx + 2;
                     authority = path[2..idx].to_string();
                     let rest = path[idx..].to_string();
-                    path = if rest.is_empty() { "/".to_string() } else { rest };
+                    path = if rest.is_empty() {
+                        "/".to_string()
+                    } else {
+                        rest
+                    };
                 }
             }
         }
@@ -84,17 +94,35 @@ impl URI {
             rest = &after[end..];
         }
         let fragment = rest.strip_prefix('#').unwrap_or("");
-        URI::new(scheme, percent_decode(authority), percent_decode(path), percent_decode(query), percent_decode(fragment))
+        URI::new(
+            scheme,
+            percent_decode(authority),
+            percent_decode(path),
+            percent_decode(query),
+            percent_decode(fragment),
+        )
     }
 
     /// `uri.with({ path })`.
     pub fn with_path(&self, path: String) -> URI {
-        URI::new(&self.scheme, self.authority.clone(), path, self.query.clone(), self.fragment.clone())
+        URI::new(
+            &self.scheme,
+            self.authority.clone(),
+            path,
+            self.query.clone(),
+            self.fragment.clone(),
+        )
     }
 
     /// `uri.with({ query, fragment })`.
     pub fn with_query_fragment(&self, query: &str, fragment: &str) -> URI {
-        URI::new(&self.scheme, self.authority.clone(), self.path.clone(), query.to_string(), fragment.to_string())
+        URI::new(
+            &self.scheme,
+            self.authority.clone(),
+            self.path.clone(),
+            query.to_string(),
+            fragment.to_string(),
+        )
     }
 
     /// `uri.fsPath`: `uriToFsPath(uri, false)` on a POSIX host.
@@ -211,7 +239,9 @@ fn encode_table(c: char) -> Option<&'static str> {
 fn encode_uri_component(s: &str) -> String {
     let mut out = String::new();
     for c in s.chars() {
-        if c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | '!' | '~' | '*' | '\'' | '(' | ')') {
+        if c.is_ascii_alphanumeric()
+            || matches!(c, '-' | '_' | '.' | '!' | '~' | '*' | '\'' | '(' | ')')
+        {
             out.push(c);
         } else {
             let mut buf = [0u8; 4];
@@ -254,12 +284,19 @@ fn encode_uri_component_fast(component: &str, is_path: bool, is_authority: bool)
 fn decode_hex_run(run: &str) -> String {
     // `decodeURIComponentGraceful`: decode the run, or keep the first escape
     // and retry on the rest when it is not valid UTF-8.
-    let bytes: Vec<u8> = (0..run.len() / 3).map(|i| u8::from_str_radix(&run[i * 3 + 1..i * 3 + 3], 16).unwrap_or(0)).collect();
-    let all_hex = (0..run.len() / 3).all(|i| u8::from_str_radix(&run[i * 3 + 1..i * 3 + 3], 16).is_ok());
+    let bytes: Vec<u8> = (0..run.len() / 3)
+        .map(|i| u8::from_str_radix(&run[i * 3 + 1..i * 3 + 3], 16).unwrap_or(0))
+        .collect();
+    let all_hex =
+        (0..run.len() / 3).all(|i| u8::from_str_radix(&run[i * 3 + 1..i * 3 + 3], 16).is_ok());
     if all_hex && let Ok(text) = String::from_utf8(bytes) {
         return text;
     }
-    if run.len() > 3 { format!("{}{}", &run[..3], decode_hex_run(&run[3..])) } else { run.to_string() }
+    if run.len() > 3 {
+        format!("{}{}", &run[..3], decode_hex_run(&run[3..]))
+    } else {
+        run.to_string()
+    }
 }
 
 /// `percentDecode`: decodes each run of `%XX` escapes.
@@ -269,7 +306,12 @@ fn percent_decode(s: &str) -> String {
     let mut i = 0;
     let mut last = 0;
     while i < b.len() {
-        let is_escape = |j: usize| j + 2 < b.len() && b[j] == b'%' && b[j + 1].is_ascii_alphanumeric() && b[j + 2].is_ascii_alphanumeric();
+        let is_escape = |j: usize| {
+            j + 2 < b.len()
+                && b[j] == b'%'
+                && b[j + 1].is_ascii_alphanumeric()
+                && b[j + 2].is_ascii_alphanumeric()
+        };
         if is_escape(i) {
             let start = i;
             while is_escape(i) {
@@ -296,7 +338,10 @@ mod tests {
         assert_eq!(uri.path, "/home/u/a b/e.py");
         assert_eq!(uri.to_string_encoded(), "file:///home/u/a%20b/e.py");
         assert_eq!(uri.fs_path(), "/home/u/a b/e.py");
-        assert_eq!(URI::file("/x/é[1]").to_string_encoded(), "file:///x/%C3%A9%5B1%5D");
+        assert_eq!(
+            URI::file("/x/é[1]").to_string_encoded(),
+            "file:///x/%C3%A9%5B1%5D"
+        );
     }
 
     #[test]

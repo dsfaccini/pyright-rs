@@ -3,6 +3,7 @@
 //! POSIX host only: `path.sep` is `/`. Separators and dots are ASCII, so byte
 //! offsets equal UTF-16 offsets at every slice point below.
 
+use jsrt::JsStr;
 use jsrt::node_path;
 use regex::Regex;
 
@@ -61,7 +62,10 @@ pub fn get_path_components(path_string: &str) -> Vec<String> {
     let normalized_path = normalize_slashes(path_string);
     let root_length = get_root_length(&normalized_path);
     let root = normalized_path[..root_length].to_string();
-    let mut rest: Vec<String> = normalized_path[root_length..].split(SEP).map(str::to_string).collect();
+    let mut rest: Vec<String> = normalized_path[root_length..]
+        .split(SEP)
+        .map(str::to_string)
+        .collect();
     if !rest.is_empty() && rest.last().unwrap().is_empty() {
         rest.pop();
     }
@@ -142,12 +146,20 @@ pub fn normalize_slashes(path_string: &str) -> String {
 
 // common/pathUtils.ts:199
 pub fn resolve_paths(path: &str, paths: &[&str]) -> String {
-    normalize_path(&if !paths.is_empty() { combine_paths(path, paths) } else { normalize_slashes(path) })
+    normalize_path(&if !paths.is_empty() {
+        combine_paths(path, paths)
+    } else {
+        normalize_slashes(path)
+    })
 }
 
 // common/pathUtils.ts:203
 pub fn combine_paths(path_string: &str, paths: &[&str]) -> String {
-    let mut path_string = if !path_string.is_empty() { normalize_slashes(path_string) } else { String::new() };
+    let mut path_string = if !path_string.is_empty() {
+        normalize_slashes(path_string)
+    } else {
+        String::new()
+    };
 
     for relative_path in paths {
         if relative_path.is_empty() {
@@ -179,10 +191,17 @@ pub fn contains_path(parent: &str, child: &str, ignore_case: bool) -> bool {
         return false;
     }
 
-    let component_equality_comparer: fn(&str, &str) -> bool =
-        if ignore_case { equate_strings_case_insensitive } else { equate_strings_case_sensitive };
+    let component_equality_comparer: fn(&str, &str) -> bool = if ignore_case {
+        equate_strings_case_insensitive
+    } else {
+        equate_strings_case_sensitive
+    };
     for i in 0..parent_components.len() {
-        let equality_comparer = if i == 0 { equate_strings_case_insensitive } else { component_equality_comparer };
+        let equality_comparer = if i == 0 {
+            equate_strings_case_insensitive
+        } else {
+            component_equality_comparer
+        };
         if !equality_comparer(&parent_components[i], &child_components[i]) {
             return false;
         }
@@ -198,7 +217,11 @@ pub fn change_any_extension(path: &str, ext: &str) -> String {
         return path.to_string();
     }
     let base = &path[..path.len() - path_ext.len()];
-    if ext.starts_with('.') { format!("{base}{ext}") } else { format!("{base}.{ext}") }
+    if ext.starts_with('.') {
+        format!("{base}{ext}")
+    } else {
+        format!("{base}.{ext}")
+    }
 }
 
 // common/pathUtils.ts:319
@@ -258,7 +281,7 @@ pub fn get_file_extension(file_name: &str, multi_dot_extension: bool) -> String 
     // last code unit.
     match file_name.find('.') {
         Some(first_dot_index) => file_name[first_dot_index..].to_string(),
-        None => jsrt::infra_shims::slice(file_name, -1, None),
+        None => file_name.js_slice(-1, None).into_owned(),
     }
 }
 
@@ -268,12 +291,12 @@ pub fn get_file_name(path_string: &str) -> &str {
 }
 
 // common/pathUtils.ts:466
-pub fn get_shortened_file_name(path_string: &str, max_dir_length: usize) -> String {
+pub fn get_shortened_file_name(path_string: &str, max_dir_length: i32) -> String {
     let file_name = get_file_name(path_string);
     let dir_name = get_directory_path(path_string);
-    let dir_len = jsrt::infra_shims::utf16_len(&dir_name);
+    let dir_len = dir_name.js_len();
     if dir_len > max_dir_length {
-        let tail = jsrt::infra_shims::slice(&dir_name, (dir_len - max_dir_length) as isize, None);
+        let tail = dir_name.js_slice(dir_len - max_dir_length, None);
         return format!("...{tail}/{file_name}");
     }
     path_string.to_string()
@@ -282,9 +305,9 @@ pub fn get_shortened_file_name(path_string: &str, max_dir_length: usize) -> Stri
 // common/pathUtils.ts:475
 pub fn strip_file_extension(file_name: &str, multi_dot_extension: bool) -> String {
     let ext = get_file_extension(file_name, multi_dot_extension);
-    let len = jsrt::infra_shims::utf16_len(file_name);
-    let ext_len = jsrt::infra_shims::utf16_len(&ext);
-    jsrt::infra_shims::substring(file_name, 0, Some(len.saturating_sub(ext_len)))
+    file_name
+        .js_substr(0, file_name.js_len() - ext.js_len())
+        .into_owned()
 }
 
 // common/pathUtils.ts:480
@@ -304,7 +327,8 @@ pub fn get_wildcard_regex_pattern(root_path: &str, file_spec: &str) -> String {
     let mut path_components = get_path_components(&absolute_path);
 
     let escaped_separator = get_regex_escaped_separator();
-    let double_asterisk_regex_fragment = format!("({escaped_separator}[^{escaped_separator}][^{escaped_separator}]*)*?");
+    let double_asterisk_regex_fragment =
+        format!("({escaped_separator}[^{escaped_separator}][^{escaped_separator}]*)*?");
 
     if !path_components.is_empty() {
         path_components[0] = strip_trailing_directory_separator(&path_components[0]).to_string();
@@ -321,12 +345,16 @@ pub fn get_wildcard_regex_pattern(root_path: &str, file_spec: &str) -> String {
         if component == "**" {
             reg_ex_pattern.push_str(&double_asterisk_regex_fragment);
         } else {
-            let component = if !first_component { format!("{escaped_separator}{component}") } else { component.clone() };
+            let component = if !first_component {
+                format!("{escaped_separator}{component}")
+            } else {
+                component.clone()
+            };
 
             // `component.replace(/[^\w\s<sep>]/g, ...)`: JS `\w` is ASCII only.
             for c in component.chars() {
                 let is_word = c.is_ascii_alphanumeric() || c == '_';
-                if is_word || jsrt::infra_shims::is_js_whitespace(c) || c == SEP {
+                if is_word || crate::common::core::is_js_whitespace_char(c) || c == SEP {
                     reg_ex_pattern.push(c);
                 } else if c == '*' {
                     reg_ex_pattern.push_str(&format!("[^{escaped_separator}]*"));
@@ -347,7 +375,11 @@ pub fn get_wildcard_regex_pattern(root_path: &str, file_spec: &str) -> String {
 /// JS `'\\' + c` inside a regex: an identity escape. The `regex` crate accepts
 /// `\c` only for ASCII punctuation, so other characters go in a class.
 fn js_identity_escape(c: char) -> String {
-    if c.is_ascii_punctuation() { format!("\\{c}") } else { format!("[{c}]") }
+    if c.is_ascii_punctuation() {
+        format!("\\{c}")
+    } else {
+        format!("[{c}]")
+    }
 }
 
 // common/pathUtils.ts:543
@@ -444,7 +476,10 @@ mod tests {
 
     #[test]
     fn get_path_components3() {
-        assert_eq!(get_path_components("/users/hello.py"), vec!["/", "users", "hello.py"]);
+        assert_eq!(
+            get_path_components("/users/hello.py"),
+            vec!["/", "users", "hello.py"]
+        );
     }
 
     #[test]
@@ -459,21 +494,30 @@ mod tests {
 
     #[test]
     fn get_path_components6() {
-        assert_eq!(get_path_components("//server/share/dir/file.py"), vec!["//server/", "share", "dir", "file.py"]);
+        assert_eq!(
+            get_path_components("//server/share/dir/file.py"),
+            vec!["//server/", "share", "dir", "file.py"]
+        );
     }
 
     #[test]
     fn combine_path_components1() {
         let p = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
         assert_eq!(combine_path_components(&p(&[])), "");
-        assert_eq!(combine_path_components(&p(&["/", "users", "hello.py"])), "/users/hello.py");
+        assert_eq!(
+            combine_path_components(&p(&["/", "users", "hello.py"])),
+            "/users/hello.py"
+        );
         assert_eq!(combine_path_components(&p(&["", "hello.py"])), "hello.py");
     }
 
     #[test]
     fn combine_paths1() {
         assert_eq!(combine_paths("/user", &["1", "2", "3"]), "/user/1/2/3");
-        assert_eq!(combine_paths("/foo", &["ngnamespace", "ngmain"]), "/foo/ngnamespace/ngmain");
+        assert_eq!(
+            combine_paths("/foo", &["ngnamespace", "ngmain"]),
+            "/foo/ngnamespace/ngmain"
+        );
         assert_eq!(combine_paths("/user", &["/1", "2"]), "/1/2");
     }
 
@@ -499,7 +543,10 @@ mod tests {
     #[test]
     fn get_file_extension1() {
         assert_eq!(get_file_extension("blah.blah/hello.JsOn", false), ".JsOn");
-        assert_eq!(get_file_extension("blah.blah/hello.cpython-32m.so", true), ".cpython-32m.so");
+        assert_eq!(
+            get_file_extension("blah.blah/hello.cpython-32m.so", true),
+            ".cpython-32m.so"
+        );
     }
 
     #[test]
@@ -509,8 +556,14 @@ mod tests {
 
     #[test]
     fn strip_file_extension1() {
-        assert_eq!(strip_file_extension("blah.blah/HeLLo.JsOn", false), "blah.blah/HeLLo");
-        assert_eq!(strip_file_extension("blah.blah/hello.cpython-32m.so", true), "blah.blah/hello");
+        assert_eq!(
+            strip_file_extension("blah.blah/HeLLo.JsOn", false),
+            "blah.blah/HeLLo"
+        );
+        assert_eq!(
+            strip_file_extension("blah.blah/hello.cpython-32m.so", true),
+            "blah.blah/hello"
+        );
     }
 
     #[test]

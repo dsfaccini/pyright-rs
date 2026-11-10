@@ -3,6 +3,7 @@
 //! `isPatternInSymbol` serves completions only and is not ported.
 
 use crate::common::core::{Comparison, compare_comparable_values_str};
+use jsrt::JsStr;
 
 // common/stringUtils.ts:103
 /// Hashes the UTF-16 code units of `contents`, as JS `charCodeAt` sees them.
@@ -17,7 +18,9 @@ pub fn hash_string_utf16(contents: impl IntoIterator<Item = u16>) -> i32 {
 
     for code_unit in contents {
         // `(hash << 5) - hash + c | 0`: every step wraps to 32 bits.
-        hash = (hash << 5).wrapping_sub(hash).wrapping_add(code_unit as i32);
+        hash = (hash << 5)
+            .wrapping_sub(hash)
+            .wrapping_add(code_unit as i32);
     }
     hash
 }
@@ -34,7 +37,9 @@ pub fn get_string_fingerprint(contents: &str) -> StringFingerprint {
     let mut secondary: i32 = 0x811c9dc5_u32 as i32;
 
     for code_unit in contents.encode_utf16() {
-        primary = (primary << 5).wrapping_sub(primary).wrapping_add(code_unit as i32);
+        primary = (primary << 5)
+            .wrapping_sub(primary)
+            .wrapping_add(code_unit as i32);
         secondary = (secondary ^ code_unit as i32).wrapping_mul(0x01000193);
     }
 
@@ -53,8 +58,8 @@ pub fn compare_strings_case_insensitive(a: Option<&str>, b: Option<&str>) -> Com
         (None, _) => Comparison::LessThan,
         (_, None) => Comparison::GreaterThan,
         (Some(a), Some(b)) => {
-            let a = jsrt::infra_shims::to_upper_case(a);
-            let b = jsrt::infra_shims::to_upper_case(b);
+            let a = a.js_to_upper_case();
+            let b = b.js_to_upper_case();
             compare_comparable_values_str(Some(&a), Some(&b))
         }
     }
@@ -67,7 +72,11 @@ pub fn compare_strings_case_sensitive(a: Option<&str>, b: Option<&str>) -> Compa
 
 // common/stringUtils.ts:173
 pub fn get_string_comparer(ignore_case: bool) -> fn(Option<&str>, Option<&str>) -> Comparison {
-    if ignore_case { compare_strings_case_insensitive } else { compare_strings_case_sensitive }
+    if ignore_case {
+        compare_strings_case_insensitive
+    } else {
+        compare_strings_case_sensitive
+    }
 }
 
 // common/stringUtils.ts:185
@@ -102,8 +111,11 @@ pub fn get_last_dotted_string(text: &str) -> &str {
 
 // common/stringUtils.ts:214
 pub fn truncate(text: &str, max_length: usize) -> String {
-    if jsrt::infra_shims::utf16_len(text) > max_length {
-        return jsrt::infra_shims::substring(text, 0, Some(max_length - "...".len())) + "...";
+    if text.js_len() as usize > max_length {
+        return format!(
+            "{}...",
+            text.js_substring(0, (max_length - "...".len()) as i32)
+        );
     }
     text.to_string()
 }
@@ -112,7 +124,10 @@ pub fn truncate(text: &str, max_length: usize) -> String {
 pub fn escape_reg_exp(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     for c in text.chars() {
-        if matches!(c, '\\' | '^' | '$' | '.' | '*' | '+' | '?' | '(' | ')' | '[' | ']' | '{' | '}' | '|') {
+        if matches!(
+            c,
+            '\\' | '^' | '$' | '.' | '*' | '+' | '?' | '(' | ')' | '[' | ']' | '{' | '}' | '|'
+        ) {
             out.push('\\');
         }
         out.push(c);
@@ -127,27 +142,42 @@ mod tests {
     // Ported from tests/stringUtils.test.ts.
     #[test]
     fn core_compare_strings_case_insensitive1() {
-        assert_eq!(compare_strings_case_insensitive(Some("Hello"), Some("hello")), Comparison::EqualTo);
+        assert_eq!(
+            compare_strings_case_insensitive(Some("Hello"), Some("hello")),
+            Comparison::EqualTo
+        );
     }
 
     #[test]
     fn core_compare_strings_case_insensitive2() {
-        assert_eq!(compare_strings_case_insensitive(Some("Hello"), None), Comparison::GreaterThan);
+        assert_eq!(
+            compare_strings_case_insensitive(Some("Hello"), None),
+            Comparison::GreaterThan
+        );
     }
 
     #[test]
     fn core_compare_strings_case_insensitive3() {
-        assert_eq!(compare_strings_case_insensitive(None, Some("hello")), Comparison::LessThan);
+        assert_eq!(
+            compare_strings_case_insensitive(None, Some("hello")),
+            Comparison::LessThan
+        );
     }
 
     #[test]
     fn core_compare_strings_case_insensitive4() {
-        assert_eq!(compare_strings_case_insensitive(None, None), Comparison::EqualTo);
+        assert_eq!(
+            compare_strings_case_insensitive(None, None),
+            Comparison::EqualTo
+        );
     }
 
     #[test]
     fn core_compare_strings_case_sensitive() {
-        assert_eq!(compare_strings_case_sensitive(Some("Hello"), Some("hello")), Comparison::LessThan);
+        assert_eq!(
+            compare_strings_case_sensitive(Some("Hello"), Some("hello")),
+            Comparison::LessThan
+        );
     }
 
     /// `tests/data/hash_string.tsv` holds `hashString` results printed by node:
@@ -160,7 +190,10 @@ mod tests {
             let units: Vec<u16> = if units.is_empty() {
                 Vec::new()
             } else {
-                units.split(',').map(|u| u16::from_str_radix(u, 16).unwrap()).collect()
+                units
+                    .split(',')
+                    .map(|u| u16::from_str_radix(u, 16).unwrap())
+                    .collect()
             };
             let expected: i32 = expected.parse().unwrap();
             assert_eq!(hash_string_utf16(units.iter().copied()), expected);
@@ -172,7 +205,14 @@ mod tests {
 
     #[test]
     fn string_fingerprint_preserves_the_legacy_hash() {
-        for value in ["", "plain text", "\0", "\u{1F600}", "value_Aa = 1\n", "value_BB = 1\n"] {
+        for value in [
+            "",
+            "plain text",
+            "\0",
+            "\u{1F600}",
+            "value_Aa = 1\n",
+            "value_BB = 1\n",
+        ] {
             assert_eq!(get_string_fingerprint(value).primary, hash_string(value));
         }
 

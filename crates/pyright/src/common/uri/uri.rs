@@ -3,6 +3,7 @@
 //! CLI creates: `FileUri`, `EmptyUri` and `ConstantUri`. `WebUri` is not
 //! ported: the CLI only sees file paths.
 
+use jsrt::JsStr;
 use std::cell::{OnceCell, RefCell};
 use std::fmt;
 use std::hash::{Hash, Hasher};
@@ -18,7 +19,9 @@ use crate::common::uri::file_uri::{FileUriData, create_file_uri};
 pub(crate) enum UriKind {
     File(FileUriData),
     /// `ConstantUri`; `EmptyUri` is the constant with key `<empty>`.
-    Constant { is_empty: bool },
+    Constant {
+        is_empty: bool,
+    },
 }
 
 pub struct UriData {
@@ -96,7 +99,9 @@ thread_local! {
 
 /// `process.cwd()`.
 pub fn process_cwd() -> String {
-    std::env::current_dir().map(|p| p.to_string_lossy().into_owned()).unwrap_or_else(|_| "/".to_string())
+    std::env::current_dir()
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_else(|_| "/".to_string())
 }
 
 // common/uri/uri.ts:43
@@ -118,7 +123,11 @@ fn get_file_path(uri: &URI) -> String {
 
 // common/uri/uri.ts:63
 fn normalize_uri(parsed: URI) -> (URI, String) {
-    let final_uri = if !parsed.path.is_empty() { vscode_uri::resolve_path(&parsed) } else { parsed };
+    let final_uri = if !parsed.path.is_empty() {
+        vscode_uri::resolve_path(&parsed)
+    } else {
+        parsed
+    };
     let final_string = final_uri.to_string_encoded();
     (final_uri, final_string)
 }
@@ -141,7 +150,11 @@ fn maybe_uri(value: &str) -> bool {
 
 impl Uri {
     // common/uri/uri.ts:92
-    pub fn create(value: &str, detector: &dyn CaseSensitivityDetector, check_relative: bool) -> Uri {
+    pub fn create(
+        value: &str,
+        detector: &dyn CaseSensitivityDetector,
+        check_relative: bool,
+    ) -> Uri {
         if maybe_uri(value) {
             return Uri::parse(Some(value), detector);
         }
@@ -164,7 +177,13 @@ impl Uri {
         };
 
         let is_case_sensitive = detector.is_case_sensitive(&str);
-        create_file_uri(&get_file_path(&uri), &uri.query, &uri.fragment, Some(&str), is_case_sensitive)
+        create_file_uri(
+            &get_file_path(&uri),
+            &uri.query,
+            &uri.fragment,
+            Some(&str),
+            is_case_sensitive,
+        )
     }
 
     // common/uri/uri.ts:127
@@ -176,7 +195,13 @@ impl Uri {
         let (uri, str) = normalize_uri(URI::parse(uri_str));
         if uri.scheme == "file" {
             let is_case_sensitive = detector.is_case_sensitive(&str);
-            return create_file_uri(&get_file_path(&uri), &uri.query, &uri.fragment, Some(&str), is_case_sensitive);
+            return create_file_uri(
+                &get_file_path(&uri),
+                &uri.query,
+                &uri.fragment,
+                Some(&str),
+                is_case_sensitive,
+            );
         }
 
         // `WebUri` is not ported; the CLI never resolves a non-file Uri.
@@ -185,7 +210,10 @@ impl Uri {
 
     // common/uri/uri.ts:160
     pub fn constant(marker_name: &str) -> Uri {
-        Uri(P::new(UriData::new(marker_name.to_string(), UriKind::Constant { is_empty: false })))
+        Uri(P::new(UriData::new(
+            marker_name.to_string(),
+            UriKind::Constant { is_empty: false },
+        )))
     }
 
     // common/uri/uri.ts:164
@@ -217,7 +245,8 @@ impl Uri {
 
     // common/uri/uri.ts:215
     pub fn is_default_workspace(uri: Uri) -> bool {
-        uri.file_name().contains(Uri::DEFAULT_WORKSPACE_ROOT_COMPONENT)
+        uri.file_name()
+            .contains(Uri::DEFAULT_WORKSPACE_ROOT_COMPONENT)
     }
 
     pub(crate) fn file_data(&self) -> Option<&'static FileUriData> {
@@ -232,7 +261,11 @@ impl Uri {
     }
 
     pub fn scheme(&self) -> &'static str {
-        if self.file_data().is_some() { "file" } else { "" }
+        if self.file_data().is_some() {
+            "file"
+        } else {
+            ""
+        }
     }
 
     pub fn is_case_sensitive(&self) -> bool {
@@ -290,8 +323,8 @@ impl Uri {
         self.file_data().map_or("", |f| f.file_path.as_str())
     }
 
-    pub fn get_path_length(&self) -> usize {
-        self.file_data().map_or(0, |f| jsrt::infra_shims::utf16_len(&f.file_path))
+    pub fn get_path_length(&self) -> i32 {
+        self.file_data().map_or(0, |f| f.file_path.js_len())
     }
 }
 
@@ -341,7 +374,10 @@ mod tests {
     #[test]
     fn combine_paths() {
         let uri = file("/a/b");
-        assert_eq!(uri.combine_paths(&["c", "d.py"]).get_file_path(), "/a/b/c/d.py");
+        assert_eq!(
+            uri.combine_paths(&["c", "d.py"]).get_file_path(),
+            "/a/b/c/d.py"
+        );
         assert_eq!(uri.combine_paths(&["../c"]).get_file_path(), "/a/c");
         assert_eq!(uri.combine_paths(&["/x"]).get_file_path(), "/x");
         assert_eq!(uri.resolve_paths(&["..", "x/"]).get_file_path(), "/a/x");
@@ -367,14 +403,26 @@ mod tests {
         assert!(uri.has_extension(".gz"));
         assert!(uri.contains_extension(".tar"));
         assert_eq!(file("/a/b").package_uri().get_file_path(), "/a/b.py");
-        assert_eq!(file("/a/b").init_pyi_uri().get_file_path(), "/a/b/__init__.pyi");
-        assert_eq!(file("/a/b.py").replace_extension(".pyi").get_file_path(), "/a/b.pyi");
+        assert_eq!(
+            file("/a/b").init_pyi_uri().get_file_path(),
+            "/a/b/__init__.pyi"
+        );
+        assert_eq!(
+            file("/a/b.py").replace_extension(".pyi").get_file_path(),
+            "/a/b.pyi"
+        );
     }
 
     #[test]
     fn path_components() {
-        assert_eq!(file("/a/b/c").get_path_components(), vec!["/", "a", "b", "c"]);
-        assert_eq!(file("/a/b").get_relative_path_components(file("/a/c/d")), vec!["..", "c", "d"]);
+        assert_eq!(
+            file("/a/b/c").get_path_components(),
+            vec!["/", "a", "b", "c"]
+        );
+        assert_eq!(
+            file("/a/b").get_relative_path_components(file("/a/c/d")),
+            vec!["..", "c", "d"]
+        );
     }
 
     #[test]

@@ -11,7 +11,11 @@ use jsrt::JsMap;
 use crate::common::core::Comparison;
 
 // common/collectionUtils.ts:16
-pub fn contains<T>(array: Option<&[T]>, value: &T, equality_comparer: impl Fn(&T, &T) -> bool) -> bool {
+pub fn contains<T>(
+    array: Option<&[T]>,
+    value: &T,
+    equality_comparer: impl Fn(&T, &T) -> bool,
+) -> bool {
     if let Some(array) = array {
         for v in array {
             if equality_comparer(v, value) {
@@ -42,7 +46,10 @@ pub fn append_array<T: Clone>(to: &mut Vec<T>, elements_to_push: &[T]) {
 }
 
 // common/collectionUtils.ts:72
-pub fn partition<T>(array: impl IntoIterator<Item = T>, cb: impl Fn(&T) -> bool) -> (Vec<T>, Vec<T>) {
+pub fn partition<T>(
+    array: impl IntoIterator<Item = T>,
+    cb: impl Fn(&T) -> bool,
+) -> (Vec<T>, Vec<T>) {
     let mut true_items = Vec::new();
     let mut false_items = Vec::new();
 
@@ -59,12 +66,21 @@ pub fn partition<T>(array: impl IntoIterator<Item = T>, cb: impl Fn(&T) -> bool)
 
 // common/collectionUtils.ts:105
 fn to_offset(len: usize, offset: isize) -> usize {
-    if offset < 0 { (len as isize + offset) as usize } else { offset as usize }
+    if offset < 0 {
+        (len as isize + offset) as usize
+    } else {
+        offset as usize
+    }
 }
 
 // common/collectionUtils.ts:126
 /// `addRange` for a defined `to`. `from` elements are never `undefined` in Rust.
-pub fn add_range<T: Clone>(to: &mut Vec<T>, from: Option<&[T]>, start: Option<isize>, end: Option<isize>) {
+pub fn add_range<T: Clone>(
+    to: &mut Vec<T>,
+    from: Option<&[T]>,
+    start: Option<isize>,
+    end: Option<isize>,
+) {
     let Some(from) = from else {
         return;
     };
@@ -112,7 +128,13 @@ pub fn binary_search<T, U>(
     key_comparer: impl Fn(&U, &U) -> Comparison,
     offset: Option<usize>,
 ) -> isize {
-    binary_search_key(array, &key_selector(value), key_selector, key_comparer, offset)
+    binary_search_key(
+        array,
+        &key_selector(value),
+        key_selector,
+        key_comparer,
+        offset,
+    )
 }
 
 // common/collectionUtils.ts:279
@@ -143,7 +165,11 @@ pub fn binary_search_key<T, U>(
 }
 
 // common/collectionUtils.ts:330
-pub fn get_or_add<K: Hash + Eq, V: Clone>(map: &mut JsMap<K, V>, key: K, new_value_factory: impl FnOnce() -> V) -> V {
+pub fn get_or_add<K: Hash + Eq, V: Clone>(
+    map: &mut JsMap<K, V>,
+    key: K,
+    new_value_factory: impl FnOnce() -> V,
+) -> V {
     if let Some(value) = map.get(&key) {
         return value.clone();
     }
@@ -160,7 +186,10 @@ pub fn remove_array_elements<T>(array: &mut Vec<T>, predicate: impl Fn(&T) -> bo
 }
 
 // common/collectionUtils.ts:360
-pub fn create_map_from_items<T>(items: impl IntoIterator<Item = T>, key_getter: impl Fn(&T) -> String) -> JsMap<String, Vec<T>> {
+pub fn create_map_from_items<T>(
+    items: impl IntoIterator<Item = T>,
+    key_getter: impl Fn(&T) -> String,
+) -> JsMap<String, Vec<T>> {
     let mut map: JsMap<String, Vec<T>> = JsMap::default();
     for item in items {
         let key = key_getter(&item);
@@ -180,7 +209,10 @@ pub fn add_if_unique<T>(arr: &mut Vec<T>, t: T, equality_comparer: impl Fn(&T, &
 
 // common/collectionUtils.ts:383
 pub fn get_map_values<K, V: Clone>(m: &JsMap<K, V>, predicate: impl Fn(&K, &V) -> bool) -> Vec<V> {
-    m.iter().filter(|(k, v)| predicate(k, v)).map(|(_, v)| v.clone()).collect()
+    m.iter()
+        .filter(|(k, v)| predicate(k, v))
+        .map(|(_, v)| v.clone())
+        .collect()
 }
 
 // common/collectionUtils.ts:403
@@ -250,7 +282,9 @@ mod tests {
     #[test]
     fn utils_clone_and_sort() {
         let data = [3, 2, 1];
-        let sorted = clone_and_sort(&data, |a, b| compare_values(Some(*a as f64), Some(*b as f64)));
+        let sorted = clone_and_sort(&data, |a, b| {
+            compare_values(Some(*a as f64), Some(*b as f64))
+        });
         assert_eq!(sorted, vec![1, 2, 3]);
         assert_eq!(data, [3, 2, 1]);
     }
@@ -258,7 +292,9 @@ mod tests {
     #[test]
     fn utils_stable_sort() {
         let data = [(2, 'a'), (1, 'b'), (2, 'c'), (1, 'd')];
-        let sorted = stable_sort(&data, |a, b| compare_values(Some(a.0 as f64), Some(b.0 as f64)));
+        let sorted = stable_sort(&data, |a, b| {
+            compare_values(Some(a.0 as f64), Some(b.0 as f64))
+        });
         assert_eq!(sorted, vec![(1, 'b'), (1, 'd'), (2, 'a'), (2, 'c')]);
     }
 

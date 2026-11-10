@@ -2,7 +2,10 @@
 
 use regex::{Regex, RegexBuilder};
 
-use crate::common::path_utils::{get_regex_escaped_separator, is_directory_wildcard_pattern_present, strip_trailing_directory_separator};
+use crate::common::path_utils::{
+    get_regex_escaped_separator, is_directory_wildcard_pattern_present,
+    strip_trailing_directory_separator,
+};
 use crate::common::uri::Uri;
 
 // common/uri/uriUtils.ts:22
@@ -21,13 +24,24 @@ impl FileSpec {
 
     // common/uri/uriUtils.ts:41
     pub fn matches_include_file_regex(uri: Uri, is_file: bool) -> bool {
-        if is_file { uri.matches_regex(include_file_regex()) } else { true }
+        if is_file {
+            uri.matches_regex(include_file_regex())
+        } else {
+            true
+        }
     }
 
     // common/uri/uriUtils.ts:45
-    pub fn match_include_file_spec(include_reg_exp: &Regex, exclude: &[FileSpec], uri: Uri, is_file: bool) -> bool {
+    pub fn match_include_file_spec(
+        include_reg_exp: &Regex,
+        exclude: &[FileSpec],
+        uri: Uri,
+        is_file: bool,
+    ) -> bool {
         if uri.matches_regex(include_reg_exp) {
-            if !FileSpec::is_in_path(uri, exclude) && FileSpec::matches_include_file_regex(uri, is_file) {
+            if !FileSpec::is_in_path(uri, exclude)
+                && FileSpec::matches_include_file_regex(uri, is_file)
+            {
                 return true;
             }
         }
@@ -45,7 +59,10 @@ fn include_file_regex() -> &'static Regex {
 }
 
 // common/uri/uriUtils.ts:62
-pub fn for_each_ancestor_directory(directory: Uri, mut callback: impl FnMut(Uri) -> Option<Uri>) -> Option<Uri> {
+pub fn for_each_ancestor_directory(
+    directory: Uri,
+    mut callback: impl FnMut(Uri) -> Option<Uri>,
+) -> Option<Uri> {
     let mut directory = directory;
     loop {
         if let Some(result) = callback(directory) {
@@ -75,7 +92,7 @@ pub fn get_wildcard_segment_regex_fragment(segment: &str) -> String {
     let mut out = String::new();
     for c in segment.chars() {
         let is_word = c.is_ascii_alphanumeric() || c == '_';
-        if is_word || jsrt::infra_shims::is_js_whitespace(c) || c == '/' {
+        if is_word || crate::common::core::is_js_whitespace_char(c) || c == '/' {
             out.push(c);
         } else if c == '*' {
             out.push_str(&format!("[^{escaped_separator}]*"));
@@ -96,7 +113,8 @@ pub fn get_wildcard_regex_pattern(root: Uri, file_spec: &str) -> String {
     let absolute_path = root.resolve_paths(&[file_spec]);
     let mut path_components = absolute_path.get_path_components();
     let escaped_separator = get_regex_escaped_separator();
-    let double_asterisk_regex_fragment = format!("({escaped_separator}[^{escaped_separator}][^{escaped_separator}]*)*?");
+    let double_asterisk_regex_fragment =
+        format!("({escaped_separator}[^{escaped_separator}][^{escaped_separator}]*)*?");
 
     if !path_components.is_empty() {
         path_components[0] = strip_trailing_directory_separator(&path_components[0]).to_string();
@@ -164,7 +182,11 @@ pub fn get_file_spec(root: Uri, file_spec: &str) -> FileSpec {
     let wildcard_root = get_wildcard_root(root, file_spec);
     let has_directory_wildcard = is_directory_wildcard_pattern_present(file_spec);
 
-    FileSpec { wildcard_root, reg_exp, has_directory_wildcard }
+    FileSpec {
+        wildcard_root,
+        reg_exp,
+        has_directory_wildcard,
+    }
 }
 
 #[cfg(test)]

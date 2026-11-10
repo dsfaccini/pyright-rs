@@ -26,7 +26,11 @@ fn normalize_string(path: &str, allow_above_root: bool) -> String {
                 // NOOP
             } else if dots == 2 {
                 let rb = res.as_bytes();
-                if rb.len() < 2 || last_segment_length != 2 || rb[rb.len() - 1] != b'.' || rb[rb.len() - 2] != b'.' {
+                if rb.len() < 2
+                    || last_segment_length != 2
+                    || rb[rb.len() - 1] != b'.'
+                    || rb[rb.len() - 2] != b'.'
+                {
                     if res.len() > 2 {
                         match res.rfind('/') {
                             None => {
@@ -35,7 +39,10 @@ fn normalize_string(path: &str, allow_above_root: bool) -> String {
                             }
                             Some(last_slash_index) => {
                                 res.truncate(last_slash_index);
-                                last_segment_length = (res.len() as isize - 1 - res.rfind('/').map_or(-1, |v| v as isize)) as usize;
+                                last_segment_length = (res.len() as isize
+                                    - 1
+                                    - res.rfind('/').map_or(-1, |v| v as isize))
+                                    as usize;
                             }
                         }
                         last_slash = i as isize;
@@ -92,7 +99,11 @@ pub fn normalize(path: &str) -> String {
     if trailing_separator {
         path.push('/');
     }
-    if is_absolute { format!("/{path}") } else { path }
+    if is_absolute {
+        format!("/{path}")
+    } else {
+        path
+    }
 }
 
 /// `path.posix.resolve`, with `cwd` standing in for `process.cwd()`.
@@ -113,7 +124,11 @@ pub fn resolve(paths: &[&str], cwd: &str) -> String {
     if resolved_absolute {
         return format!("/{resolved_path}");
     }
-    if !resolved_path.is_empty() { resolved_path } else { ".".to_string() }
+    if !resolved_path.is_empty() {
+        resolved_path
+    } else {
+        ".".to_string()
+    }
 }
 
 /// `path.posix.basename(path)`.

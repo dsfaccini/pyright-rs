@@ -25,11 +25,11 @@ pub struct Range {
 }
 
 // common/textRange.ts:178
-pub fn is_empty_position(pos: Position) -> bool {
+pub fn is_empty_position(pos: &Position) -> bool {
     pos.character == 0 && pos.line == 0
 }
 
 // common/textRange.ts:182
-pub fn is_empty_range(range: Range) -> bool {
-    is_empty_position(range.start) && is_empty_position(range.end)
+pub fn is_empty_range(range: &Range) -> bool {
+    is_empty_position(&range.start) && is_empty_position(&range.end)
 }

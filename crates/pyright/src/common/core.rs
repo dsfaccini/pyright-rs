@@ -4,6 +4,7 @@
 //! `isArray`, `isThenable`, ...) have no Rust counterpart: the type system
 //! answers them.
 
+use jsrt::JsStr;
 use std::cmp::Ordering;
 
 // common/core.ts:9
@@ -35,7 +36,7 @@ impl Comparison {
 
 // common/core.ts:46
 pub fn to_lower_case(x: &str) -> String {
-    jsrt::infra_shims::to_lower_case(x)
+    x.js_to_lower_case()
 }
 
 // common/core.ts:54
@@ -45,7 +46,7 @@ pub fn compare_comparable_values_str(a: Option<&str>, b: Option<&str>) -> Compar
         _ if a == b => Comparison::EqualTo,
         (None, _) => Comparison::LessThan,
         (_, None) => Comparison::GreaterThan,
-        (Some(a), Some(b)) if jsrt::infra_shims::utf16_cmp(a, b) == Ordering::Less => Comparison::LessThan,
+        (Some(a), Some(b)) if a.js_cmp(b) == Ordering::Less => Comparison::LessThan,
         _ => Comparison::GreaterThan,
     }
 }
@@ -69,7 +70,7 @@ pub fn compare_values(a: Option<f64>, b: Option<f64>) -> Comparison {
 
 // common/core.ts:118
 pub fn to_boolean(true_or_false: &str) -> bool {
-    let normalized = jsrt::infra_shims::to_upper_case(jsrt::infra_shims::trim(true_or_false));
+    let normalized = true_or_false.js_trim().js_to_upper_case();
     if normalized == "TRUE" {
         return true;
     }
@@ -84,13 +85,18 @@ pub fn is_debug_mode() -> bool {
 }
 
 // common/core.ts:174
-pub fn contains_only_whitespace(text: &str, start: Option<usize>, end: Option<usize>) -> bool {
+pub fn contains_only_whitespace(text: &str, start: Option<i32>, end: Option<i32>) -> bool {
     let text = match start {
-        Some(start) => jsrt::infra_shims::substring(text, start, end),
+        Some(start) => text.js_substring(start, end).into_owned(),
         None => text.to_string(),
     };
 
-    text.chars().all(jsrt::infra_shims::is_js_whitespace)
+    text.chars().all(is_js_whitespace_char)
+}
+
+/// JS regex `\s` for one character. Every JS whitespace character is in the BMP.
+pub fn is_js_whitespace_char(c: char) -> bool {
+    (c as u32) <= 0xFFFF && jsrt::string::is_js_whitespace(c as u16)
 }
 
 #[cfg(test)]
@@ -100,9 +106,18 @@ mod tests {
     #[test]
     fn compare_strings_in_utf16_order() {
         // U+FF5E sorts after U+1F600 in UTF-16 (0xFF5E > 0xD83D) but before it in UTF-8.
-        assert_eq!(compare_comparable_values_str(Some("\u{1F600}"), Some("\u{FF5E}")), Comparison::LessThan);
-        assert_eq!(compare_comparable_values_str(None, Some("a")), Comparison::LessThan);
-        assert_eq!(compare_comparable_values_str(Some("a"), Some("a")), Comparison::EqualTo);
+        assert_eq!(
+            compare_comparable_values_str(Some("\u{1F600}"), Some("\u{FF5E}")),
+            Comparison::LessThan
+        );
+        assert_eq!(
+            compare_comparable_values_str(None, Some("a")),
+            Comparison::LessThan
+        );
+        assert_eq!(
+            compare_comparable_values_str(Some("a"), Some("a")),
+            Comparison::EqualTo
+        );
     }
 
     #[test]

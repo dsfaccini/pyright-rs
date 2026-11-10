@@ -1,11 +1,13 @@
 //! Port of `packages/pyright-internal/src/common/uri/fileUri.ts`.
 
+use jsrt::JsStr;
 use jsrt::vscode_uri::URI;
 use jsrt::{FxHashMap, P};
 
 use crate::common::path_utils::{
-    ensure_trailing_directory_separator, get_directory_path, get_file_extension, get_file_name, get_path_components,
-    get_root_length, has_trailing_directory_separator, is_disk_path_root, resolve_paths, strip_file_extension,
+    ensure_trailing_directory_separator, get_directory_path, get_file_extension, get_file_name,
+    get_path_components, get_root_length, has_trailing_directory_separator, is_disk_path_root,
+    resolve_paths, strip_file_extension,
 };
 use crate::common::uri::base_uri::combine_path_elements;
 use crate::common::uri::uri::{Uri, UriData, UriKind};
@@ -41,18 +43,27 @@ pub fn create_file_uri(
         file_path.to_string(),
         query.to_string(),
         fragment.to_string(),
-        original_string.filter(|s| !s.is_empty()).map(str::to_string),
+        original_string
+            .filter(|s| !s.is_empty())
+            .map(str::to_string),
         is_case_sensitive,
     );
     if let Some(uri) = FILE_URI_CACHE.with(|c| c.borrow().get(&cache_key).copied()) {
         return uri;
     }
 
-    let file_path =
-        if is_disk_path_root(file_path) { ensure_trailing_directory_separator(file_path) } else { file_path.to_string() };
+    let file_path = if is_disk_path_root(file_path) {
+        ensure_trailing_directory_separator(file_path)
+    } else {
+        file_path.to_string()
+    };
 
     let key = create_key(&file_path, query, fragment);
-    let key = if is_case_sensitive { key } else { jsrt::infra_shims::to_lower_case(&key) };
+    let key = if is_case_sensitive {
+        key
+    } else {
+        key.js_to_lower_case()
+    };
     let data = FileUriData {
         file_path,
         query: query.to_string(),
@@ -91,7 +102,11 @@ impl Uri {
     // common/uri/fileUri.ts:66
     pub fn file_name(&self) -> &'static str {
         match self.file_data() {
-            Some(f) => self.0.get().file_name.get_or_init(|| get_file_name(&f.file_path).to_string()),
+            Some(f) => self
+                .0
+                .get()
+                .file_name
+                .get_or_init(|| get_file_name(&f.file_path).to_string()),
             None => "",
         }
     }
@@ -99,7 +114,11 @@ impl Uri {
     // common/uri/fileUri.ts:71
     pub fn last_extension(&self) -> &'static str {
         match self.file_data() {
-            Some(f) => self.0.get().last_extension.get_or_init(|| get_file_extension(&f.file_path, false)),
+            Some(f) => self
+                .0
+                .get()
+                .last_extension
+                .get_or_init(|| get_file_extension(&f.file_path, false)),
             None => "",
         }
     }
@@ -111,16 +130,24 @@ impl Uri {
         };
         *self.0.get().root.get_or_init(|| {
             let root_path = self.get_root_path();
-            if root_path != f.file_path { self.create_sibling(&root_path, "", "") } else { *self }
+            if root_path != f.file_path {
+                self.create_sibling(&root_path, "", "")
+            } else {
+                *self
+            }
         })
     }
 
     // common/uri/fileUri.ts:131
     pub(crate) fn file_to_string(&self) -> &'static str {
         let f = self.file_ref();
-        self.0.get().formatted_string.get_or_init(|| match f.original_string.as_deref().filter(|s| !s.is_empty()) {
-            Some(original) => original.to_string(),
-            None => URI::file(&f.file_path).with_query_fragment(&f.query, &f.fragment).to_string_encoded(),
+        self.0.get().formatted_string.get_or_init(|| {
+            match f.original_string.as_deref().filter(|s| !s.is_empty()) {
+                Some(original) => original.to_string(),
+                None => URI::file(&f.file_path)
+                    .with_query_fragment(&f.query, &f.fragment)
+                    .to_string_encoded(),
+            }
         })
     }
 
@@ -134,7 +161,8 @@ impl Uri {
 
     // common/uri/fileUri.ts:148
     pub fn is_root(&self) -> bool {
-        self.file_data().is_some_and(|f| is_disk_path_root(&f.file_path))
+        self.file_data()
+            .is_some_and(|f| is_disk_path_root(&f.file_path))
     }
 
     // common/uri/fileUri.ts:152
@@ -160,7 +188,8 @@ impl Uri {
             return false;
         };
         if f.file_path.len() >= o.file_path.len() {
-            let other_path = if f.file_path.len() > o.file_path.len() && !has_trailing_directory_separator(&o.file_path)
+            let other_path = if f.file_path.len() > o.file_path.len()
+                && !has_trailing_directory_separator(&o.file_path)
             {
                 ensure_trailing_directory_separator(&o.file_path)
             } else {
@@ -168,8 +197,10 @@ impl Uri {
             };
 
             if !self.is_case_sensitive() {
-                return jsrt::infra_shims::to_lower_case(&f.file_path)
-                    .starts_with(&jsrt::infra_shims::to_lower_case(&other_path));
+                return f
+                    .file_path
+                    .js_to_lower_case()
+                    .starts_with(&other_path.js_to_lower_case());
             }
             return f.file_path.starts_with(&other_path);
         }
@@ -199,18 +230,29 @@ impl Uri {
         }
         if paths.len() == 1 {
             let segment = paths[0];
-            if !segment.is_empty() && segment != "." && !segment.contains("..") && !segment.contains('/') {
+            if !segment.is_empty()
+                && segment != "."
+                && !segment.contains("..")
+                && !segment.contains('/')
+            {
                 if let Some(cached) = self.0.get().combine_children.borrow().get(segment) {
                     return *cached;
                 }
 
                 let child = self.combine_paths_unsafe(&[segment]);
-                self.0.get().combine_children.borrow_mut().insert(segment.to_string(), child);
+                self.0
+                    .get()
+                    .combine_children
+                    .borrow_mut()
+                    .insert(segment.to_string(), child);
                 return child;
             }
         }
 
-        if paths.iter().any(|p| p.contains("..") || p.contains('/') || *p == ".") {
+        if paths
+            .iter()
+            .any(|p| p.contains("..") || p.contains('/') || *p == ".")
+        {
             return self.resolve_paths(paths);
         }
 
@@ -240,7 +282,11 @@ impl Uri {
             if has_trailing_directory_separator(&dir) && dir.len() > 1 {
                 dir.pop();
             }
-            if dir != *file_path { self.create_sibling(&dir, "", "") } else { *self }
+            if dir != *file_path {
+                self.create_sibling(&dir, "", "")
+            } else {
+                *self
+            }
         })
     }
 
@@ -293,7 +339,10 @@ impl Uri {
         if !components.is_empty() && components[0].is_empty() {
             components.remove(0);
         }
-        components.into_iter().map(|c| normalize_backslashes(&c)).collect()
+        components
+            .into_iter()
+            .map(|c| normalize_backslashes(&c))
+            .collect()
     }
 
     // common/uri/fileUri.ts:292
@@ -312,11 +361,18 @@ impl Uri {
     // common/uri/fileUri.ts:304
     pub(crate) fn normalized_path(&self) -> &'static str {
         let f = self.file_ref();
-        self.0.get().normalized_path.get_or_init(|| normalize_backslashes(&f.file_path))
+        self.0
+            .get()
+            .normalized_path
+            .get_or_init(|| normalize_backslashes(&f.file_path))
     }
 }
 
 // common/uri/baseUri.ts:205
 fn normalize_backslashes(path: &str) -> String {
-    if path.contains('\\') { path.replace('\\', "/") } else { path.to_string() }
+    if path.contains('\\') {
+        path.replace('\\', "/")
+    } else {
+        path.to_string()
+    }
 }

@@ -30,7 +30,10 @@ pub struct DiagnosticSink {
 impl DiagnosticSink {
     // common/diagnosticSink.ts:47
     pub fn new(diagnostics: Option<Vec<P<Diagnostic>>>) -> DiagnosticSink {
-        DiagnosticSink { diagnostic_list: RefCell::new(diagnostics.unwrap_or_default()), diagnostic_map: Default::default() }
+        DiagnosticSink {
+            diagnostic_list: RefCell::new(diagnostics.unwrap_or_default()),
+            diagnostic_map: Default::default(),
+        }
     }
 
     // common/diagnosticSink.ts:52
@@ -52,11 +55,20 @@ impl DiagnosticSink {
 
     // common/diagnosticSink.ts:67
     pub fn add_information(&self, message: String, range: Range) -> P<Diagnostic> {
-        self.add_diagnostic(Diagnostic::new(DiagnosticCategory::Information, message, range))
+        self.add_diagnostic(Diagnostic::new(
+            DiagnosticCategory::Information,
+            message,
+            range,
+        ))
     }
 
     // common/diagnosticSink.ts:71
-    pub fn add_unused_code(&self, message: String, range: Range, action: Option<DiagnosticAction>) -> P<Diagnostic> {
+    pub fn add_unused_code(
+        &self,
+        message: String,
+        range: Range,
+        action: Option<DiagnosticAction>,
+    ) -> P<Diagnostic> {
         let diag = Diagnostic::new(DiagnosticCategory::UnusedCode, message, range);
         if let Some(action) = action {
             diag.add_action(action);
@@ -65,7 +77,12 @@ impl DiagnosticSink {
     }
 
     // common/diagnosticSink.ts:79
-    pub fn add_unreachable_code(&self, message: String, range: Range, action: Option<DiagnosticAction>) -> P<Diagnostic> {
+    pub fn add_unreachable_code(
+        &self,
+        message: String,
+        range: Range,
+        action: Option<DiagnosticAction>,
+    ) -> P<Diagnostic> {
         let diag = Diagnostic::new(DiagnosticCategory::UnreachableCode, message, range);
         if let Some(action) = action {
             diag.add_action(action);
@@ -74,7 +91,12 @@ impl DiagnosticSink {
     }
 
     // common/diagnosticSink.ts:87
-    pub fn add_deprecated(&self, message: String, range: Range, action: Option<DiagnosticAction>) -> P<Diagnostic> {
+    pub fn add_deprecated(
+        &self,
+        message: String,
+        range: Range,
+        action: Option<DiagnosticAction>,
+    ) -> P<Diagnostic> {
         let diag = Diagnostic::new(DiagnosticCategory::Deprecated, message, range);
         if let Some(action) = action {
             diag.add_action(action);
@@ -103,11 +125,18 @@ impl DiagnosticSink {
 
     // common/diagnosticSink.ts:109
     pub fn add_diagnostics(&self, diags_to_add: &[P<Diagnostic>]) {
-        self.diagnostic_list.borrow_mut().extend_from_slice(diags_to_add);
+        self.diagnostic_list
+            .borrow_mut()
+            .extend_from_slice(diags_to_add);
     }
 
     fn filter_category(&self, category: DiagnosticCategory) -> Vec<P<Diagnostic>> {
-        self.diagnostic_list.borrow().iter().copied().filter(|diag| diag.category == category).collect()
+        self.diagnostic_list
+            .borrow()
+            .iter()
+            .copied()
+            .filter(|diag| diag.category == category)
+            .collect()
     }
 
     // common/diagnosticSink.ts:113
@@ -162,7 +191,10 @@ impl TextRangeDiagnosticSink {
         lines: &'static TextRangeCollection<TextRange>,
         diagnostics: Option<Vec<P<Diagnostic>>>,
     ) -> TextRangeDiagnosticSink {
-        TextRangeDiagnosticSink { sink: DiagnosticSink::new(diagnostics), lines }
+        TextRangeDiagnosticSink {
+            sink: DiagnosticSink::new(diagnostics),
+            lines,
+        }
     }
 
     fn to_range(&self, range: TextRange) -> Range {
@@ -170,7 +202,12 @@ impl TextRangeDiagnosticSink {
     }
 
     // common/diagnosticSink.ts:148
-    pub fn add_diagnostic_with_text_range(&self, level: DiagnosticLevel, message: String, range: TextRange) -> P<Diagnostic> {
+    pub fn add_diagnostic_with_text_range(
+        &self,
+        level: DiagnosticLevel,
+        message: String,
+        range: TextRange,
+    ) -> P<Diagnostic> {
         let position_range = self.to_range(range);
         match level {
             DiagnosticLevel::Error => self.add_error(message, position_range),
@@ -217,7 +254,16 @@ mod tests {
     use crate::common::text_range::Position;
 
     fn range(line: i32, start: i32, end: i32) -> Range {
-        Range { start: Position { line, character: start }, end: Position { line, character: end } }
+        Range {
+            start: Position {
+                line,
+                character: start,
+            },
+            end: Position {
+                line,
+                character: end,
+            },
+        }
     }
 
     #[test]
@@ -235,12 +281,26 @@ mod tests {
 
     #[test]
     fn text_range_sink_converts_offsets() {
-        let lines: &'static TextRangeCollection<TextRange> = Box::leak(Box::new(TextRangeCollection::new(vec![
-            TextRange { start: 0, length: 4 },
-            TextRange { start: 4, length: 3 },
-        ])));
+        let lines: &'static TextRangeCollection<TextRange> =
+            Box::leak(Box::new(TextRangeCollection::new(vec![
+                TextRange {
+                    start: 0,
+                    length: 4,
+                },
+                TextRange {
+                    start: 4,
+                    length: 3,
+                },
+            ])));
         let sink = TextRangeDiagnosticSink::new(lines, None);
-        let diag = sink.add_diagnostic_with_text_range(DiagnosticLevel::Error, "x".to_string(), TextRange { start: 5, length: 1 });
+        let diag = sink.add_diagnostic_with_text_range(
+            DiagnosticLevel::Error,
+            "x".to_string(),
+            TextRange {
+                start: 5,
+                length: 1,
+            },
+        );
         assert_eq!(diag.range, range(1, 1, 2));
     }
 }

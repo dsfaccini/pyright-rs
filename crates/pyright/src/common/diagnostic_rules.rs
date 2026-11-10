@@ -251,13 +251,19 @@ impl DiagnosticRule {
             DiagnosticRule::reportConstantRedefinition => "reportConstantRedefinition",
             DiagnosticRule::reportDeprecated => "reportDeprecated",
             DiagnosticRule::reportIncompatibleMethodOverride => "reportIncompatibleMethodOverride",
-            DiagnosticRule::reportIncompatibleVariableOverride => "reportIncompatibleVariableOverride",
+            DiagnosticRule::reportIncompatibleVariableOverride => {
+                "reportIncompatibleVariableOverride"
+            }
             DiagnosticRule::reportInconsistentConstructor => "reportInconsistentConstructor",
             DiagnosticRule::reportOverlappingOverload => "reportOverlappingOverload",
             DiagnosticRule::reportPossiblyUnboundVariable => "reportPossiblyUnboundVariable",
             DiagnosticRule::reportMissingSuperCall => "reportMissingSuperCall",
-            DiagnosticRule::reportUninitializedInstanceVariable => "reportUninitializedInstanceVariable",
-            DiagnosticRule::reportInvalidStringEscapeSequence => "reportInvalidStringEscapeSequence",
+            DiagnosticRule::reportUninitializedInstanceVariable => {
+                "reportUninitializedInstanceVariable"
+            }
+            DiagnosticRule::reportInvalidStringEscapeSequence => {
+                "reportInvalidStringEscapeSequence"
+            }
             DiagnosticRule::reportUnknownParameterType => "reportUnknownParameterType",
             DiagnosticRule::reportUnknownArgumentType => "reportUnknownArgumentType",
             DiagnosticRule::reportUnknownLambdaType => "reportUnknownLambdaType",
@@ -273,7 +279,9 @@ impl DiagnosticRule {
             DiagnosticRule::reportUnnecessaryContains => "reportUnnecessaryContains",
             DiagnosticRule::reportAssertAlwaysTrue => "reportAssertAlwaysTrue",
             DiagnosticRule::reportSelfClsParameterName => "reportSelfClsParameterName",
-            DiagnosticRule::reportImplicitStringConcatenation => "reportImplicitStringConcatenation",
+            DiagnosticRule::reportImplicitStringConcatenation => {
+                "reportImplicitStringConcatenation"
+            }
             DiagnosticRule::reportUndefinedVariable => "reportUndefinedVariable",
             DiagnosticRule::reportUnboundVariable => "reportUnboundVariable",
             DiagnosticRule::reportUnhashable => "reportUnhashable",
@@ -284,7 +292,9 @@ impl DiagnosticRule {
             DiagnosticRule::reportUnusedCoroutine => "reportUnusedCoroutine",
             DiagnosticRule::reportUnusedExcept => "reportUnusedExcept",
             DiagnosticRule::reportUnusedExpression => "reportUnusedExpression",
-            DiagnosticRule::reportUnnecessaryTypeIgnoreComment => "reportUnnecessaryTypeIgnoreComment",
+            DiagnosticRule::reportUnnecessaryTypeIgnoreComment => {
+                "reportUnnecessaryTypeIgnoreComment"
+            }
             DiagnosticRule::reportMatchNotExhaustive => "reportMatchNotExhaustive",
             DiagnosticRule::reportUnreachable => "reportUnreachable",
             DiagnosticRule::reportImplicitOverride => "reportImplicitOverride",
@@ -292,7 +302,9 @@ impl DiagnosticRule {
     }
 
     pub fn from_name(value: &str) -> Option<DiagnosticRule> {
-        DiagnosticRule::ALL.into_iter().find(|rule| rule.as_str() == value)
+        DiagnosticRule::ALL
+            .into_iter()
+            .find(|rule| rule.as_str() == value)
     }
 }
 

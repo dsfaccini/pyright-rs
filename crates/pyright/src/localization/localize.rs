@@ -4,6 +4,7 @@
 //! from the spec). A locale that would select another language fails loudly:
 //! see `load_strings_for_locale`.
 
+use jsrt::JsStr;
 use std::cell::RefCell;
 
 use serde_json::Value;
@@ -28,7 +29,7 @@ impl ParameterizedString {
     pub fn format(&self, params: &[(&str, &str)]) -> String {
         let mut str = self.format_string.clone();
         for (key, value) in params {
-            str = jsrt::infra_shims::replace_all_literal(&str, &format!("{{{key}}}"), value);
+            str = str.js_replace_all(&format!("{{{key}}}"), value);
         }
         str
     }
@@ -43,8 +44,10 @@ impl ParameterizedString {
 const DEFAULT_LOCALE: &str = "en-us";
 
 /// Keys of pyright's `stringMapsByLocale`.
-const KNOWN_LOCALES: [&str; 16] =
-    ["cs", "de", "en-us", "en", "es", "fr", "it", "ja", "ko", "pl", "pt-br", "qps-ploc", "ru", "tr", "zh-cn", "zh-tw"];
+const KNOWN_LOCALES: [&str; 16] = [
+    "cs", "de", "en-us", "en", "es", "fr", "it", "ja", "ko", "pl", "pt-br", "qps-ploc", "ru", "tr",
+    "zh-cn", "zh-tw",
+];
 
 const EN_US_STRINGS: &str = include_str!("package.nls.en-us.json");
 
@@ -71,7 +74,9 @@ fn get_raw_string_default(key: &str) -> String {
         // The localized map is always empty or English: see `initialize`.
         match get_raw_string_from_map(state.default_strings.as_ref().unwrap(), &key_parts) {
             Some(str) => str,
-            None => crate::common::debug::fail(Some(&format!("Missing localized string for key \"{key}\""))),
+            None => crate::common::debug::fail(Some(&format!(
+                "Missing localized string for key \"{key}\""
+            ))),
         }
     })
 }
@@ -93,7 +98,10 @@ pub fn get_raw_string_from_map(map: &Value, key_parts: &[&str]) -> Option<String
 
     match cur_obj {
         Value::String(s) => Some(s.clone()),
-        other => other.get("message").and_then(Value::as_str).map(str::to_string),
+        other => other
+            .get("message")
+            .and_then(Value::as_str)
+            .map(str::to_string),
     }
 }
 
@@ -108,7 +116,8 @@ fn is_truthy(value: &Value) -> bool {
 
 // localization/localize.ts:117
 fn initialize(state: &mut LocalizeState) {
-    state.default_strings = Some(serde_json::from_str(EN_US_STRINGS).expect("package.nls.en-us.json"));
+    state.default_strings =
+        Some(serde_json::from_str(EN_US_STRINGS).expect("package.nls.en-us.json"));
     let current_locale = get_locale_from_env(state.locale_override.as_deref());
     load_strings_for_locale(&current_locale);
     state.initialized = true;
@@ -119,7 +128,7 @@ pub fn set_locale_override(locale: &str) {
     STATE.with(|state| {
         let mut state = state.borrow_mut();
         state.initialized = false;
-        state.locale_override = Some(jsrt::infra_shims::to_lower_case(locale));
+        state.locale_override = Some(locale.js_to_lower_case());
     });
 }
 
@@ -133,7 +142,9 @@ pub fn get_locale_from_env(locale_override: Option<&str>) -> String {
         if !vscode_config_string.is_empty() {
             if let Ok(config) = serde_json::from_str::<Value>(&vscode_config_string) {
                 return match config.get("locale") {
-                    Some(locale) if is_truthy(locale) => locale.as_str().unwrap_or(DEFAULT_LOCALE).to_string(),
+                    Some(locale) if is_truthy(locale) => {
+                        locale.as_str().unwrap_or(DEFAULT_LOCALE).to_string()
+                    }
                     _ => DEFAULT_LOCALE.to_string(),
                 };
             }
@@ -141,7 +152,10 @@ pub fn get_locale_from_env(locale_override: Option<&str>) -> String {
     }
 
     let env = |name: &str| std::env::var(name).ok().filter(|v| !v.is_empty());
-    let locale_string = env("LC_ALL").or_else(|| env("LC_MESSAGES")).or_else(|| env("LANG")).or_else(|| env("LANGUAGE"));
+    let locale_string = env("LC_ALL")
+        .or_else(|| env("LC_MESSAGES"))
+        .or_else(|| env("LANG"))
+        .or_else(|| env("LANGUAGE"));
     if let Some(locale_string) = locale_string {
         let first = locale_string.split('.').next().unwrap_or("");
         if !first.is_empty() {
@@ -162,13 +176,19 @@ pub fn load_strings_for_locale(locale: &str) -> Option<&'static str> {
 
     let found = KNOWN_LOCALES.iter().find(|l| **l == locale).or_else(|| {
         let first = locale.split('-').next().unwrap_or("");
-        if first.is_empty() { None } else { KNOWN_LOCALES.iter().find(|l| **l == first) }
+        if first.is_empty() {
+            None
+        } else {
+            KNOWN_LOCALES.iter().find(|l| **l == first)
+        }
     });
 
     match found {
         None => None,
         Some(&"en") | Some(&"en-us") => None,
-        Some(other) => panic!("pyright-rs ships English messages only, and locale \"{locale}\" selects \"{other}\""),
+        Some(other) => panic!(
+            "pyright-rs ships English messages only, and locale \"{locale}\" selects \"{other}\""
+        ),
     }
 }
 
@@ -409,7 +429,9 @@ pub mod Localizer {
         // localization/localize.ts:282
         /// Params: classType, name.
         pub fn base_class_variable_type_incompatible() -> ParameterizedString {
-            ParameterizedString::new(get_raw_string("Diagnostic.baseClassVariableTypeIncompatible"))
+            ParameterizedString::new(get_raw_string(
+                "Diagnostic.baseClassVariableTypeIncompatible",
+            ))
         }
 
         // localization/localize.ts:286
@@ -740,7 +762,9 @@ pub mod Localizer {
         // localization/localize.ts:396
         /// Params: type.
         pub fn data_class_transform_field_specifier() -> ParameterizedString {
-            ParameterizedString::new(get_raw_string("Diagnostic.dataClassTransformFieldSpecifier"))
+            ParameterizedString::new(get_raw_string(
+                "Diagnostic.dataClassTransformFieldSpecifier",
+            ))
         }
 
         // localization/localize.ts:398
@@ -751,7 +775,9 @@ pub mod Localizer {
         // localization/localize.ts:400
         /// Params: name.
         pub fn data_class_transform_unknown_argument() -> ParameterizedString {
-            ParameterizedString::new(get_raw_string("Diagnostic.dataClassTransformUnknownArgument"))
+            ParameterizedString::new(get_raw_string(
+                "Diagnostic.dataClassTransformUnknownArgument",
+            ))
         }
 
         // localization/localize.ts:402
@@ -762,7 +788,9 @@ pub mod Localizer {
         // localization/localize.ts:403
         /// Params: returnType.
         pub fn declared_return_type_partially_unknown() -> ParameterizedString {
-            ParameterizedString::new(get_raw_string("Diagnostic.declaredReturnTypePartiallyUnknown"))
+            ParameterizedString::new(get_raw_string(
+                "Diagnostic.declaredReturnTypePartiallyUnknown",
+            ))
         }
 
         // localization/localize.ts:407
@@ -1697,7 +1725,9 @@ pub mod Localizer {
         // localization/localize.ts:650
         /// Params: returnType.
         pub fn lambda_return_type_partially_unknown() -> ParameterizedString {
-            ParameterizedString::new(get_raw_string("Diagnostic.lambdaReturnTypePartiallyUnknown"))
+            ParameterizedString::new(get_raw_string(
+                "Diagnostic.lambdaReturnTypePartiallyUnknown",
+            ))
         }
 
         // localization/localize.ts:654
@@ -2181,7 +2211,9 @@ pub mod Localizer {
         // localization/localize.ts:788
         /// Params: name.
         pub fn overload_static_method_inconsistent() -> ParameterizedString {
-            ParameterizedString::new(get_raw_string("Diagnostic.overloadStaticMethodInconsistent"))
+            ParameterizedString::new(get_raw_string(
+                "Diagnostic.overloadStaticMethodInconsistent",
+            ))
         }
 
         // localization/localize.ts:790
@@ -2479,7 +2511,9 @@ pub mod Localizer {
         // localization/localize.ts:887
         /// Params: rule.
         pub fn pyright_comment_unknown_diagnostic_rule() -> ParameterizedString {
-            ParameterizedString::new(get_raw_string("Diagnostic.pyrightCommentUnknownDiagnosticRule"))
+            ParameterizedString::new(get_raw_string(
+                "Diagnostic.pyrightCommentUnknownDiagnosticRule",
+            ))
         }
 
         // localization/localize.ts:889
@@ -3029,19 +3063,25 @@ pub mod Localizer {
         // localization/localize.ts:1040
         /// Params: name.
         pub fn typed_dict_field_not_required_redefinition() -> ParameterizedString {
-            ParameterizedString::new(get_raw_string("Diagnostic.typedDictFieldNotRequiredRedefinition"))
+            ParameterizedString::new(get_raw_string(
+                "Diagnostic.typedDictFieldNotRequiredRedefinition",
+            ))
         }
 
         // localization/localize.ts:1042
         /// Params: name.
         pub fn typed_dict_field_read_only_redefinition() -> ParameterizedString {
-            ParameterizedString::new(get_raw_string("Diagnostic.typedDictFieldReadOnlyRedefinition"))
+            ParameterizedString::new(get_raw_string(
+                "Diagnostic.typedDictFieldReadOnlyRedefinition",
+            ))
         }
 
         // localization/localize.ts:1044
         /// Params: name.
         pub fn typed_dict_field_required_redefinition() -> ParameterizedString {
-            ParameterizedString::new(get_raw_string("Diagnostic.typedDictFieldRequiredRedefinition"))
+            ParameterizedString::new(get_raw_string(
+                "Diagnostic.typedDictFieldRequiredRedefinition",
+            ))
         }
 
         // localization/localize.ts:1046
@@ -3158,7 +3198,9 @@ pub mod Localizer {
         // localization/localize.ts:1081
         /// Params: leftType, rightType, expectedType, operator.
         pub fn type_not_support_binary_operator_bidirectional() -> ParameterizedString {
-            ParameterizedString::new(get_raw_string("Diagnostic.typeNotSupportBinaryOperatorBidirectional"))
+            ParameterizedString::new(get_raw_string(
+                "Diagnostic.typeNotSupportBinaryOperatorBidirectional",
+            ))
         }
 
         // localization/localize.ts:1085
@@ -3170,7 +3212,9 @@ pub mod Localizer {
         // localization/localize.ts:1089
         /// Params: type, expectedType, operator.
         pub fn type_not_support_unary_operator_bidirectional() -> ParameterizedString {
-            ParameterizedString::new(get_raw_string("Diagnostic.typeNotSupportUnaryOperatorBidirectional"))
+            ParameterizedString::new(get_raw_string(
+                "Diagnostic.typeNotSupportUnaryOperatorBidirectional",
+            ))
         }
 
         // localization/localize.ts:1093
@@ -3186,7 +3230,9 @@ pub mod Localizer {
         // localization/localize.ts:1095
         /// Params: name.
         pub fn type_parameter_existing_type_parameter() -> ParameterizedString {
-            ParameterizedString::new(get_raw_string("Diagnostic.typeParameterExistingTypeParameter"))
+            ParameterizedString::new(get_raw_string(
+                "Diagnostic.typeParameterExistingTypeParameter",
+            ))
         }
 
         // localization/localize.ts:1097
@@ -3357,7 +3403,9 @@ pub mod Localizer {
         // localization/localize.ts:1149
         /// Params: variadicName, typeVarName.
         pub fn type_var_with_default_follows_variadic() -> ParameterizedString {
-            ParameterizedString::new(get_raw_string("Diagnostic.typeVarWithDefaultFollowsVariadic"))
+            ParameterizedString::new(get_raw_string(
+                "Diagnostic.typeVarWithDefaultFollowsVariadic",
+            ))
         }
 
         // localization/localize.ts:1153
@@ -3744,7 +3792,6 @@ pub mod Localizer {
         pub fn zero_length_tuple_not_allowed() -> String {
             get_raw_string("Diagnostic.zeroLengthTupleNotAllowed")
         }
-
     }
 
     #[allow(non_snake_case)]
@@ -3812,7 +3859,9 @@ pub mod Localizer {
         // localization/localize.ts:1285
         /// Params: baseClass, subclass, type.
         pub fn base_class_incompatible_subclass() -> ParameterizedString {
-            ParameterizedString::new(get_raw_string("DiagnosticAddendum.baseClassIncompatibleSubclass"))
+            ParameterizedString::new(get_raw_string(
+                "DiagnosticAddendum.baseClassIncompatibleSubclass",
+            ))
         }
 
         // localization/localize.ts:1289
@@ -3858,13 +3907,17 @@ pub mod Localizer {
         // localization/localize.ts:1307
         /// Params: name, className.
         pub fn descriptor_access_binding_failed() -> ParameterizedString {
-            ParameterizedString::new(get_raw_string("DiagnosticAddendum.descriptorAccessBindingFailed"))
+            ParameterizedString::new(get_raw_string(
+                "DiagnosticAddendum.descriptorAccessBindingFailed",
+            ))
         }
 
         // localization/localize.ts:1311
         /// Params: name, className.
         pub fn descriptor_access_call_failed() -> ParameterizedString {
-            ParameterizedString::new(get_raw_string("DiagnosticAddendum.descriptorAccessCallFailed"))
+            ParameterizedString::new(get_raw_string(
+                "DiagnosticAddendum.descriptorAccessCallFailed",
+            ))
         }
 
         // localization/localize.ts:1315
@@ -3875,7 +3928,9 @@ pub mod Localizer {
         // localization/localize.ts:1316
         /// Params: name.
         pub fn function_param_default_missing() -> ParameterizedString {
-            ParameterizedString::new(get_raw_string("DiagnosticAddendum.functionParamDefaultMissing"))
+            ParameterizedString::new(get_raw_string(
+                "DiagnosticAddendum.functionParamDefaultMissing",
+            ))
         }
 
         // localization/localize.ts:1318
@@ -3887,13 +3942,17 @@ pub mod Localizer {
         // localization/localize.ts:1322
         /// Params: name.
         pub fn function_param_position_only() -> ParameterizedString {
-            ParameterizedString::new(get_raw_string("DiagnosticAddendum.functionParamPositionOnly"))
+            ParameterizedString::new(get_raw_string(
+                "DiagnosticAddendum.functionParamPositionOnly",
+            ))
         }
 
         // localization/localize.ts:1324
         /// Params: sourceType, destType.
         pub fn function_return_type_mismatch() -> ParameterizedString {
-            ParameterizedString::new(get_raw_string("DiagnosticAddendum.functionReturnTypeMismatch"))
+            ParameterizedString::new(get_raw_string(
+                "DiagnosticAddendum.functionReturnTypeMismatch",
+            ))
         }
 
         // localization/localize.ts:1328
@@ -3958,7 +4017,9 @@ pub mod Localizer {
         // localization/localize.ts:1345
         /// Params: type.
         pub fn isinstance_class_not_supported() -> ParameterizedString {
-            ParameterizedString::new(get_raw_string("DiagnosticAddendum.isinstanceClassNotSupported"))
+            ParameterizedString::new(get_raw_string(
+                "DiagnosticAddendum.isinstanceClassNotSupported",
+            ))
         }
 
         // localization/localize.ts:1347
@@ -4006,7 +4067,9 @@ pub mod Localizer {
         // localization/localize.ts:1363
         /// Params: sourceType, destType.
         pub fn literal_assignment_mismatch() -> ParameterizedString {
-            ParameterizedString::new(get_raw_string("DiagnosticAddendum.literalAssignmentMismatch"))
+            ParameterizedString::new(get_raw_string(
+                "DiagnosticAddendum.literalAssignmentMismatch",
+            ))
         }
 
         // localization/localize.ts:1367
@@ -4017,7 +4080,9 @@ pub mod Localizer {
         // localization/localize.ts:1368
         /// Params: type.
         pub fn match_is_not_exhaustive_type() -> ParameterizedString {
-            ParameterizedString::new(get_raw_string("DiagnosticAddendum.matchIsNotExhaustiveType"))
+            ParameterizedString::new(get_raw_string(
+                "DiagnosticAddendum.matchIsNotExhaustiveType",
+            ))
         }
 
         // localization/localize.ts:1370
@@ -4046,7 +4111,9 @@ pub mod Localizer {
         // localization/localize.ts:1381
         /// Params: name.
         pub fn member_is_class_var_in_protocol() -> ParameterizedString {
-            ParameterizedString::new(get_raw_string("DiagnosticAddendum.memberIsClassVarInProtocol"))
+            ParameterizedString::new(get_raw_string(
+                "DiagnosticAddendum.memberIsClassVarInProtocol",
+            ))
         }
 
         // localization/localize.ts:1383
@@ -4064,31 +4131,41 @@ pub mod Localizer {
         // localization/localize.ts:1387
         /// Params: name.
         pub fn member_is_not_class_var_in_class() -> ParameterizedString {
-            ParameterizedString::new(get_raw_string("DiagnosticAddendum.memberIsNotClassVarInClass"))
+            ParameterizedString::new(get_raw_string(
+                "DiagnosticAddendum.memberIsNotClassVarInClass",
+            ))
         }
 
         // localization/localize.ts:1389
         /// Params: name.
         pub fn member_is_not_class_var_in_protocol() -> ParameterizedString {
-            ParameterizedString::new(get_raw_string("DiagnosticAddendum.memberIsNotClassVarInProtocol"))
+            ParameterizedString::new(get_raw_string(
+                "DiagnosticAddendum.memberIsNotClassVarInProtocol",
+            ))
         }
 
         // localization/localize.ts:1391
         /// Params: name.
         pub fn member_is_not_read_only_in_protocol() -> ParameterizedString {
-            ParameterizedString::new(get_raw_string("DiagnosticAddendum.memberIsNotReadOnlyInProtocol"))
+            ParameterizedString::new(get_raw_string(
+                "DiagnosticAddendum.memberIsNotReadOnlyInProtocol",
+            ))
         }
 
         // localization/localize.ts:1393
         /// Params: name.
         pub fn member_is_read_only_in_protocol() -> ParameterizedString {
-            ParameterizedString::new(get_raw_string("DiagnosticAddendum.memberIsReadOnlyInProtocol"))
+            ParameterizedString::new(get_raw_string(
+                "DiagnosticAddendum.memberIsReadOnlyInProtocol",
+            ))
         }
 
         // localization/localize.ts:1395
         /// Params: name.
         pub fn member_is_writable_in_protocol() -> ParameterizedString {
-            ParameterizedString::new(get_raw_string("DiagnosticAddendum.memberIsWritableInProtocol"))
+            ParameterizedString::new(get_raw_string(
+                "DiagnosticAddendum.memberIsWritableInProtocol",
+            ))
         }
 
         // localization/localize.ts:1397
@@ -4139,7 +4216,9 @@ pub mod Localizer {
         // localization/localize.ts:1412
         /// Params: name.
         pub fn named_param_missing_in_source() -> ParameterizedString {
-            ParameterizedString::new(get_raw_string("DiagnosticAddendum.namedParamMissingInSource"))
+            ParameterizedString::new(get_raw_string(
+                "DiagnosticAddendum.namedParamMissingInSource",
+            ))
         }
 
         // localization/localize.ts:1414
@@ -4222,7 +4301,9 @@ pub mod Localizer {
         // localization/localize.ts:1437
         /// Params: overrideType, baseType.
         pub fn override_invariant_mismatch() -> ParameterizedString {
-            ParameterizedString::new(get_raw_string("DiagnosticAddendum.overrideInvariantMismatch"))
+            ParameterizedString::new(get_raw_string(
+                "DiagnosticAddendum.overrideInvariantMismatch",
+            ))
         }
 
         // localization/localize.ts:1441
@@ -4258,13 +4339,17 @@ pub mod Localizer {
         // localization/localize.ts:1447
         /// Params: name.
         pub fn override_param_keyword_no_default() -> ParameterizedString {
-            ParameterizedString::new(get_raw_string("DiagnosticAddendum.overrideParamKeywordNoDefault"))
+            ParameterizedString::new(get_raw_string(
+                "DiagnosticAddendum.overrideParamKeywordNoDefault",
+            ))
         }
 
         // localization/localize.ts:1449
         /// Params: name, baseType, overrideType.
         pub fn override_param_keyword_type() -> ParameterizedString {
-            ParameterizedString::new(get_raw_string("DiagnosticAddendum.overrideParamKeywordType"))
+            ParameterizedString::new(get_raw_string(
+                "DiagnosticAddendum.overrideParamKeywordType",
+            ))
         }
 
         // localization/localize.ts:1453
@@ -4282,13 +4367,17 @@ pub mod Localizer {
         // localization/localize.ts:1459
         /// Params: name.
         pub fn override_param_name_missing() -> ParameterizedString {
-            ParameterizedString::new(get_raw_string("DiagnosticAddendum.overrideParamNameMissing"))
+            ParameterizedString::new(get_raw_string(
+                "DiagnosticAddendum.overrideParamNameMissing",
+            ))
         }
 
         // localization/localize.ts:1461
         /// Params: index, baseName.
         pub fn override_param_name_position_only() -> ParameterizedString {
-            ParameterizedString::new(get_raw_string("DiagnosticAddendum.overrideParamNamePositionOnly"))
+            ParameterizedString::new(get_raw_string(
+                "DiagnosticAddendum.overrideParamNamePositionOnly",
+            ))
         }
 
         // localization/localize.ts:1465
@@ -4306,7 +4395,9 @@ pub mod Localizer {
         // localization/localize.ts:1471
         /// Params: baseCount, overrideCount.
         pub fn override_positional_param_count() -> ParameterizedString {
-            ParameterizedString::new(get_raw_string("DiagnosticAddendum.overridePositionalParamCount"))
+            ParameterizedString::new(get_raw_string(
+                "DiagnosticAddendum.overridePositionalParamCount",
+            ))
         }
 
         // localization/localize.ts:1475
@@ -4341,7 +4432,9 @@ pub mod Localizer {
         // localization/localize.ts:1488
         /// Params: module.
         pub fn private_import_from_py_typed_source() -> ParameterizedString {
-            ParameterizedString::new(get_raw_string("DiagnosticAddendum.privateImportFromPyTypedSource"))
+            ParameterizedString::new(get_raw_string(
+                "DiagnosticAddendum.privateImportFromPyTypedSource",
+            ))
         }
 
         // localization/localize.ts:1492
@@ -4352,7 +4445,9 @@ pub mod Localizer {
         // localization/localize.ts:1494
         /// Params: name.
         pub fn property_method_incompatible() -> ParameterizedString {
-            ParameterizedString::new(get_raw_string("DiagnosticAddendum.propertyMethodIncompatible"))
+            ParameterizedString::new(get_raw_string(
+                "DiagnosticAddendum.propertyMethodIncompatible",
+            ))
         }
 
         // localization/localize.ts:1496
@@ -4393,7 +4488,9 @@ pub mod Localizer {
         // localization/localize.ts:1510
         /// Params: sourceType, destType.
         pub fn protocol_source_is_not_concrete() -> ParameterizedString {
-            ParameterizedString::new(get_raw_string("DiagnosticAddendum.protocolSourceIsNotConcrete"))
+            ParameterizedString::new(get_raw_string(
+                "DiagnosticAddendum.protocolSourceIsNotConcrete",
+            ))
         }
 
         // localization/localize.ts:1514
@@ -4463,13 +4560,17 @@ pub mod Localizer {
         // localization/localize.ts:1530
         /// Params: expected.
         pub fn tuple_size_indeterminate_src() -> ParameterizedString {
-            ParameterizedString::new(get_raw_string("DiagnosticAddendum.tupleSizeIndeterminateSrc"))
+            ParameterizedString::new(get_raw_string(
+                "DiagnosticAddendum.tupleSizeIndeterminateSrc",
+            ))
         }
 
         // localization/localize.ts:1532
         /// Params: expected.
         pub fn tuple_size_indeterminate_src_dest() -> ParameterizedString {
-            ParameterizedString::new(get_raw_string("DiagnosticAddendum.tupleSizeIndeterminateSrcDest"))
+            ParameterizedString::new(get_raw_string(
+                "DiagnosticAddendum.tupleSizeIndeterminateSrcDest",
+            ))
         }
 
         // localization/localize.ts:1536
@@ -4481,7 +4582,9 @@ pub mod Localizer {
         // localization/localize.ts:1540
         /// Params: expected, received.
         pub fn tuple_size_mismatch_indeterminate_dest() -> ParameterizedString {
-            ParameterizedString::new(get_raw_string("DiagnosticAddendum.tupleSizeMismatchIndeterminateDest"))
+            ParameterizedString::new(get_raw_string(
+                "DiagnosticAddendum.tupleSizeMismatchIndeterminateDest",
+            ))
         }
 
         // localization/localize.ts:1544
@@ -4521,13 +4624,17 @@ pub mod Localizer {
         // localization/localize.ts:1560
         /// Params: name, type.
         pub fn typed_dict_extra_field_not_allowed() -> ParameterizedString {
-            ParameterizedString::new(get_raw_string("DiagnosticAddendum.typedDictExtraFieldNotAllowed"))
+            ParameterizedString::new(get_raw_string(
+                "DiagnosticAddendum.typedDictExtraFieldNotAllowed",
+            ))
         }
 
         // localization/localize.ts:1564
         /// Params: name, type.
         pub fn typed_dict_extra_field_type_mismatch() -> ParameterizedString {
-            ParameterizedString::new(get_raw_string("DiagnosticAddendum.typedDictExtraFieldTypeMismatch"))
+            ParameterizedString::new(get_raw_string(
+                "DiagnosticAddendum.typedDictExtraFieldTypeMismatch",
+            ))
         }
 
         // localization/localize.ts:1568
@@ -4539,37 +4646,49 @@ pub mod Localizer {
         // localization/localize.ts:1572
         /// Params: name.
         pub fn typed_dict_closed_extra_not_allowed() -> ParameterizedString {
-            ParameterizedString::new(get_raw_string("DiagnosticAddendum.typedDictClosedExtraNotAllowed"))
+            ParameterizedString::new(get_raw_string(
+                "DiagnosticAddendum.typedDictClosedExtraNotAllowed",
+            ))
         }
 
         // localization/localize.ts:1576
         /// Params: name, type.
         pub fn typed_dict_closed_extra_type_mismatch() -> ParameterizedString {
-            ParameterizedString::new(get_raw_string("DiagnosticAddendum.typedDictClosedExtraTypeMismatch"))
+            ParameterizedString::new(get_raw_string(
+                "DiagnosticAddendum.typedDictClosedExtraTypeMismatch",
+            ))
         }
 
         // localization/localize.ts:1580
         /// Params: name.
         pub fn typed_dict_closed_field_not_read_only() -> ParameterizedString {
-            ParameterizedString::new(get_raw_string("DiagnosticAddendum.typedDictClosedFieldNotReadOnly"))
+            ParameterizedString::new(get_raw_string(
+                "DiagnosticAddendum.typedDictClosedFieldNotReadOnly",
+            ))
         }
 
         // localization/localize.ts:1584
         /// Params: name.
         pub fn typed_dict_closed_field_not_required() -> ParameterizedString {
-            ParameterizedString::new(get_raw_string("DiagnosticAddendum.typedDictClosedFieldNotRequired"))
+            ParameterizedString::new(get_raw_string(
+                "DiagnosticAddendum.typedDictClosedFieldNotRequired",
+            ))
         }
 
         // localization/localize.ts:1588
         /// Params: name, type.
         pub fn typed_dict_field_not_read_only() -> ParameterizedString {
-            ParameterizedString::new(get_raw_string("DiagnosticAddendum.typedDictFieldNotReadOnly"))
+            ParameterizedString::new(get_raw_string(
+                "DiagnosticAddendum.typedDictFieldNotReadOnly",
+            ))
         }
 
         // localization/localize.ts:1592
         /// Params: name, type.
         pub fn typed_dict_field_not_required() -> ParameterizedString {
-            ParameterizedString::new(get_raw_string("DiagnosticAddendum.typedDictFieldNotRequired"))
+            ParameterizedString::new(get_raw_string(
+                "DiagnosticAddendum.typedDictFieldNotRequired",
+            ))
         }
 
         // localization/localize.ts:1596
@@ -4581,7 +4700,9 @@ pub mod Localizer {
         // localization/localize.ts:1600
         /// Params: name, type.
         pub fn typed_dict_field_type_mismatch() -> ParameterizedString {
-            ParameterizedString::new(get_raw_string("DiagnosticAddendum.typedDictFieldTypeMismatch"))
+            ParameterizedString::new(get_raw_string(
+                "DiagnosticAddendum.typedDictFieldTypeMismatch",
+            ))
         }
 
         // localization/localize.ts:1604
@@ -4640,7 +4761,9 @@ pub mod Localizer {
         // localization/localize.ts:1625
         /// Params: name.
         pub fn type_var_default_out_of_scope() -> ParameterizedString {
-            ParameterizedString::new(get_raw_string("DiagnosticAddendum.typeVarDefaultOutOfScope"))
+            ParameterizedString::new(get_raw_string(
+                "DiagnosticAddendum.typeVarDefaultOutOfScope",
+            ))
         }
 
         // localization/localize.ts:1627
@@ -4680,7 +4803,9 @@ pub mod Localizer {
         // localization/localize.ts:1644
         /// Params: type.
         pub fn type_var_unnecessary_suggestion() -> ParameterizedString {
-            ParameterizedString::new(get_raw_string("DiagnosticAddendum.typeVarUnnecessarySuggestion"))
+            ParameterizedString::new(get_raw_string(
+                "DiagnosticAddendum.typeVarUnnecessarySuggestion",
+            ))
         }
 
         // localization/localize.ts:1646
@@ -4697,7 +4822,9 @@ pub mod Localizer {
         // localization/localize.ts:1649
         /// Params: name, classType.
         pub fn uninitialized_abstract_variable() -> ParameterizedString {
-            ParameterizedString::new(get_raw_string("DiagnosticAddendum.uninitializedAbstractVariable"))
+            ParameterizedString::new(get_raw_string(
+                "DiagnosticAddendum.uninitializedAbstractVariable",
+            ))
         }
 
         // localization/localize.ts:1653
@@ -4729,15 +4856,18 @@ pub mod Localizer {
         // localization/localize.ts:1661
         /// Params: typeVarName, className.
         pub fn variance_mismatch_for_class() -> ParameterizedString {
-            ParameterizedString::new(get_raw_string("DiagnosticAddendum.varianceMismatchForClass"))
+            ParameterizedString::new(get_raw_string(
+                "DiagnosticAddendum.varianceMismatchForClass",
+            ))
         }
 
         // localization/localize.ts:1665
         /// Params: typeVarName, typeAliasParam.
         pub fn variance_mismatch_for_type_alias() -> ParameterizedString {
-            ParameterizedString::new(get_raw_string("DiagnosticAddendum.varianceMismatchForTypeAlias"))
+            ParameterizedString::new(get_raw_string(
+                "DiagnosticAddendum.varianceMismatchForTypeAlias",
+            ))
         }
-
     }
 
     #[allow(non_snake_case)]
@@ -4759,7 +4889,6 @@ pub mod Localizer {
         pub fn workspace() -> String {
             get_raw_string("CallHierarchy.workspace")
         }
-
     }
 
     #[allow(non_snake_case)]
@@ -4803,7 +4932,6 @@ pub mod Localizer {
         pub fn organize_imports() -> String {
             get_raw_string("CodeAction.organizeImports")
         }
-
     }
 
     #[allow(non_snake_case)]
@@ -4820,7 +4948,6 @@ pub mod Localizer {
         pub fn index_value_detail() -> String {
             get_raw_string("Completion.indexValueDetail")
         }
-
     }
 
     #[allow(non_snake_case)]
@@ -4833,7 +4960,6 @@ pub mod Localizer {
         pub fn cannot_rename_non_user_code() -> ParameterizedString {
             ParameterizedString::new(get_raw_string("Rename.cannotRenameNonUserCode"))
         }
-
     }
 
     #[allow(non_snake_case)]
@@ -4845,7 +4971,6 @@ pub mod Localizer {
         pub fn long_operation() -> String {
             get_raw_string("Service.longOperation")
         }
-
     }
 }
 

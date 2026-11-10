@@ -129,7 +129,10 @@ impl Diagnostic {
 
     // common/diagnostic.ts:133
     pub fn add_action(&self, action: DiagnosticAction) {
-        self.actions.borrow_mut().get_or_insert_with(Vec::new).push(action);
+        self.actions
+            .borrow_mut()
+            .get_or_insert_with(Vec::new)
+            .push(action);
     }
 
     // common/diagnostic.ts:149
@@ -148,8 +151,19 @@ impl Diagnostic {
     }
 
     // common/diagnostic.ts:161
-    pub fn add_related_info(&self, message: String, file_uri: Uri, range: Range, priority: TaskListPriority) {
-        self.related_info.borrow_mut().push(DiagnosticRelatedInfo { uri: file_uri, message, range, priority });
+    pub fn add_related_info(
+        &self,
+        message: String,
+        file_uri: Uri,
+        range: Range,
+        priority: TaskListPriority,
+    ) {
+        self.related_info.borrow_mut().push(DiagnosticRelatedInfo {
+            uri: file_uri,
+            message,
+            range,
+            priority,
+        });
     }
 
     // common/diagnostic.ts:165
@@ -210,7 +224,9 @@ impl DiagnosticAddendum {
     // common/diagnostic.ts:218
     pub fn create_addendum(&self) -> P<DiagnosticAddendum> {
         let new_addendum = DiagnosticAddendum::new();
-        new_addendum.nest_level.set(Some(self.nest_level.get().unwrap_or(0) + 1));
+        new_addendum
+            .nest_level
+            .set(Some(self.nest_level.get().unwrap_or(0) + 1));
         self.add_addendum(new_addendum);
         new_addendum
     }
@@ -282,7 +298,10 @@ impl DiagnosticAddendum {
             .collect();
 
         if child_ranges.len() > 1 {
-            return Some(TextRange { start: 0, length: 0 });
+            return Some(TextRange {
+                start: 0,
+                length: 0,
+            });
         }
 
         if child_ranges.len() == 1 {
@@ -308,7 +327,12 @@ impl DiagnosticAddendum {
     }
 
     // common/diagnostic.ts:313
-    fn get_lines_recursive(&self, max_depth: i32, max_line_count: usize, recursion_count: i32) -> Vec<String> {
+    fn get_lines_recursive(
+        &self,
+        max_depth: i32,
+        max_line_count: usize,
+        recursion_count: i32,
+    ) -> Vec<String> {
         if max_depth <= 0 || recursion_count > MAX_RECURSION_COUNT {
             return Vec::new();
         }
@@ -316,8 +340,16 @@ impl DiagnosticAddendum {
         let messages = self.get_messages();
         let mut child_lines: Vec<String> = Vec::new();
         for addendum in self.get_children() {
-            let max_depth_remaining = if !messages.is_empty() { max_depth - 1 } else { max_depth };
-            child_lines.extend(addendum.get_lines_recursive(max_depth_remaining, max_line_count, recursion_count + 1));
+            let max_depth_remaining = if !messages.is_empty() {
+                max_depth - 1
+            } else {
+                max_depth
+            };
+            child_lines.extend(addendum.get_lines_recursive(
+                max_depth_remaining,
+                max_line_count,
+                recursion_count + 1,
+            ));
 
             if child_lines.len() >= max_line_count {
                 child_lines.truncate(max_line_count);
@@ -326,7 +358,11 @@ impl DiagnosticAddendum {
         }
 
         let extra_space = if !messages.is_empty() { "  " } else { "" };
-        messages.into_iter().chain(child_lines).map(|line| format!("{extra_space}{line}")).collect()
+        messages
+            .into_iter()
+            .chain(child_lines)
+            .map(|line| format!("{extra_space}{line}"))
+            .collect()
     }
 }
 
@@ -341,14 +377,23 @@ mod tests {
         child.add_message("first".to_string());
         let grandchild = child.create_addendum();
         grandchild.add_message("second".to_string());
-        assert_eq!(root.get_string(DEFAULT_MAX_DIAGNOSTIC_DEPTH, DEFAULT_MAX_DIAGNOSTIC_LINE_COUNT), "\n  first\n    second");
+        assert_eq!(
+            root.get_string(
+                DEFAULT_MAX_DIAGNOSTIC_DEPTH,
+                DEFAULT_MAX_DIAGNOSTIC_LINE_COUNT
+            ),
+            "\n  first\n    second"
+        );
         assert_eq!(grandchild.get_nest_level(), 2);
 
         let wide = DiagnosticAddendum::new();
         for i in 0..10 {
             wide.add_message(format!("m{i}"));
         }
-        let text = wide.get_string(DEFAULT_MAX_DIAGNOSTIC_DEPTH, DEFAULT_MAX_DIAGNOSTIC_LINE_COUNT);
+        let text = wide.get_string(
+            DEFAULT_MAX_DIAGNOSTIC_DEPTH,
+            DEFAULT_MAX_DIAGNOSTIC_LINE_COUNT,
+        );
         assert!(text.ends_with("  m7\n  ..."));
     }
 
@@ -356,9 +401,21 @@ mod tests {
     fn effective_range() {
         let root = DiagnosticAddendum::new();
         assert_eq!(root.get_effective_text_range(), None);
-        root.create_addendum().add_text_range(TextRange { start: 3, length: 2 });
-        assert_eq!(root.get_effective_text_range(), Some(TextRange { start: 3, length: 2 }));
-        root.create_addendum().add_text_range(TextRange { start: 9, length: 2 });
+        root.create_addendum().add_text_range(TextRange {
+            start: 3,
+            length: 2,
+        });
+        assert_eq!(
+            root.get_effective_text_range(),
+            Some(TextRange {
+                start: 3,
+                length: 2
+            })
+        );
+        root.create_addendum().add_text_range(TextRange {
+            start: 9,
+            length: 2,
+        });
         assert_eq!(root.get_effective_text_range(), None);
     }
 }
