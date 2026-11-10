@@ -2952,7 +2952,7 @@ pub fn convert_to_instance(type_: P<Type>, include_subclasses: bool) -> P<Type> 
         // Cache the converted value for next time.
         let mut cached = type_.cached.borrow_mut();
         if cached.is_none() {
-            *cached = Some(Box::default());
+            *cached = Some(Default::default());
         }
         cached.as_mut().unwrap().instance_type = Some(result);
     }
@@ -2997,7 +2997,7 @@ pub fn convert_to_instantiable(type_: P<Type>, include_subclasses: bool) -> P<Ty
         // Cache the converted value for next time.
         let mut cached = type_.cached.borrow_mut();
         if cached.is_none() {
-            *cached = Some(Box::default());
+            *cached = Some(Default::default());
         }
         cached.as_mut().unwrap().instantiable_type = Some(result);
     }
@@ -3715,7 +3715,7 @@ pub fn requires_specialization(
     if can_use_cache {
         let mut cached = type_.cached.borrow_mut();
         if cached.is_none() {
-            *cached = Some(Box::default());
+            *cached = Some(Default::default());
         }
         cached.as_mut().unwrap().requires_specialization = Some(result);
     }

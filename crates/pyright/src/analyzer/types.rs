@@ -22,6 +22,7 @@ use jsrt::{JsBigInt, JsMap, JsSet, NumberValue, P, flag_ops};
 use std::cell::{Cell, RefCell, RefMut};
 use std::ops::Deref;
 use std::rc::Rc;
+use jsrt::OptionRefCell;
 
 // analyzer/types.ts:17
 #[repr(i32)]
@@ -193,13 +194,13 @@ pub struct TypeBaseProps {
 pub struct Type {
     pub category: TypeCategory,
     pub flags: Cell<TypeFlags>,
-    pub props: RefCell<Option<Box<TypeBaseProps>>>,
-    pub cached: RefCell<Option<Box<CachedTypeInfo>>>,
+    pub props: OptionRefCell<TypeBaseProps>,
+    pub cached: OptionRefCell<CachedTypeInfo>,
     // Private: reach details through typed handles and `d()`; create through the create functions.
     d: TypeDetails,
 }
 // Every type pays for its largest details variant; rare records are boxed (PLAN.md step 6).
-const _: () = assert!(size_of::<Type>() <= 144);
+const _: () = assert!(size_of::<Type>() <= 128);
 
 // analyzer/types.ts: one variant per `category` value.
 enum TypeDetails {
@@ -238,7 +239,7 @@ impl TypeBase {
     // analyzer/types.ts:229
     pub fn add_props(type_: P<Type>) -> RefMut<'static, TypeBaseProps> {
         RefMut::map(type_.get().props.borrow_mut(), |props| {
-            &mut **props.get_or_insert_with(Default::default)
+            props.get_or_insert_with(Default::default)
         })
     }
 
@@ -317,7 +318,7 @@ impl TypeBase {
             category: type_.category,
             flags: type_.flags.clone(),
             props: type_.props.clone(),
-            cached: RefCell::new(None),
+            cached: OptionRefCell::new(),
             d,
         })
     }
@@ -551,8 +552,8 @@ pub mod unbound_type {
         pub(crate) static INSTANCE: UnboundType = UnboundType(P::new_eval(Type {
             category: TypeCategory::Unbound,
             flags: Cell::new(TypeFlags::Instantiable | TypeFlags::Instance),
-            props: RefCell::new(None),
-            cached: RefCell::new(None),
+            props: OptionRefCell::new(),
+            cached: OptionRefCell::new(),
             d: TypeDetails::Unbound(UnboundTypeDetails {}),
         }));
     }
@@ -614,8 +615,8 @@ impl UnknownType {
         UnknownType(P::new_eval(Type {
             category: TypeCategory::Unknown,
             flags: Cell::new(TypeFlags::Instantiable | TypeFlags::Instance),
-            props: RefCell::new(None),
-            cached: RefCell::new(None),
+            props: OptionRefCell::new(),
+            cached: OptionRefCell::new(),
             d: TypeDetails::Unknown(UnknownTypeDetails {
                 priv_: UnknownDetailsPriv {
                     is_incomplete,
@@ -650,8 +651,8 @@ pub mod unknown_type {
         pub(crate) static INSTANCE: UnknownType = UnknownType(P::new_eval(Type {
             category: TypeCategory::Unknown,
             flags: Cell::new(TypeFlags::Instantiable | TypeFlags::Instance),
-            props: RefCell::new(None),
-            cached: RefCell::new(None),
+            props: OptionRefCell::new(),
+            cached: OptionRefCell::new(),
             d: TypeDetails::Unknown(UnknownTypeDetails {
                 priv_: UnknownDetailsPriv {
                     is_incomplete: false,
@@ -666,8 +667,8 @@ pub mod unknown_type {
         pub(crate) static INCOMPLETE_INSTANCE: UnknownType = UnknownType(P::new_eval(Type {
             category: TypeCategory::Unknown,
             flags: Cell::new(TypeFlags::Instantiable | TypeFlags::Instance),
-            props: RefCell::new(None),
-            cached: RefCell::new(None),
+            props: OptionRefCell::new(),
+            cached: OptionRefCell::new(),
             d: TypeDetails::Unknown(UnknownTypeDetails {
                 priv_: UnknownDetailsPriv {
                     is_incomplete: true,
@@ -734,8 +735,8 @@ impl ModuleType {
         ModuleType(P::new_eval(Type {
             category: TypeCategory::Module,
             flags: Cell::new(TypeFlags::Instantiable),
-            props: RefCell::new(None),
-            cached: RefCell::new(None),
+            props: OptionRefCell::new(),
+            cached: OptionRefCell::new(),
             d: TypeDetails::Module(ModuleTypeDetails {
                 priv_: RefCell::new(ModuleDetailsPriv {
                     fields: symbol_table.unwrap_or_else(SymbolTable::new),
@@ -1049,8 +1050,8 @@ impl ClassType {
         ClassType(P::new_eval(Type {
             category: TypeCategory::Class,
             flags: Cell::new(TypeFlags::Instantiable),
-            props: RefCell::new(None),
-            cached: RefCell::new(None),
+            props: OptionRefCell::new(),
+            cached: OptionRefCell::new(),
             d: TypeDetails::Class(ClassTypeDetails {
                 shared: Cell::new(P::new_eval(ClassDetailsShared {
                     name: name.to_string(),
@@ -2546,8 +2547,8 @@ impl FunctionType {
         FunctionType(P::new_eval(Type {
             category: TypeCategory::Function,
             flags: Cell::new(type_flags),
-            props: RefCell::new(None),
-            cached: RefCell::new(None),
+            props: OptionRefCell::new(),
+            cached: OptionRefCell::new(),
             d: TypeDetails::Function(FunctionTypeDetails {
                 shared: Cell::new(P::new_eval(FunctionDetailsShared {
                     name: name.to_string(),
@@ -3593,8 +3594,8 @@ impl OverloadedType {
         let new_type = OverloadedType(P::new_eval(Type {
             category: TypeCategory::Overloaded,
             flags: Cell::new(TypeFlags::Instance),
-            props: RefCell::new(None),
-            cached: RefCell::new(None),
+            props: OptionRefCell::new(),
+            cached: OptionRefCell::new(),
             d: TypeDetails::Overloaded(OverloadedTypeDetails {
                 priv_: RefCell::new(OverloadedDetailsPriv {
                     _overloads: Vec::new(),
@@ -3710,8 +3711,8 @@ pub mod never_type {
         pub(crate) static NEVER_INSTANCE: NeverType = NeverType(P::new_eval(Type {
             category: TypeCategory::Never,
             flags: Cell::new(TypeFlags::Instance | TypeFlags::Instantiable),
-            props: RefCell::new(None),
-            cached: RefCell::new(None),
+            props: OptionRefCell::new(),
+            cached: OptionRefCell::new(),
             d: TypeDetails::Never(NeverTypeDetails {
                 priv_: NeverDetailsPriv { is_no_return: false },
             }),
@@ -3723,8 +3724,8 @@ pub mod never_type {
         pub(crate) static NO_RETURN_INSTANCE: NeverType = NeverType(P::new_eval(Type {
             category: TypeCategory::Never,
             flags: Cell::new(TypeFlags::Instance | TypeFlags::Instantiable),
-            props: RefCell::new(None),
-            cached: RefCell::new(None),
+            props: OptionRefCell::new(),
+            cached: OptionRefCell::new(),
             d: TypeDetails::Never(NeverTypeDetails {
                 priv_: NeverDetailsPriv { is_no_return: true },
             }),
@@ -3797,8 +3798,8 @@ pub mod any_type {
         pub(crate) static ANY_INSTANCE_SPECIAL_FORM: AnyType = AnyType(P::new_eval(Type {
             category: TypeCategory::Any,
             flags: Cell::new(TypeFlags::Instance | TypeFlags::Instantiable),
-            props: RefCell::new(None),
-            cached: RefCell::new(None),
+            props: OptionRefCell::new(),
+            cached: OptionRefCell::new(),
             d: TypeDetails::Any(AnyTypeDetails {
                 priv_: AnyDetailsPriv { is_ellipsis: false },
             }),
@@ -3810,8 +3811,8 @@ pub mod any_type {
         pub(crate) static ANY_INSTANCE: AnyType = AnyType(P::new_eval(Type {
             category: TypeCategory::Any,
             flags: Cell::new(TypeFlags::Instance | TypeFlags::Instantiable),
-            props: RefCell::new(None),
-            cached: RefCell::new(None),
+            props: OptionRefCell::new(),
+            cached: OptionRefCell::new(),
             d: TypeDetails::Any(AnyTypeDetails {
                 priv_: AnyDetailsPriv { is_ellipsis: false },
             }),
@@ -3823,8 +3824,8 @@ pub mod any_type {
         pub(crate) static ELLIPSIS_INSTANCE: AnyType = AnyType(P::new_eval(Type {
             category: TypeCategory::Any,
             flags: Cell::new(TypeFlags::Instance | TypeFlags::Instantiable),
-            props: RefCell::new(None),
-            cached: RefCell::new(None),
+            props: OptionRefCell::new(),
+            cached: OptionRefCell::new(),
             d: TypeDetails::Any(AnyTypeDetails {
                 priv_: AnyDetailsPriv { is_ellipsis: true },
             }),
@@ -4019,8 +4020,8 @@ impl UnionType {
         UnionType(P::new_eval(Type {
             category: TypeCategory::Union,
             flags: Cell::new(TypeFlags::Instance | TypeFlags::Instantiable),
-            props: RefCell::new(None),
-            cached: RefCell::new(None),
+            props: OptionRefCell::new(),
+            cached: OptionRefCell::new(),
             d: TypeDetails::Union(UnionTypeDetails {
                 priv_: RefCell::new(UnionDetailsPriv {
                     subtypes: Vec::new(),
@@ -4734,8 +4735,8 @@ impl TypeVarType {
         TypeVarType(P::new_eval(Type {
             category: TypeCategory::TypeVar,
             flags: Cell::new(type_flags),
-            props: RefCell::new(None),
-            cached: RefCell::new(None),
+            props: OptionRefCell::new(),
+            cached: OptionRefCell::new(),
             d: TypeDetails::TypeVar(TypeVarTypeDetails {
                 shared: Cell::new(P::new_eval(TypeVarDetailsShared {
                     kind,

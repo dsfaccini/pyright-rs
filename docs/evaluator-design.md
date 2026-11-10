@@ -212,7 +212,7 @@ Then:
 - `cold_mut()` allocates and writes. `set_cold(|cold| &mut cold.f, value)` writes a value that may be `None` without allocating.
 - `<Struct>Cold { f: v, ..Default::default() }.into_cold()` builds the `cold` field in a struct literal; it stays unallocated when every field is unset.
 
-Pick cold fields by measurement: count, at the end of a run, how many objects set each field. `ClassDetailsPriv`, `TypeResult` and `FunctionDetailsShared` move the fields fewer than 1% of their objects set (python-chess and samples, 2026-11-10). A record or map pyright creates on first write (`props`, `cached`, the union literal maps) is boxed through `[sites]` instead, as `Option<Box<T>>`.
+Pick cold fields by measurement: count, at the end of a run, how many objects set each field. `ClassDetailsPriv`, `TypeResult` and `FunctionDetailsShared` move the fields fewer than 1% of their objects set (python-chess and samples, 2026-11-10). A record or map pyright creates on first write is boxed through `[sites]` instead: the union literal maps as `Option<Box<T>>`, and `Type.props` and `Type.cached`, which the type writes through `&self`, as `jsrt::OptionRefCell<T>`, a `RefCell<Option<T>>` in one pointer.
 
 ### families: unions discriminated by a kind field
 
