@@ -59,7 +59,7 @@ The same rules apply to every `[factories]` entry. `getCodeFlowEngine` is `CodeF
 
 ## 2. Names and markers
 
-- Names follow porting.md: types and enum members keep their TypeScript names; functions, methods, fields and parameters become snake_case with acronym runs kept together (`getJSXType` -> `get_jsx_type`), a leading `_` kept, and a trailing `_` on a Rust keyword (`type_`, `priv_`).
+- Names follow porting.md: types and enum members keep their TypeScript names; functions, methods, fields and parameters become snake_case with acronym runs kept together (`getJSXType` -> `get_jsx_type`), a leading `_` kept, and a trailing `_` on a Rust keyword (`type_`, `priv_`). A method named `clone` is `clone_` (porting.md "names"); a namespace function `clone` (`FunctionType.clone`) keeps its name, since it takes no receiver.
 - Every function, method, struct, enum, trait, alias, constant and factory field gets `// <path>.ts:<line>` on the line above. The run report checks that every TypeScript function, method and type declaration of a stubbed file has a marker.
 - Two Rust items with one name in one `impl` or module get `_2`, `_3`; the run report lists each rename.
 

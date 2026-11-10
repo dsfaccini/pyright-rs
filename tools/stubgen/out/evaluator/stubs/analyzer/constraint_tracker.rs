@@ -38,7 +38,7 @@ impl ConstraintSet {
     }
 
     // analyzer/constraintTracker.ts:57
-    pub fn clone(&self) -> P<ConstraintSet> {
+    pub fn clone_(&self) -> P<ConstraintSet> {
         todo!()
     }
 
@@ -117,7 +117,7 @@ impl ConstraintTracker {
     }
 
     // analyzer/constraintTracker.ts:192
-    pub fn clone(&self) -> P<ConstraintTracker> {
+    pub fn clone_(&self) -> P<ConstraintTracker> {
         todo!()
     }
 

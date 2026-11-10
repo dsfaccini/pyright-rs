@@ -7,7 +7,7 @@
 import ts from 'typescript';
 import { Gen, FamilyMember, Site, memberName, isNullish } from './gen.ts';
 import { IR, Uses, isCopy, opt, render, renderField } from './ir.ts';
-import { crateModuleOf, fieldName, modulePathOf, pascal, rustIdent, screaming, snake } from './names.ts';
+import { crateModuleOf, fieldName, fnIdent, modulePathOf, pascal, rustIdent, screaming, snake } from './names.ts';
 import { shortenPaths, usesOfText } from './gen.ts';
 import { hasModifier, isExported, lineOf, propName } from './program.ts';
 import { Factory, Family, Mode } from './table.ts';
@@ -950,7 +950,7 @@ export class FileEmitter {
         if (nested.length) {
             doc.push(`/// Nested in the TS body: ${nested.join(', ')}.`);
         }
-        const name = this.uniqueName(s.receiver !== undefined || indent !== '' ? 'impl' : 'mod', rustIdent(snake(s.name)));
+        const name = this.uniqueName(s.receiver !== undefined || indent !== '' ? 'impl' : 'mod', s.receiver !== undefined ? fnIdent(snake(s.name)) : rustIdent(snake(s.name)));
         const head = `${s.vis}fn ${name}${generics}(${params.join(', ')})${ret ? ` -> ${ret}` : ''}`;
         const lines = [`${indent}${this.marker(s.markerNode ?? decl)}`, ...doc.map((d) => indent + d)];
         if (!s.body) {

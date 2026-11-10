@@ -37,8 +37,7 @@ impl ConstraintSet {
     }
 
     // analyzer/constraintTracker.ts:57
-    #[allow(clippy::should_implement_trait)] // the TS method name
-    pub fn clone(&self) -> P<ConstraintSet> {
+    pub fn clone_(&self) -> P<ConstraintSet> {
         let constraint_set = ConstraintSet::new();
 
         let entries: Vec<TypeVarConstraints> =
@@ -240,15 +239,14 @@ impl ConstraintTracker {
     }
 
     // analyzer/constraintTracker.ts:192
-    #[allow(clippy::should_implement_trait)] // the TS method name
-    pub fn clone(&self) -> P<ConstraintTracker> {
+    pub fn clone_(&self) -> P<ConstraintTracker> {
         let new_type_var_map = ConstraintTracker::new();
 
         let sets: Vec<P<ConstraintSet>> = self
             ._constraint_sets
             .borrow()
             .iter()
-            .map(|set| ConstraintSet::clone(set))
+            .map(|set| ConstraintSet::clone_(set))
             .collect();
         *new_type_var_map._constraint_sets.borrow_mut() = sets;
 
@@ -257,7 +255,7 @@ impl ConstraintTracker {
 
     // analyzer/constraintTracker.ts:200
     pub fn clone_with_signature(&self, scope_id: &str) -> P<ConstraintTracker> {
-        let cloned = self.clone();
+        let cloned = self.clone_();
 
         if !scope_id.is_empty() {
             let filtered_sets: Vec<P<ConstraintSet>> = self
@@ -287,7 +285,7 @@ impl ConstraintTracker {
             ._constraint_sets
             .borrow()
             .iter()
-            .map(|context| ConstraintSet::clone(context))
+            .map(|context| ConstraintSet::clone_(context))
             .collect();
         *self._constraint_sets.borrow_mut() = sets;
     }
