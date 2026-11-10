@@ -16,85 +16,94 @@ use crate::analyzer::types::{
 use jsrt::P;
 
 // analyzer/typeWalker.ts:28
-pub struct TypeWalker {
-    pub(crate) _recursion_count: u32,
-    pub(crate) _is_walk_canceled: bool,
-    pub(crate) _hit_recursion_limit: bool,
-}
+pub trait TypeWalker {
+    // analyzer/typeWalker.ts:29
+    fn _recursion_count(&self) -> u32;
 
-impl TypeWalker {
+    fn _recursion_count_mut(&mut self) -> &mut u32;
+
+    // analyzer/typeWalker.ts:30
+    fn _is_walk_canceled(&self) -> bool;
+
+    fn _is_walk_canceled_mut(&mut self) -> &mut bool;
+
+    // analyzer/typeWalker.ts:31
+    fn _hit_recursion_limit(&self) -> bool;
+
+    fn _hit_recursion_limit_mut(&mut self) -> &mut bool;
+
     // analyzer/typeWalker.ts:33
-    pub fn is_recursion_limit_hit(&self) -> bool {
+    fn is_recursion_limit_hit(&self) -> bool {
         todo!()
     }
 
     // analyzer/typeWalker.ts:37
-    pub fn is_walk_canceled(&self) -> bool {
+    fn is_walk_canceled(&self) -> bool {
         todo!()
     }
 
     // analyzer/typeWalker.ts:41
-    pub fn walk(&mut self, type_: P<Type>) {
+    fn walk(&mut self, type_: P<Type>) {
         todo!()
     }
 
     // analyzer/typeWalker.ts:105
-    pub fn cancel_walk(&mut self) {
+    fn cancel_walk(&mut self) {
         todo!()
     }
 
     // analyzer/typeWalker.ts:109
-    pub fn visit_type_alias(&mut self, type_: P<Type>) {
+    fn visit_type_alias(&mut self, type_: P<Type>) {
         todo!()
     }
 
     // analyzer/typeWalker.ts:123
-    pub fn visit_unbound(&mut self, type_: UnboundType) {
+    fn visit_unbound(&mut self, type_: UnboundType) {
         todo!()
     }
 
     // analyzer/typeWalker.ts:127
-    pub fn visit_any(&mut self, type_: AnyType) {
+    fn visit_any(&mut self, type_: AnyType) {
         todo!()
     }
 
     // analyzer/typeWalker.ts:131
-    pub fn visit_unknown(&mut self, type_: UnknownType) {
+    fn visit_unknown(&mut self, type_: UnknownType) {
         todo!()
     }
 
     // analyzer/typeWalker.ts:135
-    pub fn visit_never(&mut self, type_: NeverType) {
+    fn visit_never(&mut self, type_: NeverType) {
         todo!()
     }
 
     // analyzer/typeWalker.ts:139
-    pub fn visit_function(&mut self, type_: FunctionType) {
+    fn visit_function(&mut self, type_: FunctionType) {
         todo!()
     }
 
     // analyzer/typeWalker.ts:159
-    pub fn visit_overloaded(&mut self, type_: OverloadedType) {
+    fn visit_overloaded(&mut self, type_: OverloadedType) {
         todo!()
     }
 
     // analyzer/typeWalker.ts:174
-    pub fn visit_class(&mut self, type_: ClassType) {
+    fn visit_class(&mut self, type_: ClassType) {
         todo!()
     }
 
     // analyzer/typeWalker.ts:188
-    pub fn visit_module(&mut self, type_: ModuleType) {
+    fn visit_module(&mut self, type_: ModuleType) {
         todo!()
     }
 
     // analyzer/typeWalker.ts:192
-    pub fn visit_union(&mut self, type_: UnionType) {
+    fn visit_union(&mut self, type_: UnionType) {
         todo!()
     }
 
     // analyzer/typeWalker.ts:201
-    pub fn visit_type_var(&mut self, type_: TypeVarType) {
+    fn visit_type_var(&mut self, type_: TypeVarType) {
         todo!()
     }
 }

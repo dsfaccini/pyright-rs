@@ -81,6 +81,9 @@ Promise = "$0"
 "analyzer/analyzerNodeInfo.ts:AnalyzerNodeInfoBindingSession" = {}
 "analyzer/analyzerNodeInfo.ts:AnalyzerNodeInfoContext" = {}
 "analyzer/cellChainIndex.ts:CellChainIndexProvider" = {}
+# Subclassed in typeUtils.ts (ContainsLiteralTypeWalker, AnyWalker, AnyOrUnknownWalker), which override
+# its visit methods.
+"analyzer/typeWalker.ts:TypeWalker" = { receiver = "&mut self" }
 # Ported as a trait (crates/pyright/src/common/console.rs).
 "common/console.ts:ConsoleInterface" = {}
 
