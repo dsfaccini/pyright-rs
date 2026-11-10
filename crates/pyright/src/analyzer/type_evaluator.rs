@@ -21106,8 +21106,7 @@ impl TypeEvaluator {
                 );
             }
 
-            // `ConstraintTracker::clone`, not `P::clone`: the TS clones the tracker.
-            let cloned_constraints = constraints.map(|constraints| ConstraintTracker::clone(&constraints));
+            let cloned_constraints = constraints.map(|constraints| constraints.clone_());
             if self.assign_to_union_type(
                 UnionType::cast(dest_type).unwrap(),
                 src_type,
@@ -22675,7 +22674,7 @@ impl TypeEvaluator {
                     &mut |subtype, _index, _all_subtypes| {
                         // Make a temporary clone of the constraints. We don't want to modify
                         // the original constraints until we find the "optimal" typeVar mapping.
-                        let constraints_clone = constraints.map(|constraints| ConstraintTracker::clone(&constraints));
+                        let constraints_clone = constraints.map(|constraints| constraints.clone_());
                         if self.assign_type(
                             subtype,
                             src_type,
