@@ -357,7 +357,7 @@ impl Checker {
         _evaluator: P<TypeEvaluator>,
         parse_results: &ParserOutput,
         _dependent_files: Option<Vec<ParserOutput>>,
-        node_info_reader: &dyn AnalyzerNodeInfoReader,
+        node_info_reader: P<dyn AnalyzerNodeInfoReader>,
     ) -> Self {
         todo!()
     }

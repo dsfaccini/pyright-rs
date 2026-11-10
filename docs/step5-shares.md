@@ -47,7 +47,7 @@ A stored callback is a struct whose `call` body ports a closure written elsewher
 | `typeEvaluator.ts:19573` | `SynthesizeDataClassSlotsDeferred::call` in `types.rs` | D |
 | `typeEvaluator.ts:19577` | `SynthesizeMethodsDeferred::call` in `types.rs` | D |
 | `typeEvaluator.ts:19586` | `CalculateInheritedSlotsNamesDeferred::call` in `types.rs` | D |
-| `typeEvaluator.ts:30313` | `FunctionReturnTypeCallback::call` in `type_printer.rs` | E |
+| `typeEvaluator.ts:30313` | `impl FunctionReturnTypeCallback for TypeEvaluator` in `type_evaluator.rs` (a trait, not a stored callback) | E |
 | `typeGuards.ts:1955` | `ExpandCallbackNarrowTypeForInstance::call` in `type_evaluator_types.rs` | F |
 | `patternMatching.ts:905` | `ExpandCallbackNarrowTypeBasedOnClassPattern::call` in `type_evaluator_types.rs` | F |
 | `program.ts:1439`, `program.ts:1440` | `ShadowFileBinder::call`, `BoundSourceGetter::call` in `source_mapper.rs` | G |

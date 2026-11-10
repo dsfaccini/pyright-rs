@@ -1253,6 +1253,10 @@ export class FileEmitter {
             this.out.push(this.marker(a), '#[derive(Clone)]', `pub enum ${name}${generics} {`, ...variants, '}', '');
             return;
         }
+        if (shape === 'fn' && this.gen.table.types.has(`${this.file}:${name}`)) {
+            // A [types] entry maps every use of the alias, and an [items] entry defines it.
+            return;
+        }
         let t = this.gen.mapNode(a.type, site, new Map());
         if (shape === 'fn' && t.k === 'fn' && this.gen.callbacks.isStoredAlias(a)) {
             t = this.gen.callbacks.callbackIR(a, t, this.file, name);

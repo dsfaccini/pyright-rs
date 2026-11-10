@@ -10,7 +10,6 @@
 )]
 
 use crate::{analyzer, common, parser};
-use crate::analyzer::type_evaluator::TypeEvaluator;
 use crate::analyzer::types::{ClassType, FunctionType, Type, TypeVarType, UnionType};
 use crate::common::config_options::ConfigOptions;
 use jsrt::{JsMap, P, flag_ops};
@@ -43,7 +42,7 @@ flag_ops!(PrintTypeFlags);
 pub fn print_type(
     type_: P<Type>,
     print_type_flags: PrintTypeFlags,
-    return_type_callback: &FunctionReturnTypeCallback,
+    return_type_callback: P<dyn FunctionReturnTypeCallback>,
 ) -> String {
     let mut unique_name_map = UniqueNameMap::new(print_type_flags, return_type_callback.clone());
     unique_name_map.build(type_, &mut Vec::new(), 0);
@@ -62,7 +61,7 @@ pub fn print_type(
 pub fn print_function_parts(
     type_: FunctionType,
     print_type_flags: PrintTypeFlags,
-    return_type_callback: &FunctionReturnTypeCallback,
+    return_type_callback: P<dyn FunctionReturnTypeCallback>,
 ) -> (Vec<String>, String) {
     let mut unique_name_map = UniqueNameMap::new(print_type_flags, return_type_callback.clone());
     unique_name_map.build(type_.0, &mut Vec::new(), 0);
@@ -81,7 +80,7 @@ pub fn print_function_parts(
 pub fn print_object_type_for_class(
     type_: ClassType,
     print_type_flags: PrintTypeFlags,
-    return_type_callback: &FunctionReturnTypeCallback,
+    return_type_callback: P<dyn FunctionReturnTypeCallback>,
 ) -> String {
     let mut unique_name_map = UniqueNameMap::new(print_type_flags, return_type_callback.clone());
     unique_name_map.build(type_.0, &mut Vec::new(), 0);
@@ -182,7 +181,7 @@ pub fn print_literal_value(type_: ClassType, quotation: &str) -> String {
 pub(crate) fn print_type_internal(
     type_: P<Type>,
     print_type_flags: PrintTypeFlags,
-    return_type_callback: &FunctionReturnTypeCallback,
+    return_type_callback: P<dyn FunctionReturnTypeCallback>,
     unique_name_map: &mut UniqueNameMap,
     recursion_types: &mut Vec<P<Type>>,
     recursion_count: u32,
@@ -773,7 +772,7 @@ pub(crate) fn print_union_type(
     type_: UnionType,
     print_type_flags: PrintTypeFlags,
     parenthesize_union: bool,
-    return_type_callback: &FunctionReturnTypeCallback,
+    return_type_callback: P<dyn FunctionReturnTypeCallback>,
     unique_name_map: &mut UniqueNameMap,
     recursion_types: &mut Vec<P<Type>>,
     recursion_count: u32,
@@ -968,7 +967,7 @@ pub(crate) fn print_union_type(
 pub(crate) fn print_function_type(
     type_: FunctionType,
     print_type_flags: PrintTypeFlags,
-    return_type_callback: &FunctionReturnTypeCallback,
+    return_type_callback: P<dyn FunctionReturnTypeCallback>,
     unique_name_map: &mut UniqueNameMap,
     recursion_types: &mut Vec<P<Type>>,
     recursion_count: u32,
@@ -1113,7 +1112,7 @@ pub(crate) fn print_function_type(
 pub(crate) fn print_param_spec_value_for_python_syntax(
     type_: FunctionType,
     print_type_flags: PrintTypeFlags,
-    return_type_callback: &FunctionReturnTypeCallback,
+    return_type_callback: P<dyn FunctionReturnTypeCallback>,
     unique_name_map: &mut UniqueNameMap,
     recursion_types: &mut Vec<P<Type>>,
     recursion_count: u32,
@@ -1161,7 +1160,7 @@ pub(crate) fn print_param_spec_value_for_python_syntax(
 pub(crate) fn print_object_type_for_class_internal(
     type_: ClassType,
     print_type_flags: PrintTypeFlags,
-    return_type_callback: &FunctionReturnTypeCallback,
+    return_type_callback: P<dyn FunctionReturnTypeCallback>,
     unique_name_map: &mut UniqueNameMap,
     recursion_types: &mut Vec<P<Type>>,
     recursion_count: u32,
@@ -1381,7 +1380,7 @@ pub(crate) fn print_object_type_for_class_internal(
 pub(crate) fn print_function_parts_internal(
     type_: FunctionType,
     print_type_flags: PrintTypeFlags,
-    return_type_callback: &FunctionReturnTypeCallback,
+    return_type_callback: P<dyn FunctionReturnTypeCallback>,
     unique_name_map: &mut UniqueNameMap,
     recursion_types: &mut Vec<P<Type>>,
     recursion_count: u32,
@@ -1712,14 +1711,14 @@ pub(crate) fn get_type_var_variance_text(type_: TypeVarType) -> String {
 pub struct UniqueNameMap {
     pub(crate) _map: JsMap<String, Vec<P<Type>>>,
     pub(crate) _print_type_flags: PrintTypeFlags,
-    pub(crate) _return_type_callback: FunctionReturnTypeCallback,
+    pub(crate) _return_type_callback: P<dyn FunctionReturnTypeCallback>,
 }
 
 impl UniqueNameMap {
     // analyzer/typePrinter.ts:1429
     pub fn new(
         _print_type_flags: PrintTypeFlags,
-        _return_type_callback: FunctionReturnTypeCallback,
+        _return_type_callback: P<dyn FunctionReturnTypeCallback>,
     ) -> Self {
         UniqueNameMap {
             _map: JsMap::default(),
@@ -1974,16 +1973,9 @@ pub fn get_print_type_flags(config_options: P<ConfigOptions>) -> PrintTypeFlags 
     flags
 }
 
+// Defined in tools/stubgen/typemap.toml [items].
 // analyzer/typePrinter.ts:104
-// A stored callback (docs/porting.md "memory"): the closure's captures, by name.
-#[derive(Clone)]
-pub struct FunctionReturnTypeCallback {
-    pub type_evaluator: P<TypeEvaluator>,
-}
-
-impl FunctionReturnTypeCallback {
-    // analyzer/typeEvaluator.ts:30313
-    pub fn call(&self, type_: FunctionType) -> P<Type> {
-        self.type_evaluator.get_effective_return_type(type_)
-    }
+/// `(type: FunctionType) => Type`, held as `P<dyn FunctionReturnTypeCallback>`.
+pub trait FunctionReturnTypeCallback {
+    fn call(&self, type_: FunctionType) -> P<Type>;
 }
