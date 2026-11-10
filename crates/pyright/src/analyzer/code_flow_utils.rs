@@ -88,6 +88,7 @@ impl Connection {
 flag_ops!(Connection);
 
 // analyzer/codeFlowUtils.ts:65
+#[derive(jsrt::Trace)]
 struct FlowGraphNode {
     // Written and never read, as in the TypeScript.
     #[allow(dead_code)]
@@ -102,6 +103,7 @@ struct FlowGraphNode {
 }
 
 // analyzer/codeFlowUtils.ts:76
+#[derive(jsrt::Trace)]
 struct FlowGraphEdge {
     source: P<FlowGraphNode>,
     target: P<FlowGraphNode>,

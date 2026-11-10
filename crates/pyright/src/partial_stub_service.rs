@@ -29,6 +29,7 @@ pub trait SupportPartialStubs {
 }
 
 // partialStubService.ts:37
+#[derive(jsrt::Trace)]
 pub struct PartialStubService {
     // Root paths processed
     _root_searched: RefCell<FxHashSet<Uri>>,

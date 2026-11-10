@@ -11,12 +11,14 @@ use jsrt::{JsMap, P};
 
 use super::parse_nodes::{ExpressionNode, StringListNode};
 
+#[derive(jsrt::Trace)]
 pub struct StringAnnotationMap {
     annotations: RefCell<JsMap<StringListNode, ExpressionNode>>,
 }
 
 // parser/stringAnnotationInfo.ts:3
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(jsrt::Trace)]
 pub struct StringAnnotationInfo(P<StringAnnotationMap>);
 
 impl StringAnnotationInfo {

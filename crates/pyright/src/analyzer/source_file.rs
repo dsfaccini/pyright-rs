@@ -61,6 +61,7 @@ struct ResolveImportResult {
 
 // analyzer/sourceFile.ts:69
 #[derive(Clone)]
+#[derive(jsrt::Trace)]
 pub struct ImportInfoRecord {
     pub node: P<ParseNode>,
     pub import_result: P<ImportResult>,
@@ -69,6 +70,7 @@ pub struct ImportInfoRecord {
 // analyzer/sourceFile.ts:76
 #[repr(i32)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(jsrt::Trace)]
 pub enum IPythonMode {
     None = 0,
     CellDocs,
@@ -80,6 +82,7 @@ thread_local! {
 }
 
 // analyzer/sourceFile.ts:87
+#[derive(jsrt::Trace)]
 pub struct WriteableData {
     pub diagnostic_version: u32,
     pub file_contents_version: u32,
@@ -171,10 +174,13 @@ pub type ModuleNameGetter = Rc<dyn Fn(Uri) -> String>;
 // analyzer/sourceFile.ts:209
 /// Shared: `P<SourceFile>`. State that TypeScript writes after construction
 /// sits in `RefCell`s; no borrow is held across a call into another file.
+#[derive(jsrt::Trace)]
 pub struct SourceFile {
     console: &'static dyn ConsoleInterface,
     uri: Uri,
     file_id: String,
+    /// Captures the `Program`, a program handle.
+    #[trace(skip)]
     module_name_getter: ModuleNameGetter,
     cached_module_name: RefCell<Option<String>>,
     is_stub_file: bool,

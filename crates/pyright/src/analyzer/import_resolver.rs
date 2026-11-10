@@ -60,6 +60,7 @@ pub struct ModuleNameAndType {
 // analyzer/importResolver.ts:49
 /// `extends ModuleNameAndType`: the first three fields are its fields.
 #[derive(Clone, Debug)]
+#[derive(jsrt::Trace)]
 pub struct ModuleImportInfo {
     pub module_name: String,
     pub import_type: ImportType,
@@ -126,6 +127,7 @@ const ALLOW_PARTIAL_RESOLUTION_FOR_THIRD_PARTY_PACKAGES: bool = false;
 /// Every method takes `&self`: the caches are cells. Cache maps keyed by
 /// `execEnv.root?.key` use `Option<&str>`, because pyright stores results
 /// under `undefined` for a root-less environment but looks them up under `''`.
+#[derive(jsrt::Trace)]
 pub struct ImportResolver {
     _cached_python_search_paths: RefCell<Option<Vec<Uri>>>,
     _cached_import_results: RefCell<JsMap<Option<&'static str>, CachedImportResults>>,

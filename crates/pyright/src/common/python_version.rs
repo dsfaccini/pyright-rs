@@ -5,6 +5,7 @@ use jsrt::JsStr;
 // common/pythonVersion.ts:10
 /// Ordered like its string values: `alpha < beta < candidate < final`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(jsrt::Trace)]
 pub enum PythonReleaseLevel {
     Alpha,
     Beta,
@@ -35,6 +36,7 @@ impl PythonReleaseLevel {
 
 // common/pythonVersion.ts:12
 #[derive(Clone, Copy, Debug, PartialEq, Hash, Eq)]
+#[derive(jsrt::Trace)]
 pub struct PythonVersion {
     pub major: i32,
     pub minor: i32,

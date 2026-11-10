@@ -19,6 +19,7 @@ use unicode_normalization::UnicodeNormalization;
 ///
 /// `Ord` is JS `<`: code unit order. Build one in a `Vec<u16>`, then convert.
 #[derive(Clone, Default, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(jsrt::Trace)]
 pub struct JsString(Rc<[u16]>);
 
 impl JsString {

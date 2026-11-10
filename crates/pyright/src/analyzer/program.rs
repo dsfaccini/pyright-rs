@@ -78,6 +78,7 @@ pub struct RequiringAnalysisCount {
 /// Shared: `P<Program>`. The import lookup closure re-enters the program
 /// while a file binds, so every method takes `&self` and no borrow is held
 /// across a call.
+#[derive(jsrt::Trace)]
 pub struct Program {
     console: &'static dyn ConsoleInterface,
     source_file_list: RefCell<Vec<P<SourceFileInfo>>>,
@@ -87,6 +88,8 @@ pub struct Program {
     import_resolver: Cell<P<ImportResolver>>,
     parsed_file_count: Cell<u32>,
     disable_checker: bool,
+    /// Captures the `Program`, a program handle.
+    #[trace(skip)]
     look_up_import: OnceCell<ImportLookup>,
     self_handle: OnceCell<P<Program>>,
     analyzer_node_info_context: P<AnalyzerNodeInfoContextImpl>,
@@ -418,6 +421,9 @@ impl Program {
                 if !is_user_code(Some(source_file_info)) {
                     continue;
                 }
+
+                // No evaluator frame is live between files (`docs/collector-design.md`).
+                jsrt::heap::collect_if_due();
 
                 if self.check_types(source_file_info, false) && elapsed_time.get_duration_in_milliseconds() > effective_max_time {
                     return true;

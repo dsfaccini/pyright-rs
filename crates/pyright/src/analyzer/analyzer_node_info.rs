@@ -23,6 +23,7 @@ use crate::parser::parse_nodes::{
 use crate::parser::string_annotation_info::StringAnnotationInfo;
 
 // analyzer/analyzerNodeInfo.ts:34
+#[derive(jsrt::Trace)]
 pub struct DunderAllInfo {
     pub names: Vec<String>,
     pub string_nodes: Vec<StringNode>,
@@ -34,6 +35,7 @@ pub type OwnerStringAnnotations = FxHashMap<StringListNode, ExpressionNode>;
 
 // analyzer/analyzerNodeInfo.ts:40
 #[derive(Default)]
+#[derive(jsrt::Trace)]
 pub struct AnalyzerNodeInfo {
     //---------------------------------------------------------------
     // Set as part of import resolution
@@ -50,6 +52,8 @@ pub struct AnalyzerNodeInfo {
     pub scope: Cell<Option<P<Scope>>>,
 
     // Declaration (for functions and classes only).
+    /// Set by the binder only: a program handle.
+    #[trace(program)]
     pub declaration: Cell<Option<P<Declaration>>>,
 
     // Control flow information for this node.
@@ -83,6 +87,14 @@ pub trait AnalyzerNodeInfoReader {
     fn get_file_info(&self, node: P<ParseNode>) -> Option<P<AnalyzerFileInfo>>;
 }
 
+/// Readers are program objects (`AnalyzerNodeInfoContextImpl`); a `P` to one
+/// never points into the evaluator heap.
+unsafe impl jsrt::Trace for dyn AnalyzerNodeInfoReader {
+    const HOLDS_EVAL: bool = false;
+    const EVAL: bool = false;
+    fn trace(&self, _: &mut jsrt::Tracer) {}
+}
+
 // analyzer/analyzerNodeInfo.ts:107
 pub trait AnalyzerNodeInfoWriter: AnalyzerNodeInfoReader {
     fn get_or_create(&self, node: P<ParseNode>) -> P<AnalyzerNodeInfo>;
@@ -91,6 +103,7 @@ pub trait AnalyzerNodeInfoWriter: AnalyzerNodeInfoReader {
 
 // analyzer/analyzerNodeInfo.ts:112
 #[derive(Default)]
+#[derive(jsrt::Trace)]
 pub struct AnalyzerNodeInfoStore {
     _info_by_tree: RefCell<FxHashMap<ParseTreeKey, FxHashMap<P<ParseNode>, P<AnalyzerNodeInfo>>>>,
     _file_info_by_tree: RefCell<FxHashMap<ParseTreeKey, P<AnalyzerFileInfo>>>,
@@ -156,12 +169,14 @@ pub trait AnalyzerNodeInfoContext: AnalyzerNodeInfoReader {
 
 // analyzer/analyzerNodeInfo.ts:162
 #[derive(Default)]
+#[derive(jsrt::Trace)]
 struct AnalyzerNodeInfoContextLayer {
     stores: FxHashMap<ParseTreeKey, P<AnalyzerNodeInfoStore>>,
     removed_keys: FxHashSet<ParseTreeKey>,
 }
 
 // analyzer/analyzerNodeInfo.ts:173
+#[derive(jsrt::Trace)]
 pub struct AnalyzerNodeInfoBindingSessionImpl {
     _store: P<AnalyzerNodeInfoStore>,
     _published: Cell<bool>,
@@ -252,6 +267,7 @@ impl AnalyzerNodeInfoBindingSession for AnalyzerNodeInfoBindingSessionImpl {
 // analyzer/analyzerNodeInfo.ts:229
 /// `_retiredStores`, the symbol-keyed property TypeScript hangs on a tree
 /// key, is the `_retired_stores` map: tree key to this context's store.
+#[derive(jsrt::Trace)]
 pub struct AnalyzerNodeInfoContextImpl {
     _layers: RefCell<Vec<AnalyzerNodeInfoContextLayer>>,
     _disposed: Cell<bool>,
@@ -261,6 +277,7 @@ pub struct AnalyzerNodeInfoContextImpl {
 }
 
 /// The `_currentLayerReader` object literal.
+#[derive(jsrt::Trace)]
 pub struct CurrentLayerReader {
     context: P<AnalyzerNodeInfoContextImpl>,
 }
@@ -511,6 +528,7 @@ pub type ScopedNode = P<ParseNode>;
 
 // analyzer/analyzerNodeInfo.ts:427
 #[derive(Clone, Copy)]
+#[derive(jsrt::Trace)]
 pub struct AnalyzerNodeInfoAccessor {
     _reader: &'static dyn AnalyzerNodeInfoReader,
     _writer: Option<&'static dyn AnalyzerNodeInfoWriter>,

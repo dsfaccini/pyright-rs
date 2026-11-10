@@ -14,6 +14,7 @@ use crate::common::uri::Uri;
 // analyzer/parentDirectoryCache.ts:15
 /// Shared: every directory walked for one import stores the same object, and
 /// the walk writes `import_path` once it finds the module.
+#[derive(jsrt::Trace)]
 pub struct ImportPath {
     pub import_path: Cell<Option<Uri>>,
 }
@@ -28,6 +29,7 @@ pub struct CacheEntry {
 // analyzer/parentDirectoryCache.ts:19
 /// pyright passes `_importRootGetter` to the constructor; it reads the
 /// resolver that owns this cache, so `check_valid_path` takes it instead.
+#[derive(jsrt::Trace)]
 pub struct ParentDirectoryCache {
     _import_checked: RefCell<JsMap<String, JsMap<Uri, P<ImportPath>>>>,
     _cached_results: RefCell<JsMap<String, JsMap<Uri, P<ImportResult>>>>,

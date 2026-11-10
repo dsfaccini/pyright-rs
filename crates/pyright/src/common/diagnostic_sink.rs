@@ -22,6 +22,7 @@ pub struct FileDiagnostics {
 
 // common/diagnosticSink.ts:45
 #[derive(Default)]
+#[derive(jsrt::Trace)]
 pub struct DiagnosticSink {
     diagnostic_list: RefCell<Vec<P<Diagnostic>>>,
     diagnostic_map: RefCell<JsMap<String, P<Diagnostic>>>,
@@ -172,6 +173,7 @@ impl DiagnosticSink {
 
 // common/diagnosticSink.ts:141
 /// Derefs to its `DiagnosticSink`, as the TypeScript subclass inherits it.
+#[derive(jsrt::Trace)]
 pub struct TextRangeDiagnosticSink {
     sink: DiagnosticSink,
     lines: &'static TextRangeCollection<TextRange>,

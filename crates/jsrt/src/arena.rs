@@ -1,4 +1,4 @@
-//! Leak arena: the replacement for references to garbage-collected JS objects.
+//! `P`: the replacement for references to garbage-collected JS objects.
 
 use std::cell::{Cell, RefCell};
 use std::fmt;
@@ -9,10 +9,12 @@ use std::ptr;
 use bumpalo::Bump;
 
 use crate::collections::FxHashMap;
+use crate::heap;
+use crate::trace::Trace;
 
 thread_local! {
+    /// Program objects that can hold no evaluator handle: the collector never visits them.
     static ARENA: &'static Bump = Box::leak(Box::new(Bump::new()));
-    static EVAL_ARENA: &'static Bump = Box::leak(Box::new(Bump::new()));
     static ALLOCATED: Cell<usize> = const { Cell::new(0) };
     static EVAL_ALLOCATED: Cell<usize> = const { Cell::new(0) };
     static STATS: RefCell<Option<FxHashMap<&'static str, AllocStat>>> =
@@ -67,34 +69,56 @@ fn report_if_due() {
     print_alloc_stats();
 }
 
-/// A handle to a value that lives until the thread exits.
+/// A handle to a heap object.
 ///
 /// Copy, compared and hashed by identity (JS `===` on objects). Never sort or
 /// iterate by the address: it differs between runs.
 ///
 /// Two heaps (see `docs/porting.md`, "memory"): the program heap holds what
 /// parsing, binding and configuration create, and is never collected; the
-/// evaluator heap holds what type evaluation and checking create, and is the
-/// heap a later collector reclaims.
+/// evaluator heap holds what type evaluation and checking create, and is
+/// collected between files when `PYRIGHT_RS_GC` is on
+/// (`docs/collector-design.md`).
 ///
 /// A trait object is a `P<dyn Trait>`, made from a `P` of the concrete type
 /// with [`P::to_dyn`].
 pub struct P<T: ?Sized + 'static>(&'static T);
 
-impl<T: 'static> P<T> {
-    /// Moves `value` into the current thread's program heap. Drop never runs for it.
+impl<T: Trace + 'static> P<T> {
+    /// Moves `value` into the current thread's program heap, which is never
+    /// collected. Drop never runs for it.
     pub fn new(value: T) -> P<T> {
         ALLOCATED.with(|n| n.set(n.get() + size_of::<T>()));
         record::<T>(false);
-        ARENA.with(|arena| P(arena.alloc(value)))
+        if heap::typed_program::<T>() {
+            let slot = heap::alloc::<T>(false);
+            // SAFETY: a fresh slot sized and aligned for `T`, never freed.
+            unsafe {
+                slot.write(value);
+                P(&*slot)
+            }
+        } else {
+            ARENA.with(|arena| P(arena.alloc(value)))
+        }
     }
 
-    /// Moves `value` into the current thread's evaluator heap. Drop never runs for it.
+    /// Moves `value` into the current thread's evaluator heap. The collector
+    /// drops it once no root reaches it. `T` needs `#[trace(eval)]`.
     pub fn new_eval(value: T) -> P<T> {
+        const { assert!(T::EVAL, "P::new_eval needs #[trace(eval)] on the type") };
         EVAL_ALLOCATED.with(|n| n.set(n.get() + size_of::<T>()));
         record::<T>(true);
-        EVAL_ARENA.with(|arena| P(arena.alloc(value)))
+        let slot = heap::alloc::<T>(true);
+        // SAFETY: a fresh slot sized and aligned for `T`; the collector frees it
+        // only when no traced handle reaches it.
+        unsafe {
+            slot.write(value);
+            P(&*slot)
+        }
     }
+}
+
+impl<T: 'static> P<T> {
 
     /// The same object as a trait object: `p.to_dyn::<dyn Trait>(|x| x)`.
     pub fn to_dyn<U: ?Sized>(self, upcast: fn(&'static T) -> &'static U) -> P<U> {
@@ -104,13 +128,39 @@ impl<T: 'static> P<T> {
 
 impl<T: ?Sized + 'static> P<T> {
     pub fn ptr_eq(a: P<T>, b: P<T>) -> bool {
-        ptr::addr_eq(a.0, b.0)
+        a == b
     }
 
     /// The referenced value. Never store the returned reference in a struct:
-    /// store the `P`, so a collector can see it.
+    /// store the `P`, so the collector can see it.
+    #[inline]
     pub fn get(self) -> &'static T {
+        heap::check_handle(self.addr());
         self.0
+    }
+
+    #[cfg(test)]
+    pub(crate) fn addr_for_test(self) -> usize {
+        self.addr()
+    }
+
+    #[inline]
+    fn addr(self) -> usize {
+        ptr::from_ref(self.0).cast::<u8>() as usize
+    }
+}
+
+/// Marks the target; `HOLDS_EVAL` follows whether `T` can live on the evaluator heap.
+unsafe impl<T: ?Sized + Trace + 'static> Trace for P<T> {
+    const HOLDS_EVAL: bool = T::EVAL;
+
+    #[inline]
+    fn trace(&self, t: &mut heap::Tracer) {
+        if T::EVAL {
+            t.mark(self.addr());
+        } else if t.checking() {
+            t.expect_program(self.addr(), std::any::type_name::<T>());
+        }
     }
 }
 
@@ -157,24 +207,31 @@ impl<T: ?Sized> Clone for P<T> {
 impl<T: ?Sized> Copy for P<T> {}
 
 /// Identity by address: two trait-object handles to one object are equal.
-impl<T: ?Sized> PartialEq for P<T> {
+impl<T: ?Sized + 'static> PartialEq for P<T> {
+    #[inline]
     fn eq(&self, other: &Self) -> bool {
+        heap::check_handle(self.addr());
+        heap::check_handle(other.addr());
         ptr::addr_eq(self.0, other.0)
     }
 }
 
-impl<T: ?Sized> Eq for P<T> {}
+impl<T: ?Sized + 'static> Eq for P<T> {}
 
-impl<T: ?Sized> Hash for P<T> {
+impl<T: ?Sized + 'static> Hash for P<T> {
+    #[inline]
     fn hash<H: Hasher>(&self, state: &mut H) {
+        heap::check_handle(self.addr());
         ptr::hash(ptr::from_ref(self.0).cast::<()>(), state);
     }
 }
 
-impl<T: ?Sized> Deref for P<T> {
+impl<T: ?Sized + 'static> Deref for P<T> {
     type Target = T;
 
+    #[inline]
     fn deref(&self) -> &T {
+        heap::check_handle(self.addr());
         self.0
     }
 }
@@ -204,6 +261,7 @@ mod tests {
         fn name(&self) -> &'static str;
     }
 
+    #[derive(jsrt::Trace)]
     struct Thing(u32);
 
     impl Named for Thing {

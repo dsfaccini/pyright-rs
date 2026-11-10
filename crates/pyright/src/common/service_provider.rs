@@ -14,6 +14,7 @@ use crate::partial_stub_service::{PartialStubService, SupportPartialStubs};
 // common/serviceProvider.ts:42
 /// Every service lives for the whole run, so references are `'static`.
 #[derive(Clone, Copy)]
+#[derive(jsrt::Trace)]
 pub struct ServiceProvider {
     pub fs: &'static dyn FileSystem,
     pub console: &'static dyn ConsoleInterface,

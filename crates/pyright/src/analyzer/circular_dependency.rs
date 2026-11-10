@@ -8,6 +8,7 @@ use crate::common::uri::Uri;
 
 // analyzer/circularDependency.ts:15
 #[derive(Clone, Default)]
+#[derive(jsrt::Trace)]
 pub struct CircularDependency {
     paths: Vec<Uri>,
 }

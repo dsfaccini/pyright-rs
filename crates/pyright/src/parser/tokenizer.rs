@@ -635,6 +635,7 @@ fn match_ignore_directive<'t>(
 }
 
 // parser/tokenizer.ts:574
+#[derive(jsrt::Trace)]
 pub struct TokenizerOutput {
     // List of all tokens.
     pub tokens: TextRangeCollection<P<Token>>,
@@ -683,6 +684,7 @@ struct IndentInfo {
 
 // parser/tokenizer.ts:617
 #[derive(Clone, Debug, PartialEq)]
+#[derive(jsrt::Trace)]
 pub struct IgnoreCommentRule {
     pub text: String,
     pub range: TextRange,
@@ -690,6 +692,7 @@ pub struct IgnoreCommentRule {
 
 // parser/tokenizer.ts:622
 #[derive(Clone, Debug, PartialEq)]
+#[derive(jsrt::Trace)]
 pub struct IgnoreComment {
     pub range: TextRange,
     pub rules_list: Option<Vec<IgnoreCommentRule>>,

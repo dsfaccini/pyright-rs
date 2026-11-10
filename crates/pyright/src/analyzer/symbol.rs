@@ -12,6 +12,7 @@ use crate::parser::parse_nodes::NameNode;
 
 // analyzer/symbol.ts:17
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
+#[derive(jsrt::Trace)]
 pub struct SymbolFlags(pub u32);
 
 impl SymbolFlags {
@@ -99,6 +100,7 @@ pub const INDETERMINATE_SYMBOL_ID: u32 = 0;
 
 // analyzer/symbol.ts:113
 #[derive(Clone, Copy)]
+#[derive(jsrt::Trace)]
 pub struct SynthesizedTypeInfo {
     pub type_: P<Type>,
 
@@ -110,6 +112,7 @@ pub struct SynthesizedTypeInfo {
 
 // analyzer/symbol.ts:115
 /// The private fields keep their leading underscore; the oracle prints them.
+#[derive(jsrt::Trace)]
 pub struct Symbol {
     // Information about the node that declared the value -
     // i.e. where the editor will take the user if "show definition"
@@ -425,6 +428,7 @@ impl Symbol {
 // Maps names to symbols information.
 /// A shared `Map<string, Symbol>`: copies of the handle are the same map.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(jsrt::Trace)]
 pub struct SymbolTable(P<RefCell<JsMap<String, P<Symbol>>>>);
 
 impl SymbolTable {

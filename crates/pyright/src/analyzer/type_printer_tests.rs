@@ -12,6 +12,8 @@ use crate::common::uri::Uri;
 use crate::parser::parse_nodes::ParamCategory;
 
 // tests/typePrinter.test.ts:34
+#[derive(jsrt::Trace)]
+#[trace(eval)]
 struct TestReturnTypeCallback;
 
 impl FunctionReturnTypeCallback for TestReturnTypeCallback {

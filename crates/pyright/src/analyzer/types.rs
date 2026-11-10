@@ -28,6 +28,7 @@ use jsrt::JsString;
 // analyzer/types.ts:17
 #[repr(i32)]
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+#[derive(jsrt::Trace)]
 pub enum TypeCategory {
     Unbound = 0,
     Unknown = 1,
@@ -43,6 +44,7 @@ pub enum TypeCategory {
 
 // analyzer/types.ts:49
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Default)]
+#[derive(jsrt::Trace)]
 pub struct TypeFlags(pub u32);
 
 impl TypeFlags {
@@ -67,6 +69,8 @@ pub type TypeVarScopeId = String;
 pub const UNIFICATION_SCOPE_ID: &str = "-";
 
 // analyzer/types.ts:86
+#[derive(jsrt::Trace)]
+#[trace(eval)]
 pub struct EnumLiteral {
     pub class_full_name: String,
     pub class_name: String,
@@ -100,6 +104,8 @@ impl EnumLiteral {
 }
 
 // analyzer/types.ts:100
+#[derive(jsrt::Trace)]
+#[trace(eval)]
 pub struct SentinelLiteral {
     pub class_full_name: String,
     pub class_name: String,
@@ -122,6 +128,7 @@ impl SentinelLiteral {
 
 // analyzer/types.ts:108
 #[derive(Clone)]
+#[derive(jsrt::Trace)]
 pub enum LiteralValue {
     Number(f64),
     Bigint(JsBigInt),
@@ -153,6 +160,8 @@ pub struct TypeSameOptions {
 }
 
 // analyzer/types.ts:134
+#[derive(jsrt::Trace)]
+#[trace(eval)]
 pub struct TypeAliasSharedInfo {
     pub name: String,
     pub full_name: String,
@@ -166,6 +175,7 @@ pub struct TypeAliasSharedInfo {
 
 // analyzer/types.ts:153
 #[derive(Clone)]
+#[derive(jsrt::Trace)]
 pub struct TypeAliasInfo {
     pub shared: P<TypeAliasSharedInfo>,
     pub type_args: Option<Vec<P<Type>>>,
@@ -173,6 +183,7 @@ pub struct TypeAliasInfo {
 
 // analyzer/types.ts:160
 #[derive(Clone, Default)]
+#[derive(jsrt::Trace)]
 pub struct CachedTypeInfo {
     pub instantiable_type: Option<P<Type>>,
     pub instance_type: Option<P<Type>>,
@@ -183,6 +194,7 @@ pub struct CachedTypeInfo {
 
 // analyzer/types.ts:174
 #[derive(Clone, Default)]
+#[derive(jsrt::Trace)]
 pub struct TypeBaseProps {
     pub instantiable_depth: Option<u32>,
     pub special_form: Option<ClassType>,
@@ -192,6 +204,8 @@ pub struct TypeBaseProps {
 }
 
 // analyzer/types.ts:195
+#[derive(jsrt::Trace)]
+#[trace(eval)]
 pub struct Type {
     pub category: TypeCategory,
     pub flags: Cell<TypeFlags>,
@@ -204,6 +218,7 @@ pub struct Type {
 const _: () = assert!(size_of::<Type>() <= 128);
 
 // analyzer/types.ts: one variant per `category` value.
+#[derive(jsrt::Trace)]
 enum TypeDetails {
     Unbound(UnboundTypeDetails),
     Unknown(UnknownTypeDetails),
@@ -491,6 +506,7 @@ impl TypeBase {
 }
 
 // analyzer/types.ts:389
+#[derive(jsrt::Trace)]
 pub struct UnboundTypeDetails {}
 
 // analyzer/types.ts:389
@@ -550,7 +566,8 @@ pub mod unbound_type {
 
     thread_local! {
         // analyzer/types.ts:392
-        pub(crate) static INSTANCE: UnboundType = UnboundType(P::new_eval(Type {
+        // On the program heap: it lives for the whole run.
+        pub(crate) static INSTANCE: UnboundType = UnboundType(P::new(Type {
             category: TypeCategory::Unbound,
             flags: Cell::new(TypeFlags::Instantiable | TypeFlags::Instance),
             props: OptionRefCell::new(),
@@ -562,12 +579,14 @@ pub mod unbound_type {
 
 // analyzer/types.ts:412
 #[derive(Clone)]
+#[derive(jsrt::Trace)]
 pub struct UnknownDetailsPriv {
     pub is_incomplete: bool,
     pub possible_type: Option<P<Type>>,
 }
 
 // analyzer/types.ts:424
+#[derive(jsrt::Trace)]
 pub struct UnknownTypeDetails {
     pub priv_: UnknownDetailsPriv,
 }
@@ -649,7 +668,8 @@ pub mod unknown_type {
 
     thread_local! {
         // analyzer/types.ts:429
-        pub(crate) static INSTANCE: UnknownType = UnknownType(P::new_eval(Type {
+        // On the program heap: it lives for the whole run.
+        pub(crate) static INSTANCE: UnknownType = UnknownType(P::new(Type {
             category: TypeCategory::Unknown,
             flags: Cell::new(TypeFlags::Instantiable | TypeFlags::Instance),
             props: OptionRefCell::new(),
@@ -665,7 +685,8 @@ pub mod unknown_type {
 
     thread_local! {
         // analyzer/types.ts:440
-        pub(crate) static INCOMPLETE_INSTANCE: UnknownType = UnknownType(P::new_eval(Type {
+        // On the program heap: it lives for the whole run.
+        pub(crate) static INCOMPLETE_INSTANCE: UnknownType = UnknownType(P::new(Type {
             category: TypeCategory::Unknown,
             flags: Cell::new(TypeFlags::Instantiable | TypeFlags::Instance),
             props: OptionRefCell::new(),
@@ -682,6 +703,7 @@ pub mod unknown_type {
 
 // analyzer/types.ts:478
 #[derive(Clone)]
+#[derive(jsrt::Trace)]
 pub struct ModuleDetailsPriv {
     pub fields: SymbolTable,
     pub doc_string: Option<String>,
@@ -692,6 +714,7 @@ pub struct ModuleDetailsPriv {
 }
 
 // analyzer/types.ts:497
+#[derive(jsrt::Trace)]
 pub struct ModuleTypeDetails {
     pub priv_: RefCell<ModuleDetailsPriv>,
 }
@@ -785,6 +808,8 @@ impl ModuleType {
 }
 
 // analyzer/types.ts:544
+#[derive(jsrt::Trace)]
+#[trace(eval)]
 pub struct DataClassEntry {
     pub name: String,
     pub class_type: ClassType,
@@ -804,6 +829,7 @@ pub struct DataClassEntry {
 
 // analyzer/types.ts:561
 #[derive(Clone)]
+#[derive(jsrt::Trace)]
 pub struct TypedDictEntry {
     pub value_type: P<Type>,
     pub is_required: bool,
@@ -812,6 +838,8 @@ pub struct TypedDictEntry {
 }
 
 // analyzer/types.ts:568
+#[derive(jsrt::Trace)]
+#[trace(eval)]
 pub struct TypedDictEntries {
     pub known_items: RefCell<JsMap<String, TypedDictEntry>>,
     pub extra_items: RefCell<Option<TypedDictEntry>>,
@@ -819,6 +847,7 @@ pub struct TypedDictEntries {
 
 // analyzer/types.ts:573
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Default)]
+#[derive(jsrt::Trace)]
 pub struct ClassTypeFlags(pub u32);
 
 impl ClassTypeFlags {
@@ -855,6 +884,8 @@ impl ClassTypeFlags {
 flag_ops!(ClassTypeFlags);
 
 // analyzer/types.ts:686
+#[derive(jsrt::Trace)]
+#[trace(eval)]
 pub struct DataClassBehaviors {
     pub skip_generate_init: Cell<Option<bool>>,
     pub skip_generate_eq: Cell<Option<bool>>,
@@ -869,6 +900,8 @@ pub struct DataClassBehaviors {
 }
 
 // analyzer/types.ts:699
+#[derive(jsrt::Trace)]
+#[trace(eval)]
 pub struct ClassDetailsShared {
     pub name: String,
     pub full_name: String,
@@ -906,6 +939,7 @@ pub struct ClassDetailsShared {
 
 // analyzer/types.ts:757
 #[derive(Clone)]
+#[derive(jsrt::Trace)]
 pub struct TupleTypeArg {
     pub type_: P<Type>,
     pub is_unbounded: bool,
@@ -914,6 +948,7 @@ pub struct TupleTypeArg {
 
 // analyzer/types.ts:770
 #[derive(Clone)]
+#[derive(jsrt::Trace)]
 pub struct PropertyMethodInfo {
     pub method_type: P<Type>,
     pub class_type: Option<ClassType>,
@@ -921,6 +956,7 @@ pub struct PropertyMethodInfo {
 
 // analyzer/types.ts:780
 #[derive(Clone, Default)]
+#[derive(jsrt::Trace)]
 pub struct ClassDetailsPriv {
     pub type_args: Option<Vec<P<Type>>>,
     pub is_empty_container: Option<bool>,
@@ -936,6 +972,7 @@ pub struct ClassDetailsPriv {
 
 // analyzer/types.ts:780
 #[derive(Clone, Default)]
+#[derive(jsrt::Trace)]
 pub struct ClassDetailsPrivCold {
     pub alias_name: Option<String>,
     pub typed_dict_narrowed_entries: Option<JsMap<String, TypedDictEntry>>,
@@ -1001,6 +1038,7 @@ impl ClassDetailsPriv {
 }
 
 // analyzer/types.ts:862
+#[derive(jsrt::Trace)]
 pub struct ClassTypeDetails {
     pub shared: Cell<P<ClassDetailsShared>>,
     pub priv_: RefCell<ClassDetailsPriv>,
@@ -1009,6 +1047,7 @@ const _: () = assert!(size_of::<ClassTypeDetails>() <= 96);
 
 // analyzer/types.ts:862
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+#[derive(jsrt::Trace)]
 pub struct ClassType(pub P<Type>);
 
 impl ClassType {
@@ -2245,6 +2284,7 @@ impl ClassType {
 
 // analyzer/types.ts:1589
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Default)]
+#[derive(jsrt::Trace)]
 pub struct FunctionParamFlags(pub u32);
 
 impl FunctionParamFlags {
@@ -2258,6 +2298,7 @@ flag_ops!(FunctionParamFlags);
 
 // analyzer/types.ts:1602
 #[derive(Clone)]
+#[derive(jsrt::Trace)]
 pub struct FunctionParam {
     pub category: ParamCategory,
     pub flags: FunctionParamFlags,
@@ -2319,6 +2360,7 @@ pub fn is_keyword_only_separator(param: &FunctionParam) -> bool {
 
 // analyzer/types.ts:1653
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Default)]
+#[derive(jsrt::Trace)]
 pub struct FunctionTypeFlags(pub u32);
 
 impl FunctionTypeFlags {
@@ -2348,6 +2390,8 @@ impl FunctionTypeFlags {
 flag_ops!(FunctionTypeFlags);
 
 // analyzer/types.ts:1729
+#[derive(jsrt::Trace)]
+#[trace(eval)]
 pub struct FunctionDetailsShared {
     pub name: String,
     pub full_name: String,
@@ -2367,6 +2411,7 @@ const _: () = assert!(size_of::<FunctionDetailsShared>() <= 192);
 
 // analyzer/types.ts:1729
 #[derive(Clone, Default)]
+#[derive(jsrt::Trace)]
 pub struct FunctionDetailsSharedCold {
     pub doc_string: Option<String>,
     pub deprecated_message: Option<String>,
@@ -2418,6 +2463,8 @@ impl FunctionDetailsShared {
 }
 
 // analyzer/types.ts:1757
+#[derive(jsrt::Trace)]
+#[trace(eval)]
 pub struct SpecializedFunctionTypes {
     pub parameter_types: Cell<P<RefCell<Vec<P<Type>>>>>,
     pub parameter_default_types: Cell<Option<P<RefCell<Vec<Option<P<Type>>>>>>>,
@@ -2426,6 +2473,7 @@ pub struct SpecializedFunctionTypes {
 
 // analyzer/types.ts:1772
 #[derive(Clone)]
+#[derive(jsrt::Trace)]
 pub struct CallSiteInferenceTypeCacheEntry {
     pub param_types: Vec<P<Type>>,
     pub return_type: P<Type>,
@@ -2433,6 +2481,7 @@ pub struct CallSiteInferenceTypeCacheEntry {
 
 // analyzer/types.ts:1777
 #[derive(Clone)]
+#[derive(jsrt::Trace)]
 pub struct SignatureWithOffsets {
     pub type_: P<Type>,
     pub expression_offsets: Vec<i32>,
@@ -2440,6 +2489,7 @@ pub struct SignatureWithOffsets {
 
 // analyzer/types.ts:1782
 #[derive(Clone, Default)]
+#[derive(jsrt::Trace)]
 pub struct FunctionDetailsPriv {
     pub constructor_type_var_scope_id: Option<String>,
     pub specialized_types: Option<P<SpecializedFunctionTypes>>,
@@ -2452,6 +2502,7 @@ pub struct FunctionDetailsPriv {
 }
 
 // analyzer/types.ts:1817
+#[derive(jsrt::Trace)]
 pub struct FunctionTypeDetails {
     pub shared: Cell<P<FunctionDetailsShared>>,
     pub priv_: RefCell<FunctionDetailsPriv>,
@@ -2460,6 +2511,7 @@ const _: () = assert!(size_of::<FunctionTypeDetails>() <= 96);
 
 // analyzer/types.ts:1817
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+#[derive(jsrt::Trace)]
 pub struct FunctionType(pub P<Type>);
 
 impl FunctionType {
@@ -3550,12 +3602,14 @@ impl FunctionType {
 
 // analyzer/types.ts:2422
 #[derive(Clone)]
+#[derive(jsrt::Trace)]
 pub struct OverloadedDetailsPriv {
     pub _overloads: Vec<FunctionType>,
     pub _implementation: Option<P<Type>>,
 }
 
 // analyzer/types.ts:2430
+#[derive(jsrt::Trace)]
 pub struct OverloadedTypeDetails {
     pub priv_: RefCell<OverloadedDetailsPriv>,
 }
@@ -3563,6 +3617,7 @@ const _: () = assert!(size_of::<OverloadedTypeDetails>() <= 40);
 
 // analyzer/types.ts:2430
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+#[derive(jsrt::Trace)]
 pub struct OverloadedType(pub P<Type>);
 
 impl OverloadedType {
@@ -3635,11 +3690,13 @@ impl OverloadedType {
 
 // analyzer/types.ts:2474
 #[derive(Clone)]
+#[derive(jsrt::Trace)]
 pub struct NeverDetailsPriv {
     pub is_no_return: bool,
 }
 
 // analyzer/types.ts:2478
+#[derive(jsrt::Trace)]
 pub struct NeverTypeDetails {
     pub priv_: NeverDetailsPriv,
 }
@@ -3709,7 +3766,8 @@ pub mod never_type {
 
     thread_local! {
         // analyzer/types.ts:2483
-        pub(crate) static NEVER_INSTANCE: NeverType = NeverType(P::new_eval(Type {
+        // On the program heap: it lives for the whole run.
+        pub(crate) static NEVER_INSTANCE: NeverType = NeverType(P::new(Type {
             category: TypeCategory::Never,
             flags: Cell::new(TypeFlags::Instance | TypeFlags::Instantiable),
             props: OptionRefCell::new(),
@@ -3722,7 +3780,8 @@ pub mod never_type {
 
     thread_local! {
         // analyzer/types.ts:2492
-        pub(crate) static NO_RETURN_INSTANCE: NeverType = NeverType(P::new_eval(Type {
+        // On the program heap: it lives for the whole run.
+        pub(crate) static NO_RETURN_INSTANCE: NeverType = NeverType(P::new(Type {
             category: TypeCategory::Never,
             flags: Cell::new(TypeFlags::Instance | TypeFlags::Instantiable),
             props: OptionRefCell::new(),
@@ -3736,11 +3795,13 @@ pub mod never_type {
 
 // analyzer/types.ts:2519
 #[derive(Clone)]
+#[derive(jsrt::Trace)]
 pub struct AnyDetailsPriv {
     pub is_ellipsis: bool,
 }
 
 // analyzer/types.ts:2523
+#[derive(jsrt::Trace)]
 pub struct AnyTypeDetails {
     pub priv_: AnyDetailsPriv,
 }
@@ -3796,7 +3857,8 @@ pub mod any_type {
 
     thread_local! {
         // analyzer/types.ts:2528
-        pub(crate) static ANY_INSTANCE_SPECIAL_FORM: AnyType = AnyType(P::new_eval(Type {
+        // On the program heap: it lives for the whole run.
+        pub(crate) static ANY_INSTANCE_SPECIAL_FORM: AnyType = AnyType(P::new(Type {
             category: TypeCategory::Any,
             flags: Cell::new(TypeFlags::Instance | TypeFlags::Instantiable),
             props: OptionRefCell::new(),
@@ -3809,7 +3871,8 @@ pub mod any_type {
 
     thread_local! {
         // analyzer/types.ts:2537
-        pub(crate) static ANY_INSTANCE: AnyType = AnyType(P::new_eval(Type {
+        // On the program heap: it lives for the whole run.
+        pub(crate) static ANY_INSTANCE: AnyType = AnyType(P::new(Type {
             category: TypeCategory::Any,
             flags: Cell::new(TypeFlags::Instance | TypeFlags::Instantiable),
             props: OptionRefCell::new(),
@@ -3822,7 +3885,8 @@ pub mod any_type {
 
     thread_local! {
         // analyzer/types.ts:2546
-        pub(crate) static ELLIPSIS_INSTANCE: AnyType = AnyType(P::new_eval(Type {
+        // On the program heap: it lives for the whole run.
+        pub(crate) static ELLIPSIS_INSTANCE: AnyType = AnyType(P::new(Type {
             category: TypeCategory::Any,
             flags: Cell::new(TypeFlags::Instance | TypeFlags::Instantiable),
             props: OptionRefCell::new(),
@@ -3853,6 +3917,7 @@ impl AnyType {
 
 // analyzer/types.ts:2572
 #[derive(Clone)]
+#[derive(jsrt::Trace)]
 pub struct TypeCondition {
     pub type_var: TypeVarType,
     pub constraint_index: i32,
@@ -3964,6 +4029,7 @@ impl TypeCondition {
 
 // analyzer/types.ts:2668
 #[derive(Clone, Default)]
+#[derive(jsrt::Trace)]
 pub struct LiteralTypes {
     pub literal_str_map: Option<Box<JsMap<JsString, UnionableType>>>,
     pub literal_int_map: Option<Box<JsMap<NumberValue, UnionableType>>>,
@@ -3972,6 +4038,7 @@ pub struct LiteralTypes {
 
 // analyzer/types.ts:2674
 #[derive(Clone)]
+#[derive(jsrt::Trace)]
 pub struct UnionDetailsPriv {
     pub subtypes: Vec<UnionableType>,
     pub literal_instances: LiteralTypes,
@@ -3982,6 +4049,7 @@ pub struct UnionDetailsPriv {
 }
 
 // analyzer/types.ts:2684
+#[derive(jsrt::Trace)]
 pub struct UnionTypeDetails {
     pub priv_: RefCell<UnionDetailsPriv>,
 }
@@ -3989,6 +4057,7 @@ const _: () = assert!(size_of::<UnionTypeDetails>() <= 96);
 
 // analyzer/types.ts:2684
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+#[derive(jsrt::Trace)]
 pub struct UnionType(pub P<Type>);
 
 impl UnionType {
@@ -4248,6 +4317,7 @@ impl UnionType {
 // analyzer/types.ts:2821
 #[repr(i32)]
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+#[derive(jsrt::Trace)]
 pub enum Variance {
     Auto = 0,
     Unknown = 1,
@@ -4268,6 +4338,7 @@ pub struct RecursiveAliasInfo {
 // analyzer/types.ts:2839
 #[repr(i32)]
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+#[derive(jsrt::Trace)]
 pub enum TypeVarKind {
     TypeVar = 0,
     TypeVarTuple = 1,
@@ -4275,6 +4346,8 @@ pub enum TypeVarKind {
 }
 
 // analyzer/types.ts:2845
+#[derive(jsrt::Trace)]
+#[trace(eval)]
 pub struct TypeVarDetailsShared {
     pub kind: TypeVarKind,
     pub name: RefCell<String>,
@@ -4293,6 +4366,7 @@ pub struct TypeVarDetailsShared {
 
 // analyzer/types.ts:2868
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+#[derive(jsrt::Trace)]
 pub enum ParamSpecAccess {
     Args,
     Kwargs,
@@ -4310,6 +4384,7 @@ impl ParamSpecAccess {
 // analyzer/types.ts:2870
 #[repr(i32)]
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+#[derive(jsrt::Trace)]
 pub enum TypeVarScopeType {
     Class = 0,
     Function = 1,
@@ -4318,6 +4393,7 @@ pub enum TypeVarScopeType {
 
 // analyzer/types.ts:2876
 #[derive(Clone, Default)]
+#[derive(jsrt::Trace)]
 pub struct TypeVarDetailsPriv {
     pub scope_id: Option<Rc<str>>,
     pub scope_name: Option<Rc<str>>,
@@ -4334,6 +4410,7 @@ pub struct TypeVarDetailsPriv {
 }
 
 // analyzer/types.ts:2909
+#[derive(jsrt::Trace)]
 pub struct TypeVarTypeDetails {
     pub shared: Cell<P<TypeVarDetailsShared>>,
     pub priv_: RefCell<TypeVarDetailsPriv>,
@@ -4342,6 +4419,7 @@ const _: () = assert!(size_of::<TypeVarTypeDetails>() <= 88);
 
 // analyzer/types.ts:2909
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+#[derive(jsrt::Trace)]
 pub struct TypeVarType(pub P<Type>);
 
 impl TypeVarType {
@@ -4373,6 +4451,7 @@ pub type ParamSpecDetailsPriv = TypeVarDetailsPriv;
 
 // analyzer/types.ts:2921
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+#[derive(jsrt::Trace)]
 pub struct ParamSpecType(pub P<Type>);
 
 impl ParamSpecType {
@@ -6021,6 +6100,7 @@ pub(crate) fn _add_type_if_unique(
 
 // Inline object type at FunctionDetailsShared.inferredReturnType.
 #[derive(Clone)]
+#[derive(jsrt::Trace)]
 pub struct FunctionDetailsSharedInferredReturnType {
     pub type_: P<Type>,
     pub is_incomplete: Option<bool>,
@@ -6029,6 +6109,7 @@ pub struct FunctionDetailsSharedInferredReturnType {
 
 // A stored callback (docs/porting.md "memory"): the closure's captures, by name.
 #[derive(Clone)]
+#[derive(jsrt::Trace)]
 pub struct SynthesizeMethodsDeferred {
     pub class_type: ClassType,
     pub type_evaluator: P<TypeEvaluator>,
@@ -6060,6 +6141,7 @@ impl SynthesizeMethodsDeferred {
 
 // A stored callback (docs/porting.md "memory"): the closure's captures, by name.
 #[derive(Clone)]
+#[derive(jsrt::Trace)]
 pub struct SynthesizeDataClassSlotsDeferred {
     pub type_evaluator: P<TypeEvaluator>,
     pub class_type: ClassType,
@@ -6074,6 +6156,7 @@ impl SynthesizeDataClassSlotsDeferred {
 
 // A stored callback (docs/porting.md "memory"): the closure's captures, by name.
 #[derive(Clone)]
+#[derive(jsrt::Trace)]
 pub struct CalculateInheritedSlotsNamesDeferred {
     pub class_type: ClassType,
 }

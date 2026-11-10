@@ -55,6 +55,7 @@ pub fn undefined_declaration_node() -> P<ParseNode> {
 // analyzer/declaration.ts:38
 #[repr(i32)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(jsrt::Trace)]
 pub enum DeclarationType {
     Intrinsic,
     Variable,
@@ -73,6 +74,8 @@ pub enum DeclarationType {
 pub type IntrinsicType = &'static str;
 
 // analyzer/declaration.ts:59
+#[derive(jsrt::Trace)]
+#[trace(eval)]
 pub struct Declaration {
     // Category of this symbol (function, variable, etc.).
     // Used by hover provider to display helpful text.
@@ -106,6 +109,7 @@ pub struct Declaration {
 
 /// The fields of the specific declaration interface, one variant per
 /// `DeclarationType`.
+#[derive(jsrt::Trace)]
 pub enum DeclarationDetails {
     Intrinsic(IntrinsicDeclarationDetails),
     Variable(VariableDeclarationDetails),
@@ -185,6 +189,7 @@ impl Declaration {
 }
 
 // analyzer/declaration.ts:88
+#[derive(jsrt::Trace)]
 pub struct IntrinsicDeclarationDetails {
     pub name: String,
     /// `ModuleNode | FunctionNode | LambdaNode | ClassNode`, in `node`.
@@ -192,6 +197,7 @@ pub struct IntrinsicDeclarationDetails {
 }
 
 // analyzer/declaration.ts:107
+#[derive(jsrt::Trace)]
 pub struct FunctionDeclarationDetails {
     pub is_method: Cell<bool>,
     pub is_generator: Cell<bool>,
@@ -202,6 +208,7 @@ pub struct FunctionDeclarationDetails {
 }
 
 // analyzer/declaration.ts:117
+#[derive(jsrt::Trace)]
 pub struct ParamDeclarationDetails {
     // Inferred parameters can be inferred from pieces of an actual NameNode, so this
     // value represents the actual 'name' as the user thinks of it.
@@ -212,6 +219,7 @@ pub struct ParamDeclarationDetails {
 }
 
 // analyzer/declaration.ts:134
+#[derive(jsrt::Trace)]
 pub struct TypeAliasDeclarationDetails {
     // If a docstring (based on PEP 258) is present...
     pub doc_string: RefCell<Option<String>>,
@@ -220,6 +228,7 @@ pub struct TypeAliasDeclarationDetails {
 // analyzer/declaration.ts:142
 /// `node` is a `NameNode | StringListNode`.
 #[derive(Default)]
+#[derive(jsrt::Trace)]
 pub struct VariableDeclarationDetails {
     // An explicit type annotation, if provided
     pub type_annotation_node: Cell<Option<ExpressionNode>>,
@@ -278,6 +287,7 @@ pub fn create_implicit_import_map() -> ImplicitImportMap {
 // Alias declarations are used for imports. They are resolved
 // after the binding phase.
 /// `node` is an `ImportAsNode | ImportFromAsNode | ImportFromNode`.
+#[derive(jsrt::Trace)]
 pub struct AliasDeclarationDetails {
     // Does this declaration use a local name or use the
     // imported symbol directly? This is used to find and
@@ -294,6 +304,8 @@ pub struct AliasDeclarationDetails {
     // If there is a symbol name that can't be resolved within
     // the target module (defined by "path"), the symbol might
     // refer to a submodule with the same name.
+    /// Set by the binder only: a program handle.
+    #[trace(program)]
     pub submodule_fallback: Cell<Option<P<Declaration>>>,
 
     // The first part of the multi-part name used in the import
@@ -339,6 +351,7 @@ impl AliasDeclarationDetails {
 // analyzer/declaration.ts:252
 // This interface represents a set of actions that the python loader
 // performs when a module import is encountered.
+#[derive(jsrt::Trace)]
 pub struct ModuleLoaderActions {
     // The resolved uri of the implicit import. This can be empty
     // if the resolved uri doesn't reference a module (e.g. it's

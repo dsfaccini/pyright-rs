@@ -25,6 +25,7 @@ impl<T: HasTextRange + ?Sized> HasTextRange for &T {
 
 // common/textRange.ts:12
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
+#[derive(jsrt::Trace)]
 pub struct TextRange {
     pub start: i32,
     pub length: i32,
@@ -144,6 +145,7 @@ impl TextRange {
 
 // common/textRange.ts:93
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
+#[derive(jsrt::Trace)]
 pub struct Position {
     // Both line and column are zero-based
     pub line: i32,
@@ -159,6 +161,7 @@ impl Position {
 
 // common/textRange.ts:105
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
+#[derive(jsrt::Trace)]
 pub struct Range {
     pub start: Position,
     pub end: Position,

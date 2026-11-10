@@ -6,6 +6,7 @@ use crate::common::uri::uri_utils::{is_directory, is_file};
 
 // analyzer/pyTypedUtils.ts:14
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(jsrt::Trace)]
 pub struct PyTypedInfo {
     pub py_typed_path: Uri,
     pub is_partially_typed: bool,

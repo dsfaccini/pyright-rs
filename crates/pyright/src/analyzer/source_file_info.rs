@@ -11,6 +11,7 @@ use crate::analyzer::source_file::{IPythonMode, SourceFile};
 use crate::common::uri::Uri;
 
 // analyzer/sourceFileInfo.ts:237
+#[derive(jsrt::Trace)]
 pub struct WriteableData {
     pub diagnostics_version: Option<u32>,
     pub builtins_import: Option<P<SourceFileInfo>>,
@@ -39,6 +40,7 @@ pub struct OptionalArguments {
 
 // analyzer/sourceFileInfo.ts:15
 /// Shared and compared by identity: `P<SourceFileInfo>`.
+#[derive(jsrt::Trace)]
 pub struct SourceFileInfo {
     pub source_file: P<SourceFile>,
     pub is_typeshed_file: bool,

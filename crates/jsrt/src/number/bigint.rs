@@ -26,6 +26,7 @@ fn length(x: &BigInt) -> u64 {
 /// A JS `bigint`. `Ord` is JS `<` on bigints; `PartialOrd<f64>` and
 /// `PartialEq<f64>` are JS `<` and `==` between a bigint and a number.
 #[derive(Clone, Default, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(jsrt::Trace)]
 pub struct JsBigInt(BigInt);
 
 impl JsBigInt {

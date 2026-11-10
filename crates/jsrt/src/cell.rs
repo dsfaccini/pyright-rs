@@ -6,6 +6,7 @@ use std::ops::Deref;
 /// `RefCell<Option<T>>` in one pointer: the storage is allocated on the first `borrow_mut`, so a
 /// cell that is never written costs 8 bytes. For optional records most objects never set, as
 /// pyright leaves `type.props` and `type.cached` undefined until the first write.
+#[derive(jsrt::Trace)]
 pub struct OptionRefCell<T>(OnceCell<Box<RefCell<Option<T>>>>);
 
 /// A shared borrow of an [`OptionRefCell`]: `None` while the cell is unallocated.

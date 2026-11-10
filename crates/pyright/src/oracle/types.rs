@@ -14,6 +14,8 @@ use crate::parser::parse_tree_utils::get_child_nodes;
 /// The fork's return type callback, `(functionType) => FunctionType.getEffectiveReturnType(functionType)
 /// ?? UnknownType.create()`: the specialized, declared or already-inferred return type, so printing
 /// never runs return type inference.
+#[derive(jsrt::Trace)]
+#[trace(eval)]
 struct OracleReturnTypeCallback;
 
 impl FunctionReturnTypeCallback for OracleReturnTypeCallback {

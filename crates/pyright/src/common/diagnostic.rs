@@ -20,6 +20,7 @@ const MAX_RECURSION_COUNT: i32 = 64;
 
 // common/diagnostic.ts:21
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(jsrt::Trace)]
 pub enum TaskListPriority {
     High,
     Normal,
@@ -38,6 +39,7 @@ impl TaskListPriority {
 
 // common/diagnostic.ts:27
 #[derive(Clone, Debug)]
+#[derive(jsrt::Trace)]
 pub struct TaskListToken {
     pub text: String,
     pub priority: TaskListPriority,
@@ -46,6 +48,7 @@ pub struct TaskListToken {
 // common/diagnostic.ts:32
 #[repr(i32)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(jsrt::Trace)]
 pub enum DiagnosticCategory {
     Error,
     Warning,
@@ -69,6 +72,7 @@ pub fn convert_level_to_category(level: DiagnosticLevel) -> DiagnosticCategory {
 // common/diagnostic.ts:58
 /// `DiagnosticAction` and its one check-path subtype, `CreateTypeStubFileAction`.
 #[derive(Clone, Debug)]
+#[derive(jsrt::Trace)]
 pub struct DiagnosticAction {
     pub action: String,
     pub module_name: Option<String>,
@@ -82,6 +86,7 @@ pub struct DiagnosticWithinFile {
 
 // common/diagnostic.ts:72
 #[derive(Clone, Debug)]
+#[derive(jsrt::Trace)]
 pub struct DiagnosticRelatedInfo {
     pub message: String,
     pub uri: Uri,
@@ -93,6 +98,7 @@ pub struct DiagnosticRelatedInfo {
 /// A diagnostic is shared: the sink stores it and the caller sets its rule
 /// afterwards. Pass it around as `P<Diagnostic>`.
 #[derive(Debug)]
+#[derive(jsrt::Trace)]
 pub struct Diagnostic {
     pub category: DiagnosticCategory,
     pub message: String,
@@ -192,6 +198,8 @@ pub fn compare_diagnostics(d1: &Diagnostic, d2: &Diagnostic) -> i32 {
 // common/diagnostic.ts:191
 /// Shared: `createAddendum` returns a child the caller keeps writing to.
 #[derive(Default)]
+#[derive(jsrt::Trace)]
+#[trace(eval)]
 pub struct DiagnosticAddendum {
     // `_messages`, `_childAddenda` and `_range`, allocated on the first write: about half of all
     // addenda stay empty (python-chess and samples corpora, 2026-11-10).
@@ -202,6 +210,7 @@ pub struct DiagnosticAddendum {
 const _: () = assert!(size_of::<DiagnosticAddendum>() <= 24);
 
 #[derive(Default)]
+#[derive(jsrt::Trace)]
 struct AddendumContent {
     messages: Vec<String>,
     child_addenda: Vec<P<DiagnosticAddendum>>,

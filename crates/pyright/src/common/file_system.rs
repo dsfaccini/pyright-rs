@@ -20,6 +20,7 @@ pub struct Stats {
 
 /// `fs.Dirent`: the entry's own type, without following a symbolic link.
 #[derive(Clone, Debug)]
+#[derive(jsrt::Trace)]
 pub struct Dirent {
     pub name: String,
     pub is_file: bool,
@@ -70,7 +71,10 @@ pub trait ReadOnlyFileSystem {
 
 /// vscode-jsonrpc `Disposable`: `dispose()` runs the cleanup each time it is
 /// called.
+#[derive(jsrt::Trace)]
 pub struct Disposable {
+    /// File-system cleanups capture no heap handle.
+    #[trace(skip)]
     dispose: Box<dyn Fn()>,
 }
 
