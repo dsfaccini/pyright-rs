@@ -38,21 +38,56 @@ node_info_context.publish(session);
 - `analyzerNodeInfo.ts` free functions take `node: impl Into<P<ParseNode>>`.
 - `UnresolvedModuleMarker` is `unresolved_module_marker()`: one thread-local constant Uri (constant Uris compare by identity).
 - `getInfoReader` (provider overloads) is not ported: Rust callers name the reader directly.
+- `evaluateStaticBoolExpression` / `evaluateStaticBoolLikeExpression` take the alias lists as `Option<&[String]>`.
+- parseTreeUtils:
+  - `get_full_statement_range(statement_node, &ParseFileResults, include_trailing_blank_lines: Option<bool>)`: the `options?` object is `Option<bool>`.
+  - `is_blank_line(&TokenizerOutput, text: &[u16], line)`: `ParseFileResults.text` is UTF-16.
+  - `get_parent_node_of_type` and `get_first_ancestor_or_self_of_kind` return `Option<P<ParseNode>>`; the caller casts. `get_module_node -> Option<ModuleNode>`.
+  - `print_operator` and `print_parse_node_type` return `&'static str`. `get_doc_string -> Option<JsString>`.
+  - `get_node_depth -> u32`, `get_type_source_id -> i32`.
+  - `get_call_node_and_active_param_index -> Option<CallNodeAndActiveParamIndex>`: a named struct for the anonymous TS return type, so it has no marker.
+  - Callbacks are `&dyn Fn`; `get_next_matching_token`'s `exit: None` is TS's default `() => false`.
+  - Token functions take `&TextRangeCollection<P<Token>>` and return `Option<P<Token>>`. `get_comments_at_token_index -> Option<&'static [Comment]>`.
+  - `NameNodeWalker` and `CallNodeWalker` are generic over the callback (`FnMut`).
+  - `get_ancestors_including_self` returns a lazy `impl Iterator` for the generator.
+  - `EvaluationScopeInfo` keeps `use_proxy_scope` and `use_chained_module_level_scopes` as `Option<bool>`.
+  - `PrintExpressionFlags` is a `u32` newtype. TS default parameters are explicit arguments.
+- scopeUtils: `get_scope_hierarchy(node, stop_scope: Option<P<Scope>>, node_info) -> Option<Vec<P<Scope>>>`.
 
 ## Shared-file edits
 
-- `crates/pyright/src/analyzer/analyzer_file_info.rs`: infra's WIP copied, plus `AnalyzerFileInfo.builtins_scope: Option<P<Scope>>` and `ImportLookupResult.symbol_table: SymbolTable`. Infra keeps those two fields and takes its own file otherwise.
-- `crates/pyright/src/analyzer/source_file.rs`: SHIM `IPythonMode` enum. Take infra's version.
-- `crates/pyright/src/analyzer/mod.rs`: `pub mod declaration_utils;`, `pub mod types;`.
+- `crates/pyright/src/analyzer/analyzer_file_info.rs`: adds `AnalyzerFileInfo.builtins_scope: Option<P<Scope>>` and `ImportLookupResult.symbol_table: SymbolTable`.
+- `crates/pyright/src/analyzer/source_file.rs`: `build_file_info` sets `builtins_scope: None` (STAND-IN). Infra passes `bind`'s `builtinsScope` when it wires `run_binder`.
+- `crates/pyright/src/analyzer/program.rs`: the `skipParsing` dummy `ImportLookupResult` gets `symbol_table: SymbolTable::new()`, as pyright's `new Map()`.
+- `crates/pyright/src/analyzer/import_statement_utils.rs`: adds `getWildcardImportNames` next to infra's `getDirectoryLeadingDotsPointsTo`.
+- `crates/pyright/src/analyzer/mod.rs`: `cell_chain_index`, `declaration_utils`, `types`.
+- `crates/pyright/src/analyzer/cell_chain_index.rs` (new): only the `CellChainIndexProvider` trait the binder takes.
 - `crates/pyright/src/analyzer/declaration_utils.rs` (new): only `hasTypeForDeclaration` and `areDeclarationsSame`, which `symbol.ts` calls. The evaluator step ports the rest.
 - `crates/pyright/src/analyzer/types.rs` (new): placeholder `Type` (for `SynthesizedTypeInfo`) and `TypeVarScopeId`. The evaluator step replaces it.
 
+## Oracle harness
+
+`crates/pyright/examples/oracle_bind.rs` binds the files of a reference dump and writes bind and flow dumps for `oracle/compare.py`, until infra's `Program` runs the binder:
+
+```
+cargo run --release --example oracle_bind -- [--path PREFIX]... [--python-version 3.11] [--mode strict] [--rule name=level]... <reference dump dir> <out dir>
+python3 oracle/compare.py <reference dump dir> <out dir> --stage bind --stage flow
+```
+
+- It replays each file's `importInfo` and `isInPyTypedPackage` from the reference dump; import lookups bind their target on demand, builtins first, as `Program._bindFile` does.
+- It compares bind diagnostics with the `bind:` list of the reference diag dump and prints the count of files that differ.
+- pydantic-ai needs `--python-version 3.11 --mode strict --rule reportMissingTypeStubs=false --rule reportUnnecessaryIsInstance=false --rule reportMissingModuleSource=false` (its `[tool.pyright]`). The other corpora use the defaults.
+
 ## Needs from others
 
-- frontend: the parser (`parser.ts`, `ParseFileResults`) to run the oracle and the parse-tree unit tests; `parseNodeUtils.ts` maps for `printExpression`.
-- infra: `analyzer_file_info.rs` and `source_file.rs` with the shapes above.
+- infra: wire `run_binder` in `SourceFile.bind` with the entry point above, pass `builtinsScope`, and fill `ImportLookupResult.symbol_table` in `Program._lookUpImport`. Then the oracle runs through `Program` and the harness can go.
 
 ## Doubts
 
 - Code flow reference keys are `String`. A key built from a string subscript with a lone surrogate (`a["\ud800"]`) prints U+FFFD where pyright prints `\ud800`.
 - `SymbolTable::for_each` walks by index, like a JS `Map` for entries added during the walk; an entry deleted before the cursor shifts the rest one place (JS does not skip). No binder path deletes during a walk.
+- `print_expression` returns `String`: a string literal cut at 32 UTF-16 units that splits a surrogate pair prints U+FFFD where pyright keeps the lone surrogate. Same for f-string middle tokens.
+- `PythonVersion` parts are `i32`, so `sys.version_info >= (3.5, 0)` truncates `3.5` to `3` where pyright compares the float.
+- `get_file_info_from_node` calls `get_file_info_if_available`: TS's `getFileInfo(...)!` returns undefined at runtime where the Rust `get_file_info` panics.
+- Places where JS throws a TypeError (`parent!` missing in `get_execution_scope_node`, `get_built_in_scope` with no builtins scope) panic in Rust; only the message differs.
+- Skipped test: `parseTreeUtils.test.ts` "printExpression forward declarations use parser annotations but not owner annotations" needs `program.analyze()` and the evaluator.

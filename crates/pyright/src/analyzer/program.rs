@@ -18,6 +18,7 @@ use crate::analyzer::import_resolver::{ImportResolver, ImportedModuleDescriptor,
 use crate::analyzer::import_result::{ImportResult, ImportType};
 use crate::analyzer::source_file::{IPythonMode, SourceFile};
 use crate::analyzer::source_file_info::{OptionalArguments, SourceFileInfo, is_user_code};
+use crate::analyzer::symbol::SymbolTable;
 use crate::common::config_options::{ConfigOptions, DiagnosticLevel, match_file_specs};
 use crate::common::console::ConsoleInterface;
 use crate::common::debug::{assert, fail};
@@ -1038,6 +1039,7 @@ impl Program {
             // Return dummy information if the caller has indicated that parsing is
             // unnecessary.
             return Some(ImportLookupResult {
+                symbol_table: SymbolTable::new(),
                 dunder_all_names: None,
                 uses_unsupported_dunder_all_form: false,
                 doc_string: Rc::new(|| None),
