@@ -23,9 +23,11 @@ Fill the `todo!()` bodies under your markers and leave every other marker alone.
 | C | 7,564 | `typeEvaluator.ts:7678-15241` |
 | D | 7,799 | `typeEvaluator.ts:15242-23040` |
 | E | 7,554 | `typeEvaluator.ts:23041-30594` |
-| F | 8,678 | `codeFlowEngine.ts:1-2082`, `typeGuards.ts:1-3024`, `patternMatching.ts:1-2424`, `typeCacheUtils.ts:1-246`, `typeEvaluatorTypes.ts:1-902` |
-| G | 8,592 | `constraintSolver.ts:1-1508`, `constraintTracker.ts:1-287`, `constraintSolution.ts:1-89`, `operations.ts:1-1408`, `typePrinter.ts:1-1600`, `typePrinterUtils.ts:1-49`, `parameterUtils.ts:1-493`, `functionTransform.ts:1-374`, `declarationUtils.ts:1-421`, `sourceMapper.ts:1-1155`, `sourceMapperUtils.ts:1-63`, `constructors.ts:1-1145`, `program.ts:1439-1440` |
+| F | 7,721 | `codeFlowEngine.ts:1-2082`, `typeGuards.ts:1-2067`, `patternMatching.ts:1-2424`, `typeCacheUtils.ts:1-246`, `typeEvaluatorTypes.ts:1-902` (typeGuards.ts 2068-3024 moved to J) |
+| G | 4,971 | `constraintSolver.ts:1-1508`, `constraintTracker.ts:1-287`, `constraintSolution.ts:1-89`, `operations.ts:1-1408`, `typePrinter.ts:1-1600`, `typePrinterUtils.ts:1-49`, `parameterUtils.ts:1-493`, `functionTransform.ts:1-374`, `declarationUtils.ts:1-421` (sourceMapper, sourceMapperUtils and constructors moved to I) |
 | H | 8,530 | `dataClasses.ts:1-1745`, `typedDicts.ts:1-1709`, `protocols.ts:1-899`, `enums.ts:1-759`, `decorators.ts:1-660`, `properties.ts:1-653`, `tuples.ts:1-648`, `namedTuples.ts:1-514`, `constructorTransform.ts:1-499`, `typeWalker.ts:1-204`, `typeComplexity.ts:1-102`, `sentinel.ts:1-86`, `symbolUtils.ts:1-52` |
+| I | 2,363 | `sourceMapper.ts:1-1155`, `sourceMapperUtils.ts:1-63`, `constructors.ts:1-1145`, and `program.ts:1439-1440` (moved from G on 2026-11-10) |
+| J | 957 | `typeGuards.ts:2068-3024` (moved from F on 2026-11-10) |
 
 All paths are under `packages/pyright-internal/src/analyzer/`.
 
