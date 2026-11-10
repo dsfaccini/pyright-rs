@@ -13,12 +13,18 @@ use std::rc::Rc;
 use jsrt::{JsMap, JsSet, P};
 
 use crate::analyzer::analyzer_file_info::{ImportLookup, ImportLookupKey, ImportLookupResult, LookupImportOptions};
+use crate::analyzer::analyzer_node_info::{
+    AnalyzerNodeInfoContext, AnalyzerNodeInfoContextImpl, AnalyzerNodeInfoReader, get_dunder_all_info, get_file_info,
+    get_scope,
+};
 use crate::analyzer::circular_dependency::CircularDependency;
+use crate::analyzer::parse_tree_utils::get_doc_string;
+use crate::analyzer::scope::Scope;
+use crate::analyzer::symbol::SymbolTable;
 use crate::analyzer::import_resolver::{ImportResolver, ImportedModuleDescriptor, ModuleImportInfo};
 use crate::analyzer::import_result::{ImportResult, ImportType};
 use crate::analyzer::source_file::{IPythonMode, SourceFile};
 use crate::analyzer::source_file_info::{OptionalArguments, SourceFileInfo, is_user_code};
-use crate::analyzer::symbol::SymbolTable;
 use crate::common::config_options::{ConfigOptions, DiagnosticLevel, match_file_specs};
 use crate::common::console::ConsoleInterface;
 use crate::common::debug::{assert, fail};
@@ -76,6 +82,7 @@ pub struct Program {
     disable_checker: bool,
     look_up_import: OnceCell<ImportLookup>,
     self_handle: OnceCell<P<Program>>,
+    analyzer_node_info_context: P<AnalyzerNodeInfoContextImpl>,
     pub service_provider: ServiceProvider,
 }
 
@@ -98,6 +105,7 @@ impl Program {
             disable_checker,
             look_up_import: OnceCell::new(),
             self_handle: OnceCell::new(),
+            analyzer_node_info_context: AnalyzerNodeInfoContextImpl::new(),
             service_provider,
         });
 
@@ -136,6 +144,11 @@ impl Program {
     // analyzer/program.ts:236
     pub fn look_up_import(&self) -> ImportLookup {
         self.look_up_import.get().unwrap().clone()
+    }
+
+    // analyzer/program.ts:248
+    pub fn analyzer_node_info_reader(&self) -> &'static dyn AnalyzerNodeInfoReader {
+        self.analyzer_node_info_context.get()
     }
 
     // analyzer/program.ts:327
@@ -829,10 +842,10 @@ impl Program {
     }
 
     // analyzer/program.ts:1756
-    /// STAND-IN: also removes the parse tree from the node-info context once
-    /// the binder's context lands.
     fn drop_parse_and_bind_info(&self, source_file: P<SourceFile>) {
-        source_file.drop_parse_and_bind_info();
+        if let Some(parse_tree) = source_file.drop_parse_and_bind_info() {
+            self.analyzer_node_info_context.remove(parse_tree);
+        }
     }
 
     // analyzer/program.ts:1763
@@ -951,8 +964,22 @@ impl Program {
 
         self.parse_file(file_to_bind, content, skip_file_needed_check);
 
-        // STAND-IN: `getScopeIfAvailable` returns the module scope of the
-        // chained file or the builtins file; it needs the binder's node info.
+        // Create a function to get the scope info.
+        let get_scope_if_available = |file_info: Option<P<SourceFileInfo>>| -> Option<P<Scope>> {
+            let file_info = file_info.filter(|f| !P::ptr_eq(*f, file_to_bind))?;
+
+            // If the file was deleted, there's no scope to return.
+            if file_info.source_file.is_file_deleted() {
+                return None;
+            }
+
+            let parse_results = file_info.source_file.get_parser_output()?;
+
+            // File should already be bound because of the chained file binding above.
+            get_scope(parse_results.parse_tree, self.analyzer_node_info_context.get())
+        };
+
+        let mut builtins_scope: Option<P<Scope>> = None;
         if file_to_bind.builtins_import().is_some_and(|b| !P::ptr_eq(b, file_to_bind)) {
             // Bind all of the implicit imports first. So we don't recurse into them.
             if !is_implicit_import {
@@ -964,6 +991,11 @@ impl Program {
                     return true;
                 }
             }
+
+            // If it is not builtin module itself, we need to parse and bind
+            // the builtin module.
+            builtins_scope = get_scope_if_available(file_to_bind.chained_source_file())
+                .or_else(|| get_scope_if_available(file_to_bind.builtins_import()));
         }
 
         if file_to_bind.source_file.is_parse_required() {
@@ -978,7 +1010,13 @@ impl Program {
         file_to_bind
             .set_effective_future_imports(if future_imports.is_empty() { None } else { Some(future_imports.clone()) });
 
-        file_to_bind.source_file.bind(&self.config_options.get(), self.look_up_import(), future_imports)
+        file_to_bind.source_file.bind(
+            &self.config_options.get(),
+            self.look_up_import(),
+            builtins_scope,
+            future_imports,
+            self.analyzer_node_info_context,
+        )
     }
 
     // analyzer/program.ts:2161
@@ -1052,10 +1090,25 @@ impl Program {
             self.bind_file(source_file_info, None, options.is_some_and(|o| o.skip_file_needed_check), false);
         }
 
-        // STAND-IN: returns the module symbol table, `__all__` info and doc
-        // string once the binder lands. Without a symbol table pyright returns
-        // undefined here.
-        None
+        let symbol_table = source_file_info.source_file.get_module_symbol_table()?;
+
+        let parse_results = source_file_info.source_file.get_parser_output().unwrap();
+        let module_node = parse_results.parse_tree;
+        let reader = self.analyzer_node_info_context.get();
+        let file_info = get_file_info(module_node, reader);
+
+        let dunder_all_info = get_dunder_all_info(module_node, reader);
+
+        Some(ImportLookupResult {
+            symbol_table,
+            dunder_all_names: dunder_all_info.map(|info| info.names.clone()),
+            uses_unsupported_dunder_all_form: dunder_all_info.is_some_and(|info| info.uses_unsupported_dunder_all_form),
+            // A getter in TypeScript: computed when read.
+            doc_string: Rc::new(move || {
+                get_doc_string(&module_node.d().statements.borrow()).map(|s| s.to_string_lossy())
+            }),
+            is_in_py_typed_package: file_info.is_in_py_typed_package,
+        })
     }
 
     // analyzer/program.ts:2258
@@ -1242,7 +1295,7 @@ impl Program {
             return;
         }
 
-        source_file_info.source_file.mark_reanalysis_required(force_rebinding);
+        source_file_info.source_file.mark_reanalysis_required(force_rebinding, self.analyzer_node_info_context.get());
         mark_set.insert(file_uri.key());
 
         for dep in source_file_info.imported_by() {
@@ -1263,7 +1316,10 @@ impl Program {
 
             chained
                 .source_file
-                .mark_reanalysis_required(source_file_info.ipython_mode() == IPythonMode::CellDocs);
+                .mark_reanalysis_required(
+                    source_file_info.ipython_mode() == IPythonMode::CellDocs,
+                    self.analyzer_node_info_context.get(),
+                );
             chained_source_file = chained.chained_source_file();
         }
     }

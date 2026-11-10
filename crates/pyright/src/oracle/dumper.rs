@@ -2,16 +2,23 @@
 //! environment, per-stage file writes and `oracle-run.txt`. Format:
 //! `oracle/FORMAT.md`, "running" and "files".
 //!
-//! Stages whose Rust dumper does not exist yet write nothing.
+//! The types stage writes nothing until the evaluator exists.
 
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
 
 use jsrt::JsSet;
 
+use jsrt::P;
+
+use super::bind::{dump_bind, number_scopes, walk_tree};
 use super::diag::{OracleDiagnosticLists, dump_diagnostics};
+use super::flow::dump_flow;
+use crate::analyzer::analyzer_node_info::AnalyzerNodeInfoContextImpl;
+use crate::parser::parse_nodes::ModuleNode;
 use super::format;
 use super::tokens::dump_tokenizer_output;
+use super::tree::dump_parser_output;
 use crate::parser::parser::ParseFileResults;
 use crate::analyzer::program::Program;
 use crate::common::uri::Uri;
@@ -109,7 +116,27 @@ pub fn oracle_dump_parse(uri: Uri, results: &ParseFileResults) {
         if s.stages.contains(&Stage::Tokens) {
             write_dump(s, Stage::Tokens, uri, dump_tokenizer_output(&results.tokenizer_output));
         }
-        // The tree stage has no Rust dumper yet.
+        if s.stages.contains(&Stage::Tree) {
+            write_dump(s, Stage::Tree, uri, dump_parser_output(&results.parser_output));
+        }
+    });
+}
+
+/// Called by `SourceFile.bind` right after the binder's results are published.
+pub fn oracle_dump_bind(uri: Uri, root: ModuleNode, reader: P<AnalyzerNodeInfoContextImpl>) {
+    with_state(|s| {
+        if !s.stages.contains(&Stage::Bind) && !s.stages.contains(&Stage::Flow) {
+            return;
+        }
+
+        let walk = walk_tree(root.node());
+        let scopes = number_scopes(&walk, reader.get());
+        if s.stages.contains(&Stage::Bind) {
+            write_dump(s, Stage::Bind, uri, dump_bind(&walk, &scopes, reader.get()));
+        }
+        if s.stages.contains(&Stage::Flow) {
+            write_dump(s, Stage::Flow, uri, dump_flow(&walk, &scopes, reader.get()));
+        }
     });
 }
 
