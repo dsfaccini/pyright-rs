@@ -3965,7 +3965,7 @@ impl TypeCondition {
 // analyzer/types.ts:2668
 #[derive(Clone, Default)]
 pub struct LiteralTypes {
-    pub literal_str_map: Option<Box<JsMap<String, UnionableType>>>,
+    pub literal_str_map: Option<Box<JsMap<JsString, UnionableType>>>,
     pub literal_int_map: Option<Box<JsMap<NumberValue, UnionableType>>>,
     pub literal_enum_map: Option<Box<JsMap<String, UnionableType>>>,
 }
@@ -4081,7 +4081,7 @@ impl UnionType {
                         literal_maps
                             .literal_str_map
                             .get_or_insert_with(Default::default)
-                            .insert(value.to_string_lossy(), new_type);
+                            .insert(value.clone(), new_type);
                     }
                 } else if is_int {
                     let key = match &literal_value {
@@ -4162,7 +4162,7 @@ impl UnionType {
                     && let Some(map) = &literal_maps.literal_str_map
                 {
                     return match &literal_value {
-                        LiteralValue::String(value) => map.contains_key(&value.to_string_lossy()),
+                        LiteralValue::String(value) => map.contains_key(value),
                         _ => false,
                     };
                 } else if ClassType::is_built_in(class_subtype, Some(&["int".to_string()]))
@@ -5837,7 +5837,7 @@ pub(crate) fn _add_type_if_unique(
             && let Some(map) = &literal_maps.literal_str_map
         {
             let has = match literal_value {
-                LiteralValue::String(value) => map.contains_key(&value.to_string_lossy()),
+                LiteralValue::String(value) => map.contains_key(value),
                 _ => false,
             };
             drop(union_priv);

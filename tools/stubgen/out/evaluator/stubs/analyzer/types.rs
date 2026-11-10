@@ -1882,7 +1882,7 @@ impl TypeCondition {
 // analyzer/types.ts:2668
 #[derive(Clone, Default)]
 pub struct LiteralTypes {
-    pub literal_str_map: Option<Box<JsMap<String, UnionableType>>>,
+    pub literal_str_map: Option<Box<JsMap<JsString, UnionableType>>>,
     pub literal_int_map: Option<Box<JsMap<NumberValue, UnionableType>>>,
     pub literal_enum_map: Option<Box<JsMap<String, UnionableType>>>,
 }
