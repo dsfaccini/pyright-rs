@@ -1,6 +1,6 @@
 # solver notes
 
-Share G of step 5 (`docs/step5-shares.md`): constraintSolver, constraintTracker, constraintSolution, operations, typePrinter, typePrinterUtils, parameterUtils, functionTransform, declarationUtils, sourceMapper, sourceMapperUtils, constructors, and `program.ts:1439-1440`.
+Share G of step 5 (`docs/step5-shares.md`): constraintSolver, constraintTracker, constraintSolution, operations, typePrinter, typePrinterUtils, parameterUtils, functionTransform, declarationUtils. sourceMapper, sourceMapperUtils and constructors moved to share I (801f0d7) untouched.
 
 ## Signature changes
 
@@ -22,11 +22,13 @@ All through `tools/stubgen`:
 ## Needs from others
 
 - Share E: `FunctionReturnTypeCallback::call` (typeEvaluator.ts:30313) in `type_printer.rs`.
-- Every body here calls types.rs (A) and typeUtils.rs (A) items that are still `todo!()`.
+- Share A: the typeUtils.rs bodies every file here calls.
+- A decision on `synthesizeAliasDeclaration` (declarationUtils.ts:214), still `todo!()`: TypeScript builds the declaration with `node: undefined!`, and the hand-ported `Declaration.node` is a non-optional `Cell<P<ParseNode>>`. It is reached on the check path through `_addSymbolDeclInfo` (typeEvaluator.ts:23628) and the import-alias branch of `getDeclInfoForNameNode` (23785). `getNameNodeForDeclaration` tests `declaration.node === undefined` for exactly this declaration.
 
 ## Doubts
 
 - `typePrinter.test.ts` is not ported yet. Its tests pass their own return-type callback; the Rust `FunctionReturnTypeCallback` is a struct holding a `P<TypeEvaluator>`, since the check path has one creation site. Porting the tests needs a test variant of that callback, and share A's type constructors.
 - `printFunctionPartsInternal` with `PythonSyntax` prints `*args: [object Object].args`: the TypeScript interpolates the ParamSpec object. Ported as is.
 - `printLiteralValue` stringifies a `SentinelLiteral` as `[object Object]`, as JavaScript would. Its callers print sentinels before reaching it.
+- `operations.ts` maps its literal-math `BigInt` throws (conversion of a non-integer, `**` and `<<` past V8's size limit) to the `checked_*` methods of `jsrt::JsBigInt`; a `None` takes the TypeScript catch path. The unary `~` path has no catch in TypeScript and `expect`s instead.
 - Bodies in `type_printer.rs` (a shared file) reach items by path and use fn-local `use` statements only for traits and short names; no module-level `use` line is added.

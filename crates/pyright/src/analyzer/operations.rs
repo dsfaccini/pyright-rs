@@ -286,7 +286,7 @@ pub fn get_type_of_binary_operation(
     // have no magic method, so we apply the expected type directly to both operands.
     let mut expected_operand_type = if operator == OperatorType::Or || operator == OperatorType::And
     {
-        inference_context.map(|inference_context| inference_context.expected_type)
+        inference_context.map(|inference_context| inference_context.expected_type.get())
     } else {
         None
     };
@@ -297,7 +297,7 @@ pub fn get_type_of_binary_operation(
     let mut expected_left_operand_type: Option<P<Type>> = None;
     if operator == OperatorType::Multiply {
         if let Some(inference_context) = inference_context {
-            let expected_type = inference_context.expected_type;
+            let expected_type = inference_context.expected_type.get();
             if is_class_instance(expected_type)
                 && ClassType::is_built_in(ClassType(expected_type), Some(&["list".to_string()]))
                 && ClassType(expected_type)
@@ -318,7 +318,7 @@ pub fn get_type_of_binary_operation(
     let left_type_result = evaluator.get_type_of_expression(
         left_expression,
         flags,
-        make_inference_context(effective_expected_type, None, None).as_mut(),
+        make_inference_context(effective_expected_type, None, None),
     );
     let mut left_type = left_type_result.type_.get();
 
@@ -363,7 +363,7 @@ pub fn get_type_of_binary_operation(
     let right_type_result = evaluator.get_type_of_expression(
         right_expression,
         flags,
-        make_inference_context(expected_operand_type, None, None).as_mut(),
+        make_inference_context(expected_operand_type, None, None),
     );
     let mut right_type = right_type_result.type_.get();
 
@@ -580,7 +580,7 @@ pub fn get_type_of_augmented_assignment(
     let right_type_result = evaluator.get_type_of_expression(
         node.d().right_expr.get(),
         /* flags */ EvalFlags::None,
-        make_inference_context(expected_operand_type, None, None).as_mut(),
+        make_inference_context(expected_operand_type, None, None),
     );
     let right_type = right_type_result.type_.get();
     let is_incomplete = right_type_result.is_incomplete.get().unwrap_or(false)
@@ -865,12 +865,12 @@ pub fn get_type_of_unary_operation(
         if type_.is_none() {
             if !is_incomplete.unwrap_or(false) {
                 let expr_type_text = evaluator.print_type(expr_type, None);
-                match inference_context
-                    .filter(|inference_context| !is_any_or_unknown(inference_context.expected_type))
-                {
+                match inference_context.filter(|inference_context| {
+                    !is_any_or_unknown(inference_context.expected_type.get())
+                }) {
                     Some(inference_context) => {
                         let expected_type_text =
-                            evaluator.print_type(inference_context.expected_type, None);
+                            evaluator.print_type(inference_context.expected_type.get(), None);
                         evaluator.add_diagnostic(
                             DiagnosticRule::reportOperatorIssue,
                             &LocMessage::type_not_support_unary_operator_bidirectional().format(&[
@@ -927,7 +927,6 @@ pub fn get_type_of_ternary_operation(
         return P::new_eval(TypeResult::new(UnknownType::create(false).0));
     }
 
-    let mut inference_context = inference_context;
     evaluator.get_type_of_expression(node.d().test_expr.get(), EvalFlags::None, None);
 
     let mut types_to_combine: Vec<P<Type>> = Vec::new();
@@ -944,11 +943,8 @@ pub fn get_type_of_ternary_operation(
 
     if const_expr_value != Some(false) && evaluator.is_node_reachable(node.d().if_expr.get(), None)
     {
-        let if_type = evaluator.get_type_of_expression(
-            node.d().if_expr.get(),
-            flags,
-            inference_context.as_deref_mut(),
-        );
+        let if_type =
+            evaluator.get_type_of_expression(node.d().if_expr.get(), flags, inference_context);
         types_to_combine.push(if_type.type_.get());
         if if_type.is_incomplete.get().unwrap_or(false) {
             is_incomplete = true;
@@ -1810,11 +1806,11 @@ pub(crate) fn validate_arithmetic_operation(
                         let left_type_text = evaluator.print_type(left_subtype_expanded, None);
                         let right_type_text = evaluator.print_type(right_subtype_expanded, None);
                         match inference_context.filter(|inference_context| {
-                            !is_any_or_unknown(inference_context.expected_type)
+                            !is_any_or_unknown(inference_context.expected_type.get())
                         }) {
                             Some(inference_context) => {
-                                let expected_type_text =
-                                    evaluator.print_type(inference_context.expected_type, None);
+                                let expected_type_text = evaluator
+                                    .print_type(inference_context.expected_type.get(), None);
                                 diag.add_message(
                                     LocMessage::type_not_support_binary_operator_bidirectional()
                                         .format(&[
