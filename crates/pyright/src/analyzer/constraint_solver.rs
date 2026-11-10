@@ -1674,14 +1674,16 @@ pub(crate) fn widen_type_for_type_var_tuple(
         .priv_
         .borrow()
         .tuple_type_args
-        .as_ref()
+        .map(|tuple_type_args| tuple_type_args.get().borrow())
+        .as_deref()
         .map(Vec::len);
     let args2 = ClassType(type2)
         .d()
         .priv_
         .borrow()
         .tuple_type_args
-        .as_ref()
+        .map(|tuple_type_args| tuple_type_args.get().borrow())
+        .as_deref()
         .map(Vec::len);
     match (args1, args2) {
         (Some(len1), Some(len2)) if len1 == len2 => {}
@@ -1700,13 +1702,13 @@ pub(crate) fn widen_type_for_type_var_tuple(
         .priv_
         .borrow()
         .tuple_type_args
-        .clone();
+        .map(|tuple_type_args| tuple_type_args.borrow().clone());
     let tuple_type_args2 = ClassType(stripped_type2)
         .d()
         .priv_
         .borrow()
         .tuple_type_args
-        .clone();
+        .map(|tuple_type_args| tuple_type_args.borrow().clone());
     let (Some(tuple_type_args1), Some(tuple_type_args2)) = (tuple_type_args1, tuple_type_args2)
     else {
         return None;
@@ -1804,7 +1806,7 @@ pub(crate) fn strip_literal_value_for_unpacked_tuple(
     if !is_unpacked_class(type_) {
         return type_;
     }
-    let Some(type_args) = ClassType(type_).d().priv_.borrow().tuple_type_args.clone() else {
+    let Some(type_args) = ClassType(type_).d().priv_.borrow().tuple_type_args.map(|tuple_type_args| tuple_type_args.borrow().clone()) else {
         return type_;
     };
 

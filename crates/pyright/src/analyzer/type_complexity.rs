@@ -75,7 +75,7 @@ pub(crate) fn get_complexity_score_for_class(class_type: ClassType, recursion_co
 
     let (tuple_type_args, type_args) = {
         let priv_ = class_type.d().priv_.borrow();
-        (priv_.tuple_type_args.clone(), priv_.type_args.clone())
+        (priv_.tuple_type_args.map(|tuple_type_args| tuple_type_args.borrow().clone()), priv_.type_args.clone())
     };
     if let Some(tuple_type_args) = tuple_type_args {
         for type_arg in tuple_type_args {

@@ -157,7 +157,8 @@ pub fn create_named_tuple_type(
                 .priv_
                 .borrow()
                 .tuple_type_args
-                .as_ref()
+                .map(|tuple_type_args| tuple_type_args.get().borrow())
+                .as_deref()
                 .map(|tuple_type_args| tuple_type_args.len() as i32)
         } else {
             None

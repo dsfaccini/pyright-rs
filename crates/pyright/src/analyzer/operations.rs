@@ -1667,13 +1667,13 @@ pub(crate) fn validate_arithmetic_operation(
                             .priv_
                             .borrow()
                             .tuple_type_args
-                            .clone();
+                            .map(|tuple_type_args| tuple_type_args.borrow().clone());
                         let right_tuple_type_args = ClassType(right_subtype_expanded)
                             .d()
                             .priv_
                             .borrow()
                             .tuple_type_args
-                            .clone();
+                            .map(|tuple_type_args| tuple_type_args.borrow().clone());
                         if let (
                             Some(left_tuple_type_args),
                             Some(right_tuple_type_args),

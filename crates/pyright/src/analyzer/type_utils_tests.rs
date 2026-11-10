@@ -163,7 +163,8 @@ fn transform_aligned_class_arguments_but_preserve_mismatched_wrappers() {
         UnionType(result_type_arg).d().priv_.borrow().subtypes[0],
         target_leaf
     );
-    let result_tuple_type_arg = &result_priv.tuple_type_args.as_ref().unwrap()[0];
+    let result_tuple_type_args = result_priv.tuple_type_args.unwrap().get().borrow();
+    let result_tuple_type_arg = &result_tuple_type_args[0];
     assert_eq!(result_tuple_type_arg.type_, target_leaf);
     assert!(result_tuple_type_arg.is_unbounded);
     assert_eq!(result_tuple_type_arg.is_optional, Some(true));

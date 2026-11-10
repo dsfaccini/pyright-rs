@@ -228,7 +228,7 @@ pub fn get_type_of_tuple_with_context(
     let mut expected_types: Vec<P<Type>> = vec![];
 
     let expected_class = ClassType(inference_context.expected_type.get());
-    let expected_tuple_type_args = expected_class.d().priv_.borrow().tuple_type_args.clone();
+    let expected_tuple_type_args = expected_class.d().priv_.borrow().tuple_type_args.map(|tuple_type_args| tuple_type_args.borrow().clone());
     if let Some(expected_tuple_type_args) =
         expected_tuple_type_args.filter(|_| is_tuple_class(expected_class))
     {
@@ -413,14 +413,14 @@ pub fn assign_tuple_type_args(
         .priv_
         .borrow()
         .tuple_type_args
-        .clone()
+        .map(|tuple_type_args| tuple_type_args.borrow().clone())
         .unwrap_or_default();
     let mut src_type_args = src_type
         .d()
         .priv_
         .borrow()
         .tuple_type_args
-        .clone()
+        .map(|tuple_type_args| tuple_type_args.borrow().clone())
         .unwrap_or_default();
 
     if adjust_tuple_type_args(evaluator, &mut dest_type_args, &mut src_type_args, flags) {
@@ -759,7 +759,7 @@ pub fn get_sliced_tuple_type(
     slice_node: SliceNode,
 ) -> Option<P<Type>> {
     // We don't handle step values.
-    let tuple_type_args = tuple_type.d().priv_.borrow().tuple_type_args.clone();
+    let tuple_type_args = tuple_type.d().priv_.borrow().tuple_type_args.map(|tuple_type_args| tuple_type_args.borrow().clone());
     let tuple_type_args = tuple_type_args.filter(|_| slice_node.d().step_value.get().is_none())?;
 
     let start_value = get_tuple_slice_param(
@@ -794,7 +794,7 @@ pub fn get_sliced_tuple_type(
 
 // analyzer/tuples.ts:575
 pub fn expand_tuple(tuple_type: ClassType, max_expansion: u32) -> Option<Vec<P<Type>>> {
-    let tuple_type_args = tuple_type.d().priv_.borrow().tuple_type_args.clone();
+    let tuple_type_args = tuple_type.d().priv_.borrow().tuple_type_args.map(|tuple_type_args| tuple_type_args.borrow().clone());
     let tuple_type_args = tuple_type_args.filter(|tuple_type_args| {
         is_tuple_class(tuple_type)
             && !tuple_type_args
@@ -819,7 +819,7 @@ pub fn expand_tuple(tuple_type: ClassType, max_expansion: u32) -> Option<Vec<P<T
                             .priv_
                             .borrow()
                             .tuple_type_args
-                            .clone()
+                            .map(|tuple_type_args| tuple_type_args.borrow().clone())
                             .unwrap();
                         new_type_args[index] = TupleTypeArg {
                             type_: subtype,

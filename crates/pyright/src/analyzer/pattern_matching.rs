@@ -247,7 +247,7 @@ pub(crate) fn narrow_type_based_on_sequence_pattern(
                     .priv_
                     .borrow()
                     .tuple_type_args
-                    .clone();
+                    .map(|tuple_type_args| tuple_type_args.borrow().clone());
                 if let Some(tuple_type_args) = tuple_type_args {
                     let unbounded_index = tuple_type_args
                         .iter()
@@ -300,7 +300,7 @@ pub(crate) fn narrow_type_based_on_sequence_pattern(
                     let narrowed_tuple_type_args = if is_class_instance(narrowed_entry_type) {
                         let narrowed_class = ClassType(narrowed_entry_type);
                         let tuple_type_args =
-                            narrowed_class.d().priv_.borrow().tuple_type_args.clone();
+                            narrowed_class.d().priv_.borrow().tuple_type_args.map(|tuple_type_args| tuple_type_args.borrow().clone());
                         tuple_type_args
                             .filter(|_| !is_unbounded_tuple_class(narrowed_class).unwrap_or(false))
                     } else {
@@ -878,7 +878,7 @@ pub(crate) fn get_positional_match_arg_names(
                 .priv_
                 .borrow()
                 .tuple_type_args
-                .clone();
+                .map(|tuple_type_args| tuple_type_args.borrow().clone());
             if let Some(tuple_args) = tuple_args {
                 // Are all the args string literals?
                 if tuple_args.iter().all(|arg| {
@@ -2192,36 +2192,28 @@ pub(crate) fn get_sequence_pattern_info(
                     ));
 
                     if is_tuple_class(specialized_sequence) {
-                        // The TypeScript splices `specializedSequence.priv.tupleTypeArgs` in place when
-                        // the type has them; each splice below writes the array back to the type.
-                        let priv_type_args = specialized_sequence
+                        // The splices below edit `specializedSequence.priv.tupleTypeArgs` in place, so
+                        // they reach every clone that shares the array.
+                        let type_args = specialized_sequence
                             .d()
                             .priv_
                             .borrow()
                             .tuple_type_args
-                            .clone();
-                        let splices_priv = priv_type_args.is_some();
-                        let mut type_args: Vec<TupleTypeArg> =
-                            priv_type_args.unwrap_or_else(|| {
-                                vec![TupleTypeArg {
+                            .unwrap_or_else(|| {
+                                P::new_eval(std::cell::RefCell::new(vec![TupleTypeArg {
                                     type_: UnknownType::create(false).0,
                                     is_unbounded: true,
                                     is_optional: None,
-                                }]
+                                }]))
                             });
-                        let write_back = |type_args: &[TupleTypeArg]| {
-                            if splices_priv {
-                                specialized_sequence.d().priv_.borrow_mut().tuple_type_args =
-                                    Some(type_args.to_vec());
-                            }
-                        };
 
                         let mut tuple_indeterminate_index: i32 = type_args
+                            .borrow()
                             .iter()
                             .position(is_indeterminate_entry)
                             .map_or(-1, |index| index as i32);
 
-                        let mut tuple_determinate_entry_count = type_args.len() as i32;
+                        let mut tuple_determinate_entry_count = type_args.borrow().len() as i32;
 
                         // If the tuple contains an indeterminate entry, expand or remove that
                         // entry to match the length of the pattern if possible.
@@ -2233,21 +2225,19 @@ pub(crate) fn get_sequence_pattern_info(
                         if tuple_indeterminate_index >= 0 {
                             tuple_determinate_entry_count -= 1;
 
-                            while type_args.len() < pattern_entry_count {
+                            while type_args.borrow().len() < pattern_entry_count {
                                 let index = tuple_indeterminate_index as usize;
-                                let entry = type_args[index].clone();
-                                type_args.insert(index, entry);
-                                write_back(&type_args);
+                                let entry = type_args.borrow()[index].clone();
+                                type_args.borrow_mut().insert(index, entry);
                                 tuple_determinate_entry_count += 1;
                                 tuple_indeterminate_index += 1;
                                 expanded_indeterminate = true;
                             }
 
-                            if type_args.len() > pattern_entry_count
+                            if type_args.borrow().len() > pattern_entry_count
                                 && pattern_star_entry_index.is_none()
                             {
-                                type_args.remove(tuple_indeterminate_index as usize);
-                                write_back(&type_args);
+                                type_args.borrow_mut().remove(tuple_indeterminate_index as usize);
                                 tuple_indeterminate_index = -1;
                                 removed_indeterminate = true;
                             }
@@ -2256,12 +2246,12 @@ pub(crate) fn get_sequence_pattern_info(
                         // If the pattern contains a star entry and there are too many entries
                         // in the tuple, we can collapse some of them into the star entry.
                         if let Some(star_entry_index) = pattern_star_entry_index {
-                            if type_args.len() >= 2 && type_args.len() > pattern_entry_count {
+                            if type_args.borrow().len() >= 2 && type_args.borrow().len() > pattern_entry_count {
                                 let star = star_entry_index as usize;
-                                let entries_to_combine = type_args.len() - pattern_entry_count + 1;
+                                let entries_to_combine = type_args.borrow().len() - pattern_entry_count + 1;
                                 let removed_entries: Vec<TupleTypeArg> =
-                                    type_args.drain(star..star + entries_to_combine).collect();
-                                type_args.insert(
+                                    type_args.borrow_mut().drain(star..star + entries_to_combine).collect();
+                                type_args.borrow_mut().insert(
                                     star,
                                     TupleTypeArg {
                                         type_: combine_types(
@@ -2277,10 +2267,9 @@ pub(crate) fn get_sequence_pattern_info(
                                         is_optional: None,
                                     },
                                 );
-                                write_back(&type_args);
 
                                 tuple_determinate_entry_count -= entries_to_combine as i32;
-                                if !type_args[star].is_unbounded {
+                                if !type_args.borrow()[star].is_unbounded {
                                     tuple_determinate_entry_count += 1;
                                 }
 
@@ -2295,7 +2284,7 @@ pub(crate) fn get_sequence_pattern_info(
                             }
                         }
 
-                        if type_args.len() == pattern_entry_count {
+                        if type_args.borrow().len() == pattern_entry_count {
                             let mut is_definite_no_match = false;
                             let mut is_potential_no_match =
                                 tuple_indeterminate_index >= 0 || removed_indeterminate;
@@ -2322,7 +2311,7 @@ pub(crate) fn get_sequence_pattern_info(
 
                             for i in 0..pattern_entry_count {
                                 let sub_pattern = pattern_entries[i];
-                                let type_arg = type_args[i].type_;
+                                let type_arg = type_args.borrow()[i].type_;
                                 let narrowed_type = narrow_type_based_on_pattern(
                                     evaluator,
                                     type_arg,
@@ -2341,7 +2330,7 @@ pub(crate) fn get_sequence_pattern_info(
                                 if is_definite_no_match {
                                     Vec::new()
                                 } else {
-                                    type_args.iter().map(|t| t.type_).collect()
+                                    type_args.borrow().iter().map(|t| t.type_).collect()
                                 },
                                 Some(false),
                                 Some(true),
@@ -2359,9 +2348,9 @@ pub(crate) fn get_sequence_pattern_info(
                             let star = star_entry_index as usize;
                             let mut try_match_star_sequence = false;
 
-                            if type_args.len() + 1 == pattern_entry_count {
+                            if type_args.borrow().len() + 1 == pattern_entry_count {
                                 try_match_star_sequence = true;
-                                type_args.insert(
+                                type_args.borrow_mut().insert(
                                     star,
                                     TupleTypeArg {
                                         type_: AnyType::create(false).0,
@@ -2369,9 +2358,8 @@ pub(crate) fn get_sequence_pattern_info(
                                         is_optional: None,
                                     },
                                 );
-                                write_back(&type_args);
-                            } else if type_args.len() == pattern_entry_count
-                                && type_args[star].is_unbounded
+                            } else if type_args.borrow().len() == pattern_entry_count
+                                && type_args.borrow()[star].is_unbounded
                             {
                                 try_match_star_sequence = true;
                             }
@@ -2385,7 +2373,7 @@ pub(crate) fn get_sequence_pattern_info(
                                     }
 
                                     let sub_pattern = pattern_entries[i];
-                                    let type_arg = type_args[i].type_;
+                                    let type_arg = type_args.borrow()[i].type_;
                                     let narrowed_type = narrow_type_based_on_pattern(
                                         evaluator,
                                         type_arg,
@@ -2404,7 +2392,7 @@ pub(crate) fn get_sequence_pattern_info(
                                     if is_definite_no_match {
                                         Vec::new()
                                     } else {
-                                        type_args.iter().map(|t| t.type_).collect()
+                                        type_args.borrow().iter().map(|t| t.type_).collect()
                                     },
                                     Some(false),
                                     Some(true),
@@ -3313,7 +3301,7 @@ pub fn get_pattern_subtype_narrowing_callback(
                                 .priv_
                                 .borrow()
                                 .tuple_type_args
-                                .clone()
+                                .map(|tuple_type_args| tuple_type_args.borrow().clone())
                         } else {
                             None
                         };

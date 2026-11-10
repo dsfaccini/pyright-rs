@@ -918,7 +918,7 @@ pub struct PropertyMethodInfo {
 pub struct ClassDetailsPriv {
     pub type_args: Option<Vec<P<Type>>>,
     pub is_empty_container: Option<bool>,
-    pub tuple_type_args: Option<Vec<TupleTypeArg>>,
+    pub tuple_type_args: Option<P<RefCell<Vec<TupleTypeArg>>>>,
     pub is_unpacked: Option<bool>,
     pub is_type_arg_explicit: Option<bool>,
     pub include_subclasses: Option<bool>,
@@ -1119,7 +1119,8 @@ impl ClassType {
             priv_.include_subclasses = Some(true);
         }
 
-        priv_.tuple_type_args = tuple_type_args.map(|tuple_type_args| tuple_type_args.to_vec());
+        priv_.tuple_type_args =
+            tuple_type_args.map(|tuple_type_args| P::new_eval(RefCell::new(tuple_type_args.to_vec())));
 
         if let Some(is_empty_container) = is_empty_container {
             priv_.is_empty_container = Some(is_empty_container);
@@ -5028,8 +5029,8 @@ pub fn is_type_same(
                 || !ClassType::is_pseudo_generic_class(class_type1)
             {
                 // Make sure the type args match.
-                let type1_tuple_type_args = class_type1.d().priv_.borrow().tuple_type_args.clone();
-                let type2_tuple_type_args = class_type2.d().priv_.borrow().tuple_type_args.clone();
+                let type1_tuple_type_args = class_type1.d().priv_.borrow().tuple_type_args.map(|tuple_type_args| tuple_type_args.borrow().clone());
+                let type2_tuple_type_args = class_type2.d().priv_.borrow().tuple_type_args.map(|tuple_type_args| tuple_type_args.borrow().clone());
 
                 if let (Some(type1_tuple_type_args), Some(type2_tuple_type_args)) =
                     (&type1_tuple_type_args, &type2_tuple_type_args)
