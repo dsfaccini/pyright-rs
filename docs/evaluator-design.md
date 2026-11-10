@@ -12,7 +12,7 @@ The generator maps it, and every function configured under `[factories]`, as fol
 
 - The factory becomes one struct, named after the interface it returns: `TypeEvaluator`, in `analyzer/type_evaluator.rs`.
 - The TypeScript interface `TypeEvaluator` gets no Rust item of its own. Every reference to it names the struct.
-- `createTypeEvaluator` becomes `create_type_evaluator(..) -> P<TypeEvaluator>`. The evaluator lives in the leak arena because other objects store it (below).
+- `createTypeEvaluator` becomes `create_type_evaluator(..) -> P<TypeEvaluator>`. The evaluator lives in the leak arena because other objects store it (below). Its parameters are taken by value: the struct stores them.
 - `wrapWithLogger` is dropped (`drop_params`). It only adds timing and call logging, which the check path does not print.
 
 ### fields
@@ -42,12 +42,15 @@ The generator maps it, and every function configured under `[factories]`, as fol
 
 - A helper parameter of type `TypeEvaluator` is `&TypeEvaluator`. Inside a method, pass `self` where the TypeScript passes `evaluatorInterface`.
 - A stored evaluator is `P<TypeEvaluator>`: struct fields, and closures stored in types (`ClassDetailsShared.synthesizeMethodsDeferred`) that must be `'static`. Get it with `self.evaluator_interface.get()`.
-- `getCodeFlowEngine(evaluatorInterface, ...)` stores the evaluator, so it takes the `P<TypeEvaluator>`.
+- `getCodeFlowEngine(evaluatorInterface, ...)` stores the evaluator, so it takes the `P<TypeEvaluator>` (section 4, stored parameters).
 
 ### other closure factories
 
 The same rules apply to every `[factories]` entry. `getCodeFlowEngine` is `CodeFlowEngine` and its nested factory `createCodeFlowAnalyzer` is `CodeFlowAnalyzer`.
-A nested factory's struct gets a back-pointer field to its parent, `code_flow_engine: P<CodeFlowEngine>`, because its closures read the parent's locals. Its own nested functions are its methods.
+
+- The returned object is either a `const` named in `self_names` (`evaluatorInterface`) or the object literal of a top-level `return { .. }` (`getCodeFlowEngine`). Its members are the `pub` methods.
+- A nested factory's struct gets a back-pointer field to its parent, `code_flow_engine: P<CodeFlowEngine>`, because its closures read the parent's locals. Its own nested functions are its methods.
+- `&self` cannot become a `P<Self>`. A factory with a nested factory and no `self_names` gets `handle: OnceCell<P<Self>>`, set once the struct is in the arena, so its methods can hand the back-pointer to the nested struct.
 
 ### for the step 5 agents
 
@@ -86,7 +89,7 @@ A type alias of `number` (`TypeSourceId`) is one site, so one entry covers every
 - A union of members of one family is the family root, `P<Root>` (below).
 - A union of members of one enum is that enum.
 - A union whose members map to one Rust type is that type (`T | Promise<T>` is `T`).
-- A union named in `[types]` by its sorted members maps as the table says: `"string | string[]"` is `Vec<String>`, param `&[&str]`.
+- A union named in `[types]` by its sorted members maps as the table says: `"string | string[]"` is `Vec<String>`, param `&[String]`.
 - Any other union renders as its first member followed by `/*? <TypeScript> */`. The run report lists every such site.
 
 ### collections
@@ -99,7 +102,12 @@ A type alias of `number` (`TypeSourceId`) is one site, so one entry covers every
 | `[A, B]` | `(A, B)` | `(A, B)` | |
 | `{ [key: string]: T }` | `JsMap<String, T>` | | |
 
-A collection is a value in Rust and a shared reference in TypeScript. Where two holders share one collection and one of them changes it, map that site to a shared handle in `[sites]`, as the binder's code-flow expression set does: `P<RefCell<JsSet<String>>>`.
+A collection is a value in Rust and a shared reference in TypeScript. Where two holders share one collection and one of them changes it, map every site that carries it to a shared handle in `[sites]`:
+
+- the binder's code-flow expression set, `P<RefCell<JsSet<String>>>`: the binder, its deferred tasks and the node-info store share it;
+- the evaluator's type caches, `P<RefCell<JsMap<u32, ..>>>`: the speculative type tracker deletes from the map it was handed, and the return-inference caches are swapped per call.
+
+A getter that returns live state its callers write to returns a reference into it, also through `[sites]`: `ClassType::get_symbol_table` returns `&'static RefCell<JsMap<..>>`, `TypeBase::add_props` returns `RefMut<'static, TypeBaseProps>`.
 
 ### callbacks
 
@@ -119,28 +127,32 @@ A class or interface is held one of four ways ("mode"). `[modes]` overrides the 
 
 | mode | Rust | param | default for |
 | --- | --- | --- | --- |
-| `handle` | `P<T>`, identity, shared | `P<T>` | classes; interfaces with a field written after construction |
-| `value` | owned struct | `&T`, or `&mut T` when the callee writes it | interfaces never written after construction |
+| `handle` | `P<T>`, identity, shared | `P<T>` | classes; interfaces with a field written after construction, or compared with `===` |
+| `value` | owned struct, `#[derive(Clone)]` | `&T`, or `&mut T` when the callee writes it | other interfaces |
 | `owned` | owned struct, methods take `&mut self` | `&T` | classes that implement a trait class (walkers) |
 | `opaque` | placeholder struct, ported by hand | `&T` | none; `Uri` |
 
-Generated structs derive nothing: a derive would require every field type, including ones other agents port, to implement the trait. Porters add `Clone` where the TypeScript copies a value.
+Value types, value enums and inline-object structs derive `Clone`: the TypeScript copies them with spreads and reads them out of containers. Handle, owned and family structs derive nothing.
 
-The default for interfaces follows porting.md: an object shared and written after construction needs identity. The run report lists every interface the default made a handle, with the write that decided it, so each can be reviewed.
-`typemap.toml` makes these interfaces values, each for a reason given there:
+The default follows porting.md: an object written after construction, or compared with `===`, needs identity. Writes cannot show whether an object is shared, so the default errs toward the handle. The run report lists every interface the default made a handle, with the write that decided it, and every `[modes]` value that some code compares by identity.
+`typemap.toml` makes an interface a value only where the TypeScript shows that copying it is safe:
 
-- records copied with a spread before each write (`TypedDictEntry`, `ValidateArgTypeParams`, `MatchArgsToParamsResult`);
+- records copied with a spread before each write, never compared with `===` (`TypedDictEntry`, `ValidateArgTypeParams`, `MatchArgsToParamsResult`);
 - the per-instance `priv`, `props` and `cached` records of a type, which `TypeBase.cloneType` copies with a spread;
-- results and option bags that only their builder writes (`TypeResult`, `CallResult`, `InferenceContext`). A callee that writes one takes `&mut`.
+- stack entries that live only in their stack (`SymbolResolutionStackEntry`, `SuppressedNodeStackEntry`).
+
+Results stay handles: the evaluator caches a `TypeResult` and then writes it (typeEvaluator.ts:1348–1353), and returns a cached `EffectiveTypeResult` that its caller writes (24668, 25483). A copy would change pyright's output.
 
 ### mutability
 
 The write analysis reads the whole check path:
 
 - a field assigned outside its own constructor, or deleted, is written;
-- an array, `Map` or `Set` changed in place (`push`, `splice`, `set`, `add`, `delete`, `clear`, `sort`, element assignment, `length = n`) is mutated; so is one passed to a parameter its callee mutates;
+- an array, `Map` or `Set` changed in place (`push`, `splice`, `set`, `add`, `delete`, `clear`, `sort`, element assignment, `length = n`) is mutated; so is one passed to a parameter its callee mutates, through any number of calls (the analysis repeats until nothing changes);
+- a call through a closure factory's interface (`evaluator.getTypeOfExpression(..)`) reaches the nested function behind it;
 - `x.f.g = v` writes through `f`;
-- a local initialized from a field (`const a = x.f`) stands for the field.
+- a local initialized from a field (`const a = x.f`) stands for the field;
+- `a === b` on two objects of one interface or class marks that type as compared by identity.
 
 Then:
 
@@ -165,7 +177,7 @@ porting.md "types, classes and unions" and "parse nodes". `[families]` lists the
 
 `[traits]` lists the classes and interfaces that become traits: those called through an interface or a base class with several implementations.
 
-- A trait interface (`AnalyzerNodeInfoReader`) becomes a trait with one required method per method, and one accessor per data member. Params of its type are `&dyn T`; stored ones are `&'static dyn T`.
+- A trait interface (`AnalyzerNodeInfoReader`) becomes a trait with one required method per method, and one accessor per data member. Params of its type are `&dyn T`; stored ones, fields and parameters the function stores, are `&'static dyn T`.
 - A trait class (`ParseTreeWalker`) becomes a trait whose methods have default `todo!()` bodies. Its fields become required accessors; each implementing struct stores them and returns them. Params are `&mut dyn T`, stored ones `Box<dyn T>`.
 - An implementing class gets one `impl Trait for Class` per trait in its ancestry, holding the methods that trait declares, with the trait's signature and the base's type arguments substituted (`_default` is `bool` in `impl ParseTreeVisitor<bool> for Binder`). The marker points at the implementing method. Its other methods go in an inherent `impl`.
 
@@ -190,8 +202,9 @@ An alias declared inside a function body is inlined.
 
 ### generics
 
-- A type parameter with a mappable constraint is replaced by its constraint, in functions and in structs: `<T extends Type>(type: T): T` is `(type_: P<Type>) -> P<Type>`, and `TypeResult<T extends Type = Type>` is `struct TypeResult`. A caller that knows the member type casts back.
-- Other type parameters stay Rust generics. A struct type parameter no field uses gets a `PhantomData` field.
+- A type parameter whose constraint maps to a Copy handle (`P<T>`, a typed handle, an enum) is replaced by its constraint, in functions and in structs: `<T extends Type>(type: T): T` is `(type_: P<Type>) -> P<Type>`, and `TypeResult<T extends Type = Type>` is `struct TypeResult`. A caller that knows the member type casts the handle back.
+- Other type parameters stay Rust generics: a value struct cannot stand for its subtypes (`addContextualTypeCacheEntry<T extends ContextualTypeCacheEntry>` keeps `T`). A struct type parameter no field uses gets a `PhantomData` field.
+- A type parameter of a function type (`<T>(func: T) => ..`) has no Rust generic to bind to and takes its constraint.
 
 ### other TypeScript types
 
@@ -207,12 +220,13 @@ An alias declared inside a function body is inlined.
 
 - A function with a body becomes `pub fn` (exported) or `pub(crate) fn`, with `todo!()`. An overload set gives the implementation's signature.
 - A default parameter (`flags = EvalFlags.None`) is a plain parameter; a `/// TS defaults:` line records the default. A rest parameter is a slice. A destructured parameter is `argN`.
+- A parameter the function stores takes the form of the field that keeps it: by value, `P<T>` for a factory struct, `&'static dyn T` for a trait. Stored means a constructor parameter property, a parameter the body assigns to a property as is (`this._x = x`), or any parameter of a closure factory.
 - A missing return annotation takes the checker's inferred type.
-- A class becomes a struct and an `impl`: `new(..)` returns `P<Self>` for handles and `Self` otherwise; getters are methods; setters are `set_<name>`; static methods are associated functions; static fields are module-level items named `<CLASS>_<FIELD>`.
+- A class becomes a struct and an `impl`: `new(..)` returns `P<Self>` for handles and `Self` otherwise; getters are methods; setters are `set_<name>`; static methods are associated functions; static fields follow the module-variable rules below.
 - A namespace merged with a type adds associated functions to it (`ClassType::create_instantiable`). Any other namespace becomes a unit struct of the same name (`TypeBase`) holding them; next to a trait of that name, the unit struct is `<Name>Fns`.
-- A module `const` with a literal value is a Rust `const`. Every other module variable is a `thread_local!` static: `Cell`/`RefCell` when written, with a `todo!()` initializer unless the value is a literal. Its marker sits inside the `thread_local!` block, above the `static`.
+- A module `const` with a literal value is a Rust `const`. Every other module variable is a `thread_local!` static: `Cell`/`RefCell` when it is a `let` or some code writes it, with a `todo!()` initializer unless the value is a literal. Its marker sits inside the `thread_local!` block, above the `static`.
 - Variables of a namespace and static fields of a class go in a module named after it: `UnboundType._instance` is `unbound_type::INSTANCE`.
-- A closure factory follows section 1.
+- A closure factory follows section 1. Its builder function gets no `/// Nested in the TS body:` line: its nested functions are the struct's methods.
 
 ## 5. Dependency placeholders and the compile check
 
@@ -225,7 +239,9 @@ A run writes `out/<run>/stubs/`, one module per stubbed file, and `out/<run>/dep
 
 ## 6. Open
 
-- Collections shared by reference between holders that change them need a `[sites]` entry each. The write analysis does not see aliasing; only the binder's code-flow expression set is mapped so far.
+- Collections shared by reference between holders that change them need a `[sites]` entry each; the write analysis does not see aliasing. Mapped so far: the binder's code-flow expression set and the evaluator's type caches. When `typeCacheUtils.ts` is stubbed, `SpeculativeEntry.cache` must hold those same handles, and when `codeFlowEngine.ts` is stubbed, its flow-node type cache (codeFlowEngine.ts:314) needs the same treatment.
+- Interface inheritance between value structs is flattened, so a function that takes the base cannot take a derived struct. In the evaluator, `is_type_cache_entry_valid(Option<&TypeCacheEntry>)` is called with a `TypeFormTypeCacheEntry` (typeEvaluator.ts:821), and `read_contextual_type_cache_entry_for_node` returns one where it is typed `TypeCacheEntry` (788–799). Decide per site: a generic, a conversion, or a `[sites]` type.
+- Handles never free. Results such as `TypeResult` are allocated per evaluation, and stack-like records the default makes handles (`FlowNodeTypeResult`, `SpeculativeContext`, `SpeculativeEntry`, in files not stubbed yet) leak per push. Measure at the step 4 checkpoint. A value form needs proof, per type, that no write follows a store.
 - `RegExp` has no mapping yet; jsrt's `js_regex` translates patterns for the `regex` crate. Neither run uses it.
 - The remaining `/*? .. */` sites in each run's report need a decision: `definedConstants` values (`boolean | string`), `ImportLookup`'s `Uri | AbsoluteModuleDescriptor` parameter, the `any` results in `staticExpressions.ts`.
 - Number sites ending in `?` in `numbers.toml` are unreviewed guesses. The binder group, `typeEvaluator.ts` and `types.ts` have none; the remaining ones sit in files only placeholders cover so far.

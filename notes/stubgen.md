@@ -16,6 +16,7 @@ None. New files only: `tools/stubgen/`, `docs/evaluator-design.md`, this file.
 
 ## Doubts
 
-- `TypeResult`, `CallResult`, `InferenceContext` and other result and option records are values, not handles. That is faithful only while no code writes one after storing it somewhere else. Body porters must check each write that follows a store, and switch the type to `handle` in `typemap.toml` if one does.
-- A JS collection is a shared reference; the stubs make it an owned value. Only the binder's code-flow expression set is mapped to a shared handle so far. Other collections stored in two places and changed afterwards need the same `[sites]` entry.
+- Results (`TypeResult`, `EffectiveTypeResult`, `InferenceContext`, ...) are handles, as the default rule makes them: the evaluator writes cached results after storing them, and a copy changed pyright's output in a reproduction. Each evaluation allocates handles that the arena never frees; the memory cost is unmeasured.
+- A JS collection is a shared reference; the stubs make it an owned value. The binder's code-flow expression set and the evaluator's type caches are mapped to shared handles. Other collections stored in two places and changed afterwards need the same `[sites]` entry.
+- Value structs that inherit from another value struct are flattened; two evaluator call sites pass a derived struct where the base is expected (docs/evaluator-design.md, section 6).
 - Number sites in the stubbed files are reviewed; sites ending in `?` belong to files only placeholders cover, and their owners should review them when those files are stubbed or ported.
