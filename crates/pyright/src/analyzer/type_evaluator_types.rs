@@ -513,7 +513,8 @@ pub struct ExpandCallbackNarrowTypeBasedOnClassPattern {
 impl ExpandCallbackNarrowTypeBasedOnClassPattern {
     // analyzer/patternMatching.ts:905
     pub fn call(&self, type_: P<Type>) -> P<Type> {
-        todo!()
+        self.evaluator
+            .expand_promotion_types(self.pattern.0, type_, false)
     }
 }
 
