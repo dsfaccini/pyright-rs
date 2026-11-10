@@ -111,7 +111,7 @@ Unmapped TypeScript types (rendered with a `/*? ... */` marker): 0 distinct.
 How each class and interface of the stubbed files is held (docs/porting.md "memory"):
 
 - `analyzer/typeEvaluator.ts:GetTypeArgsOptions`: value; never written after construction; never stored in a second place
-- `analyzer/typeEvaluator.ts:MatchArgsToParamsResult`: value; [modes]
+- `analyzer/typeEvaluator.ts:MatchArgsToParamsResult`: handle; [modes]
 - `analyzer/typeEvaluator.ts:MemberAccessTypeResult`: value; never written after construction; never stored in a second place
 - `analyzer/typeEvaluator.ts:ScopedTypeVarResult`: value; never written after construction; never stored in a second place
 - `analyzer/typeEvaluator.ts:AliasMapEntry`: value; never written after construction; never stored in a second place

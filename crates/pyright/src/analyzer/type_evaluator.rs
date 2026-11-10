@@ -71,19 +71,18 @@ pub struct GetTypeArgsOptions {
 }
 
 // analyzer/typeEvaluator.ts:399
-#[derive(Clone)]
 pub struct MatchArgsToParamsResult {
     pub overload: FunctionType,
     pub overload_index: i32,
     pub argument_errors: bool,
     pub is_type_incomplete: bool,
-    pub arg_params: Vec<ValidateArgTypeParams>,
+    pub arg_params: RefCell<Vec<ValidateArgTypeParams>>,
     pub active_param: Option<FunctionParam>,
     pub param_spec_target: Option<ParamSpecType>,
     pub param_spec_arg_list: Option<Vec<Arg>>,
     pub unpacked_arg_of_unknown_length: Option<bool>,
     pub unpacked_arg_maps_to_variadic: Option<bool>,
-    pub argument_match_score: f64,
+    pub argument_match_score: Cell<f64>,
 }
 
 // analyzer/typeEvaluator.ts:423
@@ -126,7 +125,7 @@ pub struct AssignClassToSelfInfo {
 #[derive(Clone)]
 pub struct MatchedOverloadInfo {
     pub overload: FunctionType,
-    pub match_results: MatchArgsToParamsResult,
+    pub match_results: P<MatchArgsToParamsResult>,
     pub constraints: P<ConstraintTracker>,
     pub arg_results: Vec<ArgResult>,
     pub return_type: P<Type>,
@@ -11382,7 +11381,7 @@ impl TypeEvaluator {
         &self,
         error_node: ExpressionNode,
         expanded_arg_types: &[Vec<Option<P<Type>>>],
-        arg_param_matches: &[MatchArgsToParamsResult],
+        arg_param_matches: &[P<MatchArgsToParamsResult>],
         constraints: Option<P<ConstraintTracker>>,
         skip_unknown_arg_check: Option<bool>,
         inference_context: Option<&InferenceContext>,
@@ -11627,7 +11626,7 @@ impl TypeEvaluator {
         arg_list: &[Arg],
         type_result: P<TypeResult>,
         overload_index: i32,
-    ) -> MatchArgsToParamsResult {
+    ) -> P<MatchArgsToParamsResult> {
         todo!()
     }
 
@@ -11636,7 +11635,7 @@ impl TypeEvaluator {
     pub(crate) fn validate_arg_types_with_context(
         &self,
         error_node: ExpressionNode,
-        match_results: &mut MatchArgsToParamsResult,
+        match_results: P<MatchArgsToParamsResult>,
         constraints: P<ConstraintTracker>,
         skip_unknown_arg_check: bool,
         inference_context: Option<&InferenceContext>,
@@ -11649,7 +11648,7 @@ impl TypeEvaluator {
     pub(crate) fn validate_arg_types_with_expected_type(
         &self,
         error_node: ExpressionNode,
-        match_results: &mut MatchArgsToParamsResult,
+        match_results: P<MatchArgsToParamsResult>,
         constraints: P<ConstraintTracker>,
         skip_unknown_arg_check: bool,
         expected_type: P<Type>,
@@ -11662,7 +11661,7 @@ impl TypeEvaluator {
     pub(crate) fn validate_arg_types(
         &self,
         error_node: ExpressionNode,
-        match_results: &mut MatchArgsToParamsResult,
+        match_results: P<MatchArgsToParamsResult>,
         constraints: P<ConstraintTracker>,
         skip_unknown_arg_check: Option<bool>,
     ) -> CallResult {

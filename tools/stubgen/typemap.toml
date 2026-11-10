@@ -57,7 +57,10 @@ Promise = "$0"
 # Copied with a spread before every write, and never compared with `===`.
 "analyzer/types.ts:TypedDictEntry" = "value"
 "analyzer/typeEvaluatorTypes.ts:ValidateArgTypeParams" = "value"
-"analyzer/typeEvaluator.ts:MatchArgsToParamsResult" = "value"
+# validateArgTypes writes argumentMatchScore (typeEvaluator.ts:13575) into the result that
+# validateOverloadedArgTypes still holds in filteredMatchResults, and
+# evaluateUsingBestMatchingOverload reads it back from there (10900).
+"analyzer/typeEvaluator.ts:MatchArgsToParamsResult" = "handle"
 # Held only by their stack; written through an index into it.
 "analyzer/typeEvaluator.ts:SymbolResolutionStackEntry" = "value"
 "analyzer/typeEvaluator.ts:SuppressedNodeStackEntry" = "value"
