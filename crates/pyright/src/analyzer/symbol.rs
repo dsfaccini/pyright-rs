@@ -1,1 +1,492 @@
 //! Port of `packages/pyright-internal/src/analyzer/symbol.ts`.
+
+use std::cell::{Cell, Ref, RefCell};
+use std::ops::{BitAnd, BitAndAssign, BitOr, BitOrAssign, Not};
+
+use jsrt::{JsMap, P};
+
+use super::code_flow_types::flag_ops;
+use super::declaration::{Declaration, DeclarationType};
+use super::declaration_utils::{are_declarations_same, has_type_for_declaration};
+use super::types::Type;
+use crate::parser::parse_nodes::NameNode;
+
+// analyzer/symbol.ts:16
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
+pub struct SymbolFlags(pub u32);
+
+impl SymbolFlags {
+    pub const None: SymbolFlags = SymbolFlags(0);
+
+    // Indicates that the symbol is unbound at the start of
+    // execution. Some symbols are initialized by the module
+    // loader, so they are bound even before the first statement
+    // in the module is executed.
+    pub const InitiallyUnbound: SymbolFlags = SymbolFlags(1 << 0);
+
+    // Indicates that the symbol is not visible from other files.
+    // Used for module-level symbols.
+    pub const ExternallyHidden: SymbolFlags = SymbolFlags(1 << 1);
+
+    // Indicates that the symbol is a class member of a class.
+    pub const ClassMember: SymbolFlags = SymbolFlags(1 << 2);
+
+    // Indicates that the symbol is an instance member of a class.
+    pub const InstanceMember: SymbolFlags = SymbolFlags(1 << 3);
+
+    // Indicates that the symbol is specified in the __slots__
+    // declaration of a class. Such symbols act like instance members
+    // in some respects but are actually implemented as class members
+    // using descriptor objects.
+    pub const SlotsMember: SymbolFlags = SymbolFlags(1 << 4);
+
+    // Indicates that the symbol is considered "private" to the
+    // class or module and should not be accessed outside or overridden.
+    pub const PrivateMember: SymbolFlags = SymbolFlags(1 << 5);
+
+    // Indicates that the symbol is not considered for protocol
+    // matching. This applies to some built-in symbols like __module__.
+    pub const IgnoredForProtocolMatch: SymbolFlags = SymbolFlags(1 << 6);
+
+    // Indicates that the symbol is a ClassVar, so it cannot be
+    // set when accessed through a class instance.
+    pub const ClassVar: SymbolFlags = SymbolFlags(1 << 7);
+
+    // Indicates that the symbol is in __all__.
+    pub const InDunderAll: SymbolFlags = SymbolFlags(1 << 8);
+
+    // Indicates that the symbol is a private import in a py.typed module.
+    pub const PrivatePyTypedImport: SymbolFlags = SymbolFlags(1 << 9);
+
+    // Indicates that the symbol is an InitVar as specified in PEP 557.
+    pub const InitVar: SymbolFlags = SymbolFlags(1 << 10);
+
+    // Indicates that the symbol is a field in a NamedTuple class, which
+    // is modeled as an instance member but in some respects acts as a
+    // class member.
+    pub const NamedTupleMember: SymbolFlags = SymbolFlags(1 << 11);
+
+    // Indicates that the symbol should be exempt from override type checks.
+    pub const IgnoredForOverrideChecks: SymbolFlags = SymbolFlags(1 << 12);
+
+    // Indicates that the symbol is marked Final and is assigned a value
+    // in the class body. The typing spec indicates that these should be
+    // considered ClassVars unless they are found in a dataclass.
+    pub const FinalVarInClassBody: SymbolFlags = SymbolFlags(1 << 13);
+
+    // Indicates that the symbol is a KW_ONLY separator in a dataclass.
+    pub const DataClassKeywordOnly: SymbolFlags = SymbolFlags(1 << 14);
+}
+
+flag_ops!(SymbolFlags);
+
+thread_local! {
+    // analyzer/symbol.ts:76
+    static NEXT_SYMBOL_ID: Cell<u32> = const { Cell::new(1) };
+}
+
+// analyzer/symbol.ts:77
+fn get_unique_symbol_id() -> u32 {
+    NEXT_SYMBOL_ID.with(|n| {
+        let id = n.get();
+        n.set(id + 1);
+        id
+    })
+}
+
+// analyzer/symbol.ts:82
+// Symbol ID that indicates that there is no specific symbol.
+pub const INDETERMINATE_SYMBOL_ID: u32 = 0;
+
+// analyzer/symbol.ts:84
+#[derive(Clone, Copy)]
+pub struct SynthesizedTypeInfo {
+    pub type_: P<Type>,
+
+    // An optional node that is not used by the type evaluator
+    // but can be used by language services to provide additional
+    // functionality (such as go-to-definition).
+    pub node: Option<NameNode>,
+}
+
+// analyzer/symbol.ts:93
+/// The private fields keep their leading underscore; the oracle prints them.
+pub struct Symbol {
+    // Information about the node that declared the value -
+    // i.e. where the editor will take the user if "show definition"
+    // is selected. Multiple declarations can exist for variables,
+    // properties, and functions (in the case of @overload).
+    pub _declarations: RefCell<Option<Vec<P<Declaration>>>>,
+
+    // Flags that provide information about the symbol.
+    pub _flags: Cell<SymbolFlags>,
+
+    // Unique numeric ID for each symbol allocated.
+    pub id: u32,
+
+    // Symbols that are completely synthesized (i.e. have no
+    // corresponding declarations in the program) can have
+    // a specified type.
+    pub _synthesized_type_info: Cell<Option<SynthesizedTypeInfo>>,
+
+    // Is this symbol an alias for a symbol originally imported from
+    // the typing or typing_extensions module (e.g. "Final")?
+    pub _typing_symbol_alias: RefCell<Option<String>>,
+}
+
+impl Symbol {
+    // analyzer/symbol.ts:115
+    pub fn new(flags: SymbolFlags) -> P<Symbol> {
+        P::new(Symbol {
+            _declarations: RefCell::new(None),
+            _flags: Cell::new(flags),
+            id: get_unique_symbol_id(),
+            _synthesized_type_info: Cell::new(None),
+            _typing_symbol_alias: RefCell::new(None),
+        })
+    }
+
+    // analyzer/symbol.ts:120
+    pub fn create_with_type(flags: SymbolFlags, type_: P<Type>, node: Option<NameNode>) -> P<Symbol> {
+        let new_symbol = Symbol::new(flags);
+        new_symbol
+            ._synthesized_type_info
+            .set(Some(SynthesizedTypeInfo { type_, node }));
+        new_symbol
+    }
+
+    fn has_flag(&self, flag: SymbolFlags) -> bool {
+        self._flags.get().any(flag)
+    }
+
+    fn add_flags(&self, flags: SymbolFlags) {
+        self._flags.set(self._flags.get() | flags);
+    }
+
+    // analyzer/symbol.ts:126
+    pub fn is_initially_unbound(&self) -> bool {
+        self.has_flag(SymbolFlags::InitiallyUnbound)
+    }
+
+    // analyzer/symbol.ts:130
+    pub fn set_is_externally_hidden(&self) {
+        self.add_flags(SymbolFlags::ExternallyHidden);
+    }
+
+    // analyzer/symbol.ts:134
+    pub fn is_externally_hidden(&self) -> bool {
+        self.has_flag(SymbolFlags::ExternallyHidden)
+    }
+
+    // analyzer/symbol.ts:138
+    pub fn set_is_ignored_for_protocol_match(&self) {
+        self.add_flags(SymbolFlags::IgnoredForProtocolMatch);
+    }
+
+    // analyzer/symbol.ts:142
+    pub fn is_ignored_for_protocol_match(&self) -> bool {
+        self.has_flag(SymbolFlags::IgnoredForProtocolMatch)
+    }
+
+    // analyzer/symbol.ts:146
+    pub fn set_is_class_member(&self) {
+        self.add_flags(SymbolFlags::ClassMember);
+    }
+
+    // analyzer/symbol.ts:150
+    pub fn is_class_member(&self) -> bool {
+        self.has_flag(SymbolFlags::ClassMember)
+    }
+
+    // analyzer/symbol.ts:154
+    pub fn set_is_instance_member(&self) {
+        self.add_flags(SymbolFlags::InstanceMember);
+    }
+
+    // analyzer/symbol.ts:158
+    pub fn is_instance_member(&self) -> bool {
+        self.has_flag(SymbolFlags::InstanceMember)
+    }
+
+    // analyzer/symbol.ts:162
+    pub fn set_is_slots_member(&self) {
+        self.add_flags(
+            SymbolFlags::ClassMember | SymbolFlags::InstanceMember | SymbolFlags::SlotsMember,
+        );
+    }
+
+    // analyzer/symbol.ts:166
+    pub fn is_slots_member(&self) -> bool {
+        self.has_flag(SymbolFlags::SlotsMember)
+    }
+
+    // analyzer/symbol.ts:170
+    pub fn set_is_class_var(&self) {
+        self.add_flags(SymbolFlags::ClassVar);
+    }
+
+    // analyzer/symbol.ts:174
+    pub fn is_class_var(&self) -> bool {
+        self.has_flag(SymbolFlags::ClassVar)
+    }
+
+    // analyzer/symbol.ts:178
+    pub fn set_is_final_var_in_class_body(&self) {
+        self.add_flags(SymbolFlags::FinalVarInClassBody);
+    }
+
+    // analyzer/symbol.ts:182
+    pub fn is_final_var_in_class_body(&self) -> bool {
+        self.has_flag(SymbolFlags::FinalVarInClassBody)
+    }
+
+    // analyzer/symbol.ts:186
+    pub fn set_is_init_var(&self) {
+        self.add_flags(SymbolFlags::InitVar);
+    }
+
+    // analyzer/symbol.ts:190
+    pub fn is_init_var(&self) -> bool {
+        self.has_flag(SymbolFlags::InitVar)
+    }
+
+    // analyzer/symbol.ts:194
+    pub fn set_is_data_class_keyword_only(&self) {
+        self.add_flags(SymbolFlags::DataClassKeywordOnly);
+    }
+
+    // analyzer/symbol.ts:198
+    pub fn is_data_class_keyword_only(&self) -> bool {
+        self.has_flag(SymbolFlags::DataClassKeywordOnly)
+    }
+
+    // analyzer/symbol.ts:202
+    pub fn set_is_in_dunder_all(&self) {
+        self.add_flags(SymbolFlags::InDunderAll);
+    }
+
+    // analyzer/symbol.ts:206
+    pub fn is_in_dunder_all(&self) -> bool {
+        self.has_flag(SymbolFlags::InDunderAll)
+    }
+
+    // analyzer/symbol.ts:210
+    pub fn set_is_private_member(&self) {
+        self.add_flags(SymbolFlags::PrivateMember);
+    }
+
+    // analyzer/symbol.ts:214
+    pub fn is_private_member(&self) -> bool {
+        self.has_flag(SymbolFlags::PrivateMember)
+    }
+
+    // analyzer/symbol.ts:218
+    pub fn set_private_py_typed_import(&self) {
+        self.add_flags(SymbolFlags::PrivatePyTypedImport);
+    }
+
+    // analyzer/symbol.ts:222
+    pub fn is_private_py_typed_import(&self) -> bool {
+        self.has_flag(SymbolFlags::PrivatePyTypedImport)
+    }
+
+    // analyzer/symbol.ts:226
+    pub fn is_named_tuple_member_member(&self) -> bool {
+        self.has_flag(SymbolFlags::NamedTupleMember)
+    }
+
+    // analyzer/symbol.ts:230
+    pub fn is_ignored_for_override_checks(&self) -> bool {
+        self.has_flag(SymbolFlags::IgnoredForOverrideChecks)
+    }
+
+    // analyzer/symbol.ts:234
+    pub fn set_typing_symbol_alias(&self, aliased_name: &str) {
+        *self._typing_symbol_alias.borrow_mut() = Some(aliased_name.to_string());
+    }
+
+    // analyzer/symbol.ts:238
+    pub fn get_typing_symbol_alias(&self) -> Option<String> {
+        self._typing_symbol_alias.borrow().clone()
+    }
+
+    // analyzer/symbol.ts:242
+    pub fn add_declaration(&self, declaration: P<Declaration>) {
+        let declarations = self._declarations.borrow().clone();
+        if let Some(declarations) = declarations {
+            // See if this node was already identified as a declaration. If so,
+            // replace it. Otherwise, add it as a new declaration to the end of
+            // the list.
+            let decl_index = declarations
+                .iter()
+                .position(|decl| are_declarations_same(decl, &declaration, false, false));
+            match decl_index {
+                None => {
+                    let mut declarations = declarations;
+                    declarations.push(declaration);
+
+                    // If there is more than one declaration for a symbol, we will
+                    // assume it is not a type alias.
+                    for decl in &declarations {
+                        if let Some(var) = decl.variable() {
+                            if var.type_alias_name.get().is_some() {
+                                var.type_alias_name.set(None);
+                            }
+                        }
+                    }
+                    *self._declarations.borrow_mut() = Some(declarations);
+                }
+                Some(decl_index) => {
+                    // If the new declaration has a defined type, it should replace
+                    // the existing one.
+                    let cur_decl = declarations[decl_index];
+                    if has_type_for_declaration(&declaration) {
+                        self._declarations.borrow_mut().as_mut().unwrap()[decl_index] = declaration;
+                        if cur_decl.type_ == DeclarationType::Variable
+                            && declaration.type_ == DeclarationType::Variable
+                        {
+                            let new_var = declaration.variable().unwrap();
+                            let cur_var = cur_decl.variable().unwrap();
+                            if new_var.inferred_type_source.get().is_none()
+                                && cur_var.inferred_type_source.get().is_some()
+                            {
+                                new_var
+                                    .inferred_type_source
+                                    .set(cur_var.inferred_type_source.get());
+                            }
+                        }
+                    } else if declaration.type_ == DeclarationType::Variable {
+                        // If it's marked "final" or "type alias", this should be reflected
+                        // in the existing declaration. Likewise, if the existing declaration
+                        // doesn't have a type source, add it.
+                        if let Some(cur_var) = cur_decl.variable() {
+                            let new_var = declaration.variable().unwrap();
+                            if new_var.is_final.get() == Some(true) {
+                                cur_var.is_final.set(Some(true));
+                            }
+
+                            cur_var.type_alias_name.set(new_var.type_alias_name.get());
+
+                            if cur_var.inferred_type_source.get().is_none()
+                                && new_var.inferred_type_source.get().is_some()
+                            {
+                                cur_var
+                                    .inferred_type_source
+                                    .set(new_var.inferred_type_source.get());
+                            }
+                        }
+                    }
+                }
+            }
+        } else {
+            *self._declarations.borrow_mut() = Some(vec![declaration]);
+        }
+    }
+
+    // analyzer/symbol.ts:294
+    pub fn has_declarations(&self) -> bool {
+        self._declarations
+            .borrow()
+            .as_ref()
+            .is_some_and(|decls| !decls.is_empty())
+    }
+
+    // analyzer/symbol.ts:298
+    pub fn get_declarations(&self) -> Vec<P<Declaration>> {
+        self._declarations.borrow().clone().unwrap_or_default()
+    }
+
+    // analyzer/symbol.ts:302
+    pub fn has_typed_declarations(&self) -> bool {
+        // We'll treat an synthesized type as an implicit declaration.
+        if self._synthesized_type_info.get().is_some() {
+            return true;
+        }
+
+        self.get_declarations()
+            .iter()
+            .any(|decl| has_type_for_declaration(decl))
+    }
+
+    // analyzer/symbol.ts:311
+    pub fn get_typed_declarations(&self) -> Vec<P<Declaration>> {
+        self.get_declarations()
+            .into_iter()
+            .filter(|decl| has_type_for_declaration(decl))
+            .collect()
+    }
+
+    // analyzer/symbol.ts:315
+    pub fn get_synthesized_type(&self) -> Option<SynthesizedTypeInfo> {
+        self._synthesized_type_info.get()
+    }
+}
+
+// analyzer/symbol.ts:321
+// Maps names to symbols information.
+/// A shared `Map<string, Symbol>`: copies of the handle are the same map.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct SymbolTable(P<RefCell<JsMap<String, P<Symbol>>>>);
+
+impl SymbolTable {
+    /// `new Map<string, Symbol>()`.
+    pub fn new() -> SymbolTable {
+        SymbolTable(P::new(RefCell::new(JsMap::default())))
+    }
+
+    pub fn get(&self, name: &str) -> Option<P<Symbol>> {
+        self.0.borrow().get(name).copied()
+    }
+
+    pub fn has(&self, name: &str) -> bool {
+        self.0.borrow().contains_key(name)
+    }
+
+    pub fn set(&self, name: &str, symbol: P<Symbol>) {
+        let mut map = self.0.borrow_mut();
+        if let Some(existing) = map.get_mut(name) {
+            *existing = symbol;
+        } else {
+            map.insert(name.to_string(), symbol);
+        }
+    }
+
+    pub fn delete(&self, name: &str) -> bool {
+        self.0.borrow_mut().shift_remove(name).is_some()
+    }
+
+    pub fn size(&self) -> usize {
+        self.0.borrow().len()
+    }
+
+    /// Read access for code that does not call back into the table.
+    pub fn borrow(&self) -> Ref<'_, JsMap<String, P<Symbol>>> {
+        self.0.borrow()
+    }
+
+    /// `forEach`, as JavaScript iterates a `Map`: entries added during the
+    /// walk are visited too, and the callback may write to the table.
+    pub fn for_each(&self, mut callback: impl FnMut(P<Symbol>, &str)) {
+        let mut index = 0;
+        loop {
+            let entry = {
+                let map = self.0.borrow();
+                map.get_index(index).map(|(name, symbol)| (name.clone(), *symbol))
+            };
+            let Some((name, symbol)) = entry else {
+                break;
+            };
+            callback(symbol, &name);
+            index += 1;
+        }
+    }
+
+    /// The entries in insertion order, copied out.
+    pub fn entries(&self) -> Vec<(String, P<Symbol>)> {
+        self.0
+            .borrow()
+            .iter()
+            .map(|(name, symbol)| (name.clone(), *symbol))
+            .collect()
+    }
+}
