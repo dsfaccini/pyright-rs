@@ -45,6 +45,13 @@ interface FnShape {
     noNestedDoc?: boolean;
 }
 
+
+// A value struct whose fields are all optional also derives `Default`, so a TypeScript object literal
+// that sets a few of them is `X { a: Some(..), ..Default::default() }`.
+function valueDerive(fields: string[]): string {
+    const all = fields.every((f) => /^\s*\/\//.test(f) || /^\s*pub \w+: (Option|PhantomData)<.*>,$/.test(f));
+    return all ? '#[derive(Clone, Default)]' : '#[derive(Clone)]';
+}
 export class FileEmitter {
     readonly uses = new Uses();
     readonly out: string[] = [];

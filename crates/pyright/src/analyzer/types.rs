@@ -10,6 +10,7 @@
 )]
 
 use crate::{analyzer, common, parser};
+
 use crate::analyzer::declaration::Declaration;
 use crate::analyzer::protocols::ProtocolCompatibility;
 use crate::analyzer::symbol::{Symbol, SymbolTable};

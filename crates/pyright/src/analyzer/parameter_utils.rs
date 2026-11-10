@@ -104,7 +104,7 @@ pub fn get_param_list_details(
         param_spec: None,
     };
 
-    let parameters: Vec<FunctionParam> = type_.d().shared.get().parameters.borrow().clone();
+    let parameters: Vec<FunctionParam> = type_.d().shared.get().parameters.get().borrow().clone();
 
     let mut position_only_index = parameters
         .iter()
@@ -446,10 +446,13 @@ pub fn get_param_list_details(
                     .and_then(|specialized_types| {
                         specialized_types
                             .parameter_default_types
-                            .borrow()
-                            .as_ref()
+                            .get()
                             .and_then(|default_types| {
-                                default_types.get(index as usize).copied().flatten()
+                                default_types
+                                    .borrow()
+                                    .get(index as usize)
+                                    .copied()
+                                    .flatten()
                             })
                     });
             add_virtual_param(
@@ -501,13 +504,8 @@ pub fn is_param_spec_args(param_spec: TypeVarType, arg_type: P<Type>) -> bool {
                     arg_subtype,
                     param_spec.0,
                     &TypeSameOptions {
-                        ignore_pseudo_generic: None,
                         ignore_type_flags: Some(true),
-                        ignore_conditions: None,
-                        ignore_typed_dict_narrow_entries: None,
-                        honor_type_form: None,
-                        honor_is_type_arg_explicit: None,
-                        treat_any_same_as_unknown: None,
+                        ..Default::default()
                     },
                     0,
                 )
@@ -562,13 +560,8 @@ pub fn is_param_spec_kwargs(param_spec: TypeVarType, arg_type: P<Type>) -> bool 
                     arg_subtype,
                     param_spec.0,
                     &TypeSameOptions {
-                        ignore_pseudo_generic: None,
                         ignore_type_flags: Some(true),
-                        ignore_conditions: None,
-                        ignore_typed_dict_narrow_entries: None,
-                        honor_type_form: None,
-                        honor_is_type_arg_explicit: None,
-                        treat_any_same_as_unknown: None,
+                        ..Default::default()
                     },
                     0,
                 )

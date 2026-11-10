@@ -84,13 +84,9 @@ impl ConstraintSet {
                 type1,
                 type2,
                 &TypeSameOptions {
-                    ignore_pseudo_generic: None,
-                    ignore_type_flags: None,
-                    ignore_conditions: None,
-                    ignore_typed_dict_narrow_entries: None,
                     honor_type_form: Some(true),
                     honor_is_type_arg_explicit: Some(true),
-                    treat_any_same_as_unknown: None,
+                    ..Default::default()
                 },
                 0,
             )
