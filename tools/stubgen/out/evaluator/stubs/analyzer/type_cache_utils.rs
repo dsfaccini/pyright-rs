@@ -11,6 +11,7 @@
 
 use crate::analyzer::code_flow_engine::CachedType;
 use crate::analyzer::type_evaluator::TypeCacheEntry;
+use crate::analyzer::type_evaluator_types::TypeResult;
 use crate::analyzer::types::Type;
 use crate::parser::parse_nodes::ParseNode;
 use jsrt::{JsMap, P};
@@ -39,23 +40,18 @@ pub struct DependentType {
     pub dependent_type: P<Type>,
 }
 
-// analyzer/typeCacheUtils.ts:34
-#[derive(Clone)]
-pub struct TypeResult {
-    pub type_: P<Type>,
-    pub is_incomplete: Option<bool>,
-}
+// analyzer/typeCacheUtils.ts:34: `TypeResult` is merged into `TypeResult` of analyzer/typeEvaluatorTypes.ts ([merge]).
 
 // analyzer/typeCacheUtils.ts:39
-#[derive(Clone, Default)]
-pub struct ContextualTypeCacheEntry {
-    pub expected_type: Option<P<Type>>,
+pub trait ContextualTypeCacheEntry {
+    // analyzer/typeCacheUtils.ts:40
+    fn expected_type(&self) -> Option<P<Type>>;
 }
 
 // analyzer/typeCacheUtils.ts:43
 pub struct SpeculativeTypeEntry {
     pub expected_type: Option<P<Type>>,
-    pub type_result: TypeResult,
+    pub type_result: P<TypeResult>,
     pub incomplete_generation_count: u32,
     pub dependent_types: RefCell<Option<Vec<DependentType>>>,
 }
@@ -72,14 +68,14 @@ pub(crate) const MAX_CONTEXTUAL_TYPE_CACHE_ENTRIES_PER_NODE: u32 = 8;
 
 // analyzer/typeCacheUtils.ts:62
 pub fn contextual_type_cache_entry_matches(
-    entry: &ContextualTypeCacheEntry,
+    entry: &dyn ContextualTypeCacheEntry,
     expected_type: Option<P<Type>>,
 ) -> bool {
     todo!()
 }
 
 // analyzer/typeCacheUtils.ts:69
-pub fn add_contextual_type_cache_entry<T>(
+pub fn add_contextual_type_cache_entry<T: Clone + ContextualTypeCacheEntry>(
     cache_entries: &[T],
     new_entry: T,
     is_entry_valid: Option<&mut dyn FnMut(T) -> bool>,
@@ -138,7 +134,7 @@ impl SpeculativeTypeTracker {
     pub fn add_speculative_type(
         &mut self,
         node: P<ParseNode>,
-        type_result: &TypeResult,
+        type_result: P<TypeResult>,
         incomplete_generation_count: u32,
         expected_type: Option<P<Type>>,
     ) {
@@ -168,4 +164,18 @@ impl SpeculativeTypeTracker {
 pub enum SpeculativeCache {
     Type(P<RefCell<JsMap<u32, TypeCacheEntry>>>),
     FlowNodeType(P<RefCell<JsMap<u32, Option<CachedType>>>>),
+}
+
+// Defined in tools/stubgen/typemap.toml [items].
+impl ContextualTypeCacheEntry for SpeculativeTypeEntry {
+    fn expected_type(&self) -> Option<P<Type>> {
+        self.expected_type
+    }
+}
+
+/// A shared entry reads through its handle.
+impl<T: ContextualTypeCacheEntry> ContextualTypeCacheEntry for P<T> {
+    fn expected_type(&self) -> Option<P<Type>> {
+        self.get().expected_type()
+    }
 }

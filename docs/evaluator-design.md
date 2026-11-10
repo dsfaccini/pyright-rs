@@ -167,7 +167,7 @@ Decisions on the types `docs/research/memory-advice.md` names (2026-11-10):
 - `DiagnosticAddendum` (common/diagnostic.ts) is written after it is stored: `createAddendum` pushes the new child into its parent and returns it, and callers write the child. It stays a handle, as ported.
 - `SpeculativeContext` and `SpeculativeEntry` are values: each lives only in the speculative stack, which `disableSpeculativeMode` moves out and `enableSpeculativeMode` moves back. `SpeculativeEntry.cache` is a `SpeculativeCache` (below).
 - `TypeResult` stays a handle: `getTypeOfExpression` writes `typeResult.type` after `writeTypeCache` stored it.
-- Other types the rule turned from handles into values: `FlowNodeTypeResult`, `ExpectedTypeCacheEntry`, `CallResult`, `InferenceContext`, `ExpectedTypeOptions`, `PrefetchedTypes`, `ClassMember`, `ParamListDetails`, `ParamAssignmentInfo`, `LiteralTypes`, `SignatureWithOffsets`, `ProtocolCompatibilityCheckState`, `TypeVarUsageInfo`. `ConstraintSolution` is an `Rc`. `SpeculativeTypeTracker`, `UniqueNameMap`, `ParamAssignmentTracker`, the `TypeVarTransformer` classes and `NumberReference` are owned; a struct that holds one and is shared (`TypeEvaluator.speculative_type_tracker`) wraps it in a `RefCell`.
+- Other types the rule turned from handles into values: `FlowNodeTypeResult`, `ExpectedTypeCacheEntry`, `CallResult`, `InferenceContext`, `ExpectedTypeOptions`, `PrefetchedTypes`, `ClassMember`, `ParamListDetails`, `ParamAssignmentInfo`, `LiteralTypes`, `SignatureWithOffsets`, `ProtocolCompatibilityCheckState`, `TypeVarUsageInfo`. `ConstraintSolution` is an `Rc`. `SpeculativeTypeTracker`, `UniqueNameMap`, `ParamAssignmentTracker`, the `TypeVarTransformer` classes and `NumberReference` are owned; a struct that holds one and is shared wraps it in a `RefCell`. The evaluator and its code flow engine share one tracker (typeEvaluator.ts:30591), so both hold it as `P<RefCell<SpeculativeTypeTracker>>` (`[sites]`).
 
 `typemap.toml` makes an interface a value only where the TypeScript shows that copying it is safe:
 
@@ -193,7 +193,7 @@ The write analysis reads the whole check path:
 
 Then:
 
-- In a handle struct, a field that is written, mutated, or written through while holding a value struct is `Cell<T>` for Copy types and `RefCell<T>` otherwise. `[mutable]` forces it on or off.
+- In a handle struct, a field that is written, mutated, or written through while holding a value struct is `Cell<T>` for Copy types and `RefCell<T>` otherwise. `[mutable]` forces it on or off; a factory local is keyed like its `[sites]` entry (`createTypeEvaluator.speculativeTypeTracker`).
 - Value and owned structs have plain fields; their holders change them through `&mut`.
 - A parameter that the function mutates, or writes through, renders in its `&mut` form.
 
@@ -243,8 +243,9 @@ An alias declared inside a function body is inlined.
 ### generics
 
 - A type parameter whose constraint maps to a Copy handle (`P<T>`, a typed handle, an enum) is replaced by its constraint, in functions and in structs: `<T extends Type>(type: T): T` is `(type_: P<Type>) -> P<Type>`, and `TypeResult<T extends Type = Type>` is `struct TypeResult`. A caller that knows the member type casts the handle back.
-- Other type parameters stay Rust generics: a value struct cannot stand for its subtypes (`addContextualTypeCacheEntry<T extends ContextualTypeCacheEntry>` keeps `T`). A struct type parameter no field uses gets a `PhantomData` field.
+- Other type parameters stay Rust generics (`ensureExpectedTypeCandidates<T>` keeps `T`): a value struct cannot stand for its subtypes. A struct type parameter no field uses gets a `PhantomData` field.
 - A type parameter of a function type (`<T>(func: T) => ..`) has no Rust generic to bind to and takes its constraint.
+- `[bounds]` keeps a function's type parameter as a Rust generic with the bounds it gives, instead of its constraint. A trait constraint needs it: `addContextualTypeCacheEntry<T extends ContextualTypeCacheEntry>` is `<T: Clone + ContextualTypeCacheEntry>`, called with `P<SpeculativeTypeEntry>` and `TypeFormTypeCacheEntry`.
 
 ### other TypeScript types
 
@@ -298,7 +299,7 @@ A run without `install` is a record: a ported crate file supersedes its stub.
 ## 6. Open
 
 - Collections shared by reference between holders that change them need a `[sites]` entry each; the write analysis does not see aliasing. Mapped so far: the binder's code-flow expression set, the evaluator's type caches and the code-flow node type cache.
-- Interface inheritance between value structs is flattened, so a function that takes the base cannot take a derived struct. In the evaluator, `is_type_cache_entry_valid(Option<&TypeCacheEntry>)` is called with a `TypeFormTypeCacheEntry` (typeEvaluator.ts:821), and `read_contextual_type_cache_entry_for_node` returns one where it is typed `TypeCacheEntry` (788–799). Decide per site: a generic, a conversion, or a `[sites]` type.
+- Interface inheritance between value structs is flattened, so a function that takes the base cannot take a derived struct. In the evaluator, `is_type_cache_entry_valid(Option<&TypeCacheEntry>)` is called with a `TypeFormTypeCacheEntry` (typeEvaluator.ts:821), and `read_contextual_type_cache_entry_for_node` returns one where it is typed `TypeCacheEntry` (788–799). Decide per site: a generic, a conversion, or a `[sites]` type. `ContextualTypeCacheEntry` is a trait (`[traits]`); `[items]` holds its impls for `SpeculativeTypeEntry` and `TypeFormTypeCacheEntry`, since the generator emits impls only for classes.
 - The handle rule is per type. A type made a handle because some object of it is stored and some object of it is written may have objects that are never both; a per-site proof can move it to a value later, through `[modes]`.
 - Captured `let`s that the TypeScript reassigns (`SynthesizeMethodsDeferred.is_named_tuple_subclass` and others) are copied into the callback struct. Where a write follows the closure, the port needs a shared cell.
 - The remaining `/*? .. */` sites are in files outside the evaluator run: `definedConstants` values (`boolean | string`), `ImportLookup`'s `Uri | AbsoluteModuleDescriptor` parameter, the `any` results in `staticExpressions.ts`.

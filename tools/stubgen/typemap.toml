@@ -86,6 +86,9 @@ Promise = "$0"
 "analyzer/typeWalker.ts:TypeWalker" = { receiver = "&mut self" }
 # Ported as a trait (crates/pyright/src/common/console.rs).
 "common/console.ts:ConsoleInterface" = {}
+# Read through the interface by `contextualTypeCacheEntryMatches` and `addContextualTypeCacheEntry`;
+# `SpeculativeTypeEntry` and `TypeFormTypeCacheEntry` (typeEvaluator.ts:640) extend it.
+"analyzer/typeCacheUtils.ts:ContextualTypeCacheEntry" = {}
 
 # Unions discriminated by a kind field become one struct plus an enum of per-kind details
 # (docs/porting.md, "types, classes and unions").
@@ -144,6 +147,10 @@ root_variant = "Plain"
 "common/uri/uriInterface.ts:Uri" = "common/uri/uri.ts:Uri"
 "analyzer/types.ts:ParamSpecDetailsPriv" = "TypeVarDetailsPriv"
 "analyzer/types.ts:TypeVarTupleDetailsPriv" = "TypeVarDetailsPriv"
+# The evaluator hands its own TypeResult object to the speculative tracker, which stores it and
+# returns it from `getSpeculativeType`; the evaluator writes `typeResult.type` after caching it
+# (typeEvaluator.ts:1349), so the entry must hold the same object.
+"analyzer/typeCacheUtils.ts:TypeResult" = "analyzer/typeEvaluatorTypes.ts:TypeResult"
 
 # Closure factories: functions that build an object out of nested closures over shared locals.
 # Each becomes a struct (docs/evaluator-design.md).
@@ -202,6 +209,10 @@ interface = "analyzer/codeFlowEngine.ts:CodeFlowAnalyzer"
 "analyzer/typeCacheUtils.ts:SpeculativeEntry.cache" = "crate::analyzer::type_cache_utils::SpeculativeCache"
 "analyzer/typeCacheUtils.ts:SpeculativeTypeTracker.trackEntry.cache" = "crate::analyzer::type_cache_utils::SpeculativeCache"
 "analyzer/codeFlowEngine.ts:CodeFlowTypeCache.cache" = "jsrt::P<std::cell::RefCell<jsrt::JsMap<u32, Option<crate::analyzer::code_flow_engine::CachedType>>>>"
+# One speculative tracker is shared by the evaluator and its code flow engine (typeEvaluator.ts:30591):
+# contexts the evaluator enters decide what the engine's `trackEntry` and `isSpeculative` see.
+"analyzer/typeEvaluator.ts:createTypeEvaluator.speculativeTypeTracker" = "jsrt::P<std::cell::RefCell<crate::analyzer::type_cache_utils::SpeculativeTypeTracker>>"
+"analyzer/codeFlowEngine.ts:getCodeFlowEngine.speculativeTypeTracker" = "jsrt::P<std::cell::RefCell<crate::analyzer::type_cache_utils::SpeculativeTypeTracker>>"
 # `object` in types.ts; protocols.ts keeps its protocol compatibility cache there (protocols.ts:297).
 "analyzer/types.ts:ClassDetailsShared.protocolCompatibility" = "jsrt::JsMap<String, Vec<crate::analyzer::protocols::ProtocolCompatibility>>"
 # Object-literal dictionaries keyed by operator, only looked up, never iterated.
@@ -215,8 +226,20 @@ interface = "analyzer/codeFlowEngine.ts:CodeFlowAnalyzer"
 "analyzer/analyzerNodeInfo.ts:AnalyzerNodeInfoContextImpl._getRetiredStore.key" = "jsrt::P<crate::parser::parse_nodes::ParseNode>"
 "analyzer/analyzerNodeInfo.ts:AnalyzerNodeInfoContextImpl._deleteRetiredStore.key" = "jsrt::P<crate::parser::parse_nodes::ParseNode>"
 
-# Force interior mutability on or off for a field: "<file>:<Struct>.<field>" = true | false.
+# Bounds on a function's type parameter, which then stays a Rust generic instead of becoming its
+# constraint: "<file>:<function>.<T>" = "<Rust bounds>".
+[bounds]
+# Called with the evaluator's `TypeFormTypeCacheEntry` and the tracker's `P<SpeculativeTypeEntry>`; it
+# copies entries it keeps into the new list.
+"analyzer/typeCacheUtils.ts:addContextualTypeCacheEntry.T" = "Clone + crate::analyzer::type_cache_utils::ContextualTypeCacheEntry"
+# Copies the candidates into a new array.
+"analyzer/typeEvaluatorTypes.ts:ensureExpectedTypeCandidates.T" = "Clone"
+
+# Force interior mutability on or off for a field: "<file>:<Struct>.<field>" = true | false. A
+# factory local is keyed like its [sites] entry: "<file>:<factory function>.<local>".
 [mutable]
+# A shared tracker handle ([sites]): writes go through its RefCell, and the field is never reassigned.
+"analyzer/typeEvaluator.ts:createTypeEvaluator.speculativeTypeTracker" = false
 # A shared map handle ([sites]): writes go through its RefCell, and the field is never reassigned.
 "analyzer/codeFlowEngine.ts:CodeFlowTypeCache.cache" = false
 # `OverloadedType.addOverload` pushes onto `priv._overloads` after the type exists (types.ts:2462).
@@ -407,6 +430,29 @@ impl Arg {
             Arg::ArgWithType(a) => a.enforce_iterable,
             Arg::ArgWithExpression(a) => a.enforce_iterable,
         }
+    }
+}
+"""
+# The interfaces that extend `ContextualTypeCacheEntry`, a trait ([traits]). The impl in
+# type_evaluator.rs names items by path: that file takes no new `use` lines (docs/step5-shares.md).
+"analyzer/typeCacheUtils.ts:impl ContextualTypeCacheEntry for SpeculativeTypeEntry" = """
+impl crate::analyzer::type_cache_utils::ContextualTypeCacheEntry for crate::analyzer::type_cache_utils::SpeculativeTypeEntry {
+    fn expected_type(&self) -> Option<jsrt::P<crate::analyzer::types::Type>> {
+        self.expected_type
+    }
+}
+
+/// A shared entry reads through its handle.
+impl<T: crate::analyzer::type_cache_utils::ContextualTypeCacheEntry> crate::analyzer::type_cache_utils::ContextualTypeCacheEntry for jsrt::P<T> {
+    fn expected_type(&self) -> Option<jsrt::P<crate::analyzer::types::Type>> {
+        self.get().expected_type()
+    }
+}
+"""
+"analyzer/typeEvaluator.ts:impl ContextualTypeCacheEntry for TypeFormTypeCacheEntry" = """
+impl analyzer::type_cache_utils::ContextualTypeCacheEntry for TypeFormTypeCacheEntry {
+    fn expected_type(&self) -> Option<jsrt::P<analyzer::types::Type>> {
+        self.expected_type
     }
 }
 """

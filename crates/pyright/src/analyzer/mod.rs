@@ -57,6 +57,8 @@ pub mod symbol_name_utils;
 pub mod symbol_utils;
 pub mod tuples;
 pub mod type_cache_utils;
+#[cfg(test)]
+mod type_cache_utils_tests;
 pub mod type_complexity;
 pub mod type_evaluator;
 pub mod type_evaluator_types;

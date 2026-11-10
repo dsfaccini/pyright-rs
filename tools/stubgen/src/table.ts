@@ -65,6 +65,7 @@ export interface Table {
     merge: Map<string, string>;
     factories: Factory[];
     sites: Map<string, string>;
+    bounds: Map<string, string>;
     mutable: Map<string, boolean>;
     flagEnums: Map<string, boolean>;
     skip: Set<string>;
@@ -138,7 +139,7 @@ function readToml(path: string): Obj {
 
 export function loadTable(path: string): Table {
     const root = readToml(path);
-    checkKeys(root, path, ['types', 'modes', 'traits', 'families', 'merge', 'factories', 'sites', 'mutable', 'enums', 'skip', 'items']);
+    checkKeys(root, path, ['types', 'modes', 'traits', 'families', 'merge', 'factories', 'sites', 'bounds', 'mutable', 'enums', 'skip', 'items']);
 
     const types = new Map<string, TypeEntry>();
     for (const [k, v] of Object.entries(table(root.types, 'types'))) {
@@ -232,6 +233,11 @@ export function loadTable(path: string): Table {
         sites.set(k, str(v, `sites."${k}"`));
     }
 
+    const bounds = new Map<string, string>();
+    for (const [k, v] of Object.entries(table(root.bounds, 'bounds'))) {
+        bounds.set(k, str(v, `bounds."${k}"`));
+    }
+
     const mutable = new Map<string, boolean>();
     for (const [k, v] of Object.entries(table(root.mutable, 'mutable'))) {
         mutable.set(k, bool(v, `mutable."${k}"`, false));
@@ -254,7 +260,7 @@ export function loadTable(path: string): Table {
         items.set(k, str(v, `items."${k}"`));
     }
 
-    return { types, modes, traits, families, merge, factories, sites, mutable, flagEnums, skip, items };
+    return { types, modes, traits, families, merge, factories, sites, bounds, mutable, flagEnums, skip, items };
 }
 
 export function loadRuns(path: string): Run[] {
