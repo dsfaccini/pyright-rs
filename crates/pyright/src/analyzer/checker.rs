@@ -2435,7 +2435,7 @@ impl Checker {
         }
         let (include_subclasses, alias_name) = {
             let priv_ = left_class.d().priv_.borrow();
-            (priv_.include_subclasses.unwrap_or(false), priv_.alias_name.clone())
+            (priv_.include_subclasses.unwrap_or(false), priv_.cold().alias_name.clone())
         };
         if include_subclasses {
             return;
@@ -3007,7 +3007,7 @@ impl Checker {
                 // Does this name refer to a TypeVar that is scoped to the class associated with
                 // this constructor method?
                 if let Some(constructor_class) = constructor_class {
-                    if scope_id == *constructor_class.d().shared.get().type_var_scope_id.borrow() {
+                    if scope_id.as_deref() == constructor_class.d().shared.get().type_var_scope_id.borrow().as_deref() {
                         let is_param_type_with_ellipsis_usage = cur_param.is_some_and(|cur_param| {
                             cur_param
                                 .d()
@@ -7731,13 +7731,13 @@ impl Checker {
         // class; on any other type the info is undefined.
         let prop_method_info: [(&str, fn(P<Type>) -> Option<P<Type>>); 3] = [
             ("fget", |c| {
-                ClassType::cast(c).and_then(|c| c.d().priv_.borrow().fget_info.as_ref().map(|info| info.method_type))
+                ClassType::cast(c).and_then(|c| c.d().priv_.borrow().cold().fget_info.as_ref().map(|info| info.method_type))
             }),
             ("fset", |c| {
-                ClassType::cast(c).and_then(|c| c.d().priv_.borrow().fset_info.as_ref().map(|info| info.method_type))
+                ClassType::cast(c).and_then(|c| c.d().priv_.borrow().cold().fset_info.as_ref().map(|info| info.method_type))
             }),
             ("fdel", |c| {
-                ClassType::cast(c).and_then(|c| c.d().priv_.borrow().fdel_info.as_ref().map(|info| info.method_type))
+                ClassType::cast(c).and_then(|c| c.d().priv_.borrow().cold().fdel_info.as_ref().map(|info| info.method_type))
             }),
         ];
 
@@ -8276,7 +8276,7 @@ impl Checker {
             && ClassType::is_property_class(ClassType(override_type))
         {
             let fget_method_type =
-                ClassType(override_type).d().priv_.borrow().fget_info.as_ref().map(|info| info.method_type);
+                ClassType(override_type).d().priv_.borrow().cold().fget_info.as_ref().map(|info| info.method_type);
             if let Some(fget_method_type) = fget_method_type {
                 if analyzer::types::is_function(fget_method_type) {
                     override_function = Some(FunctionType(fget_method_type));
@@ -8364,7 +8364,7 @@ impl Checker {
             && ClassType::is_property_class(ClassType(override_type))
         {
             let fget_method_type =
-                ClassType(override_type).d().priv_.borrow().fget_info.as_ref().map(|info| info.method_type);
+                ClassType(override_type).d().priv_.borrow().cold().fget_info.as_ref().map(|info| info.method_type);
             if let Some(fget_method_type) = fget_method_type {
                 if analyzer::types::is_function(fget_method_type) {
                     override_function = Some(FunctionType(fget_method_type));
@@ -9082,13 +9082,13 @@ impl Checker {
         // class; on any other type the info is undefined.
         let prop_method_info: [(&str, fn(P<Type>) -> Option<P<Type>>); 3] = [
             ("fget", |c| {
-                ClassType::cast(c).and_then(|c| c.d().priv_.borrow().fget_info.as_ref().map(|info| info.method_type))
+                ClassType::cast(c).and_then(|c| c.d().priv_.borrow().cold().fget_info.as_ref().map(|info| info.method_type))
             }),
             ("fset", |c| {
-                ClassType::cast(c).and_then(|c| c.d().priv_.borrow().fset_info.as_ref().map(|info| info.method_type))
+                ClassType::cast(c).and_then(|c| c.d().priv_.borrow().cold().fset_info.as_ref().map(|info| info.method_type))
             }),
             ("fdel", |c| {
-                ClassType::cast(c).and_then(|c| c.d().priv_.borrow().fdel_info.as_ref().map(|info| info.method_type))
+                ClassType::cast(c).and_then(|c| c.d().priv_.borrow().cold().fdel_info.as_ref().map(|info| info.method_type))
             }),
         ];
 
@@ -9490,7 +9490,7 @@ impl Checker {
                 let type_vars = analyzer::type_utils::get_type_var_args_recursive(param_type, 0);
 
                 if type_vars.iter().any(|type_var| {
-                    type_var.d().priv_.borrow().scope_id == *method_class.d().shared.get().type_var_scope_id.borrow()
+                    type_var.d().priv_.borrow().scope_id.as_deref() == method_class.d().shared.get().type_var_scope_id.borrow().as_deref()
                         && !TypeVarType::is_self(*type_var)
                 }) {
                     self._evaluator.add_diagnostic(

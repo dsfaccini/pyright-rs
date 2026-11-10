@@ -227,6 +227,19 @@ interface = "analyzer/codeFlowEngine.ts:CodeFlowAnalyzer"
 "analyzer/types.ts:TypeAliasSharedInfo.computedVariance" = "Option<jsrt::P<std::cell::RefCell<Vec<crate::analyzer::types::Variance>>>>"
 "analyzer/typeEvaluator.ts:createTypeEvaluator.inferVarianceForTypeAlias.return" = "Option<jsrt::P<std::cell::RefCell<Vec<crate::analyzer::types::Variance>>>>"
 "analyzer/typeEvaluator.ts:createTypeEvaluator.updateUsageVariancesRecursive.usageVariances" = "jsrt::P<std::cell::RefCell<Vec<crate::analyzer::types::Variance>>>"
+# Records and maps pyright creates on first write (`undefined` until then): boxed, so a type that
+# never sets one pays a pointer, not the record (PLAN.md step 6, exact-size variants).
+"analyzer/types.ts:Type.props" = "Option<Box<crate::analyzer::types::TypeBaseProps>>"
+"analyzer/types.ts:Type.cached" = "Option<Box<crate::analyzer::types::CachedTypeInfo>>"
+"analyzer/types.ts:LiteralTypes.literalStrMap" = "Option<Box<jsrt::JsMap<String, crate::analyzer::types::UnionableType>>>"
+"analyzer/types.ts:LiteralTypes.literalIntMap" = "Option<Box<jsrt::JsMap<jsrt::NumberValue, crate::analyzer::types::UnionableType>>>"
+"analyzer/types.ts:LiteralTypes.literalEnumMap" = "Option<Box<jsrt::JsMap<String, crate::analyzer::types::UnionableType>>>"
+"analyzer/types.ts:UnionDetailsPriv.typeAliasSources" = "Option<Box<jsrt::JsSet<crate::analyzer::types::UnionType>>>"
+"analyzer/types.ts:FunctionDetailsPriv.callSiteReturnTypeCache" = "Box<Vec<crate::analyzer::types::CallSiteInferenceTypeCacheEntry>>"
+# Strings copied with every clone of a type variable: an immutable shared string, as a JS string is.
+"analyzer/types.ts:TypeVarDetailsPriv.scopeId" = "std::rc::Rc<str>"
+"analyzer/types.ts:TypeVarDetailsPriv.scopeName" = "std::rc::Rc<str>"
+"analyzer/types.ts:TypeVarDetailsPriv.nameWithScope" = "std::rc::Rc<str>"
 # Getters that return live state their callers write to.
 "analyzer/types.ts:TypeBase.addProps.return" = "std::cell::RefMut<'static, crate::analyzer::types::TypeBaseProps>"
 # The type caches are passed by reference to the speculative type tracker, which deletes from the
@@ -292,6 +305,12 @@ interface = "analyzer/codeFlowEngine.ts:CodeFlowAnalyzer"
 "analyzer/codeFlowEngine.ts:CodeFlowTypeCache.cache" = false
 # `OverloadedType.addOverload` pushes onto `priv._overloads` after the type exists (types.ts:2462).
 "analyzer/types.ts:OverloadedType.priv" = true
+
+# Fields few objects set, moved out of a hot struct into `<Struct>Cold`, which the struct holds as
+# `cold: Option<Box<..>>` and allocates on first write ("cold fields" in docs/evaluator-design.md).
+[cold]
+# Fewer than 1% of class types set any of these on the python-chess and samples corpora (2026-11-10).
+"analyzer/types.ts:ClassDetailsPriv" = ["aliasName", "typedDictNarrowedEntries", "isTypedDictPartial", "isAsymmetricDescriptor", "isAsymmetricAttributeAccessor", "fgetInfo", "fsetInfo", "fdelInfo", "deprecatedInstanceMessage", "partialCallType"]
 
 [enums]
 # Enums to emit as flags newtypes, or as plain enums, against the detection rule.

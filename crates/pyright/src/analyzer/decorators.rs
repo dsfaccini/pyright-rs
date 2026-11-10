@@ -144,7 +144,7 @@ pub fn get_function_info_from_decorators(
                     .d()
                     .priv_
                     .borrow()
-                    .deprecated_instance_message
+                    .cold().deprecated_instance_message
                     .clone();
             }
         }
@@ -635,7 +635,7 @@ pub fn apply_class_decorator(
                 .d()
                 .priv_
                 .borrow()
-                .deprecated_instance_message
+                .cold().deprecated_instance_message
                 .clone();
             *original_class_type
                 .d()

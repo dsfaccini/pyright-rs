@@ -49,6 +49,7 @@ pyright allocates about 23 times what it keeps alive: 194 GB over a pydantic-ai 
 - Never store a `&'static T` taken from `P::get` in a struct. Store the `P`.
 - Never capture a `P` in a closure that a struct stores. Write the stored callback as a struct with named fields and a method, so a collector can see every `P`.
 - Reach parse-node and type details only through typed handles and `d()`. Create them only through their `create` functions. Their memory layout will change.
+- Keep evaluator objects small: pyright-rs creates millions of them. Box a record or map that few objects set (`Option<Box<T>>`), or move such fields into the struct's cold half (`[cold]` in `tools/stubgen/typemap.toml`; read with `cold()`, write with `cold_mut()`). Lock the size with `const _: () = assert!(size_of::<T>() <= n);` after the type.
 - Set `PYRIGHT_RS_ALLOC_STATS=1` to print objects and bytes per type and heap when `pyright-rs` exits. Set it to a number n to also print them each time the evaluator heap grows by another n GiB.
 
 ## collections
@@ -64,6 +65,7 @@ pyright allocates about 23 times what it keeps alive: 194 GB over a pydantic-ai 
 - Source text is `[u16]`, UTF-16 code units, as JavaScript holds it. The tokenizer reads it like `charCodeAt`.
 - Every text position and length is a UTF-16 offset. Never use a UTF-8 byte offset for a value pyright can observe.
 - Use `String` and `&str` for identifiers, messages, paths and other text. Source text always decodes to valid Unicode, so identifiers are valid `str`.
+- A string field that every clone of a hot evaluator object copies is `Rc<str>`: immutable and shared, as a JS string is (`TypeVarDetailsPriv` scope names, `[sites]` in `tools/stubgen/typemap.toml`).
 - Use `jsrt::JsString` (UTF-16) for unescaped Python string-literal values. Escapes such as `\ud800` give them lone surrogates.
 - Where JavaScript and Rust string operations differ, call the `jsrt` helper: length, `slice`, `substring`, `substr`, `charCodeAt`, `<` and `>`, `trim`, `toLowerCase`, `toUpperCase`, `split`, `indexOf`, `normalize('NFKC')`, `JSON.stringify` and `String.prototype.replace`.
 - Known gap: a `JsString` with a lone surrogate prints as U+FFFD inside a `String` message. Count such a case as a port failure when the oracle finds one.

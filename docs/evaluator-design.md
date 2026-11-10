@@ -204,6 +204,12 @@ Then:
 - Value and owned structs have plain fields; their holders change them through `&mut`.
 - A parameter that the function mutates, or writes through, renders in its `&mut` form.
 
+### cold fields
+
+`[cold]` names, per value struct, the fields few of its objects set. They move into `<Struct>Cold`, which the struct holds as `pub cold: Option<Box<<Struct>Cold>>`, allocated on the first write. `cold()` reads them, returning a shared empty `<Struct>Cold` while none is allocated; `cold_mut()` allocates and writes. Every cold field is optional, so an unset field reads the same either way. The struct's other fields and its copy semantics stay as they were: cloning the struct clones its cold half.
+
+Pick cold fields by measurement: count, at the end of a run, how many objects set each field. `ClassDetailsPriv` moves the fields fewer than 1% of class types set (python-chess and samples, 2026-11-10). A record or map pyright creates on first write (`props`, `cached`, the union literal maps) is boxed through `[sites]` instead, as `Option<Box<T>>`.
+
 ### families: unions discriminated by a kind field
 
 porting.md "types, classes and unions" and "parse nodes". `[families]` lists them: `ParseNode`, `Token`, `Type`, `Declaration`, `FlowNode`.

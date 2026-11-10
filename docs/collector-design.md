@@ -20,7 +20,7 @@ Recommendation 1 in `docs/research/memory-advice.md` gives the motivation; this 
 
 - Two address ranges, reserved once per process with `mmap(MAP_NORESERVE)`: 256 GiB for the evaluator heap, 64 GiB for the program heap. Pages are committed on first touch. "Is this handle in the evaluator heap" is one subtraction and one compare.
 - Each range is cut into 64 KiB blocks. A block belongs to one thread and holds objects of one Rust type, in fixed slots of `size_of` rounded up to the alignment (at least 8 bytes, so every `P` has its own address).
-- Block metadata lives in a side table indexed by block number: the type, the slot size, a bump index, a free list, and bitmaps for live and marked slots (plus dead slots in check mode). No per-object header: `Type` stays 584 bytes.
+- Block metadata lives in a side table indexed by block number: the type, the slot size, a bump index, a free list, and bitmaps for live and marked slots (plus dead slots in check mode). No per-object header: `Type` keeps its `size_of`.
 - `P::new` and `P::new_eval` find the type's allocator through a per-thread table keyed by `TypeId`, then pop the block's free list or bump.
 - The program heap uses the same blocks and is never swept. It replaces bumpalo because the collector enumerates program objects by type (below), which a bump arena cannot do.
 - `libc` provides `mmap` and `madvise`.

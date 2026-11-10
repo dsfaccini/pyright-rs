@@ -21,6 +21,7 @@ use crate::{analyzer, common, parser};
 use jsrt::{JsBigInt, JsMap, JsSet, NumberValue, P, flag_ops};
 use std::cell::{Cell, RefCell, RefMut};
 use std::ops::Deref;
+use std::rc::Rc;
 
 // analyzer/types.ts:17
 #[repr(i32)]
@@ -183,8 +184,8 @@ pub struct TypeBaseProps {
 pub struct Type {
     pub category: TypeCategory,
     pub flags: Cell<TypeFlags>,
-    pub props: RefCell<Option<TypeBaseProps>>,
-    pub cached: RefCell<Option<CachedTypeInfo>>,
+    pub props: RefCell<Option<Box<TypeBaseProps>>>,
+    pub cached: RefCell<Option<Box<CachedTypeInfo>>>,
     // Private: reach details through typed handles and `d()`; create through the create functions.
     d: TypeDetails,
 }
@@ -631,6 +632,13 @@ pub struct ClassDetailsPriv {
     pub include_subclasses: Option<bool>,
     pub include_promotions: Option<bool>,
     pub literal_value: Option<LiteralValue>,
+    // Fields few objects set ([cold] in tools/stubgen/typemap.toml): read with `cold()`, write with `cold_mut()`.
+    pub cold: Option<Box<ClassDetailsPrivCold>>,
+}
+
+// analyzer/types.ts:780
+#[derive(Clone, Default)]
+pub struct ClassDetailsPrivCold {
     pub alias_name: Option<String>,
     pub typed_dict_narrowed_entries: Option<JsMap<String, TypedDictEntry>>,
     pub is_typed_dict_partial: Option<bool>,
@@ -641,6 +649,31 @@ pub struct ClassDetailsPriv {
     pub fdel_info: Option<PropertyMethodInfo>,
     pub deprecated_instance_message: Option<String>,
     pub partial_call_type: Option<P<Type>>,
+}
+
+impl ClassDetailsPrivCold {
+    const EMPTY: ClassDetailsPrivCold = ClassDetailsPrivCold {
+        alias_name: None,
+        typed_dict_narrowed_entries: None,
+        is_typed_dict_partial: None,
+        is_asymmetric_descriptor: None,
+        is_asymmetric_attribute_accessor: None,
+        fget_info: None,
+        fset_info: None,
+        fdel_info: None,
+        deprecated_instance_message: None,
+        partial_call_type: None,
+    };
+}
+
+impl ClassDetailsPriv {
+    pub fn cold(&self) -> &ClassDetailsPrivCold {
+        self.cold.as_deref().unwrap_or(&ClassDetailsPrivCold::EMPTY)
+    }
+
+    pub fn cold_mut(&mut self) -> &mut ClassDetailsPrivCold {
+        self.cold.get_or_insert_with(Default::default)
+    }
 }
 
 // analyzer/types.ts:862
@@ -1197,7 +1230,7 @@ pub struct SignatureWithOffsets {
 pub struct FunctionDetailsPriv {
     pub constructor_type_var_scope_id: Option<String>,
     pub specialized_types: Option<P<SpecializedFunctionTypes>>,
-    pub call_site_return_type_cache: Option<Vec<CallSiteInferenceTypeCacheEntry>>,
+    pub call_site_return_type_cache: Option<Box<Vec<CallSiteInferenceTypeCacheEntry>>>,
     pub stripped_first_param_type: Option<P<Type>>,
     pub bound_to_type: Option<ClassType>,
     pub pre_bound_flags: Option<FunctionTypeFlags>,
@@ -1773,9 +1806,9 @@ impl TypeCondition {
 // analyzer/types.ts:2668
 #[derive(Clone, Default)]
 pub struct LiteralTypes {
-    pub literal_str_map: Option<JsMap<String, UnionableType>>,
-    pub literal_int_map: Option<JsMap<NumberValue, UnionableType>>,
-    pub literal_enum_map: Option<JsMap<String, UnionableType>>,
+    pub literal_str_map: Option<Box<JsMap<String, UnionableType>>>,
+    pub literal_int_map: Option<Box<JsMap<NumberValue, UnionableType>>>,
+    pub literal_enum_map: Option<Box<JsMap<String, UnionableType>>>,
 }
 
 // analyzer/types.ts:2674
@@ -1784,7 +1817,7 @@ pub struct UnionDetailsPriv {
     pub subtypes: Vec<UnionableType>,
     pub literal_instances: LiteralTypes,
     pub literal_classes: LiteralTypes,
-    pub type_alias_sources: Option<JsSet<UnionType>>,
+    pub type_alias_sources: Option<Box<JsSet<UnionType>>>,
     pub includes_recursive_type_alias: bool,
     pub includes_enum_literal: bool,
 }
@@ -1925,10 +1958,10 @@ pub enum TypeVarScopeType {
 // analyzer/types.ts:2876
 #[derive(Clone, Default)]
 pub struct TypeVarDetailsPriv {
-    pub scope_id: Option<String>,
-    pub scope_name: Option<String>,
+    pub scope_id: Option<Rc<str>>,
+    pub scope_name: Option<Rc<str>>,
     pub scope_type: Option<TypeVarScopeType>,
-    pub name_with_scope: Option<String>,
+    pub name_with_scope: Option<Rc<str>>,
     pub computed_variance: Option<Variance>,
     pub is_unification_var: Option<bool>,
     pub free_type_var: Option<TypeVarType>,

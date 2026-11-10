@@ -460,7 +460,7 @@ pub fn add_constraints_for_expected_type(
                 .get()
                 .declared_variance
                 .set(Variance::Invariant);
-            type_var.d().priv_.borrow_mut().scope_id = expected_type_scope_id.clone();
+            type_var.d().priv_.borrow_mut().scope_id = expected_type_scope_id.as_deref().map(Into::into);
             type_var
         })
         .collect();

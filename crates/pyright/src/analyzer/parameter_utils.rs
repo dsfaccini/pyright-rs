@@ -325,7 +325,7 @@ pub fn get_param_list_details(
                         .d()
                         .priv_
                         .borrow()
-                        .typed_dict_narrowed_entries
+                        .cold().typed_dict_narrowed_entries
                         .as_ref()
                         .and_then(|entries| entries.get(name).cloned());
                     let entry = narrowed_entry.unwrap_or_else(|| entry.clone());
