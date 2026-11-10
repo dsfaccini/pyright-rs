@@ -64,6 +64,10 @@ Promise = "$0"
 # Held only by their stack; written through an index into it.
 "analyzer/typeEvaluator.ts:SymbolResolutionStackEntry" = "value"
 "analyzer/typeEvaluator.ts:SuppressedNodeStackEntry" = "value"
+# Written only by adjustSourceParamDetailsForDestVariadic (typeEvaluator.ts:28091), through its
+# `srcDetails` parameter. Its one caller (28256) passes a local fresh from getParamListDetails
+# (28248, 28251); no array, field or longer-lived variable holds one, so `&mut` reaches every holder.
+"analyzer/parameterUtils.ts:ParamListDetails" = "value"
 # TypeResult, EffectiveTypeResult and other results keep the default (handle): the evaluator
 # caches the object and writes it after storing it (typeEvaluator.ts:1348-1353, 24668, 25483).
 # Rewritten from behavior (PLAN.md): one Rust type, its shape chosen by whoever ports common/uri.
