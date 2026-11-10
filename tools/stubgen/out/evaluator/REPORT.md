@@ -218,7 +218,6 @@ How each class and interface of the stubbed files is held (docs/porting.md "memo
 - `analyzer/typeCacheUtils.ts:SpeculativeTypeEntry`: handle; written: dependentTypes at analyzer/typeCacheUtils.ts:198; stored at analyzer/typeCacheUtils.ts:201
 - `analyzer/typeCacheUtils.ts:SpeculativeModeOptions`: value; never written after construction; never stored in a second place
 - `analyzer/typeCacheUtils.ts:SpeculativeTypeTracker`: owned; written: _speculativeContextStack at analyzer/typeCacheUtils.ts:174; never stored in a second place
-- `analyzer/typeWalker.ts:TypeWalker`: owned; written: _recursionCount at analyzer/typeWalker.ts:51; never stored in a second place
 - `analyzer/codeFlowEngine.ts:FlowNodeTypeResult`: value; written: type at analyzer/codeFlowEngine.ts:600; never stored in a second place
 - `analyzer/codeFlowEngine.ts:FlowNodeTypeOptions`: value; never written after construction; never stored in a second place
 - `analyzer/codeFlowEngine.ts:IncompleteSubtypeInfo`: value; never written after construction; never stored in a second place

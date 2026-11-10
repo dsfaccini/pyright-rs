@@ -665,6 +665,9 @@ export class FileEmitter {
                     const ty = render(t2, 'field', this.uses);
                     const body = mode === 'owned' ? `${copy ? '' : '&'}self.${f}${copy && !isCopy(t2) ? '.clone()' : ''}` : 'todo!()';
                     lines.push(`    fn ${acc?.name ?? f}(&self) -> ${copy ? ty : `&${ty}`} {`, `        ${body}`, '    }', '');
+                    if (this.isWrittenField(p)) {
+                        lines.push(`    fn ${acc?.name ?? f}_mut(&mut self) -> &mut ${ty} {`, `        ${mode === 'owned' ? `&mut self.${f}` : 'todo!()'}`, '    }', '');
+                    }
                 }
             }
         }
@@ -774,6 +777,11 @@ export class FileEmitter {
         return `impl${tps.length ? `<${tps.join(', ')}>` : ''} ${n}${args.length ? `<${args.join(', ')}>` : ''} for ${selfType}`;
     }
 
+    // A trait-class field that code writes after construction, so the trait needs a `_mut` accessor.
+    private isWrittenField(p: ts.Node): boolean {
+        return this.gen.writes.isWritten(p) || this.gen.writes.mutated.has(p);
+    }
+
     private classTrait(decl: ts.ClassDeclaration, name: string) {
         this.currentImpl = name;
         const key = `${this.file}:${name}`;
@@ -792,6 +800,9 @@ export class FileEmitter {
             const tt = isOptionalMember(p) ? opt(t) : t;
             const ty = acc?.byValue ? render(tt, 'field', this.uses) : accessorType(tt, this.uses);
             items.push(`    ${this.marker(p)}`, `    fn ${acc?.name ?? fieldName(n)}(&self) -> ${ty};`, '');
+            if (this.isWrittenField(p)) {
+                items.push(`    fn ${acc?.name ?? fieldName(n)}_mut(&mut self) -> &mut ${render(tt, 'field', this.uses)};`, '');
+            }
         }
         if (this.mode === 'stubs') {
             for (const m of decl.members) {
