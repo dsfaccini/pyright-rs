@@ -10,6 +10,7 @@ None.
 
 ## Needs from others
 
+- `jsrt` owner: an `Array.prototype.slice` helper (negative indexes count from the end, both clamp). `adjustSourceParamDetailsForDestVariadic` slices with an end index that can be negative; until a helper exists it uses a local closure with those semantics.
 
 ## Doubts
 
@@ -17,3 +18,10 @@ None.
 - `get_analyzer_node_info_reader` returns `evaluator_options.node_info_reader`. TypeScript returns the `AnalyzerNodeInfoAccessor` built on that reader; its `get` and `getFileInfo` delegate to the reader, so callers see the same results.
 - `getDeclInfoForStringNode` looks up a TypedDict entry by the string node's value, a `JsString`; the port converts it with `to_string_lossy`. A key with a lone surrogate would mismatch (the known gap in `docs/porting.md`, "strings").
 - `getDeclInfoForNameNode`: TypeScript tests `importInfo.resolvedUris[i]`, a `Uri` object and so always truthy once the index is in range; the port drops the test.
+- Where TypeScript dereferences `param.name!` and would throw on `undefined` (`kwargsParamMissing` in `assignFunction` and `validateOverrideMethodInternal`), the port unwraps and panics in the same case.
+- `validateOverrideMethodInternal` formats one addendum message and discards it, as pyright does; the port keeps the call so its two `printType` calls still run.
+- `assignFromUnionType`: `let remainingSrcSubtypes = sortedSrcTypes` aliases one array, so the first pass's `splice` also shrinks `sortedSrcTypes`. The port splices `sorted_src_types` and builds `remaining_src_subtypes` from it after that pass, which keeps both views equal.
+- `inferTypeOfSymbolForUsage` holds the symbol's inner cache map in TypeScript; `effective_type_cache` stores inner maps by value. The port records whether an inner map existed when the call started: if so it writes into the current inner map, else it inserts a fresh map, as the TypeScript `set` does. This is exact because only `disposeEvaluator` replaces `effectiveTypeCache`, and only a call that started without an inner map replaces one.
+- `callSiteReturnTypeCache` is an array that TypeScript clones of a function type share through the `priv` spread; the Rust field is a plain `Vec`. Only `getTypeOfFunction`'s result reads or writes it (typeEvaluator.ts:25376-25416), so no clone observes the difference.
+- Try/catch blocks that only pop a stack and rethrow (`getTypeOfSymbolForDecls`, `getDeclaredTypeOfSymbol`) and the `finally` in `inferReturnTypeForCallSite` are ported as the try path, with every push and pop where the TypeScript has it.
+- Five helper agents ported 24095-30161 in parallel from copies of this branch; each body was compiled in its copy and again here.
