@@ -147,8 +147,7 @@ pub trait TypeWalker {
         if !self._is_walk_canceled() && !FunctionType::is_param_spec_value(type_) {
             let return_type = shared.declared_return_type.get().or_else(|| {
                 shared
-                    .inferred_return_type
-                    .borrow()
+                    .cold().inferred_return_type
                     .as_ref()
                     .map(|inferred| inferred.type_)
             });

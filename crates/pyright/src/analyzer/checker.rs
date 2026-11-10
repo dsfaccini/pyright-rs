@@ -1003,7 +1003,7 @@ impl ParseTreeVisitor<bool> for Checker {
                     if !return_type_matches {
                         // If we have more detailed diagnostic information from
                         // bidirectional type inference, use that.
-                        let expected_type_diag_addendum = return_type_result.expected_type_diag_addendum.get();
+                        let expected_type_diag_addendum = return_type_result.cold().expected_type_diag_addendum;
                         if let Some(expected_type_diag_addendum) = expected_type_diag_addendum {
                             diag_addendum = expected_type_diag_addendum;
                         }
@@ -1066,7 +1066,7 @@ impl ParseTreeVisitor<bool> for Checker {
             yield_type_result
                 .map(|r| r.type_.get())
                 .unwrap_or_else(|| analyzer::types::UnknownType::create(false).0),
-            yield_type_result.and_then(|r| r.expected_type_diag_addendum.get()),
+            yield_type_result.and_then(|r| r.cold().expected_type_diag_addendum),
             None,
         );
         true
@@ -1625,7 +1625,8 @@ impl ParseTreeVisitor<bool> for Checker {
         self._report_deprecated_use_for_type(member, Some(type_), is_imported_from_typing);
 
         if let Some(type_result) = type_result {
-            if let Some(member_access_deprecation_info) = &type_result.member_access_deprecation_info {
+            let member_access_deprecation_info = type_result.cold().member_access_deprecation_info.clone();
+            if let Some(member_access_deprecation_info) = &member_access_deprecation_info {
                 self._report_deprecated_use_for_member_access(member, member_access_deprecation_info);
             }
         }
@@ -5258,7 +5259,7 @@ impl Checker {
         node: ExpressionNode,
         type_result: Option<P<TypeResult>>,
     ) {
-        let deprecation_info = type_result.and_then(|type_result| type_result.magic_method_deprecation_info.clone());
+        let deprecation_info = type_result.and_then(|type_result| type_result.cold().magic_method_deprecation_info.clone());
         let Some(deprecation_info) = deprecation_info else {
             return;
         };
@@ -5336,7 +5337,7 @@ impl Checker {
             let Some(call_type_result) = call_type_result else {
                 return;
             };
-            let overloads_used_for_call = call_type_result.overloads_used_for_call.borrow().clone();
+            let overloads_used_for_call = call_type_result.cold().overloads_used_for_call.clone();
             let Some(overloads_used_for_call) = overloads_used_for_call else {
                 return;
             };
@@ -5346,7 +5347,7 @@ impl Checker {
 
             for overload in overloads_used_for_call.iter().copied() {
                 let shared = overload.d().shared.get();
-                let overload_deprecated_message = shared.deprecated_message.borrow().clone();
+                let overload_deprecated_message = shared.cold().deprecated_message.clone();
                 if overload_deprecated_message.is_some() {
                     if node.d().value == shared.name {
                         *deprecated_message = overload_deprecated_message;
@@ -5397,7 +5398,7 @@ impl Checker {
                 if analyzer::types::is_function(subtype) {
                     let function_subtype = FunctionType(subtype);
                     let shared = function_subtype.d().shared.get();
-                    let function_deprecated_message = shared.deprecated_message.borrow().clone();
+                    let function_deprecated_message = shared.cold().deprecated_message.clone();
                     if function_deprecated_message.is_some()
                         && (shared.name.is_empty() || shared.name == "__call__" || node.d().value == shared.name)
                     {
@@ -5424,7 +5425,7 @@ impl Checker {
                         if analyzer::types::is_function(impl_) {
                             let impl_function = FunctionType(impl_);
                             let shared = impl_function.d().shared.get();
-                            let impl_deprecated_message = shared.deprecated_message.borrow().clone();
+                            let impl_deprecated_message = shared.cold().deprecated_message.clone();
                             if impl_deprecated_message.is_some() && (shared.name.is_empty() || node.d().value == shared.name) {
                                 deprecated_message = impl_deprecated_message;
                                 error_message = Some(get_deprecated_message_for_function(impl_function));

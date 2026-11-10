@@ -2205,8 +2205,7 @@ pub fn get_dataclass_decorator_behaviors(type_: P<Type>) -> Option<P<DataClassBe
                 .d()
                 .shared
                 .get()
-                .decorator_data_class_behaviors
-                .get()
+                .cold().decorator_data_class_behaviors
                 .is_some()
         });
 
@@ -2217,8 +2216,7 @@ pub fn get_dataclass_decorator_behaviors(type_: P<Type>) -> Option<P<DataClassBe
                 .d()
                 .shared
                 .get()
-                .decorator_data_class_behaviors
-                .get()
+                .cold().decorator_data_class_behaviors
                 .is_some()
         {
             function_type = Some(FunctionType(impl_));
@@ -2235,8 +2233,7 @@ pub fn get_dataclass_decorator_behaviors(type_: P<Type>) -> Option<P<DataClassBe
         .d()
         .shared
         .get()
-        .decorator_data_class_behaviors
-        .get()
+        .cold().decorator_data_class_behaviors
     {
         return Some(behaviors);
     }

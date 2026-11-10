@@ -236,12 +236,6 @@ interface = "analyzer/codeFlowEngine.ts:CodeFlowAnalyzer"
 "analyzer/types.ts:LiteralTypes.literalEnumMap" = "Option<Box<jsrt::JsMap<String, crate::analyzer::types::UnionableType>>>"
 "analyzer/types.ts:UnionDetailsPriv.typeAliasSources" = "Option<Box<jsrt::JsSet<crate::analyzer::types::UnionType>>>"
 "analyzer/types.ts:FunctionDetailsPriv.callSiteReturnTypeCache" = "Box<Vec<crate::analyzer::types::CallSiteInferenceTypeCacheEntry>>"
-# Fields of a TypeResult that few results set (python-chess and samples corpora, 2026-11-10): boxed,
-# so the millions of results that never set one pay a pointer.
-"analyzer/typeEvaluatorTypes.ts:TypeResult.typeList" = "Box<Vec<crate::analyzer::type_evaluator_types::TypeResultWithNode>>"
-"analyzer/typeEvaluatorTypes.ts:TypeResult.overloadsUsedForCall" = "Box<Vec<crate::analyzer::types::FunctionType>>"
-"analyzer/typeEvaluatorTypes.ts:TypeResult.memberAccessDeprecationInfo" = "Box<crate::analyzer::type_evaluator_types::MemberAccessDeprecationInfo>"
-"analyzer/typeEvaluatorTypes.ts:TypeResult.magicMethodDeprecationInfo" = "Box<crate::analyzer::type_evaluator_types::MagicMethodDeprecationInfo>"
 # Constraint maps that most sets never fill (72-85% stay empty on the python-chess and samples
 # corpora, 2026-11-10): the table is allocated on the first insert.
 "analyzer/constraintSolution.ts:ConstraintSolutionSet._typeVarMap" = "jsrt::LazyJsMap<String, Option<jsrt::P<crate::analyzer::types::Type>>>"
@@ -322,7 +316,10 @@ interface = "analyzer/codeFlowEngine.ts:CodeFlowAnalyzer"
 # Fields few objects set, moved out of a hot struct into `<Struct>Cold`, which the struct holds as
 # `cold: Option<Box<..>>` and allocates on first write ("cold fields" in docs/evaluator-design.md).
 [cold]
-# Fewer than 1% of class types set any of these on the python-chess and samples corpora (2026-11-10).
+# Each list holds the fields that fewer than 1% of objects set on the python-chess and samples
+# corpora (2026-11-10), plus overloadsUsedForCall (3% of results).
+"analyzer/typeEvaluatorTypes.ts:TypeResult" = ["bindToSelfType", "unpackedType", "typeList", "inlinedTypeDict", "isEmptyTupleShorthand", "expectedTypeDiagAddendum", "narrowedTypeForSet", "overloadsUsedForCall", "memberAccessDeprecationInfo", "magicMethodDeprecationInfo"]
+"analyzer/types.ts:FunctionDetailsShared" = ["docString", "deprecatedMessage", "decoratorDataClassBehaviors", "inferredReturnType"]
 "analyzer/types.ts:ClassDetailsPriv" = ["aliasName", "typedDictNarrowedEntries", "isTypedDictPartial", "isAsymmetricDescriptor", "isAsymmetricAttributeAccessor", "fgetInfo", "fsetInfo", "fdelInfo", "deprecatedInstanceMessage", "partialCallType"]
 
 [enums]
@@ -353,22 +350,13 @@ impl TypeResult {
         TypeResult {
             type_: Cell::new(type_),
             is_incomplete: Cell::new(None),
-            bind_to_self_type: None,
-            unpacked_type: None,
-            type_list: None,
             type_errors: Cell::new(None),
-            inlined_type_dict: None,
             class_type: None,
-            is_empty_tuple_shorthand: None,
-            expected_type_diag_addendum: Cell::new(None),
             is_asymmetric_accessor: None,
-            narrowed_type_for_set: None,
             is_required: None,
             is_not_required: None,
             is_read_only: None,
-            overloads_used_for_call: RefCell::new(None),
-            member_access_deprecation_info: None,
-            magic_method_deprecation_info: None,
+            cold: RefCell::new(None),
         }
     }
 }
@@ -380,22 +368,13 @@ impl Clone for TypeResult {
         TypeResult {
             type_: self.type_.clone(),
             is_incomplete: self.is_incomplete.clone(),
-            bind_to_self_type: self.bind_to_self_type,
-            unpacked_type: self.unpacked_type,
-            type_list: self.type_list.clone(),
             type_errors: self.type_errors.clone(),
-            inlined_type_dict: self.inlined_type_dict,
             class_type: self.class_type,
-            is_empty_tuple_shorthand: self.is_empty_tuple_shorthand,
-            expected_type_diag_addendum: self.expected_type_diag_addendum.clone(),
             is_asymmetric_accessor: self.is_asymmetric_accessor,
-            narrowed_type_for_set: self.narrowed_type_for_set,
             is_required: self.is_required,
             is_not_required: self.is_not_required,
             is_read_only: self.is_read_only,
-            overloads_used_for_call: self.overloads_used_for_call.clone(),
-            member_access_deprecation_info: self.member_access_deprecation_info.clone(),
-            magic_method_deprecation_info: self.magic_method_deprecation_info.clone(),
+            cold: self.cold.clone(),
         }
     }
 }
@@ -435,25 +414,26 @@ impl TypeResultWithNode {
         type_result: &TypeResult,
         node: jsrt::P<crate::parser::parse_nodes::ParseNode>,
     ) -> TypeResultWithNode {
+        let cold = type_result.cold();
         TypeResultWithNode {
             type_: type_result.type_.get(),
             is_incomplete: type_result.is_incomplete.get(),
-            bind_to_self_type: type_result.bind_to_self_type,
-            unpacked_type: type_result.unpacked_type,
-            type_list: type_result.type_list.as_deref().cloned(),
+            bind_to_self_type: cold.bind_to_self_type,
+            unpacked_type: cold.unpacked_type,
+            type_list: cold.type_list.clone(),
             type_errors: type_result.type_errors.get(),
-            inlined_type_dict: type_result.inlined_type_dict,
+            inlined_type_dict: cold.inlined_type_dict,
             class_type: type_result.class_type,
-            is_empty_tuple_shorthand: type_result.is_empty_tuple_shorthand,
-            expected_type_diag_addendum: type_result.expected_type_diag_addendum.get(),
+            is_empty_tuple_shorthand: cold.is_empty_tuple_shorthand,
+            expected_type_diag_addendum: cold.expected_type_diag_addendum,
             is_asymmetric_accessor: type_result.is_asymmetric_accessor,
-            narrowed_type_for_set: type_result.narrowed_type_for_set,
+            narrowed_type_for_set: cold.narrowed_type_for_set,
             is_required: type_result.is_required,
             is_not_required: type_result.is_not_required,
             is_read_only: type_result.is_read_only,
-            overloads_used_for_call: type_result.overloads_used_for_call.borrow().as_deref().cloned(),
-            member_access_deprecation_info: type_result.member_access_deprecation_info.as_deref().cloned(),
-            magic_method_deprecation_info: type_result.magic_method_deprecation_info.as_deref().cloned(),
+            overloads_used_for_call: cold.overloads_used_for_call.clone(),
+            member_access_deprecation_info: cold.member_access_deprecation_info.clone(),
+            magic_method_deprecation_info: cold.magic_method_deprecation_info.clone(),
             node,
         }
     }
@@ -610,11 +590,8 @@ impl Clone for FunctionDetailsShared {
             declared_return_type: self.declared_return_type.clone(),
             declaration: self.declaration.clone(),
             type_var_scope_id: self.type_var_scope_id.clone(),
-            doc_string: self.doc_string.clone(),
-            deprecated_message: self.deprecated_message.clone(),
             method_class: self.method_class.clone(),
-            decorator_data_class_behaviors: self.decorator_data_class_behaviors.clone(),
-            inferred_return_type: self.inferred_return_type.clone(),
+            cold: self.cold.clone(),
         }
     }
 }

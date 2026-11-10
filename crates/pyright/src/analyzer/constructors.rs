@@ -1220,10 +1220,10 @@ pub(crate) fn create_function_from_new_method(
             .clone();
         *converted_new_shared.type_var_scope_id.borrow_mut() = type_var_scope_id;
 
-        if converted_new_shared.doc_string.borrow().is_none()
+        if converted_new_shared.cold().doc_string.is_none()
             && let Some(doc_string) = &class_type.d().shared.get().doc_string
         {
-            *converted_new_shared.doc_string.borrow_mut() = Some(doc_string.clone());
+            converted_new_shared.cold_mut().doc_string = Some(doc_string.clone());
         }
 
         converted_new_shared.flags.set(
@@ -1293,10 +1293,10 @@ pub(crate) fn create_function_from_object_new_method(class_type: ClassType) -> F
     }
 
     let constructor_shared = constructor_function.d().shared.get();
-    if constructor_shared.doc_string.borrow().is_none()
+    if constructor_shared.cold().doc_string.is_none()
         && let Some(doc_string) = &class_type.d().shared.get().doc_string
     {
-        *constructor_shared.doc_string.borrow_mut() = Some(doc_string.clone());
+        constructor_shared.cold_mut().doc_string = Some(doc_string.clone());
     }
 
     constructor_function
@@ -1406,10 +1406,10 @@ pub(crate) fn create_function_from_init_method(
             specialized_types.return_type.set(return_type);
         }
 
-        if converted_init_shared.doc_string.borrow().is_none()
+        if converted_init_shared.cold().doc_string.is_none()
             && let Some(doc_string) = &class_type.d().shared.get().doc_string
         {
-            *converted_init_shared.doc_string.borrow_mut() = Some(doc_string.clone());
+            converted_init_shared.cold_mut().doc_string = Some(doc_string.clone());
         }
 
         converted_init_shared
@@ -1569,8 +1569,7 @@ pub(crate) fn is_default_new_method(new_method: Option<P<Type>>) -> bool {
                 .and_then(|specialized_types| specialized_types.return_type.get())
                 .or_else(|| {
                     shared
-                        .inferred_return_type
-                        .borrow()
+                        .cold().inferred_return_type
                         .as_ref()
                         .map(|inferred| inferred.type_)
                 })

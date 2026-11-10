@@ -29,7 +29,7 @@ use crate::analyzer::type_evaluator_types::{
     DeclaredSymbolTypeInfo, EffectiveTypeResult, EvalFlags, EvaluatorUsage, ExpectedTypeOptions,
     ExpectedTypeResult, FunctionTypeResult, MapSubtypesOptions, MemberAccessDeprecationInfo,
     PartialPrefetchedTypes, PrintTypeOptions, Reachability, ResolveAliasOptions,
-    SolveConstraintsOptions, SymbolDeclInfo, TypeResult, TypeResultWithNode, ValidateArgTypeParams,
+    SolveConstraintsOptions, SymbolDeclInfo, TypeResult, TypeResultCold, TypeResultWithNode, ValidateArgTypeParams,
     ValidateTypeArgsOptions,
 };
 use crate::analyzer::type_printer::{FunctionReturnTypeCallback, PrintTypeFlags};
@@ -1392,7 +1392,7 @@ impl TypeEvaluator {
                 self.add_expected_type_cache_entry(node, inference_context.expected_type.get());
 
                 if !type_result.is_incomplete.get().unwrap_or(false)
-                    && type_result.expected_type_diag_addendum.get().is_none()
+                    && type_result.cold().expected_type_diag_addendum.is_none()
                 {
                     let diag = DiagnosticAddendum::new();
 
@@ -1412,7 +1412,7 @@ impl TypeEvaluator {
                             type_errors: Cell::new(Some(true)),
                             ..(*type_result).clone()
                         });
-                        type_result.expected_type_diag_addendum.set(Some(diag));
+                        type_result.cold_mut().expected_type_diag_addendum = Some(diag);
                         diag.add_text_range(common::text_range::TextRange::create(
                             node.start.get(),
                             node.length.get(),
@@ -2070,7 +2070,11 @@ impl TypeEvaluator {
                 });
             type_result = P::new_eval(TypeResult {
                 type_errors: Cell::new(iter_type_result.type_errors.get()),
-                unpacked_type: Some(iter_type),
+                cold: TypeResultCold {
+                    unpacked_type: Some(iter_type),
+                    ..Default::default()
+                }
+                .into_cold(),
                 is_incomplete: Cell::new(iterator_type_result.is_incomplete.get()),
                 ..TypeResult::new(iterator_type_result.type_.get())
             });
@@ -3371,8 +3375,12 @@ impl TypeEvaluator {
                 class_type: member_info.class_type,
                 is_incomplete: Cell::new(Some(member_info.is_type_incomplete)),
                 is_asymmetric_accessor: Some(member_info.is_asymmetric_accessor),
-                narrowed_type_for_set: member_info.narrowed_type_for_set,
-                member_access_deprecation_info: member_info.member_access_deprecation_info.clone().map(Box::new),
+                cold: TypeResultCold {
+                    narrowed_type_for_set: member_info.narrowed_type_for_set,
+                    member_access_deprecation_info: member_info.member_access_deprecation_info.clone(),
+                    ..Default::default()
+                }
+                .into_cold(),
                 type_errors: Cell::new(Some(member_info.is_descriptor_error)),
                 ..TypeResult::new(member_info.type_)
             }));
@@ -3649,10 +3657,9 @@ impl TypeEvaluator {
                                         let shared = sig.type_.d().shared.get();
                                         !FunctionType::is_gradual_callable_form(sig.type_)
                                             || shared.parameters.get().borrow().len() > 2
-                                            || shared.doc_string.borrow().as_ref().is_some_and(|s| !s.is_empty())
+                                            || shared.cold().doc_string.as_ref().is_some_and(|s| !s.is_empty())
                                             || shared
-                                                .deprecated_message
-                                                .borrow()
+                                                .cold().deprecated_message
                                                 .as_ref()
                                                 .is_some_and(|s| !s.is_empty())
                                     })
@@ -5468,10 +5475,14 @@ impl TypeEvaluator {
 
         let result_to_cache = P::new_eval(TypeResult {
             is_incomplete: Cell::new(type_result.is_incomplete.get()),
-            member_access_deprecation_info: set_type_result.member_access_deprecation_info.clone(),
+            cold: TypeResultCold {
+                member_access_deprecation_info: set_type_result.cold().member_access_deprecation_info.clone(),
+                ..Default::default()
+            }
+            .into_cold(),
             ..TypeResult::new(
                 set_type_result
-                    .narrowed_type_for_set
+                    .cold().narrowed_type_for_set
                     .unwrap_or(type_result.type_.get()),
             )
         });
@@ -5504,9 +5515,13 @@ impl TypeEvaluator {
                     result_to_cache.type_.get(),
                     &[scope_id],
                 )),
-                member_access_deprecation_info: set_type_result
-                    .member_access_deprecation_info
+                cold: TypeResultCold {
+                    member_access_deprecation_info: set_type_result
+                    .cold().member_access_deprecation_info
                     .clone(),
+                    ..Default::default()
+                }
+                .into_cold(),
                 ..(*result_to_cache).clone()
             });
         }
@@ -6887,9 +6902,13 @@ impl TypeEvaluator {
                     true,
                 );
                 let result_to_cache = P::new_eval(TypeResult {
-                    member_access_deprecation_info: del_access_result
-                        .member_access_deprecation_info
+                    cold: TypeResultCold {
+                        member_access_deprecation_info: del_access_result
+                        .cold().member_access_deprecation_info
                         .clone(),
+                        ..Default::default()
+                    }
+                    .into_cold(),
                     ..TypeResult::new(del_access_result.type_.get())
                 });
                 self.write_type_cache(
@@ -8431,7 +8450,11 @@ impl TypeEvaluator {
                 return self.get_type_of_member_access_with_base_type(
                     node,
                     P::new_eval(TypeResult {
-                        bind_to_self_type: Some(bind_to_self_type),
+                        cold: TypeResultCold {
+                            bind_to_self_type: Some(bind_to_self_type),
+                            ..Default::default()
+                        }
+                        .into_cold(),
                         is_incomplete: Cell::new(Some(is_incomplete)),
                         ..TypeResult::new(concrete_type)
                     }),
@@ -8530,7 +8553,7 @@ impl TypeEvaluator {
                         } else {
                             MemberAccessFlags::TypeExpression
                         },
-                        base_type_result.bind_to_self_type,
+                        base_type_result.cold().bind_to_self_type,
                         0,
                     );
                 }
@@ -8557,7 +8580,8 @@ impl TypeEvaluator {
                         is_incomplete = true;
                     }
 
-                    if let Some(narrowed) = type_result.narrowed_type_for_set {
+                    let narrowed = type_result.cold().narrowed_type_for_set;
+                    if let Some(narrowed) = narrowed {
                         narrowed_type_for_set = Some(analyzer::type_utils::add_condition_to_type(
                             narrowed,
                             analyzer::type_utils::get_type_condition(base_type).as_deref(),
@@ -8568,8 +8592,9 @@ impl TypeEvaluator {
                         ));
                     }
 
-                    if let Some(info) = &type_result.member_access_deprecation_info {
-                        member_access_deprecation_info = Some((**info).clone());
+                    let info = type_result.cold().member_access_deprecation_info.clone();
+                    if let Some(info) = &info {
+                        member_access_deprecation_info = Some(info.clone());
                     }
                 }
             }
@@ -8799,8 +8824,9 @@ impl TypeEvaluator {
                             is_incomplete = true;
                         }
 
-                        if let Some(info) = &type_result.member_access_deprecation_info {
-                            member_access_deprecation_info = Some((**info).clone());
+                        let info = type_result.cold().member_access_deprecation_info.clone();
+                        if let Some(info) = &info {
+                            member_access_deprecation_info = Some(info.clone());
                         }
 
                         if type_result.type_errors.get().unwrap_or(false) {
@@ -8965,10 +8991,14 @@ impl TypeEvaluator {
         P::new_eval(TypeResult {
             is_incomplete: Cell::new(Some(is_incomplete)),
             is_asymmetric_accessor,
-            narrowed_type_for_set,
+            cold: TypeResultCold {
+                narrowed_type_for_set,
+                member_access_deprecation_info,
+                ..Default::default()
+            }
+            .into_cold(),
             is_required: Some(is_required),
             is_not_required: Some(is_not_required),
-            member_access_deprecation_info: member_access_deprecation_info.map(Box::new),
             type_errors: Cell::new(Some(type_errors)),
             ..TypeResult::new(type_)
         })
@@ -9781,8 +9811,7 @@ impl TypeEvaluator {
                     .d()
                     .shared
                     .get()
-                    .deprecated_message
-                    .borrow()
+                    .cold().deprecated_message
                     .clone()
                     .filter(|message| !message.is_empty());
                 if let Some(deprecated_message) = deprecated_message {
@@ -12603,7 +12632,8 @@ impl TypeEvaluator {
 
         for type_result in entry_type_results.iter().copied() {
             let mut possible_unpacked_tuple: Option<P<Type>> = None;
-            if let Some(unpacked_type) = type_result.unpacked_type {
+            let unpacked_type = type_result.cold().unpacked_type;
+            if let Some(unpacked_type) = unpacked_type {
                 possible_unpacked_tuple = Some(unpacked_type);
             } else if analyzer::types::is_unpacked(type_result.type_.get()) {
                 possible_unpacked_tuple = Some(type_result.type_.get());
@@ -12620,7 +12650,7 @@ impl TypeEvaluator {
                 common::collection_utils::append_array(&mut entry_types, &type_args);
             } else if analyzer::types::is_never(type_result.type_.get())
                 && type_result.is_incomplete.get().unwrap_or(false)
-                && type_result.unpacked_type.is_none()
+                && type_result.cold().unpacked_type.is_none()
             {
                 entry_types.push(TupleTypeArg {
                     type_: analyzer::types::UnknownType::create(/* isIncomplete */ true).0,
@@ -12640,7 +12670,7 @@ impl TypeEvaluator {
                 };
                 entry_types.push(TupleTypeArg {
                     type_: entry_type,
-                    is_unbounded: type_result.unpacked_type.is_some(),
+                    is_unbounded: type_result.cold().unpacked_type.is_some(),
                     is_optional: None,
                 });
             }
@@ -12802,8 +12832,8 @@ impl TypeEvaluator {
                 if call_result.argument_errors.unwrap_or(false) {
                     type_result.type_errors.set(Some(true));
                 } else {
-                    *type_result.overloads_used_for_call.borrow_mut() =
-                        call_result.overloads_used_for_call.clone().map(Box::new);
+                    let overloads_used_for_call = call_result.overloads_used_for_call.clone();
+                    type_result.set_cold(|cold| &mut cold.overloads_used_for_call, overloads_used_for_call);
                 }
 
                 if call_result.is_type_incomplete.unwrap_or(false) {
@@ -14227,7 +14257,11 @@ impl TypeEvaluator {
             };
 
             return P::new_eval(TypeResult {
-                bind_to_self_type,
+                cold: TypeResultCold {
+                    bind_to_self_type,
+                    ..Default::default()
+                }
+                .into_cold(),
                 ..TypeResult::new(type_)
             });
         }
@@ -20459,7 +20493,7 @@ impl TypeEvaluator {
                     }
                 }
 
-                expected_type_diag = expr_type_result.expected_type_diag_addendum.get();
+                expected_type_diag = expr_type_result.cold().expected_type_diag_addendum;
             }
 
             if let Some(name) = arg_param.argument.name() {
@@ -22384,8 +22418,7 @@ impl TypeEvaluator {
                             .d()
                             .shared
                             .get()
-                            .deprecated_message
-                            .borrow()
+                            .cold().deprecated_message
                             .clone();
                         if let Some(deprecated_message) =
                             deprecated_message.filter(|m| !m.is_empty())
@@ -22473,8 +22506,12 @@ impl TypeEvaluator {
 
         Some(P::new_eval(TypeResult {
             is_incomplete: Cell::new(Some(is_incomplete.get())),
-            magic_method_deprecation_info: deprecation_info.into_inner().map(Box::new),
-            overloads_used_for_call: RefCell::new(Some(Box::new(overloads_used_for_call.into_inner()))),
+            cold: TypeResultCold {
+                magic_method_deprecation_info: deprecation_info.into_inner(),
+                overloads_used_for_call: Some(overloads_used_for_call.into_inner()),
+                ..Default::default()
+            }
+            .into_cold(),
             ..TypeResult::new(return_type)
         }))
     }
@@ -22611,8 +22648,7 @@ impl TypeEvaluator {
         );
         let new_result = P::new_eval((*result).clone());
         new_result
-            .expected_type_diag_addendum
-            .set(expected_type_diag_addendum);
+            .set_cold(|cold| &mut cold.expected_type_diag_addendum, expected_type_diag_addendum);
         new_result
     }
 
@@ -23057,7 +23093,7 @@ impl TypeEvaluator {
 
                 if let (Some(expected_diag_addendum), Some(key_addendum)) = (
                     expected_diag_addendum,
-                    key_type_result.expected_type_diag_addendum.get(),
+                    key_type_result.cold().expected_type_diag_addendum,
                 ) {
                     expected_diag_addendum.add_addendum(key_addendum);
                 }
@@ -23166,7 +23202,7 @@ impl TypeEvaluator {
 
                 if let (Some(expected_diag_addendum), Some(value_addendum)) = (
                     expected_diag_addendum,
-                    value_type_result.expected_type_diag_addendum.get(),
+                    value_type_result.cold().expected_type_diag_addendum,
                 ) {
                     expected_diag_addendum.add_addendum(value_addendum);
                 }
@@ -23554,7 +23590,7 @@ impl TypeEvaluator {
                 }
             }
 
-            expected_type_diag_addendum = result.and_then(|r| r.expected_type_diag_addendum.get());
+            expected_type_diag_addendum = result.and_then(|r| r.cold().expected_type_diag_addendum);
         }
 
         let type_result = self.get_type_of_list_or_set_inferred(
@@ -23564,8 +23600,7 @@ impl TypeEvaluator {
         );
         let result = P::new_eval((*type_result).clone());
         result
-            .expected_type_diag_addendum
-            .set(expected_type_diag_addendum);
+            .set_cold(|cold| &mut cold.expected_type_diag_addendum, expected_type_diag_addendum);
         result
     }
 
@@ -23636,7 +23671,8 @@ impl TypeEvaluator {
                 type_errors = true;
             }
 
-            if let Some(addendum) = entry_type_result.expected_type_diag_addendum.get() {
+            let addendum = entry_type_result.cold().expected_type_diag_addendum;
+            if let Some(addendum) = addendum {
                 expected_type_diag_addendum.add_addendum(addendum);
             }
 
@@ -23676,7 +23712,11 @@ impl TypeEvaluator {
             return Some(P::new_eval(TypeResult {
                 is_incomplete: Cell::new(Some(is_incomplete)),
                 type_errors: Cell::new(Some(true)),
-                expected_type_diag_addendum: Cell::new(Some(expected_type_diag_addendum)),
+                cold: TypeResultCold {
+                    expected_type_diag_addendum: Some(expected_type_diag_addendum),
+                    ..Default::default()
+                }
+                .into_cold(),
                 ..TypeResult::new(analyzer::types::UnknownType::create(false).0)
             }));
         };
@@ -23686,7 +23726,11 @@ impl TypeEvaluator {
         Some(P::new_eval(TypeResult {
             is_incomplete: Cell::new(Some(is_incomplete)),
             type_errors: Cell::new(Some(type_errors)),
-            expected_type_diag_addendum: Cell::new(Some(expected_type_diag_addendum)),
+            cold: TypeResultCold {
+                expected_type_diag_addendum: Some(expected_type_diag_addendum),
+                ..Default::default()
+            }
+            .into_cold(),
             ..TypeResult::new(type_)
         }))
     }
@@ -24464,13 +24508,7 @@ impl TypeEvaluator {
                     analyzer::type_utils::make_inference_context(expected_return_type, None, None),
                 );
 
-                *function_type
-                    .d()
-                    .shared
-                    .get()
-                    .inferred_return_type
-                    .borrow_mut() =
-                    Some(analyzer::types::FunctionDetailsSharedInferredReturnType {
+                function_type.d().shared.get().cold_mut().inferred_return_type = Some(analyzer::types::FunctionDetailsSharedInferredReturnType {
                         type_: return_type_result.type_.get(),
                         is_incomplete: None,
                         evaluation_count: None,
@@ -27502,7 +27540,7 @@ impl TypeEvaluator {
                 );
 
                 let mut right_hand_type = src_type_result.type_.get();
-                expected_type_diag_addendum = src_type_result.expected_type_diag_addendum.get();
+                expected_type_diag_addendum = src_type_result.cold().expected_type_diag_addendum;
                 if src_type_result.is_incomplete.get().unwrap_or(false) {
                     is_incomplete = true;
                 }
@@ -29594,8 +29632,8 @@ impl TypeEvaluator {
 
         // See if there are any overloads provided by previous function declarations.
         if let Some(decorated_function) = FunctionType::cast(decorated_type) {
-            let deprecated_message = shared.deprecated_message.borrow().clone();
-            *decorated_function.d().shared.get().deprecated_message.borrow_mut() = deprecated_message;
+            let deprecated_message = shared.cold().deprecated_message.clone();
+            decorated_function.d().shared.get().set_cold(|cold| &mut cold.deprecated_message, deprecated_message);
 
             if FunctionType::is_overloaded(decorated_function) {
                 // Mark all the parameters as accessed.
@@ -29675,7 +29713,8 @@ impl TypeEvaluator {
         let add_flags = |flags: FunctionTypeFlags| shared.flags.set(shared.flags.get() | flags);
 
         *shared.type_var_scope_id.borrow_mut() = Some(self.get_scope_id_for_node(node.0));
-        *shared.deprecated_message.borrow_mut() = function_info.deprecation_message.clone();
+        let deprecated_message = function_info.deprecation_message.clone();
+        shared.set_cold(|cold| &mut cold.deprecated_message, deprecated_message);
         shared.method_class.set(containing_class_type);
 
         if function_name == "__init__" || function_name == "__new__" {
@@ -30420,8 +30459,7 @@ impl TypeEvaluator {
                 FunctionType::is_generator(function_type),
                 true,
             );
-            *awaitable_function_type.d().shared.get().inferred_return_type.borrow_mut() =
-                Some(analyzer::types::FunctionDetailsSharedInferredReturnType {
+            awaitable_function_type.d().shared.get().cold_mut().inferred_return_type = Some(analyzer::types::FunctionDetailsSharedInferredReturnType {
                     type_: awaitable_return_type,
                     is_incomplete: None,
                     evaluation_count: None,
@@ -35693,7 +35731,7 @@ impl TypeEvaluator {
         }
 
         let shared = type_.d().shared.get();
-        let inferred_return_type = shared.inferred_return_type.borrow().clone();
+        let inferred_return_type = shared.cold().inferred_return_type.clone();
         let eval_count = inferred_return_type
             .as_ref()
             .and_then(|inferred_return_type| inferred_return_type.evaluation_count)
@@ -35779,7 +35817,7 @@ impl TypeEvaluator {
             return_type = analyzer::type_utils::make_type_vars_free(return_type, &type_var_scopes);
 
             // Cache the type for next time.
-            *shared.inferred_return_type.borrow_mut() = Some(analyzer::types::FunctionDetailsSharedInferredReturnType {
+            shared.cold_mut().inferred_return_type = Some(analyzer::types::FunctionDetailsSharedInferredReturnType {
                 type_: return_type,
                 is_incomplete: Some(is_incomplete),
                 evaluation_count: Some(eval_count + 1),
@@ -40388,7 +40426,7 @@ impl TypeEvaluator {
                     // to a Concatenate), don't attempt to assign the remaining parameters to the ParamSpec.
                     if effective_src_param_spec.is_none() || effective_src_pos_count >= effective_dest_pos_count {
                         let effective_src_shared = effective_src_type.d().shared.get();
-                        let doc_string = effective_src_shared.doc_string.borrow().clone();
+                        let doc_string = effective_src_shared.cold().doc_string.clone();
                         let remaining_function = FunctionType::create_instance(
                             "",
                             "",
@@ -40397,8 +40435,8 @@ impl TypeEvaluator {
                             doc_string.as_deref(),
                         );
                         let remaining_shared = remaining_function.d().shared.get();
-                        let deprecated_message = effective_src_shared.deprecated_message.borrow().clone();
-                        *remaining_shared.deprecated_message.borrow_mut() = deprecated_message;
+                        let deprecated_message = effective_src_shared.cold().deprecated_message.clone();
+                        remaining_shared.set_cold(|cold| &mut cold.deprecated_message, deprecated_message);
                         let type_var_scope_id = effective_src_shared.type_var_scope_id.borrow().clone();
                         *remaining_shared.type_var_scope_id.borrow_mut() = type_var_scope_id;
                         let constructor_type_var_scope_id =
