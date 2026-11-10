@@ -3,7 +3,7 @@
 //
 //   node crates/jsrt/fixtures/gen.mjs [section...]
 //
-// Sections: tables, strings, normalize, numbers, bigints, sort. No argument runs all.
+// Sections: tables, strings, normalize, numbers, bigints, sort, regex. No argument runs all.
 // Every random input comes from a seeded PRNG, so a rerun gives the same files.
 
 import { writeFileSync } from 'node:fs';
@@ -372,7 +372,41 @@ function sortFixtures() {
     dump('sort.json', { cases, strings });
 }
 
-const sections = { tables, strings, normalize, numbers, bigints, sort: sortFixtures };
+// JS regex classes in non-unicode mode, for the `regex` crate fragments in
+// src/js_regex.rs. Code units of the BMP only: a non-`u` JS regex sees an
+// astral char as two surrogates, which a Rust `&str` regex cannot.
+function regexes() {
+    const bmp = (re) => {
+        const out = [];
+        for (let unit = 0; unit <= 0xffff; unit++) {
+            if (unit >= 0xd800 && unit <= 0xdfff) continue;
+            if (re.test(String.fromCharCode(unit))) out.push(unit);
+        }
+        return out;
+    };
+    for (let cp = 0x10000; cp <= MAX_CP; cp++) {
+        if (/\s|\w|\d/.test(charOf(cp))) throw new Error(`astral class member ${cp}`);
+    }
+    const ignoreCase = {};
+    for (const letter of 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ') {
+        ignoreCase[letter] = bmp(new RegExp(`^${letter}$`, 'i'));
+    }
+    const r = rng(6);
+    const boundary = [];
+    for (let i = 0; i < 2000; i++) {
+        const s = randomString(r, 8, ['a', 'Z', '0', '_', ' ', '-', '.', '\u00e9', '\u00df', '\u0130', '\u212a', '\u017f', '\u0661', '\u{1f600}', '\u{1d400}']);
+        const at = [];
+        for (let p = 0; p <= s.length; p++) {
+            const re = /\b/y;
+            re.lastIndex = p;
+            if (re.test(s)) at.push(p);
+        }
+        boundary.push([s, at]);
+    }
+    dump('regex.json', { s: bmp(/^\s$/), w: bmp(/^\w$/), d: bmp(/^\d$/), notDot: bmp({ test: (c) => !/^.$/.test(c) }), ignoreCase: [ignoreCase], boundary });
+}
+
+const sections = { tables, strings, normalize, numbers, bigints, sort: sortFixtures, regex: regexes };
 // Doubles travel as 16 hex digits of their bits: printing them in decimal
 // would test JS against itself.
 const bitsView = new DataView(new ArrayBuffer(8));

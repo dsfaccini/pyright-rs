@@ -4,6 +4,7 @@
 
 pub mod arena;
 pub mod collections;
+pub mod js_regex;
 pub mod node_path;
 pub mod number;
 pub mod sort;

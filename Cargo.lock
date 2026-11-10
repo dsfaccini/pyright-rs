@@ -65,6 +65,7 @@ dependencies = [
  "indexmap",
  "num-bigint",
  "num-traits",
+ "regex",
  "rustc-hash",
  "ryu",
  "serde_json",

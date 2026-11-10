@@ -173,6 +173,12 @@ pub fn is_js_whitespace(unit: u16) -> bool {
     )
 }
 
+/// JS `WhiteSpace` and `LineTerminator` for a `char`, which is also JS regex
+/// `\s`. Every member is in the BMP.
+pub fn is_js_whitespace_char(c: char) -> bool {
+    u16::try_from(u32::from(c)).is_ok_and(is_js_whitespace)
+}
+
 /// `&'static [u16]` holding the UTF-16 encoding of a string literal, built at
 /// compile time: `utf16!("abc")`.
 #[macro_export]
@@ -767,11 +773,11 @@ impl JsStr for str {
     }
 
     fn js_trim_start(&self) -> &str {
-        self.trim_start_matches(|c: char| u16::try_from(u32::from(c)).is_ok_and(is_js_whitespace))
+        self.trim_start_matches(is_js_whitespace_char)
     }
 
     fn js_trim_end(&self) -> &str {
-        self.trim_end_matches(|c: char| u16::try_from(u32::from(c)).is_ok_and(is_js_whitespace))
+        self.trim_end_matches(is_js_whitespace_char)
     }
 
     fn js_to_lower_case(&self) -> String {
