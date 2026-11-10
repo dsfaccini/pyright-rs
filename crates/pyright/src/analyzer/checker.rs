@@ -126,17 +126,605 @@ impl ParseTreeVisitor<bool> for Checker {
 
     // analyzer/checker.ts:324
     fn visit_class(&mut self, node: ClassNode) -> bool {
-        todo!()
+        let class_type_result = self._evaluator.get_type_of_class(node);
+
+        if let Some(type_params) = node.d().type_params.get() {
+            self.walk(type_params.0);
+        }
+        self.walk(node.d().suite.get().0);
+        let decorators: Vec<Option<P<ParseNode>>> =
+            node.d().decorators.borrow().iter().map(|n| Some(n.0)).collect();
+        self.walk_multiple(&decorators);
+        let arguments: Vec<Option<P<ParseNode>>> =
+            node.d().arguments.borrow().iter().map(|n| Some(n.0)).collect();
+        self.walk_multiple(&arguments);
+
+        if let Some(class_type_result) = class_type_result {
+            let class_type = class_type_result.class_type;
+
+            // Protocol classes cannot derive from non-protocol classes.
+            if ClassType::is_protocol_class(class_type) {
+                let args = node.d().arguments.borrow().clone();
+                for arg in args {
+                    if arg.d().name.get().is_none() {
+                        let base_class_type = self._evaluator.get_type(arg.d().value_expr.get());
+                        if let Some(base_class_type) = base_class_type {
+                            if analyzer::types::is_instantiable_class(base_class_type)
+                                && !ClassType::is_built_in(ClassType(base_class_type), Some(&["Protocol".to_string()]))
+                                && !ClassType::is_built_in(ClassType(base_class_type), Some(&["Generic".to_string()]))
+                                && !ClassType::is_protocol_class(ClassType(base_class_type))
+                            {
+                                self._evaluator.add_diagnostic(
+                                    DiagnosticRule::reportGeneralTypeIssues,
+                                    &LocMessage::protocol_base_class().format(&[
+                                        ("classType", &class_type.d().shared.get().name),
+                                        ("baseType", &ClassType(base_class_type).d().shared.get().name),
+                                    ]),
+                                    arg.d().value_expr.get(),
+                                    None,
+                                );
+                            }
+                        }
+                    }
+                }
+
+                // If this is a generic protocol class, verify that its type variables
+                // have the proper variance.
+                self._validate_protocol_type_param_variance(node, class_type);
+            }
+
+            // Skip the slots check because class variables declared in a stub
+            // file are interpreted as instance variables.
+            if !self._file_info.is_stub_file {
+                self._validate_slots_class_var_conflict(class_type);
+            }
+
+            self._validate_base_class_overrides(class_type);
+
+            self._validate_typed_dict_overrides(class_type);
+
+            self._validate_overload_decorator_consistency(class_type);
+
+            let name_node = node.d().name.get();
+            self._validate_disjoint_base_class(class_type, name_node.0);
+
+            self._validate_multiple_inheritance_base_classes(class_type, name_node.0);
+
+            self._validate_multiple_inheritance_compatibility(class_type, name_node.0);
+
+            self._validate_constructor_consistency(class_type, name_node.0);
+
+            self._validate_final_member_overrides(class_type);
+
+            self._validate_instance_variable_initialization(node, class_type);
+
+            self._validate_final_class_not_abstract(class_type, node);
+
+            self._validate_data_class_post_init(class_type);
+
+            self._validate_enum_members(class_type, node);
+
+            if ClassType::is_typed_dict_class(class_type) {
+                self._validate_typed_dict_class_suite(node.d().suite.get());
+            }
+
+            if ClassType::is_enum_class(class_type) {
+                self._validate_enum_class_override(node, class_type);
+            }
+
+            self._evaluator.validate_init_subclass_args(node, class_type);
+        }
+
+        self._scoped_nodes.push(node.0);
+
+        false
     }
 
     // analyzer/checker.ts:411
     fn visit_function(&mut self, node: FunctionNode) -> bool {
-        todo!()
+        if let Some(type_params) = node.d().type_params.get() {
+            self.walk(type_params.0);
+        }
+
+        if !self._file_info.diagnostic_rule_set.analyze_unannotated_functions && !self._file_info.is_stub_file {
+            if analyzer::parse_tree_utils::is_unannotated_function(node) {
+                self._evaluator.add_information(
+                    &LocMessage::unannotated_function_skipped()
+                        .format(&[("name", &node.d().name.get().d().value)]),
+                    node.d().name.get().0,
+                    None,
+                );
+            }
+        }
+
+        let function_type_result = self._evaluator.get_type_of_function(node);
+        let containing_class_node = analyzer::parse_tree_utils::get_enclosing_class(node.0, true);
+
+        if let Some(function_type_result) = &function_type_result {
+            let function_type = function_type_result.function_type;
+
+            // Track whether we have seen a *args: P.args parameter. Named
+            // parameters after this need to be flagged as an error.
+            let mut saw_param_spec_args = false;
+
+            let mut keyword_names: jsrt::JsSet<String> = jsrt::JsSet::default();
+            let param_details = analyzer::parameter_utils::get_param_list_details(function_type, None);
+
+            // If this function is the implementation of an overloaded function,
+            // its signature is ignored by the type checker (only the @overload
+            // signatures define the function's type). Per the typing spec, the
+            // implementation's parameters are allowed to remain unannotated, so
+            // skip the unknown/missing parameter type checks for it.
+            let is_overload_implementation = analyzer::types::is_overloaded(function_type_result.decorated_type)
+                && !FunctionType::is_overloaded(function_type);
+
+            // Report any unknown or missing parameter types.
+            let params = node.d().params.borrow().clone();
+            for (index, param) in params.iter().enumerate() {
+                if let Some(param_name) = param.d().name.get() {
+                    if param.d().category.get() == parser::parse_nodes::ParamCategory::Simple
+                        && index as u32 >= param_details.position_only_param_count
+                    {
+                        keyword_names.insert(param_name.d().value.clone());
+                    }
+
+                    // Determine whether this is a P.args parameter.
+                    if param.d().category.get() == parser::parse_nodes::ParamCategory::ArgsList {
+                        let annotation_expr = param.d().annotation.get().or(param.d().annotation_comment.get());
+                        if let Some(annotation_expr) = annotation_expr {
+                            if let Some(member_access) = MemberAccessNode::cast(annotation_expr) {
+                                if member_access.d().member.get().d().value == "args" {
+                                    let base_type = self._evaluator.get_type(member_access.d().left_expr.get());
+                                    if base_type.is_some_and(analyzer::types::is_param_spec) {
+                                        saw_param_spec_args = true;
+                                    }
+                                }
+                            }
+                        }
+                    } else if param.d().category.get() == parser::parse_nodes::ParamCategory::KwargsDict {
+                        saw_param_spec_args = false;
+                    }
+                }
+
+                if let Some(param_name) = param.d().name.get() {
+                    if param.d().category.get() == parser::parse_nodes::ParamCategory::Simple && saw_param_spec_args {
+                        self._evaluator.add_diagnostic(
+                            DiagnosticRule::reportGeneralTypeIssues,
+                            &LocMessage::named_param_after_param_spec_args()
+                                .format(&[("name", &param_name.d().value)]),
+                            param_name.0,
+                            None,
+                        );
+                    }
+                }
+
+                // Allow unknown and missing param types if the param is named '_'.
+                if let Some(param_name) = param.d().name.get() {
+                    let param_name_value = param_name.d().value.clone();
+                    if param_name_value != "_" {
+                        let parameters = function_type.d().shared.get().parameters.get();
+                        let param_index = parameters
+                            .borrow()
+                            .iter()
+                            .position(|p| p.name.as_deref() == Some(param_name_value.as_str()));
+
+                        if let Some(param_index) = param_index {
+                            let function_type_param = parameters.borrow()[param_index].clone();
+                            let param_type = FunctionType::get_param_type(function_type, param_index as i32);
+
+                            if !is_overload_implementation
+                                && self._file_info.diagnostic_rule_set.report_unknown_parameter_type
+                                    != common::config_options::DiagnosticLevel::None
+                            {
+                                if analyzer::types::is_unknown(param_type)
+                                    || (analyzer::types::is_type_var(param_type)
+                                        && TypeVarType(param_type).d().shared.get().is_synthesized.get()
+                                        && !TypeVarType::is_self(TypeVarType(param_type)))
+                                {
+                                    self._evaluator.add_diagnostic(
+                                        DiagnosticRule::reportUnknownParameterType,
+                                        &LocMessage::param_type_unknown().format(&[("paramName", &param_name_value)]),
+                                        param_name.0,
+                                        None,
+                                    );
+                                } else if analyzer::type_utils::is_partly_unknown(param_type, 0) {
+                                    let diag_addendum = DiagnosticAddendum::new();
+                                    diag_addendum.add_message(LocAddendum::param_type().format(&[(
+                                        "paramType",
+                                        &self._evaluator.print_type(
+                                            param_type,
+                                            Some(&analyzer::type_evaluator_types::PrintTypeOptions {
+                                                expand_type_alias: Some(true),
+                                                ..Default::default()
+                                            }),
+                                        ),
+                                    )]));
+                                    self._evaluator.add_diagnostic(
+                                        DiagnosticRule::reportUnknownParameterType,
+                                        &(LocMessage::param_type_partially_unknown()
+                                            .format(&[("paramName", &param_name_value)])
+                                            + &diag_addendum.get_string(
+                                                common::diagnostic::DEFAULT_MAX_DIAGNOSTIC_DEPTH,
+                                                common::diagnostic::DEFAULT_MAX_DIAGNOSTIC_LINE_COUNT,
+                                            )),
+                                        param_name.0,
+                                        None,
+                                    );
+                                }
+                            }
+
+                            let mut has_annotation = false;
+
+                            if analyzer::types::FunctionParam::is_type_declared(&function_type_param) {
+                                has_annotation = true;
+                            } else {
+                                // See if this is a "self" and "cls" parameter. They are exempt from this rule.
+                                if analyzer::types::is_type_var(param_type) && TypeVarType::is_self(TypeVarType(param_type)) {
+                                    has_annotation = true;
+                                }
+                            }
+
+                            if !is_overload_implementation
+                                && !has_annotation
+                                && self._file_info.diagnostic_rule_set.report_missing_parameter_type
+                                    != common::config_options::DiagnosticLevel::None
+                            {
+                                self._evaluator.add_diagnostic(
+                                    DiagnosticRule::reportMissingParameterType,
+                                    &LocMessage::param_annotation_missing().format(&[("name", &param_name_value)]),
+                                    param_name.0,
+                                    None,
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Verify that an unpacked TypedDict doesn't overlap any keyword parameters.
+            if param_details.has_unpacked_typed_dict {
+                let kwargs_index = function_type.d().shared.get().parameters.get().borrow().len() as i32 - 1;
+                let kwargs_type = FunctionType::get_param_type(function_type, kwargs_index);
+
+                if analyzer::types::is_class(kwargs_type) {
+                    if let Some(typed_dict_entries) = ClassType(kwargs_type).d().shared.get().typed_dict_entries.get() {
+                        let mut overlapping_entries: jsrt::JsSet<String> = jsrt::JsSet::default();
+                        for name in typed_dict_entries.known_items.borrow().keys() {
+                            if keyword_names.contains(name) {
+                                overlapping_entries.insert(name.clone());
+                            }
+                        }
+
+                        if !overlapping_entries.is_empty() {
+                            let kwargs_param = params[kwargs_index as usize];
+                            self._evaluator.add_diagnostic(
+                                DiagnosticRule::reportGeneralTypeIssues,
+                                &LocMessage::overlapping_keyword_args().format(&[(
+                                    "names",
+                                    &overlapping_entries.iter().cloned().collect::<Vec<_>>().join(", "),
+                                )]),
+                                kwargs_param.d().annotation.get().unwrap_or(kwargs_param.0),
+                                None,
+                            );
+                        }
+                    }
+                }
+            }
+
+            // Check for invalid use of ParamSpec P.args and P.kwargs.
+            let param_spec_params: Vec<analyzer::types::FunctionParam> = {
+                let parameters = function_type.d().shared.get().parameters.get().borrow().clone();
+                parameters
+                    .into_iter()
+                    .enumerate()
+                    .filter(|(index, param)| {
+                        let param_type = FunctionType::get_param_type(function_type, *index as i32);
+                        if analyzer::types::FunctionParam::is_type_declared(param)
+                            && analyzer::types::is_type_var(param_type)
+                            && analyzer::types::is_param_spec(param_type)
+                            && param.category != parser::parse_nodes::ParamCategory::Simple
+                            && param.name.is_some()
+                            && TypeVarType(param_type).d().priv_.borrow().param_spec_access.is_some()
+                        {
+                            return true;
+                        }
+
+                        false
+                    })
+                    .map(|(_, param)| param)
+                    .collect()
+            };
+
+            if param_spec_params.len() == 1 {
+                if let Some(param_spec_name) = &param_spec_params[0].name {
+                    let param_node = params
+                        .iter()
+                        .find(|param| {
+                            param.d().name.get().is_some_and(|n| n.d().value == *param_spec_name)
+                        })
+                        .copied();
+                    let annotation_node =
+                        param_node.and_then(|p| p.d().annotation.get().or(p.d().annotation_comment.get()));
+
+                    if let Some(annotation_node) = annotation_node {
+                        self._evaluator.add_diagnostic(
+                            DiagnosticRule::reportGeneralTypeIssues,
+                            &LocMessage::param_spec_args_kwargs_usage(),
+                            annotation_node,
+                            None,
+                        );
+                    }
+                }
+            }
+
+            // If this is a stub, ensure that the return type is specified.
+            if self._file_info.is_stub_file {
+                let return_annotation = node.d().return_annotation.get().or_else(|| {
+                    node.d().func_annotation_comment.get().map(|c| c.d().return_annotation.get())
+                });
+                if return_annotation.is_none() {
+                    self._evaluator.add_diagnostic(
+                        DiagnosticRule::reportUnknownParameterType,
+                        &LocMessage::return_type_unknown(),
+                        node.d().name.get().0,
+                        None,
+                    );
+                }
+            }
+
+            if let Some(containing_class_node) = containing_class_node {
+                self._validate_method(node, function_type, containing_class_node);
+            }
+        }
+
+        let params = node.d().params.borrow().clone();
+        for (index, param) in params.iter().enumerate() {
+            if let Some(default_value) = param.d().default_value.get() {
+                self.walk(default_value);
+            }
+
+            if let Some(annotation) = param.d().annotation.get() {
+                self.walk(annotation);
+            }
+
+            if let Some(annotation_comment) = param.d().annotation_comment.get() {
+                self.walk(annotation_comment);
+            }
+
+            // Look for method parameters that are typed with TypeVars that have the wrong variance.
+            if let Some(function_type_result) = &function_type_result {
+                let function_type = function_type_result.function_type;
+                let annotation_node = param.d().annotation.get().or(param.d().annotation_comment.get());
+                if let Some(annotation_node) = annotation_node {
+                    if index < function_type.d().shared.get().parameters.get().borrow().len() {
+                        let param_type = FunctionType::get_param_type(function_type, index as i32);
+                        let exempt_methods = ["__init__", "__new__"];
+
+                        if containing_class_node.is_some()
+                            && analyzer::types::is_type_var(param_type)
+                            && TypeVarType(param_type).d().priv_.borrow().scope_type
+                                == Some(analyzer::types::TypeVarScopeType::Class)
+                            && TypeVarType(param_type).d().shared.get().declared_variance.get()
+                                == analyzer::types::Variance::Covariant
+                            && !TypeVarType(param_type).d().shared.get().is_synthesized.get()
+                            && !exempt_methods.iter().any(|name| *name == function_type.d().shared.get().name)
+                        {
+                            self._evaluator.add_diagnostic(
+                                DiagnosticRule::reportGeneralTypeIssues,
+                                &LocMessage::param_type_covariant(),
+                                annotation_node,
+                                None,
+                            );
+                        }
+                    }
+                }
+            }
+        }
+
+        if let Some(return_annotation) = node.d().return_annotation.get() {
+            self.walk(return_annotation);
+        }
+
+        if let Some(func_annotation_comment) = node.d().func_annotation_comment.get() {
+            self.walk(func_annotation_comment.0);
+
+            if self._file_info.diagnostic_rule_set.report_type_comment_usage
+                != common::config_options::DiagnosticLevel::None
+                && common::python_version::PythonVersion::is_greater_or_equal_to(
+                    &self._file_info.execution_environment.python_version,
+                    &common::python_version::PYTHON_VERSION3_5,
+                )
+            {
+                self._evaluator.add_diagnostic(
+                    DiagnosticRule::reportTypeCommentUsage,
+                    &LocMessage::type_comment_deprecated(),
+                    func_annotation_comment.0,
+                    None,
+                );
+            }
+        }
+
+        let decorators: Vec<Option<P<ParseNode>>> =
+            node.d().decorators.borrow().iter().map(|n| Some(n.0)).collect();
+        self.walk_multiple(&decorators);
+
+        for param in &params {
+            if let Some(name) = param.d().name.get() {
+                self.walk(name.0);
+            }
+        }
+
+        let code_complexity = self._node_info.get_code_flow_complexity(node.0);
+        let is_too_complex_to_analyze = code_complexity > analyzer::type_evaluator::MAX_CODE_COMPLEXITY;
+
+        if IS_PRINT_CODE_COMPLEXITY_ENABLED {
+            println!(
+                "Code complexity of function {} is {}",
+                node.d().name.get().d().value,
+                jsrt::number::number_to_string(code_complexity)
+            );
+        }
+
+        if is_too_complex_to_analyze {
+            self._evaluator.add_diagnostic(
+                DiagnosticRule::reportGeneralTypeIssues,
+                &LocMessage::code_too_complex_to_analyze(),
+                node.d().name.get().0,
+                None,
+            );
+        } else {
+            self.walk(node.d().suite.get().0);
+        }
+
+        if let Some(function_type_result) = &function_type_result {
+            let function_type = function_type_result.function_type;
+
+            // Validate that the function returns the declared type.
+            if !is_too_complex_to_analyze {
+                self._validate_function_return(node, function_type);
+            }
+
+            // Verify common dunder signatures.
+            self._validate_dunder_signatures(node, function_type, containing_class_node.is_some());
+
+            // Verify TypeGuard and TypeIs functions.
+            self._validate_type_guard_function(node, function_type, containing_class_node.is_some());
+
+            self._validate_function_type_var_usage(node, function_type_result);
+
+            self._validate_generator_return_type(node, function_type);
+
+            self._report_deprecated_class_property(node, function_type_result);
+
+            // If this is not a method, @final is disallowed.
+            if containing_class_node.is_none() && FunctionType::is_final(function_type) {
+                self._evaluator.add_diagnostic(
+                    DiagnosticRule::reportGeneralTypeIssues,
+                    &LocMessage::final_non_method().format(&[("name", &node.d().name.get().d().value)]),
+                    node.d().name.get().0,
+                    None,
+                );
+            }
+        }
+
+        // If we're at the module level within a stub file, report a diagnostic
+        // if there is a '__getattr__' function defined when in strict mode.
+        // This signifies an incomplete stub file that obscures type errors.
+        if self._file_info.is_stub_file && node.d().name.get().d().value == "__getattr__" {
+            let scope = analyzer::scope_utils::get_scope_for_node(node.0, self._node_info.reader());
+            if scope.is_some_and(|scope| scope.type_ == ScopeType::Module) {
+                self._evaluator.add_diagnostic(
+                    DiagnosticRule::reportIncompleteStub,
+                    &LocMessage::stub_uses_get_attr(),
+                    node.d().name.get().0,
+                    None,
+                );
+            }
+        }
+
+        self._scoped_nodes.push(node.0);
+
+        if let Some(function_type_result) = &function_type_result {
+            let function_type = function_type_result.function_type;
+            if analyzer::types::is_overloaded(function_type_result.decorated_type)
+                && function_type.d().priv_.borrow().overloaded.is_some()
+            {
+                let decorated_type = OverloadedType(function_type_result.decorated_type);
+
+                // If this is the implementation for the overloaded function, skip
+                // overload consistency checks.
+                if OverloadedType::get_implementation(decorated_type) != Some(function_type.0) {
+                    let overloads = OverloadedType::get_overloads(decorated_type);
+                    if overloads.len() > 1 {
+                        let max_overload_consistency_check_length = 100;
+
+                        // The check is n^2 in time, so if the number of overloads
+                        // is very large (which can happen for some generated code),
+                        // skip this check to avoid quadratic analysis time.
+                        if overloads.len() < max_overload_consistency_check_length {
+                            self._validate_overload_consistency(
+                                node,
+                                overloads[overloads.len() - 1],
+                                &overloads[0..overloads.len() - 1],
+                            );
+                        }
+                    }
+                }
+
+                self._validate_overload_attribute_consistency(node, decorated_type);
+            }
+        }
+
+        false
     }
 
     // analyzer/checker.ts:772
     fn visit_lambda(&mut self, node: LambdaNode) -> bool {
-        todo!()
+        self._evaluator.get_type(node.0);
+
+        // Walk the children.
+        let mut children: Vec<Option<P<ParseNode>>> =
+            node.d().params.borrow().iter().map(|n| Some(n.0)).collect();
+        children.push(Some(node.d().expr.get()));
+        self.walk_multiple(&children);
+
+        let params = node.d().params.borrow().clone();
+        for param in params {
+            if let Some(param_name) = param.d().name.get() {
+                let param_type = self._evaluator.get_type(param_name.0);
+                if let Some(param_type) = param_type {
+                    if analyzer::types::is_unknown(param_type) {
+                        self._evaluator.add_diagnostic(
+                            DiagnosticRule::reportUnknownLambdaType,
+                            &LocMessage::param_type_unknown()
+                                .format(&[("paramName", &param_name.d().value)]),
+                            param_name.0,
+                            None,
+                        );
+                    } else if analyzer::type_utils::is_partly_unknown(param_type, 0) {
+                        self._evaluator.add_diagnostic(
+                            DiagnosticRule::reportUnknownLambdaType,
+                            &LocMessage::param_type_partially_unknown()
+                                .format(&[("paramName", &param_name.d().value)]),
+                            param_name.0,
+                            None,
+                        );
+                    }
+                }
+            }
+        }
+
+        let return_type = self._evaluator.get_type(node.d().expr.get());
+        if let Some(return_type) = return_type {
+            if analyzer::types::is_unknown(return_type) {
+                self._evaluator.add_diagnostic(
+                    DiagnosticRule::reportUnknownLambdaType,
+                    &LocMessage::lambda_return_type_unknown(),
+                    node.d().expr.get(),
+                    None,
+                );
+            } else if analyzer::type_utils::is_partly_unknown(return_type, 0) {
+                self._evaluator.add_diagnostic(
+                    DiagnosticRule::reportUnknownLambdaType,
+                    &LocMessage::lambda_return_type_partially_unknown().format(&[(
+                        "returnType",
+                        &self._evaluator.print_type(
+                            return_type,
+                            Some(&analyzer::type_evaluator_types::PrintTypeOptions {
+                                expand_type_alias: Some(true),
+                                ..Default::default()
+                            }),
+                        ),
+                    )]),
+                    node.d().expr.get(),
+                    None,
+                );
+            }
+        }
+
+        self._scoped_nodes.push(node.0);
+
+        false
     }
 
     // analyzer/checker.ts:823
