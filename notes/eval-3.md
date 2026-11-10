@@ -10,10 +10,7 @@ None yet. Share D's three stored callbacks in `types.rs` (`typeEvaluator.ts:1957
 
 ## Needs from others
 
-- share A (`typeUtils.ts:1628`, `validateTypeVarDefault`, and `TypeVarDefaultValidator`): TypeScript hands `invalidTypeVars` to the validator, which adds to it, and the caller reads it afterwards (`validateTypeParamDefault`, typeEvaluator.ts:19682). The stub takes `&JsSet<String>` and the validator stores its own `JsSet`, so the caller's set stays empty and `typeVarDefaultInvalidTypeVar` is never reported. The set needs a shared or `&mut` mapping in `tools/stubgen` (`[sites]`); share D's caller then passes it on.
-- shares A and H, callers of the three deferred class callbacks (`types.ts:1295`, `1346`, `1380`, `1385`; `dataClasses.ts:95`): `SynthesizeMethodsDeferred::call` and `CalculateInheritedSlotsNamesDeferred::call` clear their own slot first, as the closures' `delete` does. Take the callback out of the `RefCell` (`let cb = shared.synthesize_methods_deferred.borrow().clone();`) and call the copy; calling it through a live borrow panics.
-
-- tools/stubgen owner: `stubgen --install` rewrites more than the stubs of unported functions. Run on main at 980e3e3 it put back the stub header (`//! Stubs for ...`, `#![allow(...)]`, split `use` lines) on fully ported files (`sentinel.rs`, `symbol_utils.rs`, `type_complexity.rs`, `type_walker.rs`), and it sorts `use crate::{analyzer, common, parser};` below the other imports where main keeps it first. I reverted those changes by hand each time.
+None open.
 
 ## Doubts
 
@@ -23,3 +20,5 @@ None yet. Share D's three stored callbacks in `types.rs` (`typeEvaluator.ts:1957
 - `getTypeOfLambdaWithExpectedType` compares `!param.d.name === !expectedParam.param.name`; an expected parameter named `""` counts as unnamed, as in JavaScript.
 - Where TypeScript casts a solved type with `as ClassType` and then reads `priv.typeArgs`, the port uses `ClassType::cast` and treats a non-class like a class without type args: TypeScript reads `undefined` there.
 - No unit tests ported: `typeEvaluator.ts` has no test file of its own.
+- `evaluateTypesForStatement` ports `fail('Unexpected statement')` as `panic!`.
+- `createSpecializedClassType` indexes `typeParams[index]` for each type arg below `typeArgCount`. A pseudo-generic class that is still partially evaluated keeps `typeParams` empty while `typeArgCount` is not clamped, so the index runs past the end: TypeScript passes `undefined` to `applyTypeArgToTypeVar` (harmless only when the arg is Any or Unknown), the port panics.
