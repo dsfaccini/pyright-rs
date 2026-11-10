@@ -3,94 +3,255 @@
 Stubs (copy candidates for `crates/pyright/src`):
 
 - `stubs/analyzer/type_evaluator.rs` from `analyzer/typeEvaluator.ts`
+- `stubs/analyzer/type_evaluator_types.rs` from `analyzer/typeEvaluatorTypes.ts`
 - `stubs/analyzer/types.rs` from `analyzer/types.ts`
+- `stubs/analyzer/type_utils.rs` from `analyzer/typeUtils.ts`
+- `stubs/analyzer/type_cache_utils.rs` from `analyzer/typeCacheUtils.ts`
+- `stubs/analyzer/type_walker.rs` from `analyzer/typeWalker.ts`
+- `stubs/analyzer/type_complexity.rs` from `analyzer/typeComplexity.ts`
+- `stubs/analyzer/sentinel.rs` from `analyzer/sentinel.ts`
+- `stubs/analyzer/symbol_utils.rs` from `analyzer/symbolUtils.ts`
+- `stubs/analyzer/code_flow_engine.rs` from `analyzer/codeFlowEngine.ts`
+- `stubs/analyzer/type_guards.rs` from `analyzer/typeGuards.ts`
+- `stubs/analyzer/pattern_matching.rs` from `analyzer/patternMatching.ts`
+- `stubs/analyzer/constraint_solver.rs` from `analyzer/constraintSolver.ts`
+- `stubs/analyzer/constraint_tracker.rs` from `analyzer/constraintTracker.ts`
+- `stubs/analyzer/constraint_solution.rs` from `analyzer/constraintSolution.ts`
+- `stubs/analyzer/operations.rs` from `analyzer/operations.ts`
+- `stubs/analyzer/type_printer.rs` from `analyzer/typePrinter.ts`
+- `stubs/analyzer/type_printer_utils.rs` from `analyzer/typePrinterUtils.ts`
+- `stubs/analyzer/parameter_utils.rs` from `analyzer/parameterUtils.ts`
+- `stubs/analyzer/function_transform.rs` from `analyzer/functionTransform.ts`
+- `stubs/analyzer/declaration_utils.rs` from `analyzer/declarationUtils.ts`
+- `stubs/analyzer/source_mapper.rs` from `analyzer/sourceMapper.ts`
+- `stubs/analyzer/source_mapper_utils.rs` from `analyzer/sourceMapperUtils.ts`
+- `stubs/analyzer/constructors.rs` from `analyzer/constructors.ts`
+- `stubs/analyzer/data_classes.rs` from `analyzer/dataClasses.ts`
+- `stubs/analyzer/typed_dicts.rs` from `analyzer/typedDicts.ts`
+- `stubs/analyzer/protocols.rs` from `analyzer/protocols.ts`
+- `stubs/analyzer/enums.rs` from `analyzer/enums.ts`
+- `stubs/analyzer/decorators.rs` from `analyzer/decorators.ts`
+- `stubs/analyzer/properties.rs` from `analyzer/properties.ts`
+- `stubs/analyzer/tuples.rs` from `analyzer/tuples.ts`
+- `stubs/analyzer/named_tuples.rs` from `analyzer/namedTuples.ts`
+- `stubs/analyzer/constructor_transform.rs` from `analyzer/constructorTransform.ts`
+- `stubs/analyzer/checker.rs` from `analyzer/checker.ts`
+- `stubs/analyzer/deprecated_symbols.rs` from `analyzer/deprecatedSymbols.ts`
 
 Coverage: markers for every TypeScript function, method and type of each stubbed file, and methods for every member of each factory interface:
 
 - `analyzer/typeEvaluator.ts`: 416/416 declarations have a marker
+- `analyzer/typeEvaluatorTypes.ts`: 36/36 declarations have a marker
 - `analyzer/types.ts`: 289/289 declarations have a marker
+- `analyzer/typeUtils.ts`: 175/175 declarations have a marker
+- `analyzer/typeCacheUtils.ts`: 19/19 declarations have a marker
+- `analyzer/typeWalker.ts`: 16/16 declarations have a marker
+- `analyzer/typeComplexity.ts`: 2/2 declarations have a marker
+- `analyzer/sentinel.ts`: 1/1 declarations have a marker
+- `analyzer/symbolUtils.ts`: 4/4 declarations have a marker
+- `analyzer/codeFlowEngine.ts`: 22/22 declarations have a marker
+- `analyzer/typeGuards.ts`: 39/39 declarations have a marker
+- `analyzer/patternMatching.ts`: 24/24 declarations have a marker
+- `analyzer/constraintSolver.ts`: 17/17 declarations have a marker
+- `analyzer/constraintTracker.ts`: 30/30 declarations have a marker
+- `analyzer/constraintSolution.ts`: 15/15 declarations have a marker
+- `analyzer/operations.ts`: 14/14 declarations have a marker
+- `analyzer/typePrinter.ts`: 25/25 declarations have a marker
+- `analyzer/typePrinterUtils.ts`: 2/2 declarations have a marker
+- `analyzer/parameterUtils.ts`: 16/16 declarations have a marker
+- `analyzer/functionTransform.ts`: 8/8 declarations have a marker
+- `analyzer/declarationUtils.ts`: 10/10 declarations have a marker
+- `analyzer/sourceMapper.ts`: 50/50 declarations have a marker
+- `analyzer/sourceMapperUtils.ts`: 3/3 declarations have a marker
+- `analyzer/constructors.ts`: 20/20 declarations have a marker
+- `analyzer/dataClasses.ts`: 17/17 declarations have a marker
+- `analyzer/typedDicts.ts`: 16/16 declarations have a marker
+- `analyzer/protocols.ts`: 13/13 declarations have a marker
+- `analyzer/enums.ts`: 10/10 declarations have a marker
+- `analyzer/decorators.ts`: 7/7 declarations have a marker
+- `analyzer/properties.ts`: 12/12 declarations have a marker
+- `analyzer/tuples.ts`: 9/9 declarations have a marker
+- `analyzer/namedTuples.ts`: 4/4 declarations have a marker
+- `analyzer/constructorTransform.ts`: 4/4 declarations have a marker
+- `analyzer/checker.ts`: 146/146 declarations have a marker
+- `analyzer/deprecatedSymbols.ts`: 1/1 declarations have a marker
 - `TypeEvaluator`: 112/112 members are `pub` methods of `TypeEvaluator`
+- `CodeFlowEngine`: 4/4 members are `pub` methods of `CodeFlowEngine`
+- `CodeFlowAnalyzer`: 1/1 members are `pub` methods of `CodeFlowAnalyzer`
 
 Dependency placeholders (compile check only):
 
-- `deps/analyzer/analyzer_file_info.rs`: AbsoluteModuleDescriptor, AnalyzerFileInfo, ImportLookup, ImportLookupResult, LookupImportOptions
-- `deps/analyzer/analyzer_node_info.rs`: AnalyzerNodeInfo, AnalyzerNodeInfoAccessor, AnalyzerNodeInfoReader, AnalyzerNodeInfoWriter, DunderAllInfo
-- `deps/analyzer/code_flow_engine.rs`: CachedType, CodeFlowAnalyzer, CodeFlowEngine, CodeFlowTypeCache, FlowNodeTypeOptions, FlowNodeTypeResult, IncompleteSubtypeInfo, IncompleteType, ReachabilityCacheEntry
-- `deps/analyzer/code_flow_types.rs`: CodeFlowReferenceExpressionNode, FlowFlags, FlowNode, FlowPreFinallyGate
-- `deps/analyzer/constraint_tracker.rs`: ConstraintSet, ConstraintTracker, TypeVarConstraints
-- `deps/analyzer/declaration.rs`: DeclarationBase, DeclarationType, IntrinsicType, ModuleLoaderActions
-- `deps/analyzer/declaration_utils.rs`: ResolvedAliasInfo
-- `deps/analyzer/import_result.rs`: ImplicitImport, ImportResult, ImportType
-- `deps/analyzer/parameter_utils.rs`: ParamKind, ParamListDetails, VirtualParamDetails
-- `deps/analyzer/py_typed_utils.rs`: PyTypedInfo
-- `deps/analyzer/scope.rs`: ChainedModuleLevelLookupContext, NameBindingType, Scope, ScopeChainedModuleLevelLookup, ScopeType, SymbolWithScope
-- `deps/analyzer/source_file.rs`: IPythonMode
-- `deps/analyzer/symbol.rs`: Symbol, SymbolFlags, SynthesizedTypeInfo
-- `deps/analyzer/type_cache_utils.rs`: DependentType, SpeculativeContext, SpeculativeEntry, SpeculativeModeOptions, SpeculativeTypeEntry, SpeculativeTypeTracker, TypeResult
-- `deps/analyzer/type_evaluator_types.rs`: AbstractSymbol, Arg, ArgResult, ArgWithExpression, ArgWithType, AssignTypeFlags, CallResult, CallSignature, CallSignatureInfo, CallSiteEvaluationInfo, ClassMemberLookup, ClassTypeResult, DeclaredSymbolTypeInfo, EffectiveTypeResult, EvalFlags, EvaluatorUsage, ExpectedTypeOptions, ExpectedTypeResult, FunctionTypeResult, MagicMethodDeprecationInfo, MapSubtypesOptions, MemberAccessDeprecationInfo, PartialPrefetchedTypes, PrefetchedTypes, PrintTypeOptions, Reachability, ResolveAliasOptions, SolveConstraintsOptions, SymbolDeclInfo, TypeResult, TypeResultWithNode, ValidateArgTypeParams, ValidateTypeArgsOptions
-- `deps/analyzer/type_printer.rs`: PrintTypeFlags
-- `deps/analyzer/type_utils.rs`: ApplyTypeVarOptions, ApplyTypeVarOptionsReplaceUnsolved, ClassMember, InferenceContext, MemberAccessFlags, UniqueSignatureTracker
-- `deps/common/config_options.rs`: DiagnosticLevel, DiagnosticRuleSet, ExecutionEnvironment
+- `deps/analyzer/analyzer_file_info.rs`: AnalyzerFileInfo, ImportLookup
+- `deps/analyzer/analyzer_node_info.rs`: AnalyzerNodeInfoAccessor, AnalyzerNodeInfoReader, ScopedNode
+- `deps/analyzer/code_flow_types.rs`: CodeFlowReferenceExpressionNode, FlowCall, FlowNode, FlowWildcardImport
+- `deps/analyzer/declaration.rs`: DeclarationBase
+- `deps/analyzer/import_resolver.rs`: ImportResolver
+- `deps/analyzer/import_result.rs`: ImportResult
+- `deps/analyzer/program.rs`: Program
+- `deps/analyzer/scope.rs`: Scope, ScopeType, SymbolWithScope
+- `deps/analyzer/source_file.rs`: SourceFile
+- `deps/analyzer/source_file_info.rs`: SourceFileInfo
+- `deps/analyzer/symbol.rs`: Symbol, SynthesizedTypeInfo
+- `deps/common/config_options.rs`: ConfigOptions, DiagnosticLevel, ExecutionEnvironment
 - `deps/common/console.rs`: ConsoleInterface
-- `deps/common/diagnostic.rs`: Diagnostic, DiagnosticAction, DiagnosticAddendum, DiagnosticCategory, DiagnosticRelatedInfo, TaskListPriority
+- `deps/common/diagnostic.rs`: Diagnostic, DiagnosticAddendum
 - `deps/common/diagnostic_rules.rs`: DiagnosticRule
-- `deps/common/diagnostic_sink.rs`: TextRangeDiagnosticSink
-- `deps/common/python_version.rs`: PythonReleaseLevel, PythonVersion
-- `deps/common/text_range.rs`: Position, Range, TextRange
-- `deps/common/text_range_collection.rs`: TextRangeCollection
+- `deps/common/python_version.rs`: PythonVersion
+- `deps/common/text_range.rs`: TextRange
 - `deps/common/uri/uri.rs`: Uri
-- `deps/parser/parse_nodes.rs`: ArgCategory, ArgumentNode, AssertNode, AssignmentExpressionNode, AssignmentNode, AugmentedAssignmentNode, AwaitNode, BinaryOperationNode, BreakNode, CallNode, CaseNode, ClassNode, ComprehensionForIfNode, ComprehensionForNode, ComprehensionIfNode, ComprehensionNode, ConstantNode, ContinueNode, DecoratorNode, DelNode, DictionaryEntryNode, DictionaryExpandEntryNode, DictionaryKeyEntryNode, DictionaryNode, EllipsisNode, ErrorExpressionCategory, ErrorNode, ExceptNode, ExecutionScopeNode, ExpressionNode, ForNode, FormatStringNode, FunctionAnnotationNode, FunctionNode, GlobalNode, IfNode, ImportAsNode, ImportFromAsNode, ImportFromNode, ImportNode, IndexNode, LambdaNode, ListNode, MatchNode, MemberAccessNode, ModuleNameNode, ModuleNode, NameNode, NonlocalNode, NumberNode, ParamCategory, ParameterNode, ParseNodeBase, ParseNodeType, PassNode, PatternAsNode, PatternAtomNode, PatternCaptureNode, PatternClassArgumentNode, PatternClassNode, PatternLiteralNode, PatternMappingEntryNode, PatternMappingExpandEntryNode, PatternMappingKeyEntryNode, PatternMappingNode, PatternSequenceNode, PatternValueNode, RaiseNode, ReturnNode, SetNode, SliceNode, StatementListNode, StatementNode, StringListNode, StringNode, SuiteNode, TernaryNode, TryNode, TupleNode, TypeAliasNode, TypeAnnotationNode, TypeParamKind, TypeParameterListNode, TypeParameterNode, UnaryOperationNode, UnpackNode, WhileNode, WithItemNode, WithNode, YieldFromNode, YieldNode
-- `deps/parser/tokenizer_types.rs`: Comment, CommentType, FStringMiddleToken, FStringStartToken, IdentifierToken, KeywordToken, KeywordType, NewLineType, OperatorType, StringToken, StringTokenFlags, TokenBase, TokenType
+- `deps/parser/parse_nodes.rs`: ArgCategory, ArgumentNode, AssertNode, AssignmentExpressionNode, AssignmentNode, AugmentedAssignmentNode, AwaitNode, BinaryOperationNode, BreakNode, CallNode, CaseNode, ClassNode, ComprehensionForIfNode, ComprehensionForNode, ComprehensionIfNode, ComprehensionNode, ConstantNode, ContinueNode, DecoratorNode, DelNode, DictionaryExpandEntryNode, DictionaryKeyEntryNode, DictionaryNode, EllipsisNode, ErrorNode, ExceptNode, ExecutionScopeNode, ExpressionNode, ForNode, FormatStringNode, FunctionAnnotationNode, FunctionNode, GlobalNode, IfNode, ImportAsNode, ImportFromAsNode, ImportFromNode, ImportNode, IndexNode, LambdaNode, ListNode, MatchNode, MemberAccessNode, ModuleNameNode, ModuleNode, NameNode, NonlocalNode, NumberNode, ParamCategory, ParameterNode, ParseNodeBase, PassNode, PatternAsNode, PatternAtomNode, PatternCaptureNode, PatternClassArgumentNode, PatternClassNode, PatternLiteralNode, PatternMappingExpandEntryNode, PatternMappingKeyEntryNode, PatternMappingNode, PatternSequenceNode, PatternValueNode, RaiseNode, ReturnNode, SetNode, SliceNode, StatementListNode, StatementNode, StringListNode, StringNode, SuiteNode, TernaryNode, TryNode, TupleNode, TypeAliasNode, TypeAnnotationNode, TypeParameterListNode, TypeParameterNode, UnaryOperationNode, UnpackNode, WhileNode, WithItemNode, WithNode, YieldFromNode, YieldNode
+- `deps/parser/parser.rs`: ParserOutput
+- `deps/parser/tokenizer_types.rs`: OperatorType
 
-Number sites without a reviewed type (numbers.toml, values ending in "?"): 0 in the stubbed files, 53 in placeholders.
+Number sites without a reviewed type (numbers.toml, values ending in "?"): 0 in the stubbed files, 0 in placeholders.
 
-Unmapped TypeScript types (rendered with a `/*? ... */` marker): 7 distinct.
+Unmapped TypeScript types (rendered with a `/*? ... */` marker): 0 distinct.
 
-- `any` x12: analyzer/typeEvaluator.ts:LogWrapper, common/diagnostic.ts:Diagnostic._data, analyzer/typeCacheUtils.ts:SpeculativeEntry.cache, ...
-- `Uri | AbsoluteModuleDescriptor` x4: analyzer/analyzerFileInfo.ts:ImportLookup
-- `boolean | string` x4: analyzer/analyzerFileInfo.ts:AnalyzerFileInfo.definedConstants
-- `Parameters<T>` x1: analyzer/typeEvaluator.ts:LogWrapper
-- `ReturnType<T>` x1: analyzer/typeEvaluator.ts:LogWrapper
-- `object` x1: analyzer/types.ts:ClassDetailsShared.protocolCompatibility
-- `0 | 1 | -1` x1: analyzer/types.ts:TypeCondition._compare.return
 
-Interfaces held as `P<T>` by the default rule (a field is written after construction); set [modes] to override:
+How each class and interface of the stubbed files is held (docs/porting.md "memory"):
 
-- `analyzer/analyzerFileInfo.ts:AnalyzerFileInfo`: accessedSymbolSet at analyzer/typeEvaluator.ts:5123
-- `analyzer/analyzerNodeInfo.ts:AnalyzerNodeInfo`: importInfo at analyzer/analyzerNodeInfo.ts:554
-- `analyzer/codeFlowEngine.ts:CodeFlowTypeCache`: cache at analyzer/codeFlowEngine.ts:313
-- `analyzer/codeFlowEngine.ts:FlowNodeTypeResult`: type at analyzer/codeFlowEngine.ts:600
-- `analyzer/codeFlowEngine.ts:IncompleteType`: type at analyzer/codeFlowEngine.ts:373
-- `analyzer/codeFlowEngine.ts:ReachabilityCacheEntry`: reachability at analyzer/codeFlowEngine.ts:1277
-- `analyzer/declaration.ts:ModuleLoaderActions`: uri at analyzer/binder.ts:3019
-- `analyzer/importResult.ts:ImplicitImport`: isNativeLib at analyzer/importResolver.ts:812
-- `analyzer/importResult.ts:ImportResult`: isRelative at analyzer/importResolver.ts:925
-- `analyzer/parameterUtils.ts:ParamListDetails`: params at analyzer/typeEvaluator.ts:28147
-- `analyzer/typeCacheUtils.ts:SpeculativeContext`: entriesToUndo at analyzer/typeCacheUtils.ts:162
-- `analyzer/typeCacheUtils.ts:SpeculativeEntry`: cache at analyzer/typeCacheUtils.ts:134
-- `analyzer/typeCacheUtils.ts:SpeculativeTypeEntry`: dependentTypes at analyzer/typeCacheUtils.ts:198
-- `analyzer/typeEvaluator.ts:DeferredClassCompletion`: classesToComplete at analyzer/typeEvaluator.ts:19914
-- `analyzer/typeEvaluator.ts:ExpectedTypeCacheEntry`: type at analyzer/typeEvaluator.ts:1159
-- `analyzer/typeEvaluatorTypes.ts:CallResult`: returnType at analyzer/typeEvaluator.ts:11896
-- `analyzer/typeEvaluatorTypes.ts:EffectiveTypeResult`: type at analyzer/typeEvaluator.ts:25503
-- `analyzer/typeEvaluatorTypes.ts:ExpectedTypeOptions`: notParsed at analyzer/typeEvaluator.ts:2132
-- `analyzer/typeEvaluatorTypes.ts:PrefetchedTypes`: noneTypeClass at analyzer/typeEvaluator.ts:27032
-- `analyzer/typeEvaluatorTypes.ts:TypeResult`: type at analyzer/tuples.ts:146
-- `analyzer/typeUtils.ts:ClassMember`: isClassMember at analyzer/typeUtils.ts:1784
-- `analyzer/typeUtils.ts:InferenceContext`: expectedType at analyzer/typeEvaluator.ts:1369
-- `analyzer/types.ts:ClassDetailsShared`: flags at analyzer/types.ts:1063
-- `analyzer/types.ts:DataClassBehaviors`: skipGenerateInit at analyzer/dataClasses.ts:1643
-- `analyzer/types.ts:DataClassEntry`: hasDefault at analyzer/dataClasses.ts:591
-- `analyzer/types.ts:FunctionDetailsShared`: flags at analyzer/types.ts:2002
-- `analyzer/types.ts:LiteralTypes`: literalStrMap at analyzer/types.ts:2734
-- `analyzer/types.ts:ParamSpecDetailsPriv`: paramSpecAccess at analyzer/types.ts:3081
-- `analyzer/types.ts:SignatureWithOffsets`: expressionOffsets at analyzer/typeUtils.ts:287
-- `analyzer/types.ts:SpecializedFunctionTypes`: parameterTypes at analyzer/types.ts:2143
-- `analyzer/types.ts:TypeAliasSharedInfo`: typeParams at analyzer/typeEvaluator.ts:18021
-- `analyzer/types.ts:TypeVarDetailsShared`: name at analyzer/types.ts:2998
-- `analyzer/types.ts:TypeVarTupleDetailsPriv`: isInUnion at analyzer/types.ts:3030
-- `analyzer/types.ts:TypedDictEntries`: knownItems at analyzer/typedDicts.ts:1138
-- `common/configOptions.ts:DiagnosticRuleSet`: analyzeUnannotatedFunctions at analyzer/service.ts:1160
+- `analyzer/typeEvaluator.ts:GetTypeArgsOptions`: value; never written after construction; never stored in a second place
+- `analyzer/typeEvaluator.ts:MatchArgsToParamsResult`: value; [modes]
+- `analyzer/typeEvaluator.ts:MemberAccessTypeResult`: value; never written after construction; never stored in a second place
+- `analyzer/typeEvaluator.ts:ScopedTypeVarResult`: value; never written after construction; never stored in a second place
+- `analyzer/typeEvaluator.ts:AliasMapEntry`: value; never written after construction; never stored in a second place
+- `analyzer/typeEvaluator.ts:AssignClassToSelfInfo`: value; never written after construction; never stored in a second place
+- `analyzer/typeEvaluator.ts:MatchedOverloadInfo`: value; never written after construction; stored at analyzer/typeEvaluator.ts:10094
+- `analyzer/typeEvaluator.ts:ValidateArgTypeOptions`: value; never written after construction; never stored in a second place
+- `analyzer/typeEvaluator.ts:EffectiveReturnTypeOptions`: value; never written after construction; never stored in a second place
+- `analyzer/typeEvaluator.ts:SignatureTrackerStackEntry`: value; never written after construction; never stored in a second place
+- `analyzer/typeEvaluator.ts:SymbolResolutionStackEntry`: value; [modes]
+- `analyzer/typeEvaluator.ts:ReturnTypeInferenceContext`: value; never written after construction; never stored in a second place
+- `analyzer/typeEvaluator.ts:ParamSpecArgResult`: value; never written after construction; never stored in a second place
+- `analyzer/typeEvaluator.ts:EvaluatorOptions`: value; never written after construction; never stored in a second place
+- `analyzer/typeEvaluator.ts:DeferredClassCompletion`: handle; written: classesToComplete at analyzer/typeEvaluator.ts:19914; stored at analyzer/typeEvaluator.ts:19941
+- `analyzer/typeEvaluator.ts:TypeCacheEntry`: value; never written after construction; never stored in a second place
+- `analyzer/typeEvaluator.ts:TypeFormTypeCacheEntry`: value; never written after construction; never stored in a second place
+- `analyzer/typeEvaluator.ts:CodeFlowAnalyzerCacheEntry`: value; never written after construction; never stored in a second place
+- `analyzer/typeEvaluator.ts:FunctionRecursionInfo`: value; never written after construction; never stored in a second place
+- `analyzer/typeEvaluator.ts:SuppressedNodeStackEntry`: value; [modes]
+- `analyzer/typeEvaluator.ts:ExpectedTypeCacheEntry`: value; written: type at analyzer/typeEvaluator.ts:1159; never stored in a second place
+- `analyzer/typeEvaluatorTypes.ts:PrefetchedTypes`: value; written: noneTypeClass at analyzer/typeEvaluator.ts:27032; never stored in a second place
+- `analyzer/typeEvaluatorTypes.ts:TypeResult`: handle; written: type at analyzer/tuples.ts:146; stored at analyzer/typeEvaluator.ts:891
+- `analyzer/typeEvaluatorTypes.ts:TypeResultWithNode`: value; never written after construction; stored at analyzer/typeEvaluator.ts:7583
+- `analyzer/typeEvaluatorTypes.ts:MemberAccessDeprecationInfo`: value; never written after construction; stored at analyzer/typeEvaluator.ts:2653
+- `analyzer/typeEvaluatorTypes.ts:MagicMethodDeprecationInfo`: value; never written after construction; stored at analyzer/operations.ts:245
+- `analyzer/typeEvaluatorTypes.ts:EvaluatorUsage`: value; never written after construction; never stored in a second place
+- `analyzer/typeEvaluatorTypes.ts:ClassTypeResult`: value; never written after construction; never stored in a second place
+- `analyzer/typeEvaluatorTypes.ts:FunctionTypeResult`: value; never written after construction; never stored in a second place
+- `analyzer/typeEvaluatorTypes.ts:CallSignature`: value; never written after construction; stored at analyzer/typeEvaluator.ts:2868
+- `analyzer/typeEvaluatorTypes.ts:CallSignatureInfo`: value; never written after construction; never stored in a second place
+- `analyzer/typeEvaluatorTypes.ts:AbstractSymbol`: value; never written after construction; stored at analyzer/typeEvaluator.ts:29940
+- `analyzer/typeEvaluatorTypes.ts:ArgBase`: value; never written after construction; never stored in a second place
+- `analyzer/typeEvaluatorTypes.ts:ArgWithType`: handle; compared or hashed by identity at analyzer/typeEvaluator.ts:13711; never written after construction; stored at analyzer/typedDicts.ts:196
+- `analyzer/typeEvaluatorTypes.ts:ArgWithExpression`: handle; compared or hashed by identity at analyzer/typeEvaluator.ts:13711; never written after construction; stored at analyzer/typedDicts.ts:196
+- `analyzer/typeEvaluatorTypes.ts:EffectiveTypeResult`: handle; written: type at analyzer/typeEvaluator.ts:25503; stored at analyzer/typeEvaluator.ts:24835
+- `analyzer/typeEvaluatorTypes.ts:ValidateArgTypeParams`: value; [modes]
+- `analyzer/typeEvaluatorTypes.ts:ExpectedTypeOptions`: value; written: notParsed at analyzer/typeEvaluator.ts:2132; never stored in a second place
+- `analyzer/typeEvaluatorTypes.ts:ExpectedTypeResult`: value; never written after construction; never stored in a second place
+- `analyzer/typeEvaluatorTypes.ts:FunctionResult`: value; never written after construction; never stored in a second place
+- `analyzer/typeEvaluatorTypes.ts:ArgResult`: value; never written after construction; stored at analyzer/typeEvaluator.ts:13425
+- `analyzer/typeEvaluatorTypes.ts:CallResult`: value; written: returnType at analyzer/typeEvaluator.ts:11896; never stored in a second place
+- `analyzer/typeEvaluatorTypes.ts:ClassMemberLookup`: value; never written after construction; never stored in a second place
+- `analyzer/typeEvaluatorTypes.ts:SolveConstraintsOptions`: value; never written after construction; never stored in a second place
+- `analyzer/typeEvaluatorTypes.ts:PrintTypeOptions`: value; never written after construction; never stored in a second place
+- `analyzer/typeEvaluatorTypes.ts:DeclaredSymbolTypeInfo`: value; never written after construction; never stored in a second place
+- `analyzer/typeEvaluatorTypes.ts:ResolveAliasOptions`: value; never written after construction; never stored in a second place
+- `analyzer/typeEvaluatorTypes.ts:ValidateTypeArgsOptions`: value; never written after construction; never stored in a second place
+- `analyzer/typeEvaluatorTypes.ts:MapSubtypesOptions`: value; never written after construction; never stored in a second place
+- `analyzer/typeEvaluatorTypes.ts:CallSiteEvaluationInfo`: value; never written after construction; never stored in a second place
+- `analyzer/typeEvaluatorTypes.ts:SymbolDeclInfo`: value; never written after construction; never stored in a second place
+- `analyzer/types.ts:EnumLiteral`: handle; compared or hashed by identity at analyzer/patternMatching.ts:561; never written after construction; stored at analyzer/types.ts:984
+- `analyzer/types.ts:SentinelLiteral`: handle; compared or hashed by identity at analyzer/patternMatching.ts:561; never written after construction; stored at analyzer/types.ts:984
+- `analyzer/types.ts:TypeSameOptions`: value; never written after construction; never stored in a second place
+- `analyzer/types.ts:TypeAliasSharedInfo`: handle; written: typeParams at analyzer/typeEvaluator.ts:18021; stored at analyzer/typeEvaluator.ts:8092
+- `analyzer/types.ts:TypeAliasInfo`: value; never written after construction; stored at analyzer/types.ts:255
+- `analyzer/types.ts:CachedTypeInfo`: value; [modes]
+- `analyzer/types.ts:TypeBaseProps`: value; [modes]
+- `analyzer/types.ts:UnknownDetailsPriv`: value; never written after construction; never stored in a second place
+- `analyzer/types.ts:ModuleDetailsPriv`: value; [modes]
+- `analyzer/types.ts:DataClassEntry`: handle; written: hasDefault at analyzer/dataClasses.ts:591; stored at analyzer/dataClasses.ts:547
+- `analyzer/types.ts:TypedDictEntry`: value; [modes]
+- `analyzer/types.ts:TypedDictEntries`: handle; written: knownItems at analyzer/typedDicts.ts:1138; stored at analyzer/typedDicts.ts:854
+- `analyzer/types.ts:DataClassBehaviors`: handle; written: skipGenerateInit at analyzer/dataClasses.ts:1643; stored at analyzer/decorators.ts:183
+- `analyzer/types.ts:ClassDetailsShared`: handle; compared or hashed by identity at analyzer/types.ts:1430; written: flags at analyzer/types.ts:1063; never stored in a second place
+- `analyzer/types.ts:TupleTypeArg`: value; never written after construction; stored at analyzer/types.ts:963
+- `analyzer/types.ts:PropertyMethodInfo`: value; never written after construction; stored at analyzer/typeUtils.ts:1539
+- `analyzer/types.ts:ClassDetailsPriv`: value; [modes]
+- `analyzer/types.ts:FunctionParam`: value; never written after construction; stored at analyzer/types.ts:1901
+- `analyzer/types.ts:FunctionDetailsShared`: handle; compared or hashed by identity at analyzer/types.ts:3555; written: flags at analyzer/types.ts:2002; never stored in a second place
+- `analyzer/types.ts:SpecializedFunctionTypes`: handle; compared or hashed by identity at analyzer/types.ts:3555; written: parameterTypes at analyzer/types.ts:2143; stored at analyzer/types.ts:1961
+- `analyzer/types.ts:CallSiteInferenceTypeCacheEntry`: value; never written after construction; stored at analyzer/typeEvaluator.ts:25414
+- `analyzer/types.ts:SignatureWithOffsets`: value; written: expressionOffsets at analyzer/typeUtils.ts:287; never stored in a second place
+- `analyzer/types.ts:FunctionDetailsPriv`: value; [modes]
+- `analyzer/types.ts:OverloadedDetailsPriv`: value; [modes]
+- `analyzer/types.ts:NeverDetailsPriv`: value; never written after construction; never stored in a second place
+- `analyzer/types.ts:AnyDetailsPriv`: value; never written after construction; never stored in a second place
+- `analyzer/types.ts:TypeCondition`: value; never written after construction; stored at analyzer/types.ts:2591
+- `analyzer/types.ts:LiteralTypes`: value; written: literalStrMap at analyzer/types.ts:2734; never stored in a second place
+- `analyzer/types.ts:UnionDetailsPriv`: value; [modes]
+- `analyzer/types.ts:RecursiveAliasInfo`: value; never written after construction; never stored in a second place
+- `analyzer/types.ts:TypeVarDetailsShared`: handle; compared or hashed by identity at analyzer/types.ts:3711; written: name at analyzer/types.ts:2998; never stored in a second place
+- `analyzer/types.ts:TypeVarDetailsPriv`: value; [modes]
+- `analyzer/types.ts:CombineTypesOptions`: value; never written after construction; never stored in a second place
+- `analyzer/typeUtils.ts:ClassMember`: value; written: isClassMember at analyzer/typeUtils.ts:1784; never stored in a second place
+- `analyzer/typeUtils.ts:InferenceContext`: value; written: expectedType at analyzer/typeEvaluator.ts:1369; never stored in a second place
+- `analyzer/typeUtils.ts:RequiresSpecializationOptions`: value; never written after construction; never stored in a second place
+- `analyzer/typeUtils.ts:IsInstantiableOptions`: value; never written after construction; never stored in a second place
+- `analyzer/typeUtils.ts:SelfSpecializeOptions`: value; never written after construction; never stored in a second place
+- `analyzer/typeUtils.ts:ApplyTypeVarOptions`: value; never written after construction; stored at analyzer/typeUtils.ts:1622
+- `analyzer/typeUtils.ts:AddConditionOptions`: value; never written after construction; never stored in a second place
+- `analyzer/typeUtils.ts:UniqueSignatureTracker`: handle; written: _trackedSignatures at analyzer/typeUtils.ts:290; stored at analyzer/typeUtils.ts:1578
+- `analyzer/typeUtils.ts:MapSubtypesOptions`: value; never written after construction; never stored in a second place
+- `analyzer/typeUtils.ts:TypeVarTransformer`: owned; written: _pendingTypeVarTransformations at analyzer/typeUtils.ts:3786; never stored in a second place
+- `analyzer/typeUtils.ts:TypeVarDefaultValidator`: owned; written: _invalidTypeVars at analyzer/typeUtils.ts:4271; never stored in a second place
+- `analyzer/typeUtils.ts:UniqueFunctionSignatureTransformer`: owned; written: _signatureTracker at analyzer/typeUtils.ts:4333; never stored in a second place
+- `analyzer/typeUtils.ts:BoundTypeVarTransform`: owned; never written after construction; never stored in a second place
+- `analyzer/typeUtils.ts:FreeTypeVarTransform`: owned; never written after construction; never stored in a second place
+- `analyzer/typeUtils.ts:ApplySolvedTypeVarsTransformer`: owned; written: _isSolvingDefaultType at analyzer/typeUtils.ts:4721; never stored in a second place
+- `analyzer/typeUtils.ts:UnificationTypeTransformer`: owned; never written after construction; never stored in a second place
+- `analyzer/typeCacheUtils.ts:SpeculativeEntry`: value; written: cache at analyzer/typeCacheUtils.ts:134; never stored in a second place
+- `analyzer/typeCacheUtils.ts:SpeculativeContext`: value; written: entriesToUndo at analyzer/typeCacheUtils.ts:162; never stored in a second place
+- `analyzer/typeCacheUtils.ts:DependentType`: value; never written after construction; stored at analyzer/typeCacheUtils.ts:198
+- `analyzer/typeCacheUtils.ts:TypeResult`: value; never written after construction; stored at analyzer/typeCacheUtils.ts:192
+- `analyzer/typeCacheUtils.ts:ContextualTypeCacheEntry`: value; never written after construction; never stored in a second place
+- `analyzer/typeCacheUtils.ts:SpeculativeTypeEntry`: handle; written: dependentTypes at analyzer/typeCacheUtils.ts:198; stored at analyzer/typeCacheUtils.ts:201
+- `analyzer/typeCacheUtils.ts:SpeculativeModeOptions`: value; never written after construction; never stored in a second place
+- `analyzer/typeCacheUtils.ts:SpeculativeTypeTracker`: owned; written: _speculativeContextStack at analyzer/typeCacheUtils.ts:174; never stored in a second place
+- `analyzer/typeWalker.ts:TypeWalker`: owned; written: _recursionCount at analyzer/typeWalker.ts:51; never stored in a second place
+- `analyzer/codeFlowEngine.ts:FlowNodeTypeResult`: value; written: type at analyzer/codeFlowEngine.ts:600; never stored in a second place
+- `analyzer/codeFlowEngine.ts:FlowNodeTypeOptions`: value; never written after construction; never stored in a second place
+- `analyzer/codeFlowEngine.ts:IncompleteSubtypeInfo`: value; never written after construction; never stored in a second place
+- `analyzer/codeFlowEngine.ts:IncompleteType`: handle; written: type at analyzer/codeFlowEngine.ts:373; stored at analyzer/codeFlowEngine.ts:313
+- `analyzer/codeFlowEngine.ts:ReachabilityCacheEntry`: handle; written: reachability at analyzer/codeFlowEngine.ts:1277; stored at analyzer/codeFlowEngine.ts:1273
+- `analyzer/codeFlowEngine.ts:CodeFlowTypeCache`: handle; written: cache at analyzer/codeFlowEngine.ts:313; stored at analyzer/codeFlowEngine.ts:231
+- `analyzer/typeGuards.ts:TypeNarrowingResult`: value; never written after construction; never stored in a second place
+- `analyzer/patternMatching.ts:SequencePatternInfo`: handle; written: subtype at analyzer/patternMatching.ts:389; stored at analyzer/patternMatching.ts:243
+- `analyzer/patternMatching.ts:MappingPatternInfo`: handle; written: subtype at analyzer/patternMatching.ts:637; stored at analyzer/patternMatching.ts:511
+- `analyzer/constraintTracker.ts:TypeVarConstraints`: value; never written after construction; stored at analyzer/constraintTracker.ts:148
+- `analyzer/constraintTracker.ts:ConstraintSet`: handle; written: _typeVarMap at analyzer/constraintTracker.ts:127; stored at analyzer/constraintTracker.ts:204
+- `analyzer/constraintTracker.ts:ConstraintTracker`: handle; compared or hashed by identity at analyzer/protocols.ts:366; written: _constraintSets at analyzer/constraintTracker.ts:195; stored at analyzer/protocols.ts:351
+- `analyzer/constraintSolution.ts:ConstraintSolutionSet`: handle; written: _typeVarMap at analyzer/constraintSolution.ts:36; stored at analyzer/constraintSolution.ts:58
+- `analyzer/constraintSolution.ts:ConstraintSolution`: rc; never written after construction; stored at analyzer/typeUtils.ts:1622
+- `analyzer/operations.ts:BinaryOperationOptions`: value; never written after construction; never stored in a second place
+- `analyzer/typePrinter.ts:UniqueNameMap`: owned; written: _map at analyzer/typePrinter.ts:1547; never stored in a second place
+- `analyzer/parameterUtils.ts:VirtualParamDetails`: handle; compared or hashed by identity at analyzer/parameterUtils.ts:465; never written after construction; stored at analyzer/parameterUtils.ts:435
+- `analyzer/parameterUtils.ts:ParamListDetails`: value; written: params at analyzer/typeEvaluator.ts:28147; never stored in a second place
+- `analyzer/parameterUtils.ts:ParamListDetailsOptions`: value; never written after construction; never stored in a second place
+- `analyzer/parameterUtils.ts:ParamAssignmentInfo`: value; written: argsReceived at analyzer/parameterUtils.ts:472; never stored in a second place
+- `analyzer/parameterUtils.ts:ParamAssignmentTracker`: owned; written: params at analyzer/parameterUtils.ts:443; never stored in a second place
+- `analyzer/declarationUtils.ts:ResolvedAliasInfo`: value; never written after construction; never stored in a second place
+- `analyzer/declarationUtils.ts:ResolveAliasOptions`: value; never written after construction; never stored in a second place
+- `analyzer/sourceMapper.ts:SourceMapper`: owned; written: _importResolver at analyzer/sourceMapper.ts:145; never stored in a second place
+- `analyzer/sourceMapperUtils.ts:NumberReference`: owned; written: value at analyzer/sourceMapperUtils.ts:39; never stored in a second place
+- `analyzer/protocols.ts:ProtocolAssignmentStackEntry`: value; never written after construction; never stored in a second place
+- `analyzer/protocols.ts:ProtocolCompatibility`: value; never written after construction; stored at analyzer/protocols.ts:356
+- `analyzer/protocols.ts:ProtocolCompatibilityCheckState`: value; written: isOverloadedTypeBindingFailure at analyzer/protocols.ts:572; never stored in a second place
+- `analyzer/enums.ts:EnumEvalStackEntry`: value; never written after construction; never stored in a second place
+- `analyzer/decorators.ts:FunctionDecoratorInfo`: value; never written after construction; never stored in a second place
+- `analyzer/checker.ts:TypeVarUsageInfo`: value; written: returnTypeUsageCount at analyzer/checker.ts:2440; never stored in a second place
+- `analyzer/checker.ts:Checker`: owned; written: _isUnboundCheckSuppressed at analyzer/checker.ts:2065; never stored in a second place
+- `analyzer/deprecatedSymbols.ts:DeprecatedForm`: value; never written after construction; never stored in a second place
 
 [modes] values that some code compares by identity (porting.md wants a handle): 0.
 

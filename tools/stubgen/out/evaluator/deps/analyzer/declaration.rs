@@ -14,47 +14,6 @@ use crate::parser::parse_nodes::{ExpressionNode, NameNode, ParseNode, RaiseNode,
 use jsrt::{JsMap, P};
 use std::cell::{Cell, RefCell};
 
-// analyzer/declaration.ts:38
-#[repr(i32)]
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub enum DeclarationType {
-    Intrinsic = 0,
-    Variable = 1,
-    Param = 2,
-    TypeParam = 3,
-    TypeAlias = 4,
-    Function = 5,
-    Class = 6,
-    SpecialBuiltInClass = 7,
-    Alias = 8,
-}
-
-// analyzer/declaration.ts:50
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub enum IntrinsicType {
-    Any,
-    Str,
-    StrNone,
-    Int,
-    MutableSequenceStr,
-    Class,
-    DictStrAny,
-}
-
-impl IntrinsicType {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            IntrinsicType::Any => "Any",
-            IntrinsicType::Str => "str",
-            IntrinsicType::StrNone => "str | None",
-            IntrinsicType::Int => "int",
-            IntrinsicType::MutableSequenceStr => "MutableSequence[str]",
-            IntrinsicType::Class => "__class__",
-            IntrinsicType::DictStrAny => "dict[str, Any]",
-        }
-    }
-}
-
 // analyzer/declaration.ts:59
 pub struct Declaration {
     pub type_: DeclarationType,
@@ -139,12 +98,4 @@ pub struct AliasDeclarationDetails {
     pub is_unresolved: Cell<Option<bool>>,
     pub is_native_lib: Cell<Option<bool>>,
     pub is_lazy: Cell<Option<bool>>,
-}
-
-// analyzer/declaration.ts:239
-pub struct ModuleLoaderActions {
-    pub uri: RefCell<Uri>,
-    pub is_unresolved: Cell<Option<bool>>,
-    pub load_symbols_from_path: Cell<bool>,
-    pub implicit_imports: RefCell<Option<JsMap<String, P<ModuleLoaderActions>>>>,
 }

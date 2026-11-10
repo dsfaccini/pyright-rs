@@ -8,26 +8,6 @@
     clippy::all
 )]
 
-// common/pythonVersion.ts:10
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub enum PythonReleaseLevel {
-    Alpha,
-    Beta,
-    Candidate,
-    Final,
-}
-
-impl PythonReleaseLevel {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            PythonReleaseLevel::Alpha => "alpha",
-            PythonReleaseLevel::Beta => "beta",
-            PythonReleaseLevel::Candidate => "candidate",
-            PythonReleaseLevel::Final => "final",
-        }
-    }
-}
-
 // common/pythonVersion.ts:12
 #[derive(Clone)]
 pub struct PythonVersion {

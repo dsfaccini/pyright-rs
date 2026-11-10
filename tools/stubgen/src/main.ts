@@ -11,7 +11,7 @@ import { modulePathOf } from './names.ts';
 import { Loaded, loadProgram, relPath } from './program.ts';
 import { NumberTable, Run, Table, loadRuns, loadTable } from './table.ts';
 import { Writes } from './writes.ts';
-import { checkRun } from './check.ts';
+import { checkRun, installRun, isSkeleton } from './check.ts';
 import { coverage } from './coverage.ts';
 import { ifaceCheck } from './ifacecheck.ts';
 
@@ -26,6 +26,7 @@ function main() {
             out: { type: 'string' },
             check: { type: 'boolean' },
             'check-only': { type: 'boolean' },
+            install: { type: 'boolean' },
             trace: { type: 'boolean' },
         },
     });
@@ -39,7 +40,17 @@ function main() {
     if (values['check-only']) {
         let ok = true;
         for (const run of runs) {
-            ok = checkRun(repoRoot, path.join(outRoot, run.name)) && ok;
+            ok = checkRun(repoRoot, path.join(outRoot, run.name), run.install) && ok;
+        }
+        process.exit(ok ? 0 : 1);
+    }
+    if (values.install) {
+        let ok = true;
+        for (const run of runs) {
+            if (!run.install) {
+                throw new Error(`run ${run.name} has no \`install = true\` in runs.toml`);
+            }
+            ok = installRun(repoRoot, path.join(outRoot, run.name)) && ok;
         }
         process.exit(ok ? 0 : 1);
     }
@@ -57,10 +68,11 @@ function main() {
     let ok = true;
     for (const run of runs) {
         const gen = new Gen(loaded, table, numbers, writes);
+        gen.heap = run.heap;
         generate(gen, run, path.join(outRoot, run.name));
         writeFileSync(numbersPath, numbers.render());
         if (values.check) {
-            ok = checkRun(repoRoot, path.join(outRoot, run.name)) && ok;
+            ok = checkRun(repoRoot, path.join(outRoot, run.name), run.install) && ok;
         }
     }
     process.exit(ok ? 0 : 1);
@@ -151,7 +163,10 @@ function generate(gen: Gen, run: Run, outDir: string) {
                 }
             }
             const fe = new FileEmitter(gen, file, sf, 'deps', names);
-            write('deps', file, fe.run());
+            // A file ported in the crate serves the stubs itself: its placeholder names no further
+            // placeholders.
+            const ported = !isSkeleton(path.join(repoRoot, 'crates', 'pyright', 'src', modulePathOf(file) + '.rs'));
+            write('deps', file, ported ? gen.quietly(() => fe.run()) : fe.run());
         }
     }
     const factoryFuncs = new Set(gen.table.factories.filter((f) => !f.func.includes('.')).map((f) => f.func));
@@ -204,20 +219,18 @@ function report(gen: Gen, run: Run, deps: Map<string, Set<string>>, notes: strin
         const shown = [...new Set(sites)].slice(0, 4).join(', ');
         lines.push(`- \`${ts}\` x${sites.length}: ${shown}${sites.length > 4 ? ', ...' : ''}`);
     }
-    const candidates = new Set([...gen.needed, ...run.files.flatMap((f) => [...gen.decls.keys()].filter((k) => k.startsWith(`${f}:`)))]);
-    const defaultHandles: string[] = [];
-    for (const k of [...candidates].sort()) {
-        const isIface = gen.decls.get(k)?.some(ts.isInterfaceDeclaration) ?? false;
-        const write = gen.firstFieldWrite(k);
-        if (!isIface || write === undefined || gen.table.modes.has(k) || gen.familyMembers.has(k) || gen.familyByRootKey.has(k)) {
-            continue;
-        }
-        if (gen.modeOf(k) === 'handle' && !gen.traitClasses.has(k) && !gen.factoryByIface.has(k)) {
-            defaultHandles.push(`- \`${k}\`: ${write}`);
+    lines.push('', 'How each class and interface of the stubbed files is held (docs/porting.md "memory"):', '');
+    for (const f of run.files) {
+        for (const [k, decls] of gen.decls) {
+            if (!k.startsWith(`${f}:`) || !decls.some((d) => ts.isInterfaceDeclaration(d) || ts.isClassDeclaration(d))) {
+                continue;
+            }
+            if (gen.familyMembers.has(k) || gen.familyByRootKey.has(k) || gen.traitClasses.has(k) || gen.factoryByIface.has(k) || gen.table.merge.has(k)) {
+                continue;
+            }
+            lines.push(`- \`${k}\`: ${gen.modeOf(k)}; ${gen.modeReason(k)}`);
         }
     }
-    lines.push('', `Interfaces held as \`P<T>\` by the default rule (a field is written after construction); set [modes] to override:`, '');
-    lines.push(...defaultHandles);
     const conflicts = [...gen.table.modes]
         .filter(([k, m]) => m === 'value' && gen.identityComparedAt(k) !== undefined)
         .map(([k]) => `- \`${k}\`: compared with \`===\` at ${gen.identityComparedAt(k)}`);

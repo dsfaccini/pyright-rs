@@ -11,7 +11,6 @@
 use crate::analyzer::symbol::{Symbol, SymbolFlags};
 use jsrt::{JsMap, P};
 use std::cell::{Cell, RefCell};
-use std::rc::Rc;
 
 // analyzer/scope.ts:16
 #[repr(i32)]
@@ -70,10 +69,6 @@ pub struct ChainedModuleLevelLookupContext {
     pub uses_nonlocal_binding: Option<bool>,
     pub uses_global_binding: Option<bool>,
 }
-
-// analyzer/scope.ts:92
-pub type ScopeChainedModuleLevelLookup =
-    Rc<dyn Fn(&str, Option<&ChainedModuleLevelLookupContext>) -> Option<SymbolWithScope>>;
 
 // analyzer/scope.ts:97
 pub struct Scope {
@@ -154,6 +149,21 @@ impl Scope {
 
     // analyzer/scope.ts:277
     pub fn set_has_non_empty_slots(&self, value: bool) {
+        todo!()
+    }
+}
+
+// analyzer/scope.ts:92
+// A stored callback with no closure creation site on the check path.
+#[derive(Clone)]
+pub struct ScopeChainedModuleLevelLookup {}
+
+impl ScopeChainedModuleLevelLookup {
+    pub fn call(
+        &self,
+        name: &str,
+        context: Option<&ChainedModuleLevelLookupContext>,
+    ) -> Option<SymbolWithScope> {
         todo!()
     }
 }

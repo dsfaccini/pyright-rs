@@ -11,7 +11,6 @@
 use crate::analyzer::symbol::Symbol;
 use jsrt::{JsMap, P};
 use std::cell::{Cell, RefCell};
-use std::rc::Rc;
 
 // analyzer/scope.ts:16
 #[repr(i32)]
@@ -25,14 +24,6 @@ pub enum ScopeType {
     Builtin = 5,
 }
 
-// analyzer/scope.ts:37
-#[repr(i32)]
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub enum NameBindingType {
-    Nonlocal = 0,
-    Global = 1,
-}
-
 // analyzer/scope.ts:46
 #[derive(Clone)]
 pub struct SymbolWithScope {
@@ -43,19 +34,6 @@ pub struct SymbolWithScope {
     pub uses_nonlocal_binding: bool,
     pub uses_global_binding: bool,
 }
-
-// analyzer/scope.ts:85
-#[derive(Clone)]
-pub struct ChainedModuleLevelLookupContext {
-    pub is_outside_caller_module: Option<bool>,
-    pub is_beyond_execution_scope: Option<bool>,
-    pub uses_nonlocal_binding: Option<bool>,
-    pub uses_global_binding: Option<bool>,
-}
-
-// analyzer/scope.ts:92
-pub type ScopeChainedModuleLevelLookup =
-    Rc<dyn Fn(&str, Option<&ChainedModuleLevelLookupContext>) -> Option<SymbolWithScope>>;
 
 // analyzer/scope.ts:97
 pub struct Scope {

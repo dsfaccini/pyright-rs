@@ -4,8 +4,14 @@
 # A value ending in "?" is the generator's guess. Drop the "?" once you have checked it.
 # The generator rewrites this file: it keeps every value and regenerates the comments.
 
+["analyzer/analysis.ts"]
+"AnalysisResults.filesInProgram" = "f64?"
+"AnalysisResults.elapsedTime" = "f64?"
+"RequiringAnalysisCount.files" = "f64?"
+"RequiringAnalysisCount.cells" = "f64?"
+
 ["analyzer/analyzerFileInfo.ts"]
-"AnalyzerFileInfo.accessedSymbolSet" = "u32?"  # Map or Set key: an id
+"AnalyzerFileInfo.accessedSymbolSet" = "u32?"
 
 ["analyzer/analyzerNodeInfo.ts"]
 "AnalyzerNodeInfo.codeFlowComplexity" = "f64"
@@ -19,22 +25,36 @@
 "Binder._codeFlowComplexity" = "f64"
 "Binder._getUniqueFlowNodeId.return" = "u32"
 
+["analyzer/cacheManager.ts"]
+"CacheManager._pausedCount" = "u32?"
+"CacheManager._sharedUsagePosition" = "i32?"
+"CacheManager._lastHeapStats" = "f64?"
+"CacheManager._maxWorkers" = "f64?"
+"CacheOwner.getCacheUsage" = "f64?"
+
+["analyzer/checker.ts"]
+"TypeVarUsageInfo.returnTypeUsageCount" = "u32"
+"TypeVarUsageInfo.paramTypeUsageCount" = "u32"
+"TypeVarUsageInfo.paramTypeWithEllipsisUsageCount" = "u32"
+
 ["analyzer/codeFlowEngine.ts"]
-"FlowNodeTypeResult.generationCount" = "u32?"  # counter
-"FlowNodeTypeOptions.targetSymbolId" = "u32?"  # id
-"getCodeFlowEngine.isReachableRecursionSet" = "u32?"  # Map or Set key: an id
-"getCodeFlowEngine.reachabilityCache" = "u32?"  # Map or Set key: an id
-"getCodeFlowEngine.callIsNoReturnCache" = "u32?"  # Map or Set key: an id
-"getCodeFlowEngine.isExceptionContextManagerCache" = "u32?"  # Map or Set key: an id
-"getCodeFlowEngine.flowIncompleteGeneration" = "u32?"  # counter
-"getCodeFlowEngine.noReturnAnalysisDepth" = "u32?"  # counter
-"getCodeFlowEngine.contextManagerAnalysisDepth" = "u32?"  # counter
-"IncompleteSubtypeInfo.evaluationCount" = "u32?"  # counter
-"ReachabilityCacheEntry.reachabilityFrom" = "u32?"  # Map or Set key: an id
-"CodeFlowTypeCache.cache" = "u32?"  # Map or Set key: an id
-"CodeFlowTypeCache.pendingNodes" = "u32?"  # Map or Set key: an id
-"CodeFlowTypeCache.closedFinallyGateNodes" = "u32?"  # Map or Set key: an id
-"IncompleteType.generationCount" = "u32?"  # counter
+"FlowNodeTypeResult.generationCount" = "u32"
+"FlowNodeTypeOptions.targetSymbolId" = "u32"
+"getCodeFlowEngine.isReachableRecursionSet" = "u32"
+"getCodeFlowEngine.reachabilityCache" = "u32"
+"getCodeFlowEngine.callIsNoReturnCache" = "u32"
+"getCodeFlowEngine.isExceptionContextManagerCache" = "u32"
+"getCodeFlowEngine.flowIncompleteGeneration" = "u32"
+"getCodeFlowEngine.noReturnAnalysisDepth" = "u32"
+"getCodeFlowEngine.contextManagerAnalysisDepth" = "u32"
+"IncompleteSubtypeInfo.evaluationCount" = "u32"
+"ReachabilityCacheEntry.reachabilityFrom" = "u32"
+"CodeFlowTypeCache.cache" = "u32"
+"CodeFlowTypeCache.pendingNodes" = "u32"
+"CodeFlowTypeCache.closedFinallyGateNodes" = "u32"
+"IncompleteType.generationCount" = "u32"
+"FlowNodeTypeResult.create.generationCount" = "u32"
+"maxConvergenceAttemptLimit" = "u32"
 
 ["analyzer/codeFlowTypes.ts"]
 "_nextFlowNodeId" = "u32"
@@ -42,14 +62,57 @@
 "FlowNode.id" = "u32"
 "FlowAssignment.targetSymbolId" = "u32"
 
+["analyzer/constraintSolution.ts"]
+"ConstraintSolution.doForEachSolutionSet.callback" = "i32"
+"ConstraintSolution.getSolutionSet.index" = "i32"
+
+["analyzer/constraintSolver.ts"]
+"maxSubtypeCountForTypeVarLowerBound" = "u32"
+"assignTypeVar.recursionCount" = "u32"
+"addConstraintsForExpectedType.usageOffset" = "i32"
+"assignUnconstrainedTypeVar.recursionCount" = "u32"
+"assignConstrainedTypeVar.recursionCount" = "u32"
+"assignParamSpec.recursionCount" = "u32"
+"widenTypeForTypeVarTuple.recursionCount" = "u32"
+
+["analyzer/constraintTracker.ts"]
+"maxConstraintSetCount" = "u32"
+"ConstraintSet.getScore.return" = "f64"
+"ConstraintTracker.getScore.return" = "f64"
+"ConstraintTracker.doForEachConstraintSet.callback" = "i32"
+"ConstraintTracker.getConstraintSet.index" = "i32"
+
+["analyzer/constructors.ts"]
+"createFunctionFromConstructor.recursionCount" = "u32"
+"createFunctionFromMetaclassCall.recursionCount" = "u32"
+"createFunctionFromNewMethod.recursionCount" = "u32"
+"createFunctionFromInitMethod.recursionCount" = "u32"
+
+["analyzer/enums.ts"]
+"transformTypeForEnumMember.recursionCount" = "u32"
+
+["analyzer/functionTransform.ts"]
+"maxStructUnpackElementCount" = "u32"
+
+["analyzer/namedTuples.ts"]
+"renameKeyword.index" = "i32"
+"renameUnderscore.index" = "i32"
+
+["analyzer/operations.ts"]
+"binaryOperatorMap" = "f64"
+"booleanOperatorMap" = "f64"
+"maxLiteralMathSubtypeCount" = "u32"
+
 ["analyzer/parameterUtils.ts"]
-"ParamListDetails.positionOnlyParamCount" = "u32?"  # counter
-"ParamListDetails.positionParamCount" = "u32?"  # counter
-"ParamListDetails.kwargsIndex" = "i32?"  # text position or index
-"ParamListDetails.argsIndex" = "i32?"  # text position or index
-"ParamListDetails.firstKeywordOnlyIndex" = "i32?"  # text position or index
-"ParamListDetails.firstPositionOrKeywordIndex" = "i32?"  # text position or index
-"VirtualParamDetails.index" = "i32?"  # text position or index
+"ParamListDetails.positionOnlyParamCount" = "u32"
+"ParamListDetails.positionParamCount" = "u32"
+"ParamListDetails.kwargsIndex" = "i32"
+"ParamListDetails.argsIndex" = "i32"
+"ParamListDetails.firstKeywordOnlyIndex" = "i32"
+"ParamListDetails.firstPositionOrKeywordIndex" = "i32"
+"VirtualParamDetails.index" = "i32"
+"ParamAssignmentInfo.argsNeeded" = "u32"
+"ParamAssignmentInfo.argsReceived" = "u32"
 
 ["analyzer/parseTreeUtils.ts"]
 "getNodeDepth.return" = "u32"
@@ -80,17 +143,84 @@
 "getNextMatchingToken.offset" = "i32"
 "getCallNodeAndActiveParamIndex.return.activeIndex" = "i32"
 
+["analyzer/patternMatching.ts"]
+"maxSequencePatternTupleExpansionSubtypes" = "u32"
+"narrowTypeOfClassPatternArg.argIndex" = "i32"
+"getTypeOfPatternSequenceEntry.entryIndex" = "i32"
+"getTypeOfPatternSequenceEntry.entryCount" = "u32"
+"getTypeOfPatternSequenceEntry.starEntryIndex" = "i32"
+
+["analyzer/program.ts"]
+"Program._parsedFileCount" = "u32?"
+"MaxAnalysisTime.openFilesTimeInMs" = "f64?"
+"MaxAnalysisTime.noOpenFilesTimeInMs" = "f64?"
+"ChangedRange.delta" = "f64?"
+
+["analyzer/properties.ts"]
+"assignProperty.recursionCount" = "u32"
+
+["analyzer/protocols.ts"]
+"maxProtocolCompatibilityCacheEntries" = "u32"
+"assignClassToProtocol.recursionCount" = "u32"
+"assignModuleToProtocol.recursionCount" = "u32"
+"setProtocolCompatibility.recursionCount" = "u32"
+"assignToProtocolInternal.recursionCount" = "u32"
+
+["analyzer/service.ts"]
+"AnalyzerService._lastUserInteractionTime" = "f64?"
+
+["analyzer/sourceEnumerator.ts"]
+"SourceEnumerator._elapsedTimeInMs" = "f64?"
+"SourceEnumerator._numFilesVisited" = "f64?"
+
+["analyzer/sourceFile.ts"]
+"WriteableData.diagnosticVersion" = "f64?"
+"WriteableData.fileContentsVersion" = "f64?"
+"WriteableData.semanticVersion" = "f64?"
+"WriteableData.lastFileContentLength" = "i32?"
+"WriteableData.clientDocumentVersion" = "f64?"
+"WriteableData.analyzedFileContentsVersion" = "f64?"
+"WriteableData.lineCount" = "u32?"
+"WriteableData.typeIgnoreLines" = "u32?"
+"WriteableData.pyrightIgnoreLines" = "u32?"
+"WriteableData.hitMaxImportDepth" = "u32?"
+"WriteableData.checkTime" = "f64?"
+
+["analyzer/sourceFileInfo.ts"]
+"WriteableData.diagnosticsVersion" = "f64?"
+
+["analyzer/sourceMapperUtils.ts"]
+"MAX_TREE_SEARCH_COUNT" = "u32"
+"NumberReference.value" = "u32"
+
 ["analyzer/symbol.ts"]
 "nextSymbolId" = "u32"
 "getUniqueSymbolId.return" = "u32"
 "indeterminateSymbolId" = "u32"
 "Symbol.id" = "u32"
 
+["analyzer/tuples.ts"]
+"maxInferredTupleEntryCount" = "u32"
+"assignTupleTypeArgs.recursionCount" = "u32"
+"expandTuple.maxExpansion" = "u32"
+"getTupleSliceParam.defaultValue" = "f64"
+"getTupleSliceParam.return" = "f64"
+
 ["analyzer/typeCacheUtils.ts"]
-"SpeculativeTypeTracker._speculativeTypeCache" = "u32?"  # Map or Set key: an id
-"SpeculativeTypeEntry.incompleteGenerationCount" = "u32?"  # counter
-"SpeculativeEntry.cache" = "u32?"  # Map or Set key: an id
-"SpeculativeEntry.id" = "u32?"  # id
+"SpeculativeTypeTracker._speculativeTypeCache" = "u32"
+"SpeculativeTypeEntry.incompleteGenerationCount" = "u32"
+"SpeculativeEntry.cache" = "u32"
+"SpeculativeEntry.id" = "u32"
+"maxContextualTypeCacheEntriesPerNode" = "u32"
+"SpeculativeTypeTracker.trackEntry.cache" = "u32"
+"SpeculativeTypeTracker.trackEntry.id" = "u32"
+"SpeculativeTypeTracker.addSpeculativeType.incompleteGenerationCount" = "u32"
+
+["analyzer/typeComplexity.ts"]
+"getComplexityScoreForType.recursionCount" = "u32"
+"getComplexityScoreForType.return" = "f64"
+"getComplexityScoreForClass.recursionCount" = "u32"
+"getComplexityScoreForClass.return" = "f64"
 
 ["analyzer/typeEvaluator.ts"]
 "MatchArgsToParamsResult.overloadIndex" = "i32"
@@ -170,7 +300,80 @@
 "createTypeEvaluator.partiallySpecializeBoundMethod.recursionCount" = "u32"
 
 ["analyzer/typeEvaluatorTypes.ts"]
-"EffectiveTypeResult.evaluationAttempts" = "u32?"  # counter
+"EffectiveTypeResult.evaluationAttempts" = "u32"
+"maxSubtypesForInferredType" = "u32"
+"maxInferredContainerDepth" = "u32"
+
+["analyzer/typeGuards.ts"]
+"getTypeNarrowingCallback.recursionCount" = "u32"
+"getTypeNarrowingCallbackForAliasedCondition.recursionCount" = "u32"
+"getTypeNarrowingCallbackForAssignmentExpression.recursionCount" = "u32"
+"narrowTupleTypeForIsNone.indexValue" = "f64"
+"narrowTypeForTupleLength.lengthValue" = "f64"
+"expandUnboundedTupleElement.elementsToAdd" = "f64"
+
+["analyzer/typePrinter.ts"]
+"maxLiteralStringLength" = "i32"
+"printTypeInternal.recursionCount" = "u32"
+"printUnionType.recursionCount" = "u32"
+"printFunctionType.recursionCount" = "u32"
+"printParamSpecValueForPythonSyntax.recursionCount" = "u32"
+"printObjectTypeForClassInternal.recursionCount" = "u32"
+"printFunctionPartsInternal.recursionCount" = "u32"
+"UniqueNameMap.build.recursionCount" = "u32"
+
+["analyzer/typeUtils.ts"]
+"maxTupleTypeArgRecursionDepth" = "u32"
+"UniqueSignatureTracker.addSignature.offset" = "i32"
+"cleanIncompleteUnknown.recursionCount" = "u32"
+"compareTypes.recursionCount" = "u32"
+"compareTypes.return" = "i32"
+"doForEachSubtype.callback" = "i32"
+"doForEachSignature.callback" = "i32"
+"transformPossibleRecursiveTypeAlias.recursionCount" = "u32"
+"stripTypeFormRecursive.recursionCount" = "u32"
+"getUnionSubtypeCount.return" = "u32"
+"isTupleIndexUnambiguous.index" = "f64"
+"ensureSignaturesAreUnique.expressionOffset" = "i32"
+"transformExpectedType.usageOffset" = "i32"
+"getProtocolSymbolsRecursive.recursionCount" = "u32"
+"getContainerDepth.recursionCount" = "u32"
+"getContainerDepth.return" = "u32"
+"getTypeVarArgsRecursive.recursionCount" = "u32"
+"isEffectivelyInstantiable.recursionCount" = "u32"
+"isPartlyUnknown.recursionCount" = "u32"
+"requiresSpecialization.recursionCount" = "u32"
+"_requiresSpecialization.recursionCount" = "u32"
+"addDeclaringModuleNamesForType.recursionCount" = "u32"
+"transformTypePairRecursive.recursionCount" = "u32"
+"TypeVarTransformer.apply.recursionCount" = "u32"
+"TypeVarTransformer.transformTypeVar.recursionCount" = "u32"
+"TypeVarTransformer.transformTupleTypeVar.recursionCount" = "u32"
+"TypeVarTransformer.transformUnionSubtype.recursionCount" = "u32"
+"TypeVarTransformer.transformGenericTypeAlias.recursionCount" = "u32"
+"TypeVarTransformer.transformConditionalType.recursionCount" = "u32"
+"TypeVarTransformer.transformTypeVarsInClassType.recursionCount" = "u32"
+"TypeVarTransformer.transformTypeVarsInFunctionType.recursionCount" = "u32"
+"UniqueFunctionSignatureTransformer._expressionOffset" = "i32"
+"UniqueFunctionSignatureTransformer.constructor._expressionOffset" = "i32"
+"UniqueFunctionSignatureTransformer.transformGenericTypeAlias.recursionCount" = "u32"
+"UniqueFunctionSignatureTransformer.transformTypeVarsInClassType.recursionCount" = "u32"
+"UniqueFunctionSignatureTransformer.transformTypeVarsInFunctionType.recursionCount" = "u32"
+"ApplySolvedTypeVarsTransformer._activeConstraintSetIndex" = "i32"
+"ApplySolvedTypeVarsTransformer.transformTypeVar.recursionCount" = "u32"
+"ApplySolvedTypeVarsTransformer.transformConditionalType.recursionCount" = "u32"
+"ApplySolvedTypeVarsTransformer._solveDefaultType.recursionCount" = "u32"
+"UnificationTypeTransformer._usageOffset" = "i32"
+"UnificationTypeTransformer.constructor._usageOffset" = "i32"
+"invertVariance.return" = "f64"
+
+["analyzer/typeWalker.ts"]
+"TypeWalker._recursionCount" = "u32"
+
+["analyzer/typedDicts.ts"]
+"getTypedDictDictEquivalent.recursionCount" = "u32"
+"getTypedDictMembersForClassRecursive.recursionCount" = "u32"
+"assignTypedDictToTypedDict.recursionCount" = "u32"
 
 ["analyzer/types.ts"]
 "TypeBaseProps.instantiableDepth" = "u32"
@@ -195,35 +398,69 @@
 "CombineTypesOptions.maxSubtypeCount" = "u32"
 "TypeCondition._compare.return#1" = "f64"
 "TypeCondition._compare.return#2" = "f64"
+"TypeVarType.getVariance.return" = "f64"
+
+["backgroundAnalysisBase.ts"]
+"IBackgroundAnalysis.setFileOpened" = "f64?"
+
+["common/commandLineOptions.ts"]
+"CommandLineLanguageServerOptions.typeEvaluationTimeThreshold" = "f64?"
+
+["common/configOptions.ts"]
+"ConfigOptions.typeEvaluationTimeThreshold" = "f64?"
 
 ["common/diagnostic.ts"]
-"DiagnosticAddendum._nestLevel" = "u32?"  # counter
+"DiagnosticAddendum._nestLevel" = "u32?"
+
+["common/diagnosticSink.ts"]
+"FileDiagnostics.version" = "f64?"
+
+["common/fileSystem.ts"]
+"Stats.size" = "u32?"
+"Stats.mtimeMs" = "f64?"
+"Stats.ctimeMs" = "f64?"
+
+["common/host.ts"]
+"ScriptOutput.exitCode" = "f64?"
+"SpawnedProcess.pid" = "u32?"
+"SpawnedProcess.exitCode" = "f64?"
+"SpawnedProcess.kill" = "f64?"
+
+["common/logTracker.ts"]
+"State._startFile" = "i32?"
+"State._startToken" = "i32?"
+"State._startParse" = "i32?"
+"State._startImport" = "i32?"
+"State._startBind" = "i32?"
 
 ["common/pythonVersion.ts"]
-"PythonVersion.major" = "f64?"  # no rule matched
-"PythonVersion.minor" = "f64?"  # no rule matched
-"PythonVersion.micro" = "f64?"  # no rule matched
-"PythonVersion.serial" = "f64?"  # no rule matched
+"PythonVersion.major" = "f64?"
+"PythonVersion.minor" = "f64?"
+"PythonVersion.micro" = "f64?"
+"PythonVersion.serial" = "f64?"
 
 ["common/stringUtils.ts"]
 "StringFingerprint.primary" = "f64?"
 "StringFingerprint.secondary" = "f64?"
 
 ["common/textRange.ts"]
-"TextRange.start" = "i32?"  # text position or index
-"TextRange.length" = "i32?"  # text position or index
-"Position.line" = "i32?"  # text position or index
-"Position.character" = "i32?"  # text position or index
+"TextRange.start" = "i32?"
+"TextRange.length" = "i32?"
+"Position.line" = "i32?"
+"Position.character" = "i32?"
 
 ["common/textRangeCollection.ts"]
-"TextRangeCollection._lastHitIndex" = "i32?"  # text position or index
+"TextRangeCollection._lastHitIndex" = "i32?"
+
+["common/timing.ts"]
+"Duration._startTime" = "i32?"
 
 ["parser/parseNodes.ts"]
-"ParseNode.start" = "i32?"  # text position or index
-"ParseNode.length" = "i32?"  # text position or index
-"ParseNode.id" = "u32?"  # id
-"ModuleNameNode.d.leadingDots" = "f64?"  # no rule matched
-"PatternSequenceNode.d.starEntryIndex" = "i32?"  # text position or index
+"ParseNode.start" = "i32?"
+"ParseNode.length" = "i32?"
+"ParseNode.id" = "u32?"
+"ModuleNameNode.d.leadingDots" = "f64?"
+"PatternSequenceNode.d.starEntryIndex" = "i32?"
 
 ["parser/parser.ts"]
 "ModuleImport.leadingDots" = "f64?"
@@ -236,13 +473,13 @@
 "TokenizerOutput.pyrightIgnoreLines" = "u32?"
 
 ["parser/tokenizerTypes.ts"]
-"Comment.start" = "i32?"  # text position or index
-"Comment.length" = "i32?"  # text position or index
-"Token.start" = "i32?"  # text position or index
-"Token.length" = "i32?"  # text position or index
-"IndentToken.indentAmount" = "i32?"  # text position or index
-"DedentToken.indentAmount" = "i32?"  # text position or index
-"StringToken.prefixLength" = "i32?"  # text position or index
-"StringToken.quoteMarkLength" = "i32?"  # text position or index
-"FStringStartToken.prefixLength" = "i32?"  # text position or index
-"FStringStartToken.quoteMarkLength" = "i32?"  # text position or index
+"Comment.start" = "i32?"
+"Comment.length" = "i32?"
+"Token.start" = "i32?"
+"Token.length" = "i32?"
+"IndentToken.indentAmount" = "i32?"
+"DedentToken.indentAmount" = "i32?"
+"StringToken.prefixLength" = "i32?"
+"StringToken.quoteMarkLength" = "i32?"
+"FStringStartToken.prefixLength" = "i32?"
+"FStringStartToken.quoteMarkLength" = "i32?"

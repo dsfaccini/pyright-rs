@@ -100,34 +100,12 @@ pub enum ParseNodeType {
     TypeAlias = 77,
 }
 
-// parser/parseNodes.ts:116
-#[repr(i32)]
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub enum ErrorExpressionCategory {
-    MissingIn = 0,
-    MissingElse = 1,
-    MissingExpression = 2,
-    MissingIndexOrSlice = 3,
-    MissingDecoratorCallName = 4,
-    MissingCallCloseParen = 5,
-    MissingIndexCloseBracket = 6,
-    MissingMemberAccessName = 7,
-    MissingTupleCloseParen = 8,
-    MissingListCloseBracket = 9,
-    MissingFunctionParameterList = 10,
-    MissingPattern = 11,
-    MissingPatternSubject = 12,
-    MissingDictValue = 13,
-    MissingKeywordArgValue = 14,
-    MaxDepthExceeded = 15,
-}
-
 // parser/parseNodes.ts:167
 pub struct ParseNode {
     pub node_type: ParseNodeType,
-    pub start: Cell<i32>,
-    pub length: Cell<i32>,
-    pub id: Cell<u32>,
+    pub start: Cell<f64>,
+    pub length: Cell<f64>,
+    pub id: Cell<f64>,
     pub parent: Cell<Option<P<ParseNode>>>,
     pub a: Cell<P<ParseNode>>,
     pub d: ParseNodeDetails,
@@ -394,9 +372,6 @@ impl Deref for ForNode {
     }
 }
 
-// parser/parseNodes.ts:376
-pub type ComprehensionForIfNode = P<ParseNode>;
-
 // parser/parseNodes.ts:378
 pub struct ComprehensionForNodeDetails {
     pub is_async: Cell<Option<bool>>,
@@ -579,15 +554,6 @@ impl Deref for FunctionNode {
     fn deref(&self) -> &ParseNode {
         self.0.get()
     }
-}
-
-// parser/parseNodes.ts:566
-#[repr(i32)]
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub enum ParamCategory {
-    Simple = 0,
-    ArgsList = 1,
-    KwargsDict = 2,
 }
 
 // parser/parseNodes.ts:572
@@ -988,15 +954,6 @@ impl Deref for AssignmentNode {
     fn deref(&self) -> &ParseNode {
         self.0.get()
     }
-}
-
-// parser/parseNodes.ts:1107
-#[repr(i32)]
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub enum TypeParamKind {
-    TypeVar = 0,
-    TypeVarTuple = 1,
-    ParamSpec = 2,
 }
 
 // parser/parseNodes.ts:1113
@@ -2030,15 +1987,6 @@ impl Deref for ListNode {
     }
 }
 
-// parser/parseNodes.ts:2062
-#[repr(i32)]
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub enum ArgCategory {
-    Simple = 0,
-    UnpackedList = 1,
-    UnpackedDictionary = 2,
-}
-
 // parser/parseNodes.ts:2068
 pub struct ArgumentNodeDetails {
     pub arg_category: Cell<ArgCategory>,
@@ -2619,7 +2567,7 @@ impl Deref for CaseNode {
 // parser/parseNodes.ts:2516
 pub struct PatternSequenceNodeDetails {
     pub entries: RefCell<Vec<PatternAsNode>>,
-    pub star_entry_index: Cell<Option<i32>>,
+    pub star_entry_index: Cell<Option<f64>>,
 }
 
 // parser/parseNodes.ts:2516
@@ -2853,9 +2801,6 @@ impl Deref for PatternMappingNode {
     }
 }
 
-// parser/parseNodes.ts:2756
-pub type PatternMappingEntryNode = P<ParseNode>;
-
 // parser/parseNodes.ts:2758
 pub struct PatternMappingKeyEntryNodeDetails {
     pub key_pattern: Cell<P<ParseNode>>,
@@ -2955,9 +2900,6 @@ impl Deref for PatternValueNode {
         self.0.get()
     }
 }
-
-// parser/parseNodes.ts:2843
-pub type PatternAtomNode = P<ParseNode>;
 
 // parser/parseNodes.ts:2933
 pub type EvaluationScopeNode = P<ParseNode>;

@@ -10,57 +10,23 @@
 
 use crate::analyzer::scope::Scope;
 use crate::analyzer::source_file::IPythonMode;
-use crate::analyzer::symbol::Symbol;
 use crate::common::config_options::{DiagnosticRuleSet, ExecutionEnvironment};
 use crate::common::diagnostic_sink::TextRangeDiagnosticSink;
 use crate::common::text_range::TextRange;
 use crate::common::text_range_collection::TextRangeCollection;
 use crate::common::uri::uri::Uri;
 use jsrt::{JsMap, JsSet, P};
-use std::cell::RefCell;
-use std::rc::Rc;
-
-// analyzer/analyzerFileInfo.ts:22
-#[derive(Clone)]
-pub struct AbsoluteModuleDescriptor {
-    pub importing_file_uri: Uri,
-    pub name_parts: Vec<String>,
-}
-
-// analyzer/analyzerFileInfo.ts:27
-#[derive(Clone)]
-pub struct LookupImportOptions {
-    pub skip_file_needed_check: bool,
-    pub skip_parsing: Option<bool>,
-}
-
-// analyzer/analyzerFileInfo.ts:32
-pub type ImportLookup = Rc<
-    dyn Fn(
-        &Uri, /*? Uri | AbsoluteModuleDescriptor */
-        Option<&LookupImportOptions>,
-    ) -> Option<ImportLookupResult>,
->;
-
-// analyzer/analyzerFileInfo.ts:37
-#[derive(Clone)]
-pub struct ImportLookupResult {
-    pub symbol_table: JsMap<String, P<Symbol>>,
-    pub dunder_all_names: Option<Vec<String>>,
-    pub uses_unsupported_dunder_all_form: bool,
-    pub doc_string: Option<String>,
-    pub is_in_py_typed_package: bool,
-}
+use std::cell::{Cell, RefCell};
 
 // analyzer/analyzerFileInfo.ts:45
 pub struct AnalyzerFileInfo {
     pub import_lookup: ImportLookup,
     pub future_imports: JsSet<String>,
     pub builtins_scope: Option<P<Scope>>,
-    pub diagnostic_sink: P<TextRangeDiagnosticSink>,
+    pub diagnostic_sink: Cell<P<TextRangeDiagnosticSink>>,
     pub execution_environment: P<ExecutionEnvironment>,
     pub diagnostic_rule_set: P<DiagnosticRuleSet>,
-    pub lines: TextRangeCollection<TextRange>,
+    pub lines: RefCell<TextRangeCollection<TextRange>>,
     pub typing_symbol_aliases: JsMap<String, String>,
     pub defined_constants: JsMap<String, bool /*? boolean | string */>,
     pub file_id: String,
@@ -73,5 +39,20 @@ pub struct AnalyzerFileInfo {
     pub is_built_in_stub_file: bool,
     pub is_in_py_typed_package: bool,
     pub ipython_mode: IPythonMode,
-    pub accessed_symbol_set: RefCell<JsSet<u32>>,
+    pub accessed_symbol_set: RefCell<JsSet<f64>>,
+}
+
+// analyzer/analyzerFileInfo.ts:32
+// A stored callback with no closure creation site on the check path.
+#[derive(Clone)]
+pub struct ImportLookup {}
+
+impl ImportLookup {
+    pub fn call(
+        &self,
+        file_uri_or_module: &Uri, /*? Uri | AbsoluteModuleDescriptor */
+        options: Option<&LookupImportOptions>,
+    ) -> Option<ImportLookupResult> {
+        todo!()
+    }
 }

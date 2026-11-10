@@ -328,26 +328,21 @@ pub fn is_assignment_to_defaults_following_named_tuple(call_node: P<ParseNode>) 
 // analyzer/parseTreeUtils.ts:1706
 pub struct NameNodeWalker {
     pub(crate) _default: bool,
-    pub(crate) _get_string_annotation: Rc<dyn Fn(StringListNode) -> Option<P<ParseNode>>>,
-    pub(crate) _annotation_node_info: Option<&'static dyn AnalyzerNodeInfoReader>,
+    pub(crate) _annotation_node_info: Option<P<dyn AnalyzerNodeInfoReader>>,
     pub(crate) _subscript_index: Option<i32>,
     pub(crate) _base_expression: Option<ExpressionNode>,
-    pub(crate) _callback: Rc<dyn Fn(NameNode, Option<i32>, Option<ExpressionNode>)>,
+    pub(crate) _callback: Callback,
 }
 
 impl ParseTreeWalker for NameNodeWalker {
-    fn _get_string_annotation(&self) -> &Rc<dyn Fn(StringListNode) -> Option<P<ParseNode>>> {
-        &self._get_string_annotation
-    }
-
-    fn _annotation_node_info(&self) -> Option<&'static dyn AnalyzerNodeInfoReader> {
+    fn annotation_node_info(&self) -> Option<P<dyn AnalyzerNodeInfoReader>> {
         self._annotation_node_info
     }
 }
 
 impl ParseTreeVisitor<bool> for NameNodeWalker {
-    fn _default(&self) -> &bool {
-        &self._default
+    fn default_visit_result(&self) -> bool {
+        self._default
     }
 
     // analyzer/parseTreeUtils.ts:1720
@@ -371,24 +366,19 @@ impl NameNodeWalker {
 // analyzer/parseTreeUtils.ts:1744
 pub struct CallNodeWalker {
     pub(crate) _default: bool,
-    pub(crate) _get_string_annotation: Rc<dyn Fn(StringListNode) -> Option<P<ParseNode>>>,
-    pub(crate) _annotation_node_info: Option<&'static dyn AnalyzerNodeInfoReader>,
-    pub(crate) _callback: Rc<dyn Fn(CallNode)>,
+    pub(crate) _annotation_node_info: Option<P<dyn AnalyzerNodeInfoReader>>,
+    pub(crate) _callback: Callback,
 }
 
 impl ParseTreeWalker for CallNodeWalker {
-    fn _get_string_annotation(&self) -> &Rc<dyn Fn(StringListNode) -> Option<P<ParseNode>>> {
-        &self._get_string_annotation
-    }
-
-    fn _annotation_node_info(&self) -> Option<&'static dyn AnalyzerNodeInfoReader> {
+    fn annotation_node_info(&self) -> Option<P<dyn AnalyzerNodeInfoReader>> {
         self._annotation_node_info
     }
 }
 
 impl ParseTreeVisitor<bool> for CallNodeWalker {
-    fn _default(&self) -> &bool {
-        &self._default
+    fn default_visit_result(&self) -> bool {
+        self._default
     }
 
     // analyzer/parseTreeUtils.ts:1749
@@ -568,7 +558,9 @@ pub fn is_last_name_of_module_name(node: NameNode) -> bool {
 }
 
 // analyzer/parseTreeUtils.ts:2219
-pub fn get_ancestors_including_self(node: Option<P<ParseNode>>) -> Vec<P<ParseNode>> {
+pub fn get_ancestors_including_self(
+    node: Option<P<ParseNode>>,
+) -> Box<dyn Iterator<Item = P<ParseNode>>> {
     todo!()
 }
 
@@ -648,7 +640,7 @@ pub fn get_full_statement_range(
 }
 
 // analyzer/parseTreeUtils.ts:2448
-pub fn is_blank_line(tokenizer_output: &TokenizerOutput, text: &str, line: i32) -> bool {
+pub fn is_blank_line(tokenizer_output: P<TokenizerOutput>, text: &str, line: i32) -> bool {
     todo!()
 }
 
@@ -671,7 +663,7 @@ pub fn operator_supports_chaining(op: OperatorType) -> bool {
 pub(crate) fn _get_start_position_if_multiple_statements_are_on_same_line(
     range: &Range,
     token_position: i32,
-    tokenizer_output: &TokenizerOutput,
+    tokenizer_output: P<TokenizerOutput>,
 ) -> Option<Position> {
     todo!()
 }
@@ -680,7 +672,7 @@ pub(crate) fn _get_start_position_if_multiple_statements_are_on_same_line(
 pub(crate) fn _get_end_position_if_multiple_statements_are_on_same_line(
     range: &Range,
     token_position: i32,
-    tokenizer_output: &TokenizerOutput,
+    tokenizer_output: P<TokenizerOutput>,
 ) -> Option<Position> {
     todo!()
 }
@@ -752,4 +744,14 @@ pub struct GetCallNodeAndActiveParamIndexReturn {
 #[derive(Clone)]
 pub struct GetFullStatementRangeOptions {
     pub include_trailing_blank_lines: bool,
+}
+
+// A stored callback with no closure creation site on the check path.
+#[derive(Clone)]
+pub struct Callback {}
+
+impl Callback {
+    pub fn call(&self, node: CallNode) {
+        todo!()
+    }
 }

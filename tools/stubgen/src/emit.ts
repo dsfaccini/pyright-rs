@@ -8,8 +8,9 @@ import ts from 'typescript';
 import { Gen, FamilyMember, Site, memberName, isNullish } from './gen.ts';
 import { IR, Uses, isCopy, opt, render, renderField } from './ir.ts';
 import { crateModuleOf, fieldName, modulePathOf, pascal, rustIdent, screaming, snake } from './names.ts';
+import { shortenPaths, usesOfText } from './gen.ts';
 import { hasModifier, isExported, lineOf, propName } from './program.ts';
-import { Factory, Family } from './table.ts';
+import { Factory, Family, Mode } from './table.ts';
 import { skipParens } from './writes.ts';
 
 export type EmitMode = 'stubs' | 'deps';
@@ -79,6 +80,13 @@ export class FileEmitter {
             this.statement(st);
         }
         this.emitAnonStructs();
+        this.out.push(...this.gen.callbacks.emit(this.file, this.uses));
+        for (const [k, text] of this.gen.table.items) {
+            if (this.gen.fileOfKey(k) === this.file && this.wants(this.gen.nameOfKey(k))) {
+                this.uses.add(usesOfText(text));
+                this.out.push('// Defined in tools/stubgen/typemap.toml [items].', shortenPaths(text).trim(), '');
+            }
+        }
         return this.finish();
     }
 
@@ -88,6 +96,7 @@ export class FileEmitter {
             this.mode === 'deps'
                 ? '//! Dependency placeholder: only the types other stubs name. Never copy it into crates/.'
                 : '//! Every body is `todo!()`. Port each one from the TypeScript at its marker.',
+            ...(this.mode === 'stubs' && this.gen.heap === 'eval' ? ['//! Evaluator code: allocate with `P::new_eval` (docs/porting.md, "memory").'] : []),
             '#![allow(unused_variables, unused_imports, dead_code, non_camel_case_types, clippy::all)]',
             '',
         ];
@@ -112,7 +121,11 @@ export class FileEmitter {
                 this.enumDecl(st);
             }
         } else if (ts.isTypeAliasDeclaration(st)) {
-            if (this.wants(st.name.text)) {
+            if (this.gen.table.skip.has(`${this.file}:${st.name.text}`)) {
+                if (this.mode === 'stubs') {
+                    this.out.push(`${this.marker(st)}: \`${st.name.text}\` is not ported ([skip] in tools/stubgen/typemap.toml).`, '');
+                }
+            } else if (this.wants(st.name.text)) {
                 this.aliasDecl(st);
             }
         } else if (ts.isFunctionDeclaration(st)) {
@@ -195,7 +208,7 @@ export class FileEmitter {
     }
 
     // A struct from interface or class fields.
-    private struct(decl: ts.InterfaceDeclaration | ts.ClassDeclaration, name: string, mode: 'handle' | 'value' | 'owned' | 'opaque', extraProps: ts.Node[] = []) {
+    private struct(decl: ts.InterfaceDeclaration | ts.ClassDeclaration, name: string, mode: Mode, extraProps: ts.Node[] = []) {
         if (mode === 'opaque') {
             this.out.push(
                 this.marker(decl),
@@ -216,6 +229,9 @@ export class FileEmitter {
         const props = this.gen.collectProps(decl, sp.erased);
         const used = new Set<string>();
         for (const p of props) {
+            if (this.gen.accessorOf(p.node)?.drop) {
+                continue;
+            }
             const f = this.field(p.node, name, mode === 'handle', false, p.subst);
             if (f) {
                 fields.push(f);
@@ -297,6 +313,9 @@ export class FileEmitter {
         }
         this.currentStruct = owner;
         let t = this.gen.mapDecl(p.type, p, this.site(`${owner}.${name}`), subst);
+        if (!this.gen.siteOverride(this.site(`${owner}.${name}`))) {
+            t = this.gen.storedCallbacks(t, p, this.file, name);
+        }
         if (p.questionToken) {
             t = opt(t);
         }
@@ -338,7 +357,11 @@ export class FileEmitter {
                 fields.push(f);
             }
         }
-        fields.push(`    pub ${fam.detailsField}: ${fam.name}Details,`);
+        const vis = fam.privateDetails ? '' : 'pub ';
+        if (fam.privateDetails) {
+            fields.push(`    // Private: reach details through typed handles and \`d()\`; create through the create functions.`);
+        }
+        fields.push(`    ${vis}${fam.detailsField}: ${fam.name}Details,`);
         this.out.push(this.marker(base), `pub struct ${fam.name} {`, ...fields, '}', '');
 
         const variants: string[] = [];
@@ -353,7 +376,7 @@ export class FileEmitter {
             seen.add(m.variant);
             variants.push(fam.emptyVariants === 'unit' && !this.memberHasFields(m) ? `    ${m.variant},` : `    ${m.variant}(${m.name}Details),`);
         }
-        this.out.push(`// ${fam.file}: one variant per ${fam.kind ? `\`${fam.kind}\` value` : 'interface'}.`, `pub enum ${fam.name}Details {`, ...variants, '}', '');
+        this.out.push(`// ${fam.file}: one variant per ${fam.kind ? `\`${fam.kind}\` value` : 'interface'}.`, `${vis}enum ${fam.name}Details {`, ...variants, '}', '');
     }
 
     // A base property typed `object` is a per-kind slot: each member redeclares it.
@@ -579,7 +602,8 @@ export class FileEmitter {
         if (this.mode === 'deps') {
             return;
         }
-        const recv = mode === 'owned' ? '&mut self' : '&self';
+        // An owned class that some code writes takes `&mut self`; a handle writes through cells.
+        const recv = mode === 'owned' && (this.gen.firstFieldWrite(key) !== undefined || traitAncestors.length > 0) ? '&mut self' : '&self';
         const tps = this.gen.structParams(decl).kept;
         const generics = tps.length ? `<${tps.join(', ')}>` : '';
         const selfType = name + generics;
@@ -623,17 +647,18 @@ export class FileEmitter {
                 // The trait class's fields live in this struct; the trait reads them through accessors.
                 for (const p of ownFieldNodes(tdecl)) {
                     const n = memberName(p);
-                    if (n === undefined) {
+                    const acc = this.gen.accessorOf(p);
+                    if (n === undefined || acc?.drop) {
                         continue;
                     }
                     const wrap = (x: IR) => (isOptionalMember(p) ? opt(x) : x);
                     const t2 = wrap(this.gen.mapDecl(fieldTypeNode(p), p, this.site(`${tdecl.name?.text}.${n}`), sub));
                     // By value only when the trait itself returns it by value (a generic `T` is `&T`).
-                    const copy = isCopy(wrap(this.gen.mapDecl(fieldTypeNode(p), p, this.site(`${tdecl.name?.text}.${n}`))));
+                    const copy = acc?.byValue || isCopy(wrap(this.gen.mapDecl(fieldTypeNode(p), p, this.site(`${tdecl.name?.text}.${n}`))));
                     const f = fieldName(n);
                     const ty = render(t2, 'field', this.uses);
-                    const body = mode === 'owned' ? `${copy ? '' : '&'}self.${f}` : 'todo!()';
-                    lines.push(`    fn ${f}(&self) -> ${copy ? ty : `&${ty}`} {`, `        ${body}`, '    }', '');
+                    const body = mode === 'owned' ? `${copy ? '' : '&'}self.${f}${copy && !isCopy(t2) ? '.clone()' : ''}` : 'todo!()';
+                    lines.push(`    fn ${acc?.name ?? f}(&self) -> ${copy ? ty : `&${ty}`} {`, `        ${body}`, '    }', '');
                 }
             }
         }
@@ -753,11 +778,14 @@ export class FileEmitter {
         const items: string[] = [];
         for (const p of ownFieldNodes(decl)) {
             const n = memberName(p);
-            if (n === undefined) {
+            const acc = this.gen.accessorOf(p);
+            if (n === undefined || acc?.drop) {
                 continue;
             }
             const t = this.gen.mapDecl(fieldTypeNode(p), p, this.site(`${name}.${n}`));
-            items.push(`    ${this.marker(p)}`, `    fn ${fieldName(n)}(&self) -> ${accessorType(isOptionalMember(p) ? opt(t) : t, this.uses)};`, '');
+            const tt = isOptionalMember(p) ? opt(t) : t;
+            const ty = acc?.byValue ? render(tt, 'field', this.uses) : accessorType(tt, this.uses);
+            items.push(`    ${this.marker(p)}`, `    fn ${acc?.name ?? fieldName(n)}(&self) -> ${ty};`, '');
         }
         if (this.mode === 'stubs') {
             for (const m of decl.members) {
@@ -1195,7 +1223,14 @@ export class FileEmitter {
             this.out.push(this.marker(a), '#[derive(Clone)]', `pub enum ${name}${generics} {`, ...variants, '}', '');
             return;
         }
-        const t = this.gen.mapNode(a.type, site, new Map());
+        let t = this.gen.mapNode(a.type, site, new Map());
+        if (shape === 'fn' && t.k === 'fn' && this.gen.callbacks.isStoredAlias(a)) {
+            t = this.gen.callbacks.callbackIR(a, t, this.file, name);
+            if (t.k === 'named') {
+                // The callback struct, emitted with the file's other callbacks, takes the alias's name.
+                return;
+            }
+        }
         const rhs = render(t, 'field', this.uses);
         const code = rhs.replace(/\/\*.*?\*\//g, '');
         const usedTps = tps.filter((tp) => new RegExp(`\\b${tp}\\b`).test(code));
@@ -1305,7 +1340,10 @@ export class FileEmitter {
                     fields.push(`    ${this.marker(d)}`, `    // \`${n}\` is a closure; it is the method \`${snake(n)}\`.`);
                     continue;
                 }
-                const t = this.gen.mapDecl(d.type, d, this.site(`${siteRoot}.${n}`));
+                let t = this.gen.mapDecl(d.type, d, this.site(`${siteRoot}.${n}`));
+                if (!this.gen.siteOverride(this.site(`${siteRoot}.${n}`))) {
+                    t = this.gen.storedCallbacks(t, d, this.file, n);
+                }
                 const w = this.gen.writes;
                 const reassigned = w.reassigned.has(d) || w.written.has(d);
                 const mutated = w.mutated.has(d) || (w.writtenThrough.has(d) && !isCopy(t));

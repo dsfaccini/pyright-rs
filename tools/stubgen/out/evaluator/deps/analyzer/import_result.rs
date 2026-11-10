@@ -13,24 +13,6 @@ use crate::common::uri::uri::Uri;
 use jsrt::{JsMap, P};
 use std::cell::{Cell, RefCell};
 
-// analyzer/importResult.ts:13
-#[repr(i32)]
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub enum ImportType {
-    BuiltIn = 0,
-    ThirdParty = 1,
-    Local = 2,
-}
-
-// analyzer/importResult.ts:19
-pub struct ImplicitImport {
-    pub is_stub_file: bool,
-    pub is_native_lib: Cell<bool>,
-    pub name: String,
-    pub uri: RefCell<Uri>,
-    pub py_typed_info: Option<PyTypedInfo>,
-}
-
 // analyzer/importResult.ts:27
 pub struct ImportResult {
     pub import_name: String,

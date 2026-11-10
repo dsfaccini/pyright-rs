@@ -14,7 +14,7 @@ use std::rc::Rc;
 // parser/stringAnnotationInfo.ts:3
 #[derive(Clone)]
 pub struct StringAnnotationInfo {
-    pub size: u32,
+    pub size: f64,
     pub get: Rc<dyn Fn(StringListNode) -> Option<ExpressionNode>>,
     pub for_each: Rc<dyn Fn(&mut dyn FnMut(ExpressionNode, StringListNode))>,
 }

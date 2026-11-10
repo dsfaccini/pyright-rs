@@ -580,7 +580,7 @@ pub trait ParseTreeVisitor<T> {
 // visitXXX methods that you want to handle.
 pub trait ParseTreeWalker: ParseTreeVisitor<bool> {
     /// The `_annotationNodeInfo` passed to the constructor.
-    fn annotation_node_info(&self) -> Option<&'static dyn AnalyzerNodeInfoReader> {
+    fn annotation_node_info(&self) -> Option<P<dyn AnalyzerNodeInfoReader>> {
         None
     }
 
@@ -623,7 +623,7 @@ pub trait ParseTreeWalker: ParseTreeVisitor<bool> {
     // analyzer/parseTreeWalker.ts:712
     fn get_string_annotation(&self, node: StringListNode) -> Option<ExpressionNode> {
         match self.annotation_node_info() {
-            Some(reader) => analyzer_node_info::get_string_annotation(node, reader),
+            Some(reader) => analyzer_node_info::get_string_annotation(node, reader.get()),
             None => get_parser_string_annotation(node),
         }
     }

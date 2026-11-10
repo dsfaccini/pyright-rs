@@ -56,19 +56,19 @@ pub trait AnalyzerNodeInfoReader {
 // analyzer/analyzerNodeInfo.ts:87
 #[derive(Clone)]
 pub struct AnalyzerNodeInfoReaderPropertyProvider {
-    pub analyzer_node_info_reader: &'static dyn AnalyzerNodeInfoReader,
+    pub analyzer_node_info_reader: P<dyn AnalyzerNodeInfoReader>,
 }
 
 // analyzer/analyzerNodeInfo.ts:91
 #[derive(Clone)]
 pub struct AnalyzerNodeInfoReaderMethodProvider {
-    pub get_analyzer_node_info_reader: Rc<dyn Fn() -> &'static dyn AnalyzerNodeInfoReader>,
+    pub get_analyzer_node_info_reader: Rc<dyn Fn() -> P<dyn AnalyzerNodeInfoReader>>,
 }
 
 // analyzer/analyzerNodeInfo.ts:97
 pub fn get_info_reader(
     provider: &AnalyzerNodeInfoReaderPropertyProvider, /*? AnalyzerNodeInfoReaderPropertyProvider | AnalyzerNodeInfoReaderMethodProvider */
-) -> &'static dyn AnalyzerNodeInfoReader {
+) -> P<dyn AnalyzerNodeInfoReader> {
     todo!()
 }
 
@@ -121,10 +121,10 @@ pub trait AnalyzerNodeInfoBindingSession: AnalyzerNodeInfoWriter {
 // analyzer/analyzerNodeInfo.ts:148
 pub trait AnalyzerNodeInfoContext: AnalyzerNodeInfoReader {
     // analyzer/analyzerNodeInfo.ts:149
-    fn get_current_layer_reader(&self) -> &'static dyn AnalyzerNodeInfoReader;
+    fn get_current_layer_reader(&self) -> P<dyn AnalyzerNodeInfoReader>;
 
     // analyzer/analyzerNodeInfo.ts:150
-    fn begin_write(&self, root: ModuleNode) -> &'static dyn AnalyzerNodeInfoBindingSession;
+    fn begin_write(&self, root: ModuleNode) -> P<dyn AnalyzerNodeInfoBindingSession>;
 
     // analyzer/analyzerNodeInfo.ts:151
     fn publish(&self, session: &dyn AnalyzerNodeInfoBindingSession) -> P<AnalyzerNodeInfoStore>;
@@ -169,7 +169,7 @@ pub struct RetiredAnalyzerNodeInfoHost {}
 // analyzer/analyzerNodeInfo.ts:173
 pub struct AnalyzerNodeInfoBindingSessionImpl {
     pub(crate) _store: P<AnalyzerNodeInfoStore>,
-    pub(crate) _published: Cell<bool>,
+    pub(crate) _published: bool,
     pub root: ModuleNode,
     pub(crate) _context: P<AnalyzerNodeInfoContextImpl>,
 }
@@ -207,20 +207,17 @@ impl AnalyzerNodeInfoReader for AnalyzerNodeInfoBindingSessionImpl {
 
 impl AnalyzerNodeInfoBindingSessionImpl {
     // analyzer/analyzerNodeInfo.ts:177
-    pub fn new(
-        root: ModuleNode,
-        _context: P<AnalyzerNodeInfoContextImpl>,
-    ) -> P<AnalyzerNodeInfoBindingSessionImpl> {
+    pub fn new(root: ModuleNode, _context: P<AnalyzerNodeInfoContextImpl>) -> Self {
         todo!()
     }
 
     // analyzer/analyzerNodeInfo.ts:205
-    pub fn publish(&self, context: P<AnalyzerNodeInfoContextImpl>) -> P<AnalyzerNodeInfoStore> {
+    pub fn publish(&mut self, context: P<AnalyzerNodeInfoContextImpl>) -> P<AnalyzerNodeInfoStore> {
         todo!()
     }
 
     // analyzer/analyzerNodeInfo.ts:218
-    pub(crate) fn _verify_writable(&self, node: P<ParseNode>) {
+    pub(crate) fn _verify_writable(&mut self, node: P<ParseNode>) {
         todo!()
     }
 }
@@ -229,17 +226,17 @@ impl AnalyzerNodeInfoBindingSessionImpl {
 pub struct AnalyzerNodeInfoContextImpl {
     pub(crate) _layers: RefCell<Vec<P<AnalyzerNodeInfoContextLayer>>>,
     pub(crate) _disposed: Cell<bool>,
-    pub(crate) _current_layer_reader: &'static dyn AnalyzerNodeInfoReader,
+    pub(crate) _current_layer_reader: P<dyn AnalyzerNodeInfoReader>,
 }
 
 impl AnalyzerNodeInfoContext for AnalyzerNodeInfoContextImpl {
     // analyzer/analyzerNodeInfo.ts:291
-    fn get_current_layer_reader(&self) -> &'static dyn AnalyzerNodeInfoReader {
+    fn get_current_layer_reader(&self) -> P<dyn AnalyzerNodeInfoReader> {
         todo!()
     }
 
     // analyzer/analyzerNodeInfo.ts:295
-    fn begin_write(&self, root: ModuleNode) -> &'static dyn AnalyzerNodeInfoBindingSession {
+    fn begin_write(&self, root: ModuleNode) -> P<dyn AnalyzerNodeInfoBindingSession> {
         todo!()
     }
 
@@ -339,8 +336,8 @@ pub type ScopedNode = P<ParseNode>;
 
 // analyzer/analyzerNodeInfo.ts:427
 pub struct AnalyzerNodeInfoAccessor {
-    pub(crate) _reader: &'static dyn AnalyzerNodeInfoReader,
-    pub(crate) _writer: Option<&'static dyn AnalyzerNodeInfoWriter>,
+    pub(crate) _reader: P<dyn AnalyzerNodeInfoReader>,
+    pub(crate) _writer: Option<P<dyn AnalyzerNodeInfoWriter>>,
 }
 
 impl AnalyzerNodeInfoReader for AnalyzerNodeInfoAccessor {
@@ -358,9 +355,9 @@ impl AnalyzerNodeInfoReader for AnalyzerNodeInfoAccessor {
 impl AnalyzerNodeInfoAccessor {
     // analyzer/analyzerNodeInfo.ts:428
     pub fn new(
-        _reader: &'static dyn AnalyzerNodeInfoReader,
-        _writer: Option<&'static dyn AnalyzerNodeInfoWriter>,
-    ) -> P<AnalyzerNodeInfoAccessor> {
+        _reader: P<dyn AnalyzerNodeInfoReader>,
+        _writer: Option<P<dyn AnalyzerNodeInfoWriter>>,
+    ) -> Self {
         todo!()
     }
 
@@ -492,7 +489,7 @@ impl AnalyzerNodeInfoAccessor {
     }
 
     // analyzer/analyzerNodeInfo.ts:530
-    pub(crate) fn _get_writer(&self) -> &'static dyn AnalyzerNodeInfoWriter {
+    pub(crate) fn _get_writer(&self) -> P<dyn AnalyzerNodeInfoWriter> {
         todo!()
     }
 
@@ -506,7 +503,7 @@ impl AnalyzerNodeInfoAccessor {
 pub fn create_analyzer_node_info_accessor(
     reader: &dyn AnalyzerNodeInfoReader,
     writer: Option<&dyn AnalyzerNodeInfoWriter>,
-) -> P<AnalyzerNodeInfoAccessor> {
+) -> Rc<AnalyzerNodeInfoAccessor> {
     todo!()
 }
 

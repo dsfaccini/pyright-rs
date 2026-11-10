@@ -4,8 +4,9 @@ import ts from 'typescript';
 import { BOOL, IR, STR, UNIT, isCopy, opt, render as renderIR } from './ir.ts';
 import { crateModuleOf, pascal, rustIdent } from './names.ts';
 import { Loaded, lineOf, propName, relPath, resolveSymbol } from './program.ts';
-import { Factory, Family, Mode, NumberTable, Table } from './table.ts';
+import { Accessor, Factory, Family, Mode, NumberTable, Table } from './table.ts';
 import { Writes } from './writes.ts';
+import { Callbacks } from './callbacks.ts';
 
 export interface FamilyMember {
     fam: Family;
@@ -60,6 +61,9 @@ export class Gen {
     private readonly inlining = new Set<string>();
     // Type-parameter values for inferred types (`mapType`), set while mapping one signature.
     typeSubst: Map<string, IR> | undefined;
+    // The heap the run's code allocates in.
+    heap: 'program' | 'eval' = 'program';
+    readonly callbacks: Callbacks;
 
     constructor(
         readonly loaded: Loaded,
@@ -68,6 +72,7 @@ export class Gen {
         readonly writes: Writes
     ) {
         this.checker = loaded.checker;
+        this.callbacks = new Callbacks(this);
         this.indexDecls();
         this.indexFamilies();
         for (const f of table.factories) {
@@ -288,6 +293,9 @@ export class Gen {
 
     // ---- modes ----------------------------------------------------------------------------
 
+    // docs/porting.md "memory": an object is a `P` only when pyright compares it with `===` (or
+    // hashes it as a Map key or Set element), or writes it after storing it in a second place.
+    // Otherwise a class is owned (an `Rc` when stored but never written) and an interface is a value.
     modeOf(key: string): Mode {
         const m = this.table.modes.get(key);
         if (m) {
@@ -295,14 +303,49 @@ export class Gen {
         }
         const decls = this.decls.get(key) ?? [];
         const cls = decls.find(ts.isClassDeclaration);
-        if (cls) {
-            return this.traitAncestors(key).length > 0 ? 'owned' : 'handle';
+        if (cls && this.traitAncestors(key).length > 0) {
+            return 'owned';
         }
-        const iface = decls.find(ts.isInterfaceDeclaration);
-        if (iface && (this.interfaceFieldsWritten(key) || this.identityComparedAt(key) !== undefined)) {
+        if (!cls && !decls.some(ts.isInterfaceDeclaration)) {
+            return 'value';
+        }
+        const written = this.firstFieldWrite(key) !== undefined;
+        const stored = this.storedAt(key) !== undefined;
+        if (this.identityComparedAt(key) !== undefined || (written && stored)) {
             return 'handle';
         }
+        if (cls) {
+            return !written && stored ? 'rc' : 'owned';
+        }
         return 'value';
+    }
+
+    // Where code stores an existing object of this type in a second place, if anywhere.
+    storedAt(key: string): string | undefined {
+        for (const d of this.decls.get(key) ?? []) {
+            const at = this.writes.stored.get(d);
+            if (at) {
+                return at;
+            }
+        }
+        return undefined;
+    }
+
+    // Why `modeOf` chose the mode it did, for the report.
+    modeReason(key: string): string {
+        if (this.table.modes.has(key)) {
+            return '[modes]';
+        }
+        const parts: string[] = [];
+        const id = this.identityComparedAt(key);
+        if (id) {
+            parts.push(`compared or hashed by identity at ${id}`);
+        }
+        const w = this.firstFieldWrite(key);
+        parts.push(w ? `written: ${w}` : 'never written after construction');
+        const st = this.storedAt(key);
+        parts.push(st ? `stored at ${st}` : 'never stored in a second place');
+        return parts.join('; ');
     }
 
     // Where code compares two objects of this type with `===`, if anywhere.
@@ -316,18 +359,22 @@ export class Gen {
         return undefined;
     }
 
-    private interfaceFieldsWritten(key: string): boolean {
-        return this.firstFieldWrite(key) !== undefined;
-    }
-
     // "<field> at <file>:<line>" for the first field of an interface written after construction.
     firstFieldWrite(key: string): string | undefined {
         for (const d of this.decls.get(key) ?? []) {
-            if (!ts.isInterfaceDeclaration(d)) {
+            if (!ts.isInterfaceDeclaration(d) && !ts.isClassDeclaration(d)) {
                 continue;
             }
+            const fields: ts.Node[] = [];
             for (const m of d.members) {
-                if (ts.isPropertySignature(m) && (this.writes.written.has(m) || this.writes.mutated.has(m))) {
+                if (ts.isPropertySignature(m) || (ts.isPropertyDeclaration(m) && !m.modifiers?.some((x) => x.kind === ts.SyntaxKind.StaticKeyword))) {
+                    fields.push(m);
+                } else if (ts.isConstructorDeclaration(m)) {
+                    fields.push(...m.parameters.filter((p) => ts.isParameterPropertyDeclaration(p, m)));
+                }
+            }
+            for (const m of fields) {
+                if (this.writes.written.has(m) || this.writes.mutated.has(m)) {
                     return `${memberName(m)} at ${this.writes.where.get(m)}`;
                 }
             }
@@ -590,6 +637,11 @@ export class Gen {
         if (parts.every((p) => ts.isLiteralTypeNode(p) && ts.isStringLiteral(p.literal))) {
             return wrap(STR);
         }
+        // String literals mixed with string-literal aliases (`StructElementType | 'pad'`): a String.
+        const t0 = this.checker.getTypeFromTypeNode(node);
+        if (t0.isUnion() && t0.types.every((m) => m.flags & (ts.TypeFlags.StringLiteral | ts.TypeFlags.Undefined | ts.TypeFlags.Null))) {
+            return wrap(STR);
+        }
         // `-1 | 0 | 1`: one number site.
         if (parts.every((p) => ts.isLiteralTypeNode(p) && (ts.isNumericLiteral(p.literal) || ts.isPrefixUnaryExpression(p.literal)))) {
             return wrap(this.numberAt(site));
@@ -697,12 +749,17 @@ export class Gen {
             return this.rawEntry(entry, args);
         }
         switch (name) {
+            case 'Generator':
+            case 'IterableIterator': {
+                // A TS generator runs lazily, interleaved with its caller: an iterator, never a Vec.
+                const scratch = { set: new Set<string>(), add(p: readonly string[]) { for (const x of p) { this.set.add(x); } } };
+                const elem = renderIR(args[0] ?? UNIT, 'elem', scratch);
+                return { k: 'raw', text: `Box<dyn Iterator<Item = ${elem}>>`, param: `&mut dyn Iterator<Item = ${elem}>`, copy: false, uses: [...scratch.set] };
+            }
             case 'Array':
             case 'ReadonlyArray':
             case 'Iterable':
-            case 'IterableIterator':
             case 'Iterator':
-            case 'Generator':
                 return { k: 'vec', elem: args[0] ?? UNIT };
             case 'Map':
             case 'ReadonlyMap':
@@ -856,6 +913,10 @@ export class Gen {
             if (mode === 'handle') {
                 return { k: 'named', text: `P<${name}${generic}>`, copy: true, uses: ['jsrt::P', path, ...argUses] };
             }
+            if (mode === 'rc') {
+                // Shared and never written: an `Rc`, read through `&T`.
+                return { k: 'raw', text: `Rc<${name}${generic}>`, param: `&${name}${generic}`, copy: false, uses: ['std::rc::Rc', path, ...argUses] };
+            }
             return { k: 'named', text: name + generic, copy: false, uses: [path, ...argUses] };
         }
         return this.unmappedAt(node ? node.getText() : key, undefined, site);
@@ -972,6 +1033,10 @@ export class Gen {
             if (parts.every((m) => m.flags & ts.TypeFlags.BooleanLiteral)) {
                 return wrap(BOOL);
             }
+            // `-1 | 0 | 1`: one number site.
+            if (parts.every((m) => m.flags & ts.TypeFlags.NumberLiteral && !(m.flags & ts.TypeFlags.EnumLiteral))) {
+                return wrap(this.numberAt(site));
+            }
             const enumSym = this.enumOfUnion(t);
             if (enumSym) {
                 return wrap(this.mapSymbol(enumSym, [], undefined, site));
@@ -1014,8 +1079,10 @@ export class Gen {
             const named = decl && (ts.isInterfaceDeclaration(decl) || ts.isClassDeclaration(decl) || ts.isEnumDeclaration(decl));
             if (named) {
                 const keyed = ['Map', 'ReadonlyMap', 'Set', 'ReadonlySet', 'WeakMap', 'WeakSet'].includes(sym.getName());
+                // A generator's return and next types are not mapped: only what it yields.
+                const used = sym.getName() === 'Generator' ? 1 : undefined;
                 const args = isRef(t)
-                    ? this.checker.getTypeArguments(t).map((a, i) =>
+                    ? this.checker.getTypeArguments(t).slice(0, used).map((a, i) =>
                           keyed && i === 0 && a.flags & ts.TypeFlags.Number ? this.numberAt(site, 'key') : this.mapType(a, site, depth + 1)
                       )
                     : [];
@@ -1055,6 +1122,16 @@ export class Gen {
         }
         this.need(key);
         return { k: 'named', text: name, copy: false, uses: [`${crateModuleOf(site.file)}::${name}`] };
+    }
+
+    // Runs `f` without recording sites, needs or anonymous structs.
+    quietly<T>(f: () => T): T {
+        this.quiet++;
+        try {
+            return f();
+        } finally {
+            this.quiet--;
+        }
     }
 
     need(key: string) {
@@ -1155,6 +1232,54 @@ export class Gen {
         return out;
     }
 
+    // The function declaration a closure factory entry names (`getCodeFlowEngine.createCodeFlowAnalyzer`).
+    factoryNode(f: Factory): ts.FunctionDeclaration | undefined {
+        const sf = this.loaded.files.find((x) => relPath(this.loaded, x) === f.file);
+        let fn: ts.FunctionDeclaration | undefined;
+        let stmts: readonly ts.Statement[] = sf?.statements ?? [];
+        for (const part of f.func.split('.')) {
+            fn = stmts.find((x): x is ts.FunctionDeclaration => ts.isFunctionDeclaration(x) && x.name?.text === part);
+            stmts = fn?.body?.statements ?? [];
+        }
+        return fn;
+    }
+
+    // A stored closure factory struct: `P<TypeEvaluator>`.
+    factoryIR(name: string): IR {
+        const f = this.table.factories.find((x) => x.name === name);
+        return { k: 'named', text: `P<${name}>`, copy: true, uses: ['jsrt::P', `${crateModuleOf(f?.file ?? '')}::${name}`] };
+    }
+
+    // A stored function type becomes a callback struct or a `fn` pointer (callbacks.ts). Function
+    // types inside options, vectors and tuples count; a [sites] entry wins.
+    storedCallbacks(t: IR, slot: ts.Node, file: string, slotName: string): IR {
+        switch (t.k) {
+            case 'fn':
+                return this.callbacks.callbackIR(slot, t, file, slotName);
+            case 'opt':
+                return { k: 'opt', inner: this.storedCallbacks(t.inner, slot, file, slotName) };
+            case 'vec':
+                return { k: 'vec', elem: this.storedCallbacks(t.elem, slot, file, slotName) };
+            case 'tuple':
+                return { k: 'tuple', elems: t.elems.map((e) => this.storedCallbacks(e, slot, file, slotName)) };
+            case 'map':
+                return { k: 'map', key: t.key, val: this.storedCallbacks(t.val, slot, file, slotName) };
+            default:
+                return t;
+        }
+    }
+
+    // The [traits] accessor entry for a field of a trait class, if the table has one.
+    accessorOf(p: ts.Node): Accessor | undefined {
+        const owner = ts.isParameter(p) ? p.parent.parent : p.parent;
+        if (!owner || !(ts.isClassDeclaration(owner) || ts.isInterfaceDeclaration(owner)) || !owner.name) {
+            return undefined;
+        }
+        const name = memberName(p);
+        const key = `${relPath(this.loaded, owner.getSourceFile())}:${owner.name.text}`;
+        return name === undefined ? undefined : this.table.traits.get(key)?.accessors.get(name);
+    }
+
     lineKey(node: ts.Node): string {
         return `${relPath(this.loaded, node.getSourceFile())}:${lineOf(node)}`;
     }
@@ -1246,6 +1371,10 @@ export function shortenPaths(rust: string): string {
 }
 
 // `jsrt::JsString` -> uses `jsrt::JsString`. Bare names are assumed to be in scope.
+export function usesOfText(rust: string): string[] {
+    return usesOf(rust);
+}
+
 function usesOf(rust: string): string[] {
     const out: string[] = [];
     for (const m of rust.matchAll(/\b((?:crate|jsrt|std)(?:::[A-Za-z_][A-Za-z0-9_]*)+)/g)) {

@@ -5,6 +5,12 @@
 # Library and package types use their bare name ("RegExp", "CancellationToken").
 # Number sites live in numbers.toml.
 
+# Declarations not ported. The stub keeps only their marker.
+skip = [
+    # The type of createTypeEvaluator's `wrapWithLogger`, which the port drops ([factories]).
+    "analyzer/typeEvaluator.ts:LogWrapper",
+]
+
 # TypeScript type -> Rust type. A string is the Rust type in every position, passed as `&T` unless
 # `copy = true`. A table can give `param`, the Rust type in parameter position. $0, $1 are the
 # mapped type arguments.
@@ -16,6 +22,8 @@ bigint = { rust = "jsrt::JsBigInt" }
 "string | string[]" = { rust = "Vec<String>", param = "&[String]" }
 # The CLI check runs to completion: nothing cancels it and nothing on the check path awaits.
 CancellationToken = { rust = "()", copy = true }
+# Pyright's patterns have no `u` flag; spell JS-only escapes with jsrt::js_regex fragments.
+RegExp = { rust = "Regex", use = "regex::Regex" }
 Promise = "$0"
 # Ported by hand as a generic over its element (crates/pyright/src/common/text_range_collection.rs).
 "common/textRangeCollection.ts:TextRangeCollection" = { rust = "TextRangeCollection<$0>", use = "crate::common::text_range_collection::TextRangeCollection" }
@@ -56,10 +64,14 @@ Promise = "$0"
 "common/uri/uri.ts:Uri" = "opaque"
 
 # Classes and interfaces that become Rust traits. `receiver` is the receiver of every method
-# (default: "&mut self" for classes, "&self" for interfaces).
+# (default: "&mut self" for classes, "&self" for interfaces). `accessors` records how a hand-ported
+# trait reads a field of its trait class: `name` renames the accessor, `by_value` returns the field
+# by value, `drop` leaves out the accessor and the implementing struct's field.
 [traits]
-"analyzer/parseTreeWalker.ts:ParseTreeVisitor" = { receiver = "&mut self" }
-"analyzer/parseTreeWalker.ts:ParseTreeWalker" = { receiver = "&mut self" }
+# As ported in crates/pyright/src/analyzer/parse_tree_walker.rs. `_getStringAnnotation` is a
+# closure bound to the method `getStringAnnotation`; the Rust trait calls the method.
+"analyzer/parseTreeWalker.ts:ParseTreeVisitor" = { receiver = "&mut self", accessors = { _default = { name = "default_visit_result", by_value = true } } }
+"analyzer/parseTreeWalker.ts:ParseTreeWalker" = { receiver = "&mut self", accessors = { _annotationNodeInfo = { name = "annotation_node_info" }, _getStringAnnotation = { drop = true } } }
 # Called through the interface; several classes and object literals implement them.
 "analyzer/analyzerNodeInfo.ts:AnalyzerNodeInfoReader" = {}
 "analyzer/analyzerNodeInfo.ts:AnalyzerNodeInfoWriter" = {}
@@ -77,7 +89,10 @@ Promise = "$0"
 # all_fields_mutable: every field is Cell/RefCell (porting.md "parse nodes");
 # root_variant: the variant for objects created as the base itself;
 # typed_handles = false: members are P<Root>, with no typed handle (default true);
-# empty_variants = "unit": a member without fields of its own is a unit variant (default "struct").
+# empty_variants = "unit": a member without fields of its own is a unit variant (default "struct");
+# private_details = true: the details field and enum are private to the family's module, so other
+# code reaches details only through typed handles and `d()`, and creates objects only through the
+# module's create functions.
 [families.ParseNode]
 file = "parser/parseNodes.ts"
 base = "ParseNodeBase"
@@ -99,6 +114,8 @@ file = "analyzer/types.ts"
 base = "TypeBase"
 union = "Type"
 kind = "category"
+# docs/porting.md "memory": the layout of type details will change.
+private_details = true
 
 [families.Declaration]
 file = "analyzer/declaration.ts"
@@ -169,6 +186,16 @@ interface = "analyzer/codeFlowEngine.ts:CodeFlowAnalyzer"
 "analyzer/typeEvaluator.ts:createTypeEvaluator.returnTypeInferenceTypeCache" = "Option<jsrt::P<std::cell::RefCell<jsrt::JsMap<u32, crate::analyzer::type_evaluator::TypeCacheEntry>>>>"
 "analyzer/typeEvaluator.ts:createTypeEvaluator.returnTypeInferenceTypeFormTypeCache" = "Option<jsrt::P<std::cell::RefCell<jsrt::JsMap<u32, Vec<crate::analyzer::type_evaluator::TypeFormTypeCacheEntry>>>>>"
 "analyzer/typeEvaluator.ts:createTypeEvaluator.getTypeFormTypeCache.return" = "jsrt::P<std::cell::RefCell<jsrt::JsMap<u32, Vec<crate::analyzer::type_evaluator::TypeFormTypeCacheEntry>>>>"
+# The speculative tracker deletes entries from the very cache it was handed (typeCacheUtils.ts:133):
+# an evaluator type cache (typeEvaluator.ts:912) or a code-flow node type cache (codeFlowEngine.ts:314).
+"analyzer/typeCacheUtils.ts:SpeculativeEntry.cache" = "crate::analyzer::type_cache_utils::SpeculativeCache"
+"analyzer/typeCacheUtils.ts:SpeculativeTypeTracker.trackEntry.cache" = "crate::analyzer::type_cache_utils::SpeculativeCache"
+"analyzer/codeFlowEngine.ts:CodeFlowTypeCache.cache" = "jsrt::P<std::cell::RefCell<jsrt::JsMap<u32, Option<crate::analyzer::code_flow_engine::CachedType>>>>"
+# `object` in types.ts; protocols.ts keeps its protocol compatibility cache there (protocols.ts:297).
+"analyzer/types.ts:ClassDetailsShared.protocolCompatibility" = "jsrt::JsMap<String, Vec<crate::analyzer::protocols::ProtocolCompatibility>>"
+# Object-literal dictionaries keyed by operator, only looked up, never iterated.
+"analyzer/operations.ts:binaryOperatorMap" = "jsrt::JsMap<crate::parser::tokenizer_types::OperatorType, (String, String)>"
+"analyzer/operations.ts:booleanOperatorMap" = "jsrt::JsMap<crate::parser::tokenizer_types::OperatorType, bool>"
 # Stores keyed by a parse tree key (`node.a`): the module node.
 "analyzer/analyzerNodeInfo.ts:AnalyzerNodeInfoStore._infoByTree" = "jsrt::JsMap<jsrt::P<crate::parser::parse_nodes::ParseNode>, jsrt::JsMap<jsrt::P<crate::parser::parse_nodes::ParseNode>, jsrt::P<crate::analyzer::analyzer_node_info::AnalyzerNodeInfo>>>"
 "analyzer/analyzerNodeInfo.ts:AnalyzerNodeInfoStore._fileInfoByTree" = "jsrt::JsMap<jsrt::P<crate::parser::parse_nodes::ParseNode>, jsrt::P<crate::analyzer::analyzer_file_info::AnalyzerFileInfo>>"
@@ -179,8 +206,24 @@ interface = "analyzer/codeFlowEngine.ts:CodeFlowAnalyzer"
 
 # Force interior mutability on or off for a field: "<file>:<Struct>.<field>" = true | false.
 [mutable]
+# A shared map handle ([sites]): writes go through its RefCell, and the field is never reassigned.
+"analyzer/codeFlowEngine.ts:CodeFlowTypeCache.cache" = false
 
 [enums]
 # Enums to emit as flags newtypes, or as plain enums, against the detection rule.
 flags = []
 plain = []
+
+# Rust items the table defines, emitted verbatim into the module of "<file>:<Name>". Use qualified
+# paths; the generator shortens them and adds the imports.
+[items]
+"analyzer/typeCacheUtils.ts:SpeculativeCache" = """
+/// A type cache that a speculative context deletes its entries from when it ends
+/// (typeCacheUtils.ts:133): an evaluator type cache (typeEvaluator.ts:912) or a code-flow node type
+/// cache (codeFlowEngine.ts:314). TypeScript passes the map itself; the holder shares it.
+#[derive(Clone, Copy)]
+pub enum SpeculativeCache {
+    Type(jsrt::P<std::cell::RefCell<jsrt::JsMap<u32, crate::analyzer::type_evaluator::TypeCacheEntry>>>),
+    FlowNodeType(jsrt::P<std::cell::RefCell<jsrt::JsMap<u32, Option<crate::analyzer::code_flow_engine::CachedType>>>>),
+}
+"""

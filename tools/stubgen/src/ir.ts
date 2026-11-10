@@ -136,7 +136,12 @@ export function render(t: IR, pos: Pos, uses: Uses, mutated = false): string {
             if (pos === 'param') {
                 return t.mutRecv ? `&mut dyn ${t.text}` : `&dyn ${t.text}`;
             }
-            return t.mutRecv ? `Box<dyn ${t.text}>` : `&'static dyn ${t.text}`;
+            // A stored trait object is a `P` (docs/porting.md "memory"), never a `&'static`.
+            if (t.mutRecv) {
+                return `Box<dyn ${t.text}>`;
+            }
+            uses.add(['jsrt::P']);
+            return `P<dyn ${t.text}>`;
         case 'generic':
             return t.name;
         case 'raw':

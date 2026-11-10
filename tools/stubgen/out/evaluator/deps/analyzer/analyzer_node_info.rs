@@ -9,38 +9,8 @@
 )]
 
 use crate::analyzer::analyzer_file_info::AnalyzerFileInfo;
-use crate::analyzer::code_flow_types::FlowNode;
-use crate::analyzer::declaration::Declaration;
-use crate::analyzer::import_result::ImportResult;
-use crate::analyzer::scope::Scope;
-use crate::parser::parse_nodes::{
-    ExpressionNode, ModuleNode, ParseNode, StringListNode, StringNode,
-};
-use jsrt::{JsMap, JsSet, P};
-use std::cell::{Cell, RefCell};
-
-// analyzer/analyzerNodeInfo.ts:34
-#[derive(Clone)]
-pub struct DunderAllInfo {
-    pub names: Vec<String>,
-    pub string_nodes: Vec<StringNode>,
-    pub uses_unsupported_dunder_all_form: bool,
-}
-
-// analyzer/analyzerNodeInfo.ts:40
-pub struct AnalyzerNodeInfo {
-    pub import_info: Cell<Option<P<ImportResult>>>,
-    pub scope: Cell<Option<P<Scope>>>,
-    pub declaration: Cell<Option<P<Declaration>>>,
-    pub flow_node: Cell<Option<P<FlowNode>>>,
-    pub after_flow_node: Cell<Option<P<FlowNode>>>,
-    pub code_flow_expressions: Cell<Option<P<RefCell<JsSet<String>>>>>,
-    pub code_flow_complexity: Cell<Option<f64>>,
-    pub static_condition_value: Cell<Option<bool>>,
-    pub dunder_all_info: RefCell<Option<DunderAllInfo>>,
-    pub string_annotations:
-        RefCell<Option<JsMap<P<AnalyzerFileInfo>, JsMap<StringListNode, ExpressionNode>>>>,
-}
+use crate::parser::parse_nodes::ParseNode;
+use jsrt::P;
 
 // analyzer/analyzerNodeInfo.ts:82
 pub trait AnalyzerNodeInfoReader {
@@ -51,17 +21,11 @@ pub trait AnalyzerNodeInfoReader {
     fn get_file_info(&self, node: P<ParseNode>) -> Option<P<AnalyzerFileInfo>>;
 }
 
-// analyzer/analyzerNodeInfo.ts:107
-pub trait AnalyzerNodeInfoWriter: AnalyzerNodeInfoReader {
-    // analyzer/analyzerNodeInfo.ts:108
-    fn get_or_create(&self, node: P<ParseNode>) -> P<AnalyzerNodeInfo>;
-
-    // analyzer/analyzerNodeInfo.ts:109
-    fn set_file_info(&self, root: ModuleNode, file_info: P<AnalyzerFileInfo>);
-}
+// analyzer/analyzerNodeInfo.ts:425
+pub type ScopedNode = P<ParseNode>;
 
 // analyzer/analyzerNodeInfo.ts:427
 pub struct AnalyzerNodeInfoAccessor {
-    pub(crate) _reader: &'static dyn AnalyzerNodeInfoReader,
-    pub(crate) _writer: Option<&'static dyn AnalyzerNodeInfoWriter>,
+    pub(crate) _reader: P<dyn AnalyzerNodeInfoReader>,
+    pub(crate) _writer: Option<P<dyn AnalyzerNodeInfoWriter>>,
 }
