@@ -68,7 +68,9 @@ pyright allocates about 23 times what it keeps alive: 194 GB over a pydantic-ai 
 - A string field that every clone of a hot evaluator object copies is `Rc<str>`: immutable and shared, as a JS string is (`TypeVarDetailsPriv` scope names, `FunctionParam.name`; `[sites]` in `tools/stubgen/typemap.toml`).
 - Use `jsrt::JsString` (UTF-16) for unescaped Python string-literal values. Escapes such as `\ud800` give them lone surrogates.
 - Where JavaScript and Rust string operations differ, call the `jsrt` helper: length, `slice`, `substring`, `substr`, `charCodeAt`, `<` and `>`, `trim`, `toLowerCase`, `toUpperCase`, `split`, `indexOf`, `normalize('NFKC')`, `JSON.stringify` and `String.prototype.replace`.
-- Known gap: a `JsString` with a lone surrogate prints as U+FFFD inside a `String` message. Count such a case as a port failure when the oracle finds one.
+- Known gap: a `JsString` with a lone surrogate becomes U+FFFD inside a `String`: in a message, and in a `String` key, where two names that differ only in a lone surrogate collide. Count such a case as a port failure when the oracle finds one. Two key sites, kept as `String` because `SymbolTable` and TypedDict entries are keyed by `String` throughout the port:
+  - named tuple field names, `create_named_tuple_type` (`analyzer/named_tuples.rs`): `NamedTuple('X', [('a\ud800', int), ('a\udc00', str)])` reports "Names within a named tuple must be unique", which pyright does not;
+  - functional TypedDict entry names (`analyzer/typed_dicts.rs`): `TypedDict('T', {'a\ud800': int, 'a\udc00': str})` reports "Names within a dictionary must be unique" and merges the two entries, so `t: T = {'a\ud800': 1, 'a\udc00': 's'}` fails to assign. pyright reports neither.
 
 ## numbers
 

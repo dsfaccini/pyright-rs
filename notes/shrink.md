@@ -30,6 +30,6 @@ PLAN.md step 6, "exact-size variants": cut the `size_of` of the evaluator heap's
 
 ## Doubts
 
-- Named tuple field names from str literals (`create_named_tuple_type`) still collapse two names that differ only in a lone surrogate: the duplicate-name check, `named_tuple_entries` and the class `SymbolTable` are keyed by `String`. pyright keeps both and reports no duplicate. A fix means `JsString` symbol table keys. Functional TypedDict entry names (`typed_dicts.rs`, a lossy `join_string_values`) behave the same way.
+- Named tuple field names and functional TypedDict entry names collapse two names that differ only in a lone surrogate. Decided 2026-11-10: they stay `String` keys, recorded as a known gap in `docs/porting.md` "strings".
 
 - A handle's `cold()` borrow lives to the end of its statement, or through the body of an `if let`. Every `if let` on a cold field now copies the value out first. A call argument `f(r.cold().x)` where `f` writes `r`'s cold half would still panic; the seven corpora hit none.
