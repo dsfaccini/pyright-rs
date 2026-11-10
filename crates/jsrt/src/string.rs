@@ -337,7 +337,7 @@ fn relative_index(index: i32, len: i32) -> i32 {
     }
 }
 
-fn slice_range(start: i32, end: Option<i32>, len: i32) -> (usize, usize) {
+pub(crate) fn slice_range(start: i32, end: Option<i32>, len: i32) -> (usize, usize) {
     let from = relative_index(start, len);
     let to = relative_index(end.unwrap_or(len), len);
     if from >= to {

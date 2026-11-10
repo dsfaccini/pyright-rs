@@ -3,6 +3,7 @@
 //! semantics. Nothing here ports a pyright file.
 
 pub mod arena;
+pub mod array;
 pub mod collections;
 pub mod flags;
 pub mod command_line_args;

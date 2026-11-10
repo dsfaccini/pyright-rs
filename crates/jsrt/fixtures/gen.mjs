@@ -3,7 +3,7 @@
 //
 //   node crates/jsrt/fixtures/gen.mjs [section...]
 //
-// Sections: tables, strings, normalize, numbers, bigints, sort, regex. No argument runs all.
+// Sections: tables, strings, normalize, numbers, bigints, sort, regex, arrays. No argument runs all.
 // Every random input comes from a seeded PRNG, so a rerun gives the same files.
 
 import { writeFileSync } from 'node:fs';
@@ -406,7 +406,31 @@ function regexes() {
     dump('regex.json', { s: bmp(/^\s$/), w: bmp(/^\w$/), d: bmp(/^\d$/), notDot: bmp({ test: (c) => !/^.$/.test(c) }), ignoreCase: [ignoreCase], boundary });
 }
 
-const sections = { tables, strings, normalize, numbers, bigints, sort: sortFixtures, regex: regexes };
+// Array.prototype.slice on arrays of 0..8 elements: random indexes around
+// the bounds, an omitted end (null), and the i32 extremes.
+function arrays() {
+    const r = rng(7);
+    const slice = [];
+    const extremes = [-(2 ** 31), -(2 ** 31) + 1, 2 ** 31 - 1];
+    for (let n = 0; n <= 8; n++) {
+        const a = Array.from({ length: n }, (_, k) => k);
+        for (const start of extremes) {
+            for (const end of [...extremes, null]) {
+                slice.push([n, start, end, a.slice(start, end ?? undefined)]);
+            }
+        }
+    }
+    for (let i = 0; i < 3000; i++) {
+        const n = r.int(9);
+        const a = Array.from({ length: n }, (_, k) => k);
+        const start = r.int(2 * n + 7) - n - 3;
+        const end = optIndex(r, n);
+        slice.push([n, start, end, a.slice(start, end ?? undefined)]);
+    }
+    dump('arrays.json', { slice });
+}
+
+const sections = { tables, strings, normalize, numbers, bigints, sort: sortFixtures, regex: regexes, arrays };
 // Doubles travel as 16 hex digits of their bits: printing them in decimal
 // would test JS against itself.
 const bitsView = new DataView(new ArrayBuffer(8));

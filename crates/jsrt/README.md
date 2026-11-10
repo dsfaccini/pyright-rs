@@ -12,6 +12,12 @@ Every helper is tested against Node 26 through fixtures in `fixtures/`. Regenera
 | `Map`, `Set` | `JsMap`, `JsSet` (delete with `shift_remove`) |
 | lookup-only map or set | `FxHashMap`, `FxHashSet` (never iterate) |
 
+## arrays
+
+| JavaScript | Rust |
+|---|---|
+| `a.slice(start, end)` | `array::slice(&a, start, end)` (`None` is an omitted `end`; borrows, so `.to_vec()` for the copy) |
+
 ## strings
 
 `JsString` is an immutable UTF-16 string that may hold lone surrogates. Build it in a `Vec<u16>`, then `JsString::from(vec)`; it also converts from `&str`, `String` and `&[u16]`, and derefs to `[u16]`. `to_string_lossy()` turns a lone surrogate into U+FFFD. Its `Ord` is JS `<`. `utf16!("text")` is a `&'static [u16]` built at compile time.
