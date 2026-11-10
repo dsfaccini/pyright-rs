@@ -18,7 +18,7 @@ use crate::parser::parse_nodes::{
 };
 use crate::parser::tokenizer_types::OperatorType;
 
-// analyzer/codeFlowTypes.ts:34
+// analyzer/codeFlowTypes.ts:35
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
 pub struct FlowFlags(pub u32);
 
@@ -88,15 +88,15 @@ pub(crate) use flag_ops;
 flag_ops!(FlowFlags);
 
 thread_local! {
-    // analyzer/codeFlowTypes.ts:56
+    // analyzer/codeFlowTypes.ts:57
     static _NEXT_FLOW_NODE_ID: Cell<u32> = const { Cell::new(1) };
 }
 
-// analyzer/codeFlowTypes.ts:58
+// analyzer/codeFlowTypes.ts:59
 /// `NameNode | MemberAccessNode | IndexNode | AssignmentExpressionNode`.
 pub type CodeFlowReferenceExpressionNode = P<ParseNode>;
 
-// analyzer/codeFlowTypes.ts:60
+// analyzer/codeFlowTypes.ts:61
 pub fn get_unique_flow_node_id() -> u32 {
     _NEXT_FLOW_NODE_ID.with(|n| {
         let id = n.get();
@@ -105,7 +105,7 @@ pub fn get_unique_flow_node_id() -> u32 {
     })
 }
 
-// analyzer/codeFlowTypes.ts:64
+// analyzer/codeFlowTypes.ts:65
 pub struct FlowNode {
     pub flags: Cell<FlowFlags>,
     pub id: u32,
@@ -192,7 +192,7 @@ macro_rules! flow_handle {
     };
 }
 
-// analyzer/codeFlowTypes.ts:71
+// analyzer/codeFlowTypes.ts:70
 pub struct FlowLabelDetails {
     pub antecedents: RefCell<Vec<P<FlowNode>>>,
 
@@ -233,7 +233,7 @@ impl FlowLabelDetails {
     }
 }
 
-// analyzer/codeFlowTypes.ts:81
+// analyzer/codeFlowTypes.ts:82
 pub struct FlowBranchLabelDetails {
     pub label: FlowLabelDetails,
 
@@ -283,7 +283,6 @@ pub struct FlowAssignmentDetails {
 }
 simple_flow_handle!(FlowAssignment, FlowAssignmentDetails, Assignment);
 
-// analyzer/codeFlowTypes.ts:104
 // FlowVariableAnnotation separates a variable annotation
 // node from its type annotation. For example, the declaration
 // "foo: bar", the "bar" needs to be associated with a flow
@@ -291,6 +290,7 @@ simple_flow_handle!(FlowAssignment, FlowAssignmentDetails, Assignment);
 // same name is used for both (e.g. "foo: foo") and we need
 // to determine that the annotation refers to a symbol within
 // an outer scope.
+// analyzer/codeFlowTypes.ts:105
 pub struct FlowVariableAnnotationDetails {
     pub antecedent: P<FlowNode>,
 }
@@ -300,7 +300,7 @@ simple_flow_handle!(
     VariableAnnotation
 );
 
-// analyzer/codeFlowTypes.ts:110
+// analyzer/codeFlowTypes.ts:111
 // Similar to FlowAssignment but used specifically for
 // wildcard "from X import *" statements.
 pub struct FlowWildcardImportDetails {
@@ -314,7 +314,7 @@ simple_flow_handle!(
     WildcardImport
 );
 
-// analyzer/codeFlowTypes.ts:118
+// analyzer/codeFlowTypes.ts:117
 // FlowCondition represents a condition that is known to
 // be true or false at the node's location in the control flow.
 pub struct FlowConditionDetails {
@@ -324,7 +324,7 @@ pub struct FlowConditionDetails {
 }
 simple_flow_handle!(FlowCondition, FlowConditionDetails, Condition);
 
-// analyzer/codeFlowTypes.ts:124
+// analyzer/codeFlowTypes.ts:125
 /// `statement` is a `CaseNode | MatchNode`.
 pub struct FlowNarrowForPatternDetails {
     pub subject_expression: ExpressionNode,
@@ -337,7 +337,7 @@ simple_flow_handle!(
     NarrowForPattern
 );
 
-// analyzer/codeFlowTypes.ts:133
+// analyzer/codeFlowTypes.ts:134
 // FlowExhaustedMatch represents a control flow gate that is "closed"
 // if a match statement can be statically proven to exhaust all cases
 // (i.e. the narrowed type of the subject expression is Never at the bottom).
@@ -352,7 +352,7 @@ simple_flow_handle!(
     ExhaustedMatch
 );
 
-// analyzer/codeFlowTypes.ts:141
+// analyzer/codeFlowTypes.ts:142
 // Records a call, which may raise exceptions, thus affecting
 // the code flow and making subsequent code unreachable.
 pub struct FlowCallDetails {
@@ -361,7 +361,7 @@ pub struct FlowCallDetails {
 }
 simple_flow_handle!(FlowCall, FlowCallDetails, Call);
 
-// analyzer/codeFlowTypes.ts:148
+// analyzer/codeFlowTypes.ts:149
 // See comment in the visitTry method in binder.ts for a full
 // explanation of the FlowPreFinally and FlowPostFinally nodes.
 pub struct FlowPreFinallyGateDetails {
@@ -373,7 +373,7 @@ simple_flow_handle!(
     PreFinallyGate
 );
 
-// analyzer/codeFlowTypes.ts:152
+// analyzer/codeFlowTypes.ts:153
 pub struct FlowPostFinallyDetails {
     pub antecedent: P<FlowNode>,
     pub finally_node: SuiteNode,
@@ -381,7 +381,7 @@ pub struct FlowPostFinallyDetails {
 }
 simple_flow_handle!(FlowPostFinally, FlowPostFinallyDetails, PostFinally);
 
-// analyzer/codeFlowTypes.ts:158
+// analyzer/codeFlowTypes.ts:159
 pub struct FlowPostContextManagerLabelDetails {
     pub label: FlowLabelDetails,
     pub expressions: Vec<ExpressionNode>,
@@ -412,7 +412,7 @@ impl FlowPostContextManagerLabel {
     }
 }
 
-// analyzer/codeFlowTypes.ts:169
+// analyzer/codeFlowTypes.ts:170
 pub fn is_code_flow_supported_for_reference(reference: ExpressionNode) -> bool {
     if reference.node_type == ParseNodeType::Name {
         return true;
@@ -471,7 +471,7 @@ pub fn is_code_flow_supported_for_reference(reference: ExpressionNode) -> bool {
     false
 }
 
-// analyzer/codeFlowTypes.ts:216
+// analyzer/codeFlowTypes.ts:223
 pub fn create_key_for_reference(reference: CodeFlowReferenceExpressionNode) -> String {
     let key;
     match &reference.get().d {
@@ -528,7 +528,7 @@ pub fn create_key_for_reference(reference: CodeFlowReferenceExpressionNode) -> S
     key
 }
 
-// analyzer/codeFlowTypes.ts:252
+// analyzer/codeFlowTypes.ts:258
 pub fn create_keys_for_reference_subexpressions(
     reference: CodeFlowReferenceExpressionNode,
 ) -> Vec<String> {
@@ -549,6 +549,6 @@ pub fn create_keys_for_reference_subexpressions(
     }
 }
 
-// analyzer/codeFlowTypes.ts:284
+// analyzer/codeFlowTypes.ts:285
 // A reference key that corresponds to a wildcard import.
 pub const WILDCARD_IMPORT_REFERENCE_KEY: &str = "*";

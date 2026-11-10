@@ -7,5 +7,5 @@ pub struct Type {
     _private: (),
 }
 
-// analyzer/types.ts:85
+// analyzer/types.ts:81
 pub type TypeVarScopeId = String;

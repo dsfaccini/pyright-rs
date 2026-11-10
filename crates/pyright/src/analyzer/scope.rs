@@ -9,7 +9,7 @@ use super::declaration::DeclarationType;
 use super::symbol::{Symbol, SymbolFlags, SymbolTable};
 use crate::common::debug::fail;
 
-// analyzer/scope.ts:15
+// analyzer/scope.ts:16
 #[repr(i32)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum ScopeType {
@@ -33,7 +33,7 @@ pub enum ScopeType {
     Builtin,
 }
 
-// analyzer/scope.ts:36
+// analyzer/scope.ts:37
 #[repr(i32)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum NameBindingType {
@@ -44,7 +44,7 @@ pub enum NameBindingType {
     Global,
 }
 
-// analyzer/scope.ts:45
+// analyzer/scope.ts:46
 // Provides information for recursive scope lookups.
 #[derive(Clone, Copy, Debug)]
 pub struct SymbolWithScope {
@@ -145,7 +145,7 @@ pub struct Scope {
 }
 
 impl Scope {
-    // analyzer/scope.ts:132
+    // analyzer/scope.ts:133
     pub fn new(
         type_: ScopeType,
         parent: Option<P<Scope>>,
@@ -173,7 +173,7 @@ impl Scope {
         self._self.get().unwrap()
     }
 
-    // analyzer/scope.ts:144
+    // analyzer/scope.ts:145
     pub fn get_global_scope(&self) -> GlobalScopeResult {
         let mut cur_scope = Some(self.handle());
         let mut is_beyond_execution_scope = false;
@@ -196,7 +196,7 @@ impl Scope {
         fail(Some("failed to find scope"));
     }
 
-    // analyzer/scope.ts:167
+    // analyzer/scope.ts:168
     // Independently-executable scopes are those that are executed independently
     // of their parent scopes. Classes are executed in the context of their parent
     // scope, so they don't fit this category.
@@ -204,12 +204,12 @@ impl Scope {
         self.type_ == ScopeType::Module || self.type_ == ScopeType::Function
     }
 
-    // analyzer/scope.ts:171
+    // analyzer/scope.ts:172
     pub fn look_up_symbol(&self, name: &str) -> Option<P<Symbol>> {
         self.symbol_table.get(name)
     }
 
-    // analyzer/scope.ts:175
+    // analyzer/scope.ts:176
     pub fn look_up_symbol_recursive(
         &self,
         name: &str,
@@ -327,19 +327,19 @@ impl Scope {
         None
     }
 
-    // analyzer/scope.ts:256
+    // analyzer/scope.ts:255
     pub fn add_symbol(&self, name: &str, flags: SymbolFlags) -> P<Symbol> {
         let symbol = Symbol::new(flags);
         self.symbol_table.set(name, symbol);
         symbol
     }
 
-    // analyzer/scope.ts:262
+    // analyzer/scope.ts:261
     pub fn get_binding_type(&self, name: &str) -> Option<NameBindingType> {
         self.not_local_bindings.borrow().get(name).copied()
     }
 
-    // analyzer/scope.ts:266
+    // analyzer/scope.ts:265
     pub fn set_binding_type(&self, name: &str, binding_type: NameBindingType) {
         let mut bindings = self.not_local_bindings.borrow_mut();
         if let Some(existing) = bindings.get_mut(name) {
@@ -349,17 +349,17 @@ impl Scope {
         }
     }
 
-    // analyzer/scope.ts:270
+    // analyzer/scope.ts:269
     pub fn set_slots_names(&self, names: Vec<String>) {
         *self.slots_names.borrow_mut() = Some(names);
     }
 
-    // analyzer/scope.ts:274
+    // analyzer/scope.ts:273
     pub fn get_slots_names(&self) -> Option<Vec<String>> {
         self.slots_names.borrow().clone()
     }
 
-    // analyzer/scope.ts:278
+    // analyzer/scope.ts:277
     pub fn set_has_non_empty_slots(&self, value: bool) {
         self.has_non_empty_slots.set(value);
     }

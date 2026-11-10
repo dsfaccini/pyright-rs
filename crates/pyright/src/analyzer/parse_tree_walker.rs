@@ -611,7 +611,6 @@ pub trait ParseTreeWalker: ParseTreeVisitor<bool> {
         }
     }
 
-    // analyzer/parseTreeWalker.ts:712
     // Resolves the effective string annotation used to expand child nodes during traversal.
     //
     // When an `AnalyzerNodeInfoReader` was supplied (Program-aware walkers that must observe
@@ -621,6 +620,7 @@ pub trait ParseTreeWalker: ParseTreeVisitor<bool> {
     // was supplied, the walker is deliberately syntax-only and sees tier-1 parser annotations
     // exclusively. The binder intentionally stays syntax-only: tier-2 annotations do not exist yet
     // at bind time, so tier-1 descent is both sufficient and correct there.
+    // analyzer/parseTreeWalker.ts:712
     fn get_string_annotation(&self, node: StringListNode) -> Option<ExpressionNode> {
         match self.annotation_node_info() {
             Some(reader) => analyzer_node_info::get_string_annotation(node, reader),

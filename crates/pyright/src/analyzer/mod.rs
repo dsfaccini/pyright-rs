@@ -3,6 +3,7 @@ pub mod analyzer_file_info;
 pub mod analyzer_node_info;
 pub mod background_analysis_program;
 pub mod binder;
+pub mod cell_chain_index;
 pub mod circular_dependency;
 pub mod code_flow_types;
 pub mod code_flow_utils;

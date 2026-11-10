@@ -246,7 +246,7 @@ pub fn create_implicit_import_map() -> ImplicitImportMap {
     P::new(RefCell::new(JsMap::default()))
 }
 
-// analyzer/declaration.ts:197
+// analyzer/declaration.ts:193
 // Alias declarations are used for imports. They are resolved
 // after the binding phase.
 /// `node` is an `ImportAsNode | ImportFromAsNode | ImportFromNode`.
@@ -308,7 +308,7 @@ impl AliasDeclarationDetails {
     }
 }
 
-// analyzer/declaration.ts:247
+// analyzer/declaration.ts:252
 // This interface represents a set of actions that the python loader
 // performs when a module import is encountered.
 pub struct ModuleLoaderActions {
@@ -379,52 +379,52 @@ impl ModuleLoaderActionsLike for Declaration {
     }
 }
 
-// analyzer/declaration.ts:274
+// analyzer/declaration.ts:266
 pub fn is_function_declaration(decl: &Declaration) -> bool {
     decl.type_ == DeclarationType::Function
 }
 
-// analyzer/declaration.ts:278
+// analyzer/declaration.ts:270
 pub fn is_class_declaration(decl: &Declaration) -> bool {
     decl.type_ == DeclarationType::Class
 }
 
-// analyzer/declaration.ts:282
+// analyzer/declaration.ts:274
 pub fn is_param_declaration(decl: &Declaration) -> bool {
     decl.type_ == DeclarationType::Param
 }
 
-// analyzer/declaration.ts:286
+// analyzer/declaration.ts:278
 pub fn is_type_param_declaration(decl: &Declaration) -> bool {
     decl.type_ == DeclarationType::TypeParam
 }
 
-// analyzer/declaration.ts:290
+// analyzer/declaration.ts:282
 pub fn is_type_alias_declaration(decl: &Declaration) -> bool {
     decl.type_ == DeclarationType::TypeAlias
 }
 
-// analyzer/declaration.ts:294
+// analyzer/declaration.ts:286
 pub fn is_variable_declaration(decl: &Declaration) -> bool {
     decl.type_ == DeclarationType::Variable
 }
 
-// analyzer/declaration.ts:298
+// analyzer/declaration.ts:290
 pub fn is_alias_declaration(decl: &Declaration) -> bool {
     decl.type_ == DeclarationType::Alias
 }
 
-// analyzer/declaration.ts:302
+// analyzer/declaration.ts:294
 pub fn is_special_built_in_class_declaration(decl: &Declaration) -> bool {
     decl.type_ == DeclarationType::SpecialBuiltInClass
 }
 
-// analyzer/declaration.ts:306
+// analyzer/declaration.ts:298
 pub fn is_intrinsic_declaration(decl: &Declaration) -> bool {
     decl.type_ == DeclarationType::Intrinsic
 }
 
-// analyzer/declaration.ts:310
+// analyzer/declaration.ts:302
 pub fn is_unresolved_alias_declaration(decl: &Declaration) -> bool {
     is_alias_declaration(decl) && decl.uri.get().equals(Some(unresolved_module_marker()))
 }

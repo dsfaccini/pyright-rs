@@ -49,7 +49,7 @@ pub fn has_type_for_declaration(declaration: &Declaration) -> bool {
     }
 }
 
-// analyzer/declarationUtils.ts:69
+// analyzer/declarationUtils.ts:71
 pub fn are_declarations_same(
     decl1: &Declaration,
     decl2: &Declaration,

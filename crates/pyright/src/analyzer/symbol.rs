@@ -11,7 +11,7 @@ use super::declaration_utils::{are_declarations_same, has_type_for_declaration};
 use super::types::Type;
 use crate::parser::parse_nodes::NameNode;
 
-// analyzer/symbol.ts:16
+// analyzer/symbol.ts:17
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
 pub struct SymbolFlags(pub u32);
 
@@ -81,11 +81,11 @@ impl SymbolFlags {
 flag_ops!(SymbolFlags);
 
 thread_local! {
-    // analyzer/symbol.ts:76
+    // analyzer/symbol.ts:80
     static NEXT_SYMBOL_ID: Cell<u32> = const { Cell::new(1) };
 }
 
-// analyzer/symbol.ts:77
+// analyzer/symbol.ts:81
 fn get_unique_symbol_id() -> u32 {
     NEXT_SYMBOL_ID.with(|n| {
         let id = n.get();
@@ -94,11 +94,11 @@ fn get_unique_symbol_id() -> u32 {
     })
 }
 
-// analyzer/symbol.ts:82
+// analyzer/symbol.ts:86
 // Symbol ID that indicates that there is no specific symbol.
 pub const INDETERMINATE_SYMBOL_ID: u32 = 0;
 
-// analyzer/symbol.ts:84
+// analyzer/symbol.ts:113
 #[derive(Clone, Copy)]
 pub struct SynthesizedTypeInfo {
     pub type_: P<Type>,
@@ -109,7 +109,7 @@ pub struct SynthesizedTypeInfo {
     pub node: Option<NameNode>,
 }
 
-// analyzer/symbol.ts:93
+// analyzer/symbol.ts:115
 /// The private fields keep their leading underscore; the oracle prints them.
 pub struct Symbol {
     // Information about the node that declared the value -
@@ -135,7 +135,7 @@ pub struct Symbol {
 }
 
 impl Symbol {
-    // analyzer/symbol.ts:115
+    // analyzer/symbol.ts:119
     pub fn new(flags: SymbolFlags) -> P<Symbol> {
         P::new(Symbol {
             _declarations: RefCell::new(None),
@@ -146,7 +146,7 @@ impl Symbol {
         })
     }
 
-    // analyzer/symbol.ts:120
+    // analyzer/symbol.ts:124
     pub fn create_with_type(flags: SymbolFlags, type_: P<Type>, node: Option<NameNode>) -> P<Symbol> {
         let new_symbol = Symbol::new(flags);
         new_symbol
@@ -163,12 +163,12 @@ impl Symbol {
         self._flags.set(self._flags.get() | flags);
     }
 
-    // analyzer/symbol.ts:126
+    // analyzer/symbol.ts:130
     pub fn is_initially_unbound(&self) -> bool {
         self.has_flag(SymbolFlags::InitiallyUnbound)
     }
 
-    // analyzer/symbol.ts:130
+    // analyzer/symbol.ts:134
     pub fn set_is_externally_hidden(&self) {
         self.add_flags(SymbolFlags::ExternallyHidden);
     }
@@ -178,7 +178,7 @@ impl Symbol {
         self.has_flag(SymbolFlags::ExternallyHidden)
     }
 
-    // analyzer/symbol.ts:138
+    // analyzer/symbol.ts:142
     pub fn set_is_ignored_for_protocol_match(&self) {
         self.add_flags(SymbolFlags::IgnoredForProtocolMatch);
     }
@@ -188,7 +188,7 @@ impl Symbol {
         self.has_flag(SymbolFlags::IgnoredForProtocolMatch)
     }
 
-    // analyzer/symbol.ts:146
+    // analyzer/symbol.ts:150
     pub fn set_is_class_member(&self) {
         self.add_flags(SymbolFlags::ClassMember);
     }
@@ -198,7 +198,7 @@ impl Symbol {
         self.has_flag(SymbolFlags::ClassMember)
     }
 
-    // analyzer/symbol.ts:154
+    // analyzer/symbol.ts:158
     pub fn set_is_instance_member(&self) {
         self.add_flags(SymbolFlags::InstanceMember);
     }
@@ -208,7 +208,7 @@ impl Symbol {
         self.has_flag(SymbolFlags::InstanceMember)
     }
 
-    // analyzer/symbol.ts:162
+    // analyzer/symbol.ts:166
     pub fn set_is_slots_member(&self) {
         self.add_flags(
             SymbolFlags::ClassMember | SymbolFlags::InstanceMember | SymbolFlags::SlotsMember,
@@ -220,7 +220,7 @@ impl Symbol {
         self.has_flag(SymbolFlags::SlotsMember)
     }
 
-    // analyzer/symbol.ts:170
+    // analyzer/symbol.ts:174
     pub fn set_is_class_var(&self) {
         self.add_flags(SymbolFlags::ClassVar);
     }
@@ -230,7 +230,7 @@ impl Symbol {
         self.has_flag(SymbolFlags::ClassVar)
     }
 
-    // analyzer/symbol.ts:178
+    // analyzer/symbol.ts:182
     pub fn set_is_final_var_in_class_body(&self) {
         self.add_flags(SymbolFlags::FinalVarInClassBody);
     }
@@ -240,7 +240,7 @@ impl Symbol {
         self.has_flag(SymbolFlags::FinalVarInClassBody)
     }
 
-    // analyzer/symbol.ts:186
+    // analyzer/symbol.ts:190
     pub fn set_is_init_var(&self) {
         self.add_flags(SymbolFlags::InitVar);
     }
@@ -250,7 +250,7 @@ impl Symbol {
         self.has_flag(SymbolFlags::InitVar)
     }
 
-    // analyzer/symbol.ts:194
+    // analyzer/symbol.ts:198
     pub fn set_is_data_class_keyword_only(&self) {
         self.add_flags(SymbolFlags::DataClassKeywordOnly);
     }
@@ -260,7 +260,7 @@ impl Symbol {
         self.has_flag(SymbolFlags::DataClassKeywordOnly)
     }
 
-    // analyzer/symbol.ts:202
+    // analyzer/symbol.ts:206
     pub fn set_is_in_dunder_all(&self) {
         self.add_flags(SymbolFlags::InDunderAll);
     }
@@ -270,7 +270,7 @@ impl Symbol {
         self.has_flag(SymbolFlags::InDunderAll)
     }
 
-    // analyzer/symbol.ts:210
+    // analyzer/symbol.ts:214
     pub fn set_is_private_member(&self) {
         self.add_flags(SymbolFlags::PrivateMember);
     }
@@ -280,37 +280,37 @@ impl Symbol {
         self.has_flag(SymbolFlags::PrivateMember)
     }
 
-    // analyzer/symbol.ts:218
+    // analyzer/symbol.ts:222
     pub fn set_private_py_typed_import(&self) {
         self.add_flags(SymbolFlags::PrivatePyTypedImport);
     }
 
-    // analyzer/symbol.ts:222
+    // analyzer/symbol.ts:226
     pub fn is_private_py_typed_import(&self) -> bool {
         self.has_flag(SymbolFlags::PrivatePyTypedImport)
     }
 
-    // analyzer/symbol.ts:226
+    // analyzer/symbol.ts:230
     pub fn is_named_tuple_member_member(&self) -> bool {
         self.has_flag(SymbolFlags::NamedTupleMember)
     }
 
-    // analyzer/symbol.ts:230
+    // analyzer/symbol.ts:234
     pub fn is_ignored_for_override_checks(&self) -> bool {
         self.has_flag(SymbolFlags::IgnoredForOverrideChecks)
     }
 
-    // analyzer/symbol.ts:234
+    // analyzer/symbol.ts:238
     pub fn set_typing_symbol_alias(&self, aliased_name: &str) {
         *self._typing_symbol_alias.borrow_mut() = Some(aliased_name.to_string());
     }
 
-    // analyzer/symbol.ts:238
+    // analyzer/symbol.ts:242
     pub fn get_typing_symbol_alias(&self) -> Option<String> {
         self._typing_symbol_alias.borrow().clone()
     }
 
-    // analyzer/symbol.ts:242
+    // analyzer/symbol.ts:246
     pub fn add_declaration(&self, declaration: P<Declaration>) {
         let declarations = self._declarations.borrow().clone();
         if let Some(declarations) = declarations {
@@ -383,7 +383,7 @@ impl Symbol {
         }
     }
 
-    // analyzer/symbol.ts:294
+    // analyzer/symbol.ts:295
     pub fn has_declarations(&self) -> bool {
         self._declarations
             .borrow()
@@ -391,12 +391,12 @@ impl Symbol {
             .is_some_and(|decls| !decls.is_empty())
     }
 
-    // analyzer/symbol.ts:298
+    // analyzer/symbol.ts:299
     pub fn get_declarations(&self) -> Vec<P<Declaration>> {
         self._declarations.borrow().clone().unwrap_or_default()
     }
 
-    // analyzer/symbol.ts:302
+    // analyzer/symbol.ts:303
     pub fn has_typed_declarations(&self) -> bool {
         // We'll treat an synthesized type as an implicit declaration.
         if self._synthesized_type_info.get().is_some() {
@@ -408,7 +408,7 @@ impl Symbol {
             .any(|decl| has_type_for_declaration(decl))
     }
 
-    // analyzer/symbol.ts:311
+    // analyzer/symbol.ts:312
     pub fn get_typed_declarations(&self) -> Vec<P<Declaration>> {
         self.get_declarations()
             .into_iter()
@@ -416,13 +416,13 @@ impl Symbol {
             .collect()
     }
 
-    // analyzer/symbol.ts:315
+    // analyzer/symbol.ts:316
     pub fn get_synthesized_type(&self) -> Option<SynthesizedTypeInfo> {
         self._synthesized_type_info.get()
     }
 }
 
-// analyzer/symbol.ts:321
+// analyzer/symbol.ts:322
 // Maps names to symbols information.
 /// A shared `Map<string, Symbol>`: copies of the handle are the same map.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
