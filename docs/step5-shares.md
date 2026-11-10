@@ -49,6 +49,13 @@ A stored callback is a struct whose `call` body ports a closure written elsewher
 | `patternMatching.ts:905` | `ExpandCallbackNarrowTypeBasedOnClassPattern::call` in `type_evaluator_types.rs` | F |
 | `program.ts:1439`, `program.ts:1440` | `ShadowFileBinder::call`, `BoundSourceGetter::call` in `source_mapper.rs` | G |
 
+## files shared by several shares
+
+`type_evaluator.rs` (B to E), `types.rs` (A, D) and `type_printer.rs` (G, E) hold markers of more than one share.
+
+- Add no `use` line to these files. Reach anything their imports lack by path: `analyzer::type_utils::is_never(..)`, `common::diagnostic_rules::DiagnosticRule`, `parser::parse_nodes::CallNode`. Each file imports `crate::{analyzer, common, parser}` for this. Separate import blocks per share collide at merge (E0252).
+- Add a derive, a constructor or another additive item to a type outside your share through `tools/stubgen` (`typemap.toml` `[items]` or the generator), in your own branch. Name it in the `READY:` commit subject and in your notes under Signature changes. Ask the main session before you change an existing field or signature that another share owns.
+
 ## running the code
 
 - `PYRIGHT_RS_CHECKER=1` runs the checker and the types dump stage. Unset, `pyright-rs` parses and binds only and reaches no stub, so the milestone 1 corpus check stays green.
