@@ -20,7 +20,8 @@ Recommendation 1 in `docs/research/memory-advice.md` gives the motivation; this 
 
 - Two address ranges, reserved once per process with `mmap(PROT_NONE, MAP_NORESERVE)`: 256 GiB for the evaluator heap, 64 GiB for typed program blocks. Under an address-space limit (`ulimit -v`) they shrink to a quarter and a sixteenth of it, and a refused reservation is retried at half the size. Blocks become readable and writable 512 at a time (`mprotect`), so strict overcommit charges only what is handed out; pages are backed on first touch. "Is this handle in the evaluator heap" is one subtraction and one compare.
 - Each range is cut into 64 KiB blocks. A block belongs to one thread and holds objects of one Rust type, in fixed slots of `size_of` rounded up to the alignment (at least 8 bytes, so every `P` has its own address).
-- Block metadata lives in a side table indexed by block number: the type, the slot size, a bump index, a free list, and bitmaps for live and marked slots (plus dead slots in check mode). No per-object header: `Type` keeps its `size_of`.
+- Block metadata lives in a side table indexed by block number: the type, the slot size, a bump index (program blocks), and bitmaps for live and marked slots (plus dead slots in check mode). No per-object header: `Type` keeps its `size_of`.
+- An evaluator class allocates from a cursor over its current block's live bitmap: the free slots of one 64-slot word, taken lowest first. Allocation never reads the slot it hands out, which after a sweep is no longer in cache; a free list threaded through the slots would cost a cache miss per allocation.
 - Every `P::new_eval` goes to a typed block. A `P::new` goes to a typed block when its type has `HOLDS_EVAL` (below), because the collector scans those objects as roots; every other program object stays in the bump arena, which parse and bind speed depends on. The choice is made at compile time from the const.
 - The allocator id of a non-generic type sits in a static the derive emits (`jsrt::ClassSlot`), so finding the type's blocks is one load. A generic type allocated directly (`RefCell<Vec<P<Type>>>`) falls back to a per-thread `TypeId` map.
 - `libc` provides `mmap` and `madvise`. Code: `crates/jsrt/src/heap.rs`, `trace.rs`, `arena.rs`; the derive in `crates/jsrt_derive`.
@@ -60,7 +61,7 @@ pub unsafe trait Trace {
 
 ## sweep
 
-- A live, unmarked evaluator slot is dropped in place. `drop_in_place` frees the `Vec`, `String` and map buffers it owns, and releases its `Rc`s. The slot then joins its block's free list.
+- A live, unmarked evaluator slot is dropped in place. `drop_in_place` frees the `Vec`, `String` and map buffers it owns, and releases its `Rc`s. Its live bit clears, so the allocation cursor hands the slot out again.
 - No port type implements `Drop`, and the std drops never dereference a `P`, so the order in which dead objects drop does not matter.
 - Allocation, root registration and collection never nest: the heap panics when a root, `Trace` impl or drop allocates.
 - A panic while marking (check mode's assertions, a borrowed `RefCell`) clears the marks before it unwinds, so a later collection traces everything again. A panic while sweeping aborts the process.

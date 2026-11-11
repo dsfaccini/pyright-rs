@@ -125,8 +125,9 @@ struct BlockMeta {
     slot: u32,
     recip: u32,
     count: u32,
+    /// Program blocks: the slots handed out, in order.
     bump: u32,
-    free: u32,
+    _spare: u32,
     words: u32,
     cap: u32,
 }
@@ -140,24 +141,27 @@ impl BlockMeta {
         ((offset as u64 * self.recip as u64) >> 32) as usize
     }
 
-    /// One slot, from the free list or by bumping. Sets its live bit on the evaluator heap.
+    /// The next program slot. Program blocks are never swept, so they only bump.
     #[inline]
-    unsafe fn take(&mut self, base: usize, eval: bool) -> Option<usize> {
-        let slot = self.slot as usize;
-        let i = if self.free != NONE {
-            let i = self.free;
-            self.free = unsafe { ptr::read_unaligned((base + i as usize * slot) as *const u32) };
-            i
-        } else if self.bump < self.count {
-            self.bump += 1;
-            self.bump - 1
-        } else {
+    fn bump(&mut self, base: usize) -> Option<usize> {
+        if self.bump == self.count {
             return None;
-        };
-        if eval {
-            unsafe { *self.bits.add(i as usize / 64) |= 1 << (i % 64) };
         }
-        Some(base + i as usize * slot)
+        self.bump += 1;
+        Some(base + (self.bump as usize - 1) * self.slot as usize)
+    }
+
+    /// Evaluator blocks: the slots of bitmap word `w` that are neither live nor dead.
+    ///
+    /// # Safety
+    /// `w < words`, and the block's bitmaps are allocated.
+    #[inline]
+    unsafe fn free_bits(&self, w: usize) -> u64 {
+        let words = self.words as usize;
+        let taken = unsafe { *self.bits.add(w) | *self.bits.add(2 * words + w) };
+        let tail = self.count as usize - 64 * w;
+        let valid = if tail >= 64 { u64::MAX } else { (1u64 << tail) - 1 };
+        !taken & valid
     }
 }
 
@@ -366,6 +370,13 @@ fn type_info(id: u32) -> TypeInfo {
 struct Class {
     info: TypeInfo,
     current: u32,
+    /// Evaluator classes: where `current` hands out slots next. `free` holds the
+    /// slots of bitmap word `word` not handed out yet, and `live` points at that
+    /// word's live bits. Allocation never reads a slot: after a sweep it is cold.
+    word: u32,
+    free: u64,
+    live: *mut u64,
+    base: usize,
     blocks: Vec<u32>,
     partial: Vec<u32>,
 }
@@ -456,16 +467,19 @@ impl ThreadHeap {
     #[inline]
     unsafe fn alloc<T: Trace + 'static>(&mut self, eval: bool) -> usize {
         let id = self.type_id::<T>() as usize;
-        let classes = if eval { &mut self.eval } else { &mut self.program };
-        if let Some(Some(class)) = classes.get_mut(id)
+        if eval {
+            if let Some(Some(class)) = self.eval.get_mut(id)
+                && class.free != 0
+            {
+                let addr = unsafe { class.take() };
+                self.since_gc += class.info.slot as usize;
+                return addr;
+            }
+        } else if let Some(Some(class)) = self.program.get_mut(id)
             && class.current != NONE
         {
-            let range = if eval { &ranges().eval } else { &ranges().program };
-            let base = range.block_base(class.current);
-            if let Some(addr) = unsafe { range.meta(class.current).take(base, eval) } {
-                if eval {
-                    self.since_gc += class.info.slot as usize;
-                }
+            let program = &ranges().program;
+            if let Some(addr) = unsafe { program.meta(class.current) }.bump(program.block_base(class.current)) {
                 return addr;
             }
         }
@@ -483,23 +497,61 @@ impl ThreadHeap {
         let class = classes[id].get_or_insert_with(|| Class {
             info: type_info(id as u32),
             current: NONE,
+            word: 0,
+            free: 0,
+            live: ptr::null_mut(),
+            base: 0,
             blocks: Vec::new(),
             partial: Vec::new(),
         });
-        loop {
-            if class.current != NONE
-                && let Some(addr) = unsafe { range.meta(class.current).take(range.block_base(class.current), eval) }
-            {
-                if eval {
-                    self.since_gc += class.info.slot as usize;
+        if !eval {
+            loop {
+                if class.current != NONE
+                    && let Some(addr) = unsafe { range.meta(class.current) }.bump(range.block_base(class.current))
+                {
+                    return addr;
                 }
-                return addr;
+                class.current = unsafe { new_block(range, class, owner, false) };
             }
-            class.current = match class.partial.pop() {
-                Some(block) => block,
-                None => unsafe { new_block(range, class, owner, eval) },
-            };
         }
+        loop {
+            if class.current != NONE {
+                // SAFETY: `current` is a block of this class, owned by this thread.
+                let meta = unsafe { range.meta(class.current) };
+                while class.free == 0 && class.word + 1 < meta.words {
+                    class.word += 1;
+                    class.free = unsafe { meta.free_bits(class.word as usize) };
+                }
+                if class.free != 0 {
+                    class.live = unsafe { meta.bits.add(class.word as usize) };
+                    self.since_gc += class.info.slot as usize;
+                    return unsafe { class.take() };
+                }
+            }
+            let block = match class.partial.pop() {
+                Some(block) => block,
+                None => unsafe { new_block(range, class, owner, true) },
+            };
+            class.current = block;
+            class.base = range.block_base(block);
+            class.word = 0;
+            class.free = unsafe { range.meta(block).free_bits(0) };
+            class.live = unsafe { range.meta(block).bits };
+        }
+    }
+}
+
+impl Class {
+    /// Hands out the lowest free slot of the cursor's word and sets its live bit.
+    ///
+    /// # Safety
+    /// `free != 0`, and `live` points at the live bits of word `word` of `current`.
+    #[inline]
+    unsafe fn take(&mut self) -> usize {
+        let j = self.free.trailing_zeros();
+        self.free &= self.free - 1;
+        unsafe { *self.live |= 1 << j };
+        self.base + (self.word as usize * 64 + j as usize) * self.info.slot as usize
     }
 }
 
@@ -514,7 +566,6 @@ unsafe fn new_block(range: &Range, class: &mut Class, owner: u32, eval: bool) ->
     meta.recip = info.recip;
     meta.count = info.count;
     meta.bump = 0;
-    meta.free = NONE;
     if eval {
         let words = info.count.div_ceil(64);
         let need = 3 * words;
@@ -936,6 +987,7 @@ impl ThreadHeap {
         for class in self.eval.iter_mut().flatten() {
             class.partial.clear();
             class.current = NONE;
+            class.free = 0;
             let slot = class.info.slot as usize;
             let mut kept = Vec::with_capacity(class.blocks.len());
             let (freed_before, live_before) = (freed, live_bytes);
@@ -957,9 +1009,6 @@ impl ThreadHeap {
                             if check {
                                 ptr::write_bytes(addr as *mut u8, POISON, slot);
                                 *meta.bits.add(2 * words + w) |= 1 << j;
-                            } else {
-                                ptr::write_unaligned(addr as *mut u32, meta.free);
-                                meta.free = i as u32;
                             }
                             freed += 1;
                         }
@@ -975,7 +1024,7 @@ impl ThreadHeap {
                     continue;
                 }
                 kept.push(block);
-                if meta.free != NONE || meta.bump < meta.count {
+                if (0..words).any(|w| unsafe { meta.free_bits(w) } != 0) {
                     class.partial.push(block);
                 }
             }
