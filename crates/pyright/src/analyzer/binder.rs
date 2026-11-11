@@ -1432,7 +1432,7 @@ impl ParseTreeVisitor<bool> for Binder {
                 let name = node.d().name.get();
                 let mut cur_scope = self._current_scope;
                 while let Some(scope) = cur_scope.filter(|scope| *scope != container_scope) {
-                    let local_symbol = scope.look_up_symbol(name.d().value());
+                    let local_symbol = scope.look_up_symbol(name.d().value_atom());
                     if local_symbol.is_some() {
                         self._add_syntax_error(
                             LocMessage::assignment_expr_comprehension()
@@ -4593,7 +4593,7 @@ impl Binder {
                 if let Some(member_access_info) = member_access_info {
                     let name = member_access.member.get();
 
-                    let mut symbol = member_access_info.class_scope.look_up_symbol(name.d().value());
+                    let mut symbol = member_access_info.class_scope.look_up_symbol(name.d().value_atom());
                     if symbol.is_none() {
                         let new_symbol = member_access_info
                             .class_scope
@@ -4795,7 +4795,7 @@ impl Binder {
                 if let Some(member_access_info) = member_access_info {
                     let name = member_access.member.get();
 
-                    let mut symbol = member_access_info.class_scope.look_up_symbol(name.d().value());
+                    let mut symbol = member_access_info.class_scope.look_up_symbol(name.d().value_atom());
                     if symbol.is_none() {
                         let new_symbol = member_access_info
                             .class_scope

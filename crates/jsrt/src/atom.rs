@@ -175,6 +175,83 @@ unsafe impl Trace for Atom {
     fn trace(&self, _: &mut Tracer) {}
 }
 
+/// A key for a table keyed by atoms: an atom, or text. Text that this thread
+/// never interned is no table's key, so a lookup needs no interning.
+pub trait AtomKey: Copy {
+    /// The key's atom, if its text is interned.
+    fn lookup(self) -> Option<Atom>;
+    /// The key's atom, interning its text.
+    fn intern(self) -> Atom;
+    /// The key's text.
+    fn text(&self) -> &str;
+}
+
+impl AtomKey for Atom {
+    #[inline]
+    fn lookup(self) -> Option<Atom> {
+        Some(self)
+    }
+    #[inline]
+    fn intern(self) -> Atom {
+        self
+    }
+    #[inline]
+    fn text(&self) -> &str {
+        self.as_str()
+    }
+}
+
+impl AtomKey for &Atom {
+    #[inline]
+    fn lookup(self) -> Option<Atom> {
+        Some(*self)
+    }
+    #[inline]
+    fn intern(self) -> Atom {
+        *self
+    }
+    #[inline]
+    fn text(&self) -> &str {
+        self.as_str()
+    }
+}
+
+impl AtomKey for &str {
+    fn lookup(self) -> Option<Atom> {
+        Atom::lookup(self)
+    }
+    fn intern(self) -> Atom {
+        Atom::new(self)
+    }
+    fn text(&self) -> &str {
+        self
+    }
+}
+
+impl AtomKey for &&str {
+    fn lookup(self) -> Option<Atom> {
+        Atom::lookup(self)
+    }
+    fn intern(self) -> Atom {
+        Atom::new(self)
+    }
+    fn text(&self) -> &str {
+        self
+    }
+}
+
+impl AtomKey for &String {
+    fn lookup(self) -> Option<Atom> {
+        Atom::lookup(self)
+    }
+    fn intern(self) -> Atom {
+        Atom::new(self)
+    }
+    fn text(&self) -> &str {
+        self
+    }
+}
+
 /// The atom of a string literal, interned once per call site and thread.
 #[macro_export]
 macro_rules! atom {

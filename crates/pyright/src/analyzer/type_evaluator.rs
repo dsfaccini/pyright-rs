@@ -56,7 +56,7 @@ use crate::parser::parse_nodes::{
     StringListNode, StringNode, TypeAliasNode, TypeAnnotationNode, TypeParameterListNode,
     TypeParameterNode, UnpackNode, WithItemNode, YieldFromNode, YieldNode,
 };
-use jsrt::{FxHashMap, JsMap, JsSet, JsString, P};
+use jsrt::{Atom, AtomKey, FxHashMap, JsMap, JsSet, JsString, P};
 use jsrt::cell::{Cell, OnceCell, RefCell};
 use std::rc::Rc;
 
@@ -3835,7 +3835,7 @@ impl TypeEvaluator {
             let value_expr = annotation.d().value_expr.get();
             if let Some(name_node) = NameNode::cast(value_expr) {
                 let symbol_with_scope =
-                    self.look_up_symbol_recursive(expression, &name_node.d().value(), false, false);
+                    self.look_up_symbol_recursive(expression, name_node.d().value_atom(), false, false);
                 if let Some(symbol_with_scope) = symbol_with_scope {
                     let symbol = symbol_with_scope.symbol;
                     return symbol
@@ -3925,7 +3925,7 @@ impl TypeEvaluator {
             parser::parse_nodes::ParseNodeType::Name => {
                 let name_node = NameNode::cast(expression).unwrap();
                 let symbol_with_scope =
-                    self.look_up_symbol_recursive(expression, &name_node.d().value(), true, false);
+                    self.look_up_symbol_recursive(expression, name_node.d().value_atom(), true, false);
                 if let Some(symbol_with_scope) = symbol_with_scope {
                     symbol = Some(symbol_with_scope.symbol);
 
@@ -7044,7 +7044,7 @@ impl TypeEvaluator {
             if let Some(alias) = alias {
                 symbol_with_scope = self.look_up_symbol_recursive(
                     alias.node(),
-                    &alias.d().value(),
+                    alias.d().value_atom(),
                     !allow_forward_references,
                     allow_forward_references && flags.any(EvalFlags::TypeExpression),
                 );
@@ -13894,7 +13894,7 @@ impl TypeEvaluator {
                     let type_of_symbol = self.get_effective_type_of_symbol(symbol);
                     info_messages.push(
                         crate::localization::localize::LocAddendum::type_of_symbol().format(&[
-                            ("name", name),
+                            ("name", &name),
                             (
                                 "type",
                                 &self.print_type(
@@ -16513,7 +16513,7 @@ impl TypeEvaluator {
     pub(crate) fn get_abstract_symbol_info(
         &self,
         class_type: ClassType,
-        symbol_name: &str,
+        symbol_name: impl AtomKey,
     ) -> Option<AbstractSymbol> {
         let is_protocol_class = ClassType::is_protocol_class(class_type);
 
@@ -16547,7 +16547,7 @@ impl TypeEvaluator {
             }) {
                 return Some(AbstractSymbol {
                     symbol,
-                    symbol_name: symbol_name.to_string(),
+                    symbol_name: symbol_name.text().to_string(),
                     class_type: class_type.0,
                     has_implementation: false,
                 });
@@ -16608,7 +16608,7 @@ impl TypeEvaluator {
 
                 return Some(AbstractSymbol {
                     symbol,
-                    symbol_name: symbol_name.to_string(),
+                    symbol_name: symbol_name.text().to_string(),
                     class_type: class_type.0,
                     has_implementation: false,
                 });
@@ -16637,7 +16637,7 @@ impl TypeEvaluator {
 
         Some(AbstractSymbol {
             symbol,
-            symbol_name: symbol_name.to_string(),
+            symbol_name: symbol_name.text().to_string(),
             class_type: class_type.0,
             has_implementation,
         })
@@ -27394,7 +27394,7 @@ impl TypeEvaluator {
             parser::parse_nodes::ParseNodeType::Name => {
                 let name = NameNode(expression);
                 let symbol_with_scope =
-                    self.look_up_symbol_recursive(expression, &name.d().value(), /* honorCodeFlow */ true, false);
+                    self.look_up_symbol_recursive(expression, name.d().value_atom(), /* honorCodeFlow */ true, false);
                 symbol_with_scope.is_some_and(|symbol_with_scope| {
                     symbol_with_scope.symbol.has_typed_declarations()
                         || symbol_with_scope.scope.type_ == analyzer::scope::ScopeType::Class
@@ -27510,7 +27510,7 @@ impl TypeEvaluator {
                 } else if let Some(left_name) = NameNode::cast(left_expr) {
                     let symbol_with_scope = self.look_up_symbol_recursive(
                         left_expr,
-                        &left_name.d().value(),
+                        left_name.d().value_atom(),
                         /* honorCodeFlow */ false,
                         false,
                     );
@@ -27733,7 +27733,7 @@ impl TypeEvaluator {
 
         // Set a partial type to handle recursive (self-referential) type aliases.
         let scope = self.get_scope_for_node(decl_node);
-        let type_alias_symbol = scope.and_then(|scope| scope.look_up_symbol_recursive(&name_node.d().value(), None));
+        let type_alias_symbol = scope.and_then(|scope| scope.look_up_symbol_recursive(name_node.d().value_atom(), None));
         let type_alias_decl = self.node_info.get_declaration(decl_node);
         if let (Some(type_alias_decl), Some(type_alias_symbol)) = (type_alias_decl, type_alias_symbol) {
             self.set_symbol_resolution_partial_type(type_alias_symbol.symbol, type_alias_decl, type_alias_type_var.0);
@@ -30204,7 +30204,7 @@ impl TypeEvaluator {
     pub(crate) fn mark_param_accessed(&self, param: ParameterNode) {
         if let Some(param_name) = param.d().name.get() {
             let symbol_with_scope =
-                self.look_up_symbol_recursive(param_name.0, &param_name.d().value(), /* honorCodeFlow */ false, false);
+                self.look_up_symbol_recursive(param_name.0, param_name.d().value_atom(), /* honorCodeFlow */ false, false);
             if let Some(symbol_with_scope) = symbol_with_scope {
                 self.set_symbol_accessed(self.node_info.get_file_info(param.0), symbol_with_scope.symbol, param_name.0);
             }
@@ -31287,7 +31287,7 @@ impl TypeEvaluator {
         // export and mark the symbol as accessed.
         if node.d().alias.get().is_some_and(|alias| alias.d().value() == name_node.d().value()) {
             let symbol_in_scope =
-                self.look_up_symbol_recursive(node.0, &name_node.d().value(), /* honorCodeFlow */ true, false);
+                self.look_up_symbol_recursive(node.0, name_node.d().value_atom(), /* honorCodeFlow */ true, false);
             if let Some(symbol_in_scope) = symbol_in_scope {
                 self.set_symbol_accessed(file_info, symbol_in_scope.symbol, node.0);
             }
@@ -31297,7 +31297,7 @@ impl TypeEvaluator {
         let class_node = analyzer::parse_tree_utils::get_enclosing_class(node.0, /* stopAtFunction */ true);
         if class_node.is_some() {
             let symbol_in_scope =
-                self.look_up_symbol_recursive(node.0, &alias_node.d().value(), /* honorCodeFlow */ true, false);
+                self.look_up_symbol_recursive(node.0, alias_node.d().value_atom(), /* honorCodeFlow */ true, false);
             if let Some(symbol_in_scope) = symbol_in_scope {
                 self.set_symbol_accessed(file_info, symbol_in_scope.symbol, node.0);
             }
@@ -33282,10 +33282,11 @@ impl TypeEvaluator {
     pub fn look_up_symbol_recursive(
         &self,
         node: P<ParseNode>,
-        name: &str,
+        name: impl AtomKey,
         honor_code_flow: bool,
         prefer_global_scope: bool,
     ) -> Option<SymbolWithScope> {
+        let name = name.intern();
         let reader = self.node_info.reader();
         let scope_node_info = analyzer::parse_tree_utils::get_evaluation_scope_node(node, reader);
         let scope = self.node_info.get_scope(scope_node_info.node);
@@ -33824,7 +33825,7 @@ impl TypeEvaluator {
             let scope = self.get_scope_for_node(node.0);
             if let Some(scope) = scope {
                 // Look up the alias symbol.
-                let symbol_in_scope = scope.look_up_symbol_recursive(&alias.d().value(), None);
+                let symbol_in_scope = scope.look_up_symbol_recursive(alias.d().value_atom(), None);
                 if let Some(symbol_in_scope) = symbol_in_scope {
                     // The alias could have more decls that don't refer to this import. Filter
                     // out the one(s) that specifically associated with this import statement.
@@ -34121,7 +34122,7 @@ impl TypeEvaluator {
 
             let symbol_with_scope = self.look_up_symbol_recursive(
                 node.0,
-                &node.d().value(),
+                node.d().value_atom(),
                 !allow_forward_references,
                 is_within_type_annotation,
             );
@@ -36604,13 +36605,13 @@ impl TypeEvaluator {
                     if let Some(primary_decl) = primary_decl
                         && primary_decl.type_ == analyzer::declaration::DeclarationType::Variable
                         && !self.is_final_variable_declaration(primary_decl)
-                        && !analyzer::type_utils::is_member_read_only(dest_type, name)
+                        && !analyzer::type_utils::is_member_read_only(dest_type, &name)
                     {
                         // Class and instance variables that are mutable need to
                         // enforce invariance. We will exempt variables that are
                         // private or protected, since these are presumably
                         // not modifiable outside of the class.
-                        if !analyzer::symbol_name_utils::is_private_or_protected_name(name) {
+                        if !analyzer::symbol_name_utils::is_private_or_protected_name(&name) {
                             flags |= AssignTypeFlags::Invariant;
                         }
                     }
@@ -39331,10 +39332,10 @@ impl TypeEvaluator {
         for mro_class in mro.iter().copied() {
             if analyzer::types::is_class(mro_class) && ClassType::is_protocol_class(ClassType::cast(mro_class).unwrap()) {
                 // Nothing below writes the symbol table, so a snapshot iterates it as the TS does.
-                let fields: Vec<(String, P<Symbol>)> = ClassType::get_symbol_table(ClassType::cast(mro_class).unwrap())
+                let fields: Vec<(Atom, P<Symbol>)> = ClassType::get_symbol_table(ClassType::cast(mro_class).unwrap())
                     .borrow()
                     .iter()
-                    .map(|(name, symbol)| (name.clone(), *symbol))
+                    .map(|(name, symbol)| (*name, *symbol))
                     .collect();
                 for (field_name, field_symbol) in fields {
                     // We're expecting a __call__ method. We will also ignore a
@@ -41578,7 +41579,7 @@ impl TypeEvaluator {
 
     // analyzer/typeEvaluator.ts:29928
     pub fn get_abstract_symbols(&self, class_type: ClassType) -> Vec<AbstractSymbol> {
-        let mut symbol_table: JsMap<String, AbstractSymbol> = JsMap::default();
+        let mut symbol_table: JsMap<Atom, AbstractSymbol> = JsMap::default();
 
         for mro_class in ClassType::get_reverse_mro(class_type) {
             if analyzer::types::is_instantiable_class(mro_class) {
@@ -41591,9 +41592,9 @@ impl TypeEvaluator {
                     let abstract_symbol_info = self.get_abstract_symbol_info(mro_class, symbol_name);
 
                     if let Some(abstract_symbol_info) = abstract_symbol_info {
-                        symbol_table.insert(symbol_name.to_string(), abstract_symbol_info);
+                        symbol_table.insert(symbol_name, abstract_symbol_info);
                     } else {
-                        symbol_table.shift_remove(symbol_name);
+                        symbol_table.shift_remove(&symbol_name);
                     }
                 });
             }

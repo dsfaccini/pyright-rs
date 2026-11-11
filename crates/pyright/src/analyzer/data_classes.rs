@@ -219,9 +219,9 @@ pub fn synthesize_data_class_slots(evaluator: &TypeEvaluator, class_type: ClassT
             && !symbol.is_class_var()
             && !symbol.is_init_var()
             && !is_keyword_only_separator
-            && !inherited_slots_names.contains(&name)
+            && !inherited_slots_names.contains(name.as_str())
         {
-            local_slots_names.push(name);
+            local_slots_names.push(name.to_string());
         }
     }
     // The TypeScript `finally` block.

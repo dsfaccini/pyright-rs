@@ -125,7 +125,7 @@ pub fn create_property(
     ClassType::get_symbol_table(decorator_type).for_each(|symbol, name| {
         let ignored_methods = ["__get__", "__set__", "__delete__"];
 
-        if !symbol.is_ignored_for_protocol_match() && !ignored_methods.contains(&name) {
+        if !symbol.is_ignored_for_protocol_match() && !ignored_methods.contains(&name.as_str()) {
             fields.set(name, symbol);
         }
     });

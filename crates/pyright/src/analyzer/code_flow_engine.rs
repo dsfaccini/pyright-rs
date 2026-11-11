@@ -453,7 +453,7 @@ impl CodeFlowEngine {
                             // too expensive.
                             let symbol_with_scope = evaluator.look_up_symbol_recursive(
                                 condition_reference.0,
-                                condition_reference.d().value(),
+                                condition_reference.d().value_atom(),
                                 false,
                                 false,
                             );
@@ -2297,7 +2297,7 @@ impl CodeFlowAnalyzer {
                                     // too expensive.
                                     let symbol_with_scope = evaluator.look_up_symbol_recursive(
                                         condition_reference.0,
-                                        condition_reference.d().value(),
+                                        condition_reference.d().value_atom(),
                                         false,
                                         false,
                                     );

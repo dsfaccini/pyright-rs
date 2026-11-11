@@ -118,7 +118,7 @@ pub fn is_enum_class_with_members(
         let name = symbol_table
             .borrow()
             .get_index(index)
-            .map(|(name, _)| name.clone());
+            .map(|(name, _)| *name);
         let Some(name) = name else {
             break;
         };

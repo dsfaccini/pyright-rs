@@ -15,7 +15,7 @@ use crate::analyzer::types::{
     ClassType, ClassTypeFlags, FunctionType, ModuleType, SignatureWithOffsets, TupleTypeArg, Type,
     TypeCondition, TypeSameOptions, TypeVarScopeId, TypeVarType, Variance,
 };
-use jsrt::{JsMap, JsSet, P, SmallJsSet, flag_ops};
+use jsrt::{AtomKey, JsMap, JsSet, P, SmallJsSet, flag_ops};
 use jsrt::cell::{Cell, RefCell};
 use std::rc::Rc;
 
@@ -2020,7 +2020,7 @@ pub fn get_container_depth(type_: P<Type>, recursion_count: u32) -> u32 {
 /// TS defaults: flags = MemberAccessFlags.Default.
 pub fn look_up_object_member(
     object_type: ClassType,
-    member_name: &str,
+    member_name: impl AtomKey,
     flags: MemberAccessFlags,
     skip_mro_class: Option<ClassType>,
 ) -> Option<ClassMember> {
@@ -2035,7 +2035,7 @@ pub fn look_up_object_member(
 /// TS defaults: flags = MemberAccessFlags.Default.
 pub fn look_up_class_member(
     class_type: ClassType,
-    member_name: &str,
+    member_name: impl AtomKey,
     flags: MemberAccessFlags,
     skip_mro_class: Option<ClassType>,
 ) -> Option<ClassMember> {
@@ -2074,10 +2074,12 @@ pub fn look_up_class_member(
 /// TS defaults: flags = MemberAccessFlags.Default.
 pub fn get_class_member_iterator(
     class_type: P<Type>,
-    member_name: &str,
+    member_name: impl AtomKey,
     flags: MemberAccessFlags,
     skip_mro_class: Option<ClassType>,
-) -> impl Iterator<Item = ClassMember> + '_ {
+) -> impl Iterator<Item = ClassMember> {
+    // Symbol tables are keyed by atom: text without one is in none of them.
+    let member_key = member_name.lookup();
     // A TypeScript generator: each `next()` runs the body up to its next `yield`, so the
     // MRO walk and its partial specializations happen only as far as the caller reads.
     let declared_types_only = flags.any(MemberAccessFlags::DeclaredTypesOnly);
@@ -2151,7 +2153,7 @@ pub fn get_class_member_iterator(
                     current = Some((mro_class, specialized_mro_class, member_fields, skip_td_entry, true));
 
                     if !flags.any(MemberAccessFlags::SkipInstanceMembers) {
-                        let symbol = member_fields.get(member_name);
+                        let symbol = member_key.and_then(|key| member_fields.get(key));
 
                         if let Some(symbol) = symbol {
                             if symbol.is_instance_member() && !skip_td_entry {
@@ -2168,7 +2170,7 @@ pub fn get_class_member_iterator(
                                         ),
                                         class_type: specialized_mro_class.0,
                                         unspecialized_class_type: mro_class,
-                                        is_read_only: is_member_read_only(specialized_mro_class, member_name),
+                                        is_read_only: is_member_read_only(specialized_mro_class, member_name.text()),
                                         is_type_declared: has_declared_type,
                                         skipped_undeclared_type,
                                     });
@@ -2183,7 +2185,7 @@ pub fn get_class_member_iterator(
                 // Next look at class members.
                 current = None;
                 if !flags.any(MemberAccessFlags::SkipClassMembers) {
-                    let mut symbol = member_fields.get(member_name);
+                    let mut symbol = member_key.and_then(|key| member_fields.get(key));
 
                     if let Some(found_symbol) = symbol {
                         if found_symbol.is_class_member() && !skip_td_entry {
@@ -2211,7 +2213,7 @@ pub fn get_class_member_iterator(
 
                                 // Handle the special case of a __call__ class member in a partial class.
                                 let partial_call_type = ClassType(class_type).d().priv_.borrow().cold().partial_call_type;
-                                if member_name == "__call__" {
+                                if member_key == Some(jsrt::atom!("__call__")) {
                                     if let Some(partial_call_type) = partial_call_type {
                                         let generic_class = if crate::analyzer::types::TypeBase::is_instance(class_type) {
                                             ClassType::clone_as_instantiable(ClassType(class_type), true)
@@ -2286,7 +2288,7 @@ pub fn get_class_member_iterator(
                     .get()
                     .typed_dict_entries
                     .get()
-                    .is_some_and(|entries| entries.known_items.borrow().contains_key(member_name));
+                    .is_some_and(|entries| entries.known_items.borrow().contains_key(member_name.text()));
             current = Some((mro_class, specialized_mro_class, member_fields, skip_td_entry, false));
         }
     })
@@ -2417,7 +2419,7 @@ pub fn get_class_fields_recursive(class_type: ClassType) -> JsMap<String, ClassM
                                 symbol,
                                 ClassType::is_data_class(specialized_mro_class),
                             ),
-                            is_read_only: is_member_read_only(specialized_mro_class, name),
+                            is_read_only: is_member_read_only(specialized_mro_class, &name),
                             is_type_declared: true,
                             skipped_undeclared_type: false,
                         },

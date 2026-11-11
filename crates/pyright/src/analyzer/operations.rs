@@ -1515,7 +1515,7 @@ pub(crate) fn is_expression_local_variable(
 
     let symbol_with_scope = evaluator.look_up_symbol_recursive(
         node,
-        name_node.d().value(),
+        name_node.d().value_atom(),
         /* honorCodeFlow */ false,
         false,
     );
