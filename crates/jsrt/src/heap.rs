@@ -12,7 +12,7 @@ use std::cell::{Cell, UnsafeCell};
 use std::collections::HashMap;
 use std::panic::{AssertUnwindSafe, catch_unwind, resume_unwind};
 use std::ptr;
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering::Relaxed, Ordering::SeqCst};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering::Acquire, Ordering::Relaxed, Ordering::Release, Ordering::SeqCst};
 use std::sync::{Mutex, MutexGuard, OnceLock, PoisonError};
 use std::time::Instant;
 
@@ -339,7 +339,7 @@ struct Ranges {
 static RANGES: OnceLock<Ranges> = OnceLock::new();
 
 /// Where the write barrier marks cards. The lengths stay 0, so the barrier marks
-/// nothing, unless collection is generational.
+/// nothing, until a generational collection ends (`start_barrier`).
 struct Barrier {
     eval_base: AtomicUsize,
     eval_len: AtomicUsize,
@@ -369,8 +369,9 @@ static BARRIER: Barrier = Barrier {
 /// because no heap object's cell sits in a buffer (`Trace::CELL_OUT_OF_LINE`).
 #[inline(always)]
 pub fn remember(addr: usize) {
+    let len = BARRIER.eval_len.load(Acquire);
     let offset = addr.wrapping_sub(BARRIER.eval_base.load(Relaxed));
-    if offset < BARRIER.eval_len.load(Relaxed) {
+    if offset < len {
         // SAFETY: the cell is in a live object, so its block is committed, owned by
         // this thread and has bitmaps; the card table covers the committed blocks.
         unsafe {
@@ -382,8 +383,9 @@ pub fn remember(addr: usize) {
         }
         return;
     }
+    let len = BARRIER.program_len.load(Acquire);
     let offset = addr.wrapping_sub(BARRIER.program_base.load(Relaxed));
-    if offset < BARRIER.program_len.load(Relaxed) {
+    if offset < len {
         // SAFETY: as above.
         unsafe { *((BARRIER.program_cards.load(Relaxed) + (offset >> CARD_SHIFT)) as *mut u8) = 1 };
     }
@@ -394,21 +396,24 @@ fn ranges() -> &'static Ranges {
         // Under an address-space limit, leave most of it to the program heap's bump
         // arena, the system allocator and the stack.
         let limit = address_space_limit();
-        let ranges = Ranges {
+        Ranges {
             program: Range::reserve("program", PROGRAM_RESERVE, limit / 16),
             eval: Range::reserve("evaluator", EVAL_RESERVE, limit / 4),
-        };
-        if config().generational && config().mode != GcMode::Off {
-            BARRIER.eval_base.store(ranges.eval.base, Relaxed);
-            BARRIER.eval_cards.store(ranges.eval.cards, Relaxed);
-            BARRIER.eval_meta.store(ranges.eval.meta as usize, Relaxed);
-            BARRIER.eval_len.store(ranges.eval.len, Relaxed);
-            BARRIER.program_base.store(ranges.program.base, Relaxed);
-            BARRIER.program_cards.store(ranges.program.cards, Relaxed);
-            BARRIER.program_len.store(ranges.program.len, Relaxed);
         }
-        ranges
     })
+}
+
+/// Turns the write barrier on, at the end of a generational collection: before
+/// the first one no object is old, so no write needs a card. A thread that sees
+/// a range's length sees the rest of it.
+fn start_barrier(ranges: &Ranges) {
+    BARRIER.eval_base.store(ranges.eval.base, Relaxed);
+    BARRIER.eval_cards.store(ranges.eval.cards, Relaxed);
+    BARRIER.eval_meta.store(ranges.eval.meta as usize, Relaxed);
+    BARRIER.eval_len.store(ranges.eval.len, Release);
+    BARRIER.program_base.store(ranges.program.base, Relaxed);
+    BARRIER.program_cards.store(ranges.program.cards, Relaxed);
+    BARRIER.program_len.store(ranges.program.len, Release);
 }
 
 // ---------------------------------------------------------------------------
@@ -1320,6 +1325,7 @@ impl ThreadHeap {
         self.sticky_marks = generational;
         if generational {
             self.clear_cards();
+            start_barrier(ranges);
         }
         if census {
             census::set_phase(census::MUTATOR);
@@ -1990,16 +1996,9 @@ mod tests {
         Collection { check, log: 0, threads: 4, minor, generational: true }
     }
 
-    /// Turns the write barrier on, as generational collection does at start.
+    /// Turns the write barrier on, as the first generational collection does.
     fn enable_barrier() {
-        let ranges = ranges();
-        BARRIER.eval_base.store(ranges.eval.base, Relaxed);
-        BARRIER.eval_cards.store(ranges.eval.cards, Relaxed);
-        BARRIER.eval_meta.store(ranges.eval.meta as usize, Relaxed);
-        BARRIER.eval_len.store(ranges.eval.len, Relaxed);
-        BARRIER.program_base.store(ranges.program.base, Relaxed);
-        BARRIER.program_cards.store(ranges.program.cards, Relaxed);
-        BARRIER.program_len.store(ranges.program.len, Relaxed);
+        start_barrier(ranges());
     }
 
     /// A minor collection frees young garbage, keeps young objects that an old one
