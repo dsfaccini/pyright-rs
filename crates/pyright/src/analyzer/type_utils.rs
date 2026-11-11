@@ -1089,7 +1089,8 @@ pub fn transform_possible_recursive_type_alias(
     let recursion_count = recursion_count + 1;
 
     if let Some(type_) = type_ {
-        let alias_info = type_.props.borrow().as_ref().and_then(|props| props.type_alias_info.clone());
+        // `type.props?.typeAliasInfo`, read where a branch needs it: cloning it copies its type args.
+        let alias_info = || type_.props.borrow().as_ref().and_then(|props| props.type_alias_info.clone());
 
         if crate::analyzer::types::is_type_var(type_) {
             let shared = TypeVarType(type_).d().shared.get();
@@ -1097,6 +1098,7 @@ pub fn transform_possible_recursive_type_alias(
             let bound_type = shared.bound_type.get();
             if let (Some(recursive_alias), Some(bound_type)) = (recursive_alias, bound_type) {
                 if !recursive_alias.name.is_empty() {
+                    let alias_info = alias_info();
                     let unspecialized_type = if crate::analyzer::types::TypeBase::is_instance(type_) {
                         convert_to_instance(bound_type, true)
                     } else {
@@ -1122,6 +1124,7 @@ pub fn transform_possible_recursive_type_alias(
         if crate::analyzer::types::is_union(type_)
             && crate::analyzer::types::UnionType(type_).d().priv_.borrow().includes_recursive_type_alias
         {
+            let alias_info = alias_info();
             let mut new_type = map_subtypes(
                 type_,
                 &mut |subtype| transform_possible_recursive_type_alias(Some(subtype), recursion_count),
