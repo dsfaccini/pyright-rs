@@ -353,11 +353,12 @@ unsafe impl<T: Trace> Trace for OnceCell<T> {
 pub struct OptionRefCell<T>(std::cell::OnceCell<Box<std::cell::RefCell<Option<T>>>>);
 
 // SAFETY: as `RefCell`. The boxed `RefCell` sits outside the owner's slot, but every
-// write to it goes through `OptionRefCell::borrow_mut`, which runs the barrier.
+// write to it goes through `OptionRefCell::borrow_mut`, which runs the barrier. A cell
+// inside `T` sits in the box too, where a write through it marks no card of the owner.
 unsafe impl<T: Trace> Trace for OptionRefCell<T> {
     const HOLDS_EVAL: bool = T::HOLDS_EVAL;
     const HAS_CELL: bool = T::HOLDS_EVAL;
-    const CELL_OUT_OF_LINE: bool = T::CELL_OUT_OF_LINE;
+    const CELL_OUT_OF_LINE: bool = T::HAS_CELL;
     #[inline]
     fn prefetch_owned(&self) {
         if let Some(cell) = self.0.get() {

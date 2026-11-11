@@ -1665,6 +1665,14 @@ mod tests {
         node: Cell<Option<P<Node>>>,
     }
 
+    /// A cell inside an `OptionRefCell`'s value sits in its box, out of the owner's slot.
+    #[derive(jsrt::Trace)]
+    struct WithCell {
+        node: Cell<Option<P<Node>>>,
+    }
+    const _: () = assert!(<crate::cell::OptionRefCell<WithCell> as Trace>::CELL_OUT_OF_LINE);
+    const _: () = assert!(!<crate::cell::OptionRefCell<Option<P<Node>>> as Trace>::CELL_OUT_OF_LINE);
+
     fn node(next: Option<P<Node>>, drops: &Rc<()>, id: u32) -> P<Node> {
         P::new_eval(Node { next: Cell::new(next), drops: drops.clone(), id })
     }
