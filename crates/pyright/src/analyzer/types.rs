@@ -203,6 +203,17 @@ pub struct TypeBaseProps {
     pub condition: Option<Vec<TypeCondition>>,
 }
 
+impl TypeBaseProps {
+    fn is_empty(&self) -> bool {
+        let TypeBaseProps { instantiable_depth, special_form, type_form, type_alias_info, condition } = self;
+        instantiable_depth.is_none()
+            && special_form.is_none()
+            && type_form.is_none()
+            && type_alias_info.is_none()
+            && condition.is_none()
+    }
+}
+
 // analyzer/types.ts:195
 #[derive(jsrt::Trace)]
 #[trace(eval)]
@@ -263,6 +274,15 @@ impl TypeBase {
         })
     }
 
+    /// `addProps(type).<field> = value`. Every read of `props` is `props?.<field>`, so
+    /// an empty props object reads as none: writing `None` to a type without props
+    /// allocates nothing.
+    fn set_prop<T>(type_: P<Type>, field: fn(&mut TypeBaseProps) -> &mut Option<T>, value: Option<T>) {
+        if value.is_some() || type_.props.borrow().is_some() {
+            *field(&mut TypeBase::add_props(type_)) = value;
+        }
+    }
+
     // analyzer/types.ts:242
     pub fn get_instantiable_depth(type_: P<Type>) -> u32 {
         type_
@@ -275,27 +295,27 @@ impl TypeBase {
 
     // analyzer/types.ts:246
     pub fn set_special_form(type_: P<Type>, special_form: Option<ClassType>) {
-        TypeBase::add_props(type_).special_form = special_form;
+        TypeBase::set_prop(type_, |props| &mut props.special_form, special_form);
     }
 
     // analyzer/types.ts:250
     pub fn set_instantiable_depth(type_: P<Type>, depth: Option<u32>) {
-        TypeBase::add_props(type_).instantiable_depth = depth;
+        TypeBase::set_prop(type_, |props| &mut props.instantiable_depth, depth);
     }
 
     // analyzer/types.ts:254
     pub fn set_type_alias_info(type_: P<Type>, type_alias_info: Option<TypeAliasInfo>) {
-        TypeBase::add_props(type_).type_alias_info = type_alias_info;
+        TypeBase::set_prop(type_, |props| &mut props.type_alias_info, type_alias_info);
     }
 
     // analyzer/types.ts:258
     pub fn set_type_form(type_: P<Type>, type_form: Option<P<Type>>) {
-        TypeBase::add_props(type_).type_form = type_form;
+        TypeBase::set_prop(type_, |props| &mut props.type_form, type_form);
     }
 
     // analyzer/types.ts:262
     pub fn set_condition(type_: P<Type>, condition: Option<Vec<TypeCondition>>) {
-        TypeBase::add_props(type_).condition = condition;
+        TypeBase::set_prop(type_, |props| &mut props.condition, condition);
     }
 
     // analyzer/types.ts:266
@@ -337,7 +357,11 @@ impl TypeBase {
         P::new_eval(Type {
             category: type_.category,
             flags: type_.flags.clone(),
-            props: type_.props.clone(),
+            // `{ ...type.props }`; a copy of an empty props object reads as none (`set_prop`).
+            props: match type_.props.borrow().as_ref() {
+                Some(props) if !props.is_empty() => Some(props.clone()).into(),
+                _ => OptionRefCell::new(),
+            },
             cached: OptionRefCell::new(),
             cached_requires_specialization: Cell::new(None),
             d,
