@@ -33608,7 +33608,7 @@ impl TypeEvaluator {
         decls: &mut Vec<P<Declaration>>,
     ) -> bool {
         if !analyzer::types::is_instantiable_class(base_type)
-            || ClassType::cast(base_type).unwrap().d().shared.get().full_name != "functools.partial"
+            || ClassType::cast(base_type).unwrap().d().shared.get().full_name != jsrt::atom!("functools.partial")
         {
             return false;
         }
@@ -38198,16 +38198,17 @@ impl TypeEvaluator {
     pub(crate) fn is_type_form_class(&self, type_: ClassType) -> bool {
         let shared = type_.d().shared.get();
         let priv_ = type_.d().priv_.borrow();
-        let alias_name = priv_.cold().alias_name.as_deref();
-        let name_matches = shared.name == "TypeForm";
-        let alias_matches = alias_name == Some("TypeForm");
-        if !name_matches && !alias_matches && shared.full_name != "TypeForm" {
+        let alias_name = priv_.cold().alias_name;
+        let type_form = jsrt::atom!("TypeForm");
+        let name_matches = shared.name == type_form;
+        let alias_matches = alias_name == Some(type_form);
+        if !name_matches && !alias_matches && shared.full_name != type_form {
             return false;
         }
 
         let flags = shared.flags.get();
         // ClassType.isBuiltIn(type, 'TypeForm')
-        if flags.any(analyzer::types::ClassTypeFlags::BuiltIn) && (name_matches || shared.full_name == "TypeForm" || alias_matches) {
+        if flags.any(analyzer::types::ClassTypeFlags::BuiltIn) && (name_matches || shared.full_name == type_form || alias_matches) {
             return true;
         }
         // ClassType.isSpecialBuiltIn(type)
