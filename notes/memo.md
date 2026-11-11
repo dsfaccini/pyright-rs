@@ -7,6 +7,7 @@ Cut evaluator work that pyright repeats with the same result, with caches and sh
 - `jsrt::switch`: `SwitchMode` (`Off`, `On`, `Check`) and `jsrt::switch_mode!("PYRIGHT_RS_...")`, which reads a switch once per process.
 - `type_utils::get_class_iterator` takes `specialize: bool` and yields `(mro_class, Option<specialized>)`; `None` when `specialize` is false.
 - `type_evaluator::uncached_evaluation_count()` and `note_uncached_evaluation()`: a per-thread count of evaluations whose results can change later. `get_type_of_expression` counts every call that answers from no complete main type cache entry (a miss, an incomplete entry, a speculative or TypeForm entry), and `SynthesizeMethodsDeferred::call` counts each synthesis. A computation that leaves the count unchanged read only entries that stay.
+- `DiagnosticAddendum::add_message_format(message, params)`: `add_message(message.format(params))` with the formatting deferred to the first read (`get_messages`, `get_string`). The hot `assign_type`, `assign_class`, `assign_type_args`, `assign_to_union_type`, `assign_from_union_type` and `get_type_of_class_member_name` sites use it. `ParameterizedString` derives `Trace`.
 - `TypeEvaluator` has two Rust-only fields: `abstract_symbols_memo` (class details to `AbstractSymbolsMemoEntry`: the MRO `Rc` it was computed from and the symbols) and `stashed_speculative_stacks` (how many `disable_speculative_mode` calls hold a nonempty speculative stack). `AbstractSymbol` derives `Trace`.
 
 ## Shared-file edits
@@ -14,6 +15,7 @@ Cut evaluator work that pyright repeats with the same result, with caches and sh
 - `crates/jsrt/src/lib.rs`: `switch` module.
 - `analyzer/types.rs`: `SynthesizeMethodsDeferred::call` counts an uncached evaluation.
 - `analyzer/type_evaluator_types.rs`: `AbstractSymbol` derives `Trace`.
+- `common/diagnostic.rs`: `AddendumMessage` and `add_message_format`. `localization/localize.rs`: `ParameterizedString` derives `Trace`.
 - `docs/porting.md`: "switches" table and the `jsrt::switch_mode!` rule.
 
 ## Needs from others

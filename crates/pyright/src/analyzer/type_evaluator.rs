@@ -9162,10 +9162,7 @@ impl TypeEvaluator {
 
             // Report that the member could not be accessed.
             if let Some(diag) = diag {
-                diag.add_message(
-                    crate::localization::localize::LocAddendum::member_unknown()
-                        .format(&[("name", &member_name)]),
-                );
+                diag.add_message_format(crate::localization::localize::LocAddendum::member_unknown(), vec![("name", member_name.to_string())]);
             }
             return None;
         };
@@ -9176,10 +9173,7 @@ impl TypeEvaluator {
 
         if member_info.symbol.is_init_var() {
             if let Some(diag) = diag {
-                diag.add_message(
-                    crate::localization::localize::LocAddendum::member_is_init_var()
-                        .format(&[("name", &member_name)]),
-                );
+                diag.add_message_format(crate::localization::localize::LocAddendum::member_is_init_var(), vec![("name", member_name.to_string())]);
             }
             return None;
         }
@@ -9304,10 +9298,7 @@ impl TypeEvaluator {
                 && typed_decls[0].type_ == analyzer::declaration::DeclarationType::Variable
             {
                 if let Some(diag) = diag {
-                    diag.add_message(
-                        crate::localization::localize::LocAddendum::member_unknown()
-                            .format(&[("name", &member_name)]),
-                    );
+                    diag.add_message_format(crate::localization::localize::LocAddendum::member_unknown(), vec![("name", member_name.to_string())]);
                 }
                 return None;
             }
@@ -9438,10 +9429,7 @@ impl TypeEvaluator {
                     && flags.any(MemberAccessFlags::DisallowClassVarWrites)
                 {
                     if let Some(diag) = diag {
-                        diag.add_message(
-                            crate::localization::localize::LocAddendum::member_set_class_var()
-                                .format(&[("name", &member_name)]),
-                        );
+                        diag.add_message_format(crate::localization::localize::LocAddendum::member_set_class_var(), vec![("name", member_name.to_string())]);
                     }
                     is_descriptor_error = true;
                 }
@@ -9472,10 +9460,7 @@ impl TypeEvaluator {
                                 || analyzer::types::is_instantiable_class(class_type.0)
                             {
                                 if let Some(diag) = diag {
-                                    diag.add_message(
-                                        crate::localization::localize::LocMessage::final_reassigned()
-                                            .format(&[("name", &member_name)]),
-                                    );
+                                    diag.add_message_format(crate::localization::localize::LocMessage::final_reassigned(), vec![("name", member_name.to_string())]);
                                 }
                                 is_descriptor_error = true;
                             }
@@ -9490,10 +9475,7 @@ impl TypeEvaluator {
                     && member_info.is_read_only
                 {
                     if let Some(diag) = diag {
-                        diag.add_message(
-                            crate::localization::localize::LocAddendum::read_only_attribute()
-                                .format(&[("name", &member_name)]),
-                        );
+                        diag.add_message_format(crate::localization::localize::LocAddendum::read_only_attribute(), vec![("name", member_name.to_string())]);
                     }
                     is_descriptor_error = true;
                 }
@@ -9530,14 +9512,7 @@ impl TypeEvaluator {
                 ) {
                     if !set_type.is_incomplete.get().unwrap_or(false) {
                         if let Some(diag) = diag {
-                            diag.add_message(
-                                crate::localization::localize::LocAddendum::member_assignment()
-                                    .format(&[
-                                        ("type", &self.print_type(set_type.type_.get(), None)),
-                                        ("name", &member_name),
-                                        ("classType", &self.print_object_type_for_class(class_type)),
-                                    ]),
-                            );
+                            diag.add_message_format(crate::localization::localize::LocAddendum::member_assignment(), vec![("type", self.print_type(set_type.type_.get(), None)), ("name", member_name.to_string()), ("classType", self.print_object_type_for_class(class_type))]);
                         }
                     }
 
@@ -36516,16 +36491,7 @@ impl TypeEvaluator {
                 recursion_count,
             ) {
                 if let Some(diag) = diag {
-                    diag.add_message(crate::localization::localize::LocAddendum::protocol_incompatible().format(&[
-                        (
-                            "sourceType",
-                            &self.print_type(analyzer::type_utils::convert_to_instance(src_type.0, true), None),
-                        ),
-                        (
-                            "destType",
-                            &self.print_type(analyzer::type_utils::convert_to_instance(dest_type.0, true), None),
-                        ),
-                    ]));
+                    diag.add_message_format(crate::localization::localize::LocAddendum::protocol_incompatible(), vec![("sourceType", self.print_type(analyzer::type_utils::convert_to_instance(src_type.0, true), None)), ("destType", self.print_type(analyzer::type_utils::convert_to_instance(dest_type.0, true), None))]);
                 }
                 return false;
             }
@@ -36575,10 +36541,7 @@ impl TypeEvaluator {
                 src_error_type_text = src_full_name.to_string();
             }
 
-            diag.add_message(crate::localization::localize::LocAddendum::type_incompatible().format(&[
-                ("sourceType", &src_error_type_text),
-                ("destType", &dest_error_type_text),
-            ]));
+            diag.add_message_format(crate::localization::localize::LocAddendum::type_incompatible(), vec![("sourceType", src_error_type_text), ("destType", dest_error_type_text)]);
 
             // Tell the user about the disableBytesTypePromotions if that is involved.
             if ClassType::is_built_in(dest_type, Some(&[jsrt::atom!("bytes")])) {
@@ -37079,11 +37042,7 @@ impl TypeEvaluator {
                                 let error_message = error_source();
                                 let name = TypeVarType::get_readable_name(dest_type_param, true);
                                 let src_dest_types = self.print_src_dest_types(src_type_arg, dest_type_arg, None);
-                                child_diag.add_message(error_message.format(&[
-                                    ("name", &name),
-                                    ("sourceType", &src_dest_types.source_type),
-                                    ("destType", &src_dest_types.dest_type),
-                                ]));
+                                child_diag.add_message_format(error_message, vec![("name", name), ("sourceType", src_dest_types.source_type), ("destType", src_dest_types.dest_type)]);
 
                                 if include_diag_addendum {
                                     child_diag.add_addendum(assignment_diag);
@@ -37524,12 +37483,7 @@ impl TypeEvaluator {
                 if !analyzer::types::is_union(dest_type) {
                     if let Some(diag) = diag {
                         let src_dest_types = self.print_src_dest_types(src_type, dest_type, None);
-                        diag.add_message(
-                            crate::localization::localize::LocAddendum::type_assignment_mismatch().format(&[
-                                ("sourceType", &src_dest_types.source_type),
-                                ("destType", &src_dest_types.dest_type),
-                            ]),
-                        );
+                        diag.add_message_format(crate::localization::localize::LocAddendum::type_assignment_mismatch(), vec![("sourceType", src_dest_types.source_type), ("destType", src_dest_types.dest_type)]);
                     }
                     return false;
                 }
@@ -37567,10 +37521,7 @@ impl TypeEvaluator {
 
                 if let Some(diag) = diag {
                     let src_dest_types = self.print_src_dest_types(src_type, dest_type, None);
-                    diag.add_message(crate::localization::localize::LocAddendum::type_assignment_mismatch().format(&[
-                        ("sourceType", &src_dest_types.source_type),
-                        ("destType", &src_dest_types.dest_type),
-                    ]));
+                    diag.add_message_format(crate::localization::localize::LocAddendum::type_assignment_mismatch(), vec![("sourceType", src_dest_types.source_type), ("destType", src_dest_types.dest_type)]);
                 }
                 return false;
             }
@@ -37679,10 +37630,7 @@ impl TypeEvaluator {
 
                 if let Some(diag) = diag {
                     let src_dest_types = self.print_src_dest_types(src_type, dest_type, None);
-                    diag.add_message(crate::localization::localize::LocAddendum::type_assignment_mismatch().format(&[
-                        ("sourceType", &src_dest_types.source_type),
-                        ("destType", &src_dest_types.dest_type),
-                    ]));
+                    diag.add_message_format(crate::localization::localize::LocAddendum::type_assignment_mismatch(), vec![("sourceType", src_dest_types.source_type), ("destType", src_dest_types.dest_type)]);
                 }
                 return false;
             }
@@ -37702,15 +37650,7 @@ impl TypeEvaluator {
                         && !ClassType::cast(src_type).unwrap().d().priv_.borrow().include_subclasses.unwrap_or(false)
                     {
                         if let Some(diag) = diag {
-                            diag.add_message(
-                                crate::localization::localize::LocAddendum::protocol_source_is_not_concrete().format(&[
-                                    (
-                                        "sourceType",
-                                        &self.print_type(analyzer::type_utils::convert_to_instance(src_type, true), None),
-                                    ),
-                                    ("destType", &self.print_type(dest_type, None)),
-                                ]),
-                            );
+                            diag.add_message_format(crate::localization::localize::LocAddendum::protocol_source_is_not_concrete(), vec![("sourceType", self.print_type(analyzer::type_utils::convert_to_instance(src_type, true), None)), ("destType", self.print_type(dest_type, None))]);
                         }
                         return false;
                     }
@@ -37751,10 +37691,7 @@ impl TypeEvaluator {
 
                 if let Some(diag) = diag {
                     let src_dest_types = self.print_src_dest_types(src_type, dest_type, None);
-                    diag.add_message(crate::localization::localize::LocAddendum::type_assignment_mismatch().format(&[
-                        ("sourceType", &src_dest_types.source_type),
-                        ("destType", &src_dest_types.dest_type),
-                    ]));
+                    diag.add_message_format(crate::localization::localize::LocAddendum::type_assignment_mismatch(), vec![("sourceType", src_dest_types.source_type), ("destType", src_dest_types.dest_type)]);
                 }
                 return false;
             }
@@ -37855,12 +37792,7 @@ impl TypeEvaluator {
                     let src_literal_is_undefined = concrete_src_class.d().priv_.borrow().literal_value.is_none();
                     if src_literal_is_undefined || !ClassType::is_literal_value_same(concrete_src_class, dest_class) {
                         if let Some(diag) = diag {
-                            diag.add_message(
-                                crate::localization::localize::LocAddendum::literal_assignment_mismatch().format(&[
-                                    ("sourceType", &self.print_type(src_type, None)),
-                                    ("destType", &self.print_type(dest_type, None)),
-                                ]),
-                            );
+                            diag.add_message_format(crate::localization::localize::LocAddendum::literal_assignment_mismatch(), vec![("sourceType", self.print_type(src_type, None)), ("destType", self.print_type(dest_type, None))]);
                         }
 
                         return false;
@@ -38081,10 +38013,7 @@ impl TypeEvaluator {
 
                 if filtered_overloads.is_empty() {
                     if let Some(diag) = diag {
-                        diag.add_message(
-                            crate::localization::localize::LocAddendum::no_overload_assignable()
-                                .format(&[("type", &self.print_type(dest_type, None))]),
-                        );
+                        diag.add_message_format(crate::localization::localize::LocAddendum::no_overload_assignable(), vec![("type", self.print_type(dest_type, None))]);
                     }
                     return false;
                 }
@@ -38158,10 +38087,7 @@ impl TypeEvaluator {
                 if let Some(overload_diag) = overload_diag
                     && !overloads.is_empty()
                 {
-                    overload_diag.add_message(
-                        crate::localization::localize::LocAddendum::overload_not_assignable()
-                            .format(&[("name", &overloads[0].d().shared.get().name)]),
-                    );
+                    overload_diag.add_message_format(crate::localization::localize::LocAddendum::overload_not_assignable(), vec![("name", overloads[0].d().shared.get().name.to_string())]);
                 }
                 return false;
             }
@@ -38212,10 +38138,7 @@ impl TypeEvaluator {
 
         if let Some(diag) = diag {
             let src_dest_types = self.print_src_dest_types(src_type, dest_type, None);
-            diag.add_message(crate::localization::localize::LocAddendum::type_assignment_mismatch().format(&[
-                ("sourceType", &src_dest_types.source_type),
-                ("destType", &src_dest_types.dest_type),
-            ]));
+            diag.add_message_format(crate::localization::localize::LocAddendum::type_assignment_mismatch(), vec![("sourceType", src_dest_types.source_type), ("destType", src_dest_types.dest_type)]);
         }
 
         false
@@ -38733,10 +38656,7 @@ impl TypeEvaluator {
 
             if let Some(diag) = diag {
                 let types = self.print_src_dest_types(src_type.0, dest_type, None);
-                diag.add_message(
-                    crate::localization::localize::LocAddendum::type_assignment_mismatch()
-                        .format(&[("sourceType", &types.source_type), ("destType", &types.dest_type)]),
-                );
+                diag.add_message_format(crate::localization::localize::LocAddendum::type_assignment_mismatch(), vec![("sourceType", types.source_type), ("destType", types.dest_type)]);
             }
             return false;
         }
@@ -39119,10 +39039,7 @@ impl TypeEvaluator {
             if is_incompatible {
                 if let Some(diag) = diag {
                     let types = self.print_src_dest_types(src_type, dest_type.0, None);
-                    diag.add_message(
-                        crate::localization::localize::LocAddendum::type_assignment_mismatch()
-                            .format(&[("sourceType", &types.source_type), ("destType", &types.dest_type)]),
-                    );
+                    diag.add_message_format(crate::localization::localize::LocAddendum::type_assignment_mismatch(), vec![("sourceType", types.source_type), ("destType", types.dest_type)]);
                 }
                 return false;
             }
@@ -39287,10 +39204,7 @@ impl TypeEvaluator {
         if !found_match {
             if let (Some(diag), Some(diag_addendum)) = (diag, diag_addendum) {
                 let types = self.print_src_dest_types(src_type, dest_type.0, None);
-                diag.add_message(
-                    crate::localization::localize::LocAddendum::type_assignment_mismatch()
-                        .format(&[("sourceType", &types.source_type), ("destType", &types.dest_type)]),
-                );
+                diag.add_message_format(crate::localization::localize::LocAddendum::type_assignment_mismatch(), vec![("sourceType", types.source_type), ("destType", types.dest_type)]);
                 diag.add_addendum(diag_addendum);
             }
             return false;
