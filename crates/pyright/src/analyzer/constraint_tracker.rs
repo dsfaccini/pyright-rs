@@ -6,8 +6,8 @@ use crate::analyzer::type_complexity::get_complexity_score_for_type;
 use crate::analyzer::types::TypeSameOptions;
 use crate::analyzer::types::is_type_same;
 use crate::analyzer::types::{Type, TypeVarScopeId, TypeVarType};
-use jsrt::{Atom, JsSet, LazyJsMap, NonEmptyList, P};
-use jsrt::cell::RefCell;
+use jsrt::{Atom, JsSet, NonEmptyList, P, VecMap};
+use jsrt::cell::{OnceCell, Ref, RefCell};
 
 // analyzer/constraintTracker.ts:24
 pub(crate) const MAX_CONSTRAINT_SET_COUNT: u32 = 1024;
@@ -26,19 +26,45 @@ pub struct TypeVarConstraints {
 #[derive(jsrt::Trace)]
 #[trace(eval)]
 pub struct ConstraintSet {
-    pub(crate) _type_var_map: RefCell<LazyJsMap<Atom, TypeVarConstraints>>,
-    pub(crate) _scope_ids: RefCell<Option<Box<JsSet<TypeVarScopeId>>>>,
+    // `_typeVarMap` and `_scopeIds`, each allocated on its first insert: most sets stay empty,
+    // and a dead set without them is swept without reading its slot (docs/collector-design.md,
+    // "sweep").
+    pub(crate) _type_var_map: OnceCell<P<TypeVarConstraintMap>>,
+    pub(crate) _scope_ids: OnceCell<P<ScopeIdSet>>,
 }
-// Most sets stay empty: the map and the scope ids are allocated on first insert (PLAN.md step 6).
-const _: () = assert!(size_of::<ConstraintSet>() <= 32);
+const _: () = assert!(size_of::<ConstraintSet>() <= 16);
+
+/// The entries of a [`ConstraintSet`].
+#[derive(Default)]
+#[derive(jsrt::Trace)]
+#[trace(eval)]
+pub(crate) struct TypeVarConstraintMap(RefCell<VecMap<Atom, TypeVarConstraints>>);
+
+/// The scope ids of a [`ConstraintSet`].
+#[derive(Default)]
+#[derive(jsrt::Trace)]
+#[trace(eval)]
+pub(crate) struct ScopeIdSet(RefCell<JsSet<TypeVarScopeId>>);
 
 impl ConstraintSet {
     // analyzer/constraintTracker.ts:53
     pub fn new() -> P<ConstraintSet> {
         P::new_eval(ConstraintSet {
-            _type_var_map: RefCell::new(LazyJsMap::default()),
-            _scope_ids: RefCell::new(None),
+            _type_var_map: OnceCell::new(),
+            _scope_ids: OnceCell::new(),
         })
+    }
+
+    fn map(&self) -> Option<Ref<'_, VecMap<Atom, TypeVarConstraints>>> {
+        self._type_var_map.get().map(|map| map.get().0.borrow())
+    }
+
+    fn map_len(&self) -> usize {
+        self.map().map_or(0, |map| map.len())
+    }
+
+    fn scope_ids(&self) -> Option<Ref<'_, JsSet<TypeVarScopeId>>> {
+        self._scope_ids.get().map(|scope_ids| scope_ids.get().0.borrow())
     }
 
     // analyzer/constraintTracker.ts:57
@@ -57,7 +83,7 @@ impl ConstraintSet {
             );
         }
 
-        let scope_ids = self._scope_ids.borrow().clone();
+        let scope_ids = self.scope_ids().map(|scope_ids| scope_ids.clone());
         if let Some(scope_ids) = scope_ids {
             for scope_id in scope_ids.iter() {
                 constraint_set.add_scope_id(*scope_id);
@@ -70,7 +96,7 @@ impl ConstraintSet {
     // analyzer/constraintTracker.ts:71
     /// Nested in the TS body: typesMatch (:76).
     pub fn is_same(&self, other: P<ConstraintSet>) -> bool {
-        if self._type_var_map.borrow().len() != other._type_var_map.borrow().len() {
+        if self.map_len() != other.map_len() {
             return false;
         }
 
@@ -93,13 +119,12 @@ impl ConstraintSet {
 
         let mut is_same = true;
         let entries: Vec<(Atom, TypeVarConstraints)> = self
-            ._type_var_map
-            .borrow()
+            .map()
             .iter()
-            .map(|(k, v)| (*k, v.clone()))
+            .flat_map(|map| map.iter().map(|(k, v)| (*k, v.clone())))
             .collect();
         for (key, value) in entries {
-            let other_value = other._type_var_map.borrow().get(&key).cloned();
+            let other_value = other.map().and_then(|map| map.get(&key).cloned());
             match other_value {
                 Some(other_value)
                     if types_match(value.lower_bound, other_value.lower_bound)
@@ -115,7 +140,7 @@ impl ConstraintSet {
 
     // analyzer/constraintTracker.ts:99
     pub fn is_empty(&self) -> bool {
-        self._type_var_map.borrow().is_empty()
+        self.map_len() == 0
     }
 
     // analyzer/constraintTracker.ts:105
@@ -150,7 +175,8 @@ impl ConstraintSet {
         retain_literals: Option<bool>,
     ) {
         let key = TypeVarType::get_name_with_scope(type_var);
-        self._type_var_map.borrow_mut().insert(
+        let map = *self._type_var_map.get_or_init(|| P::new_eval(TypeVarConstraintMap::default()));
+        map.get().0.borrow_mut().insert(
             key,
             TypeVarConstraints {
                 type_var,
@@ -174,21 +200,23 @@ impl ConstraintSet {
 
     /// The entry at `index` in insertion order, copied out of the map.
     fn entry_at(&self, index: usize) -> Option<TypeVarConstraints> {
-        self._type_var_map.borrow().get_index(index).map(|(_, entry)| entry.clone())
+        self.map()?.get_index(index).map(|(_, entry)| entry.clone())
     }
 
     // analyzer/constraintTracker.ts:139
     pub fn get_type_var(&self, type_var: TypeVarType) -> Option<TypeVarConstraints> {
         let key = TypeVarType::get_name_with_scope(type_var);
-        self._type_var_map.borrow().get(&key).cloned()
+        self.map()?.get(&key).cloned()
     }
 
     // analyzer/constraintTracker.ts:144
     pub fn get_type_vars(&self) -> Vec<TypeVarConstraints> {
         let mut entries: Vec<TypeVarConstraints> = Vec::new();
 
-        for entry in self._type_var_map.borrow().values() {
-            entries.push(entry.clone());
+        if let Some(map) = self.map() {
+            for entry in map.values() {
+                entries.push(entry.clone());
+            }
         }
 
         entries
@@ -196,17 +224,13 @@ impl ConstraintSet {
 
     // analyzer/constraintTracker.ts:154
     pub fn add_scope_id(&self, scope_id: TypeVarScopeId) {
-        let mut scope_ids = self._scope_ids.borrow_mut();
-        if scope_ids.is_none() {
-            *scope_ids = Some(Box::default());
-        }
-
-        scope_ids.as_mut().unwrap().insert(scope_id);
+        let scope_ids = *self._scope_ids.get_or_init(|| P::new_eval(ScopeIdSet::default()));
+        scope_ids.get().0.borrow_mut().insert(scope_id);
     }
 
     // analyzer/constraintTracker.ts:162
     pub fn has_scope_id(&self, scope_id: TypeVarScopeId) -> bool {
-        match &*self._scope_ids.borrow() {
+        match self.scope_ids() {
             None => false,
             Some(scope_ids) => scope_ids.contains(&scope_id),
         }
@@ -215,7 +239,7 @@ impl ConstraintSet {
     // analyzer/constraintTracker.ts:170
     pub fn get_scope_ids(&self) -> JsSet<TypeVarScopeId> {
         // `new Set(undefined)` is an empty set.
-        self._scope_ids.borrow().as_deref().cloned().unwrap_or_default()
+        self.scope_ids().map(|scope_ids| scope_ids.clone()).unwrap_or_default()
     }
 
     // analyzer/constraintTracker.ts:174
