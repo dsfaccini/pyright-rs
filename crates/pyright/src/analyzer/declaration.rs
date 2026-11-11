@@ -99,13 +99,15 @@ pub struct Declaration {
     // contains the declaration (may not be definitive
     // because a source file can be accessed via different
     // import names in some cases).
-    /// Shared with the file info, as the TypeScript string is.
-    pub module_name: RefCell<Rc<str>>,
+    /// Shared with the file info, as the TypeScript string is: `module_name()`.
+    /// Always set; the `Option` lets `module_name()` clone it out of the `Cell`.
+    #[trace(skip)]
+    module_name: Cell<Option<Rc<String>>>,
 
     /// Private, so only `Declaration::create` makes a header, always followed by its fields.
     _details: (),
 }
-const _: () = assert!(size_of::<Declaration>() <= 64);
+const _: () = assert!(size_of::<Declaration>() <= 48);
 
 /// A declaration as allocated: the header, then the fields of its interface.
 #[repr(C)]
@@ -172,7 +174,7 @@ impl Declaration {
         node: P<ParseNode>,
         uri: Uri,
         range: Range,
-        module_name: Rc<str>,
+        module_name: Rc<String>,
         is_in_except_suite: bool,
     ) -> Declaration {
         Declaration {
@@ -182,7 +184,7 @@ impl Declaration {
             node: Cell::new(node),
             uri: Cell::new(uri),
             range: Cell::new(range),
-            module_name: RefCell::new(module_name),
+            module_name: Cell::new(Some(module_name)),
             _details: (),
         }
     }
@@ -194,7 +196,7 @@ impl Declaration {
         node: P<ParseNode>,
         uri: Uri,
         range: Range,
-        module_name: Rc<str>,
+        module_name: Rc<String>,
         is_in_except_suite: bool,
         d: D,
     ) -> P<Declaration> {
@@ -203,13 +205,23 @@ impl Declaration {
         P::new(DeclarationAlloc { decl, d }).header(|alloc| &alloc.decl)
     }
 
+    pub fn module_name(&self) -> Rc<String> {
+        let name = self.module_name.take();
+        self.module_name.set(name.clone());
+        name.expect("a declaration's module name is always set")
+    }
+
+    pub fn set_module_name(&self, name: Rc<String>) {
+        self.module_name.set(Some(name));
+    }
+
     /// `create` on the evaluator heap.
     pub fn create_eval<D: DeclarationInterface>(
         type_: DeclarationType,
         node: P<ParseNode>,
         uri: Uri,
         range: Range,
-        module_name: Rc<str>,
+        module_name: Rc<String>,
         is_in_except_suite: bool,
         d: D,
     ) -> P<Declaration> {

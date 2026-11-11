@@ -73,7 +73,7 @@ pub struct AnalyzerFileInfo {
     pub file_id: String,
     pub file_uri: Uri,
     /// Shared with every declaration of the file.
-    pub module_name: Rc<str>,
+    pub module_name: Rc<String>,
     pub is_stub_file: bool,
     pub is_typing_stub_file: bool,
     pub is_typing_extensions_stub_file: bool,

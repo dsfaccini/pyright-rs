@@ -25,6 +25,7 @@ use crate::parser::parse_nodes::{
 };
 use jsrt::P;
 use jsrt::cell::{Cell, RefCell};
+use std::rc::Rc;
 
 // analyzer/declarationUtils.ts:20
 #[derive(Clone)]
@@ -284,7 +285,7 @@ pub fn get_declarations_with_uses_local_name_removed(
             decl.node.get(),
             decl.uri.get(),
             decl.range.get(),
-            decl.module_name.borrow().clone(),
+            decl.module_name(),
             decl.is_in_except_suite.get(),
             AliasDeclarationDetails {
                 uses_local_name: Cell::new(alias.uses_local_name.get()),
@@ -328,7 +329,7 @@ pub fn synthesize_alias_declaration(uri: &Uri) -> P<Declaration> {
         undefined_declaration_node(),
         *uri,
         get_empty_range(),
-        "".into(),
+        Rc::default(),
         false,
         alias,
     )
@@ -356,7 +357,7 @@ pub fn resolve_alias_declaration(
             decl.node.get(),
             decl.uri.get(),
             decl.range.get(),
-            decl.module_name.borrow().clone(),
+            decl.module_name(),
             decl.is_in_except_suite.get(),
             AliasDeclarationDetails {
                 uses_local_name: Cell::new(alias.uses_local_name.get()),
@@ -450,14 +451,13 @@ pub fn resolve_alias_declaration(
                 }
 
                 let submodule_fallback = copy_alias_declaration(&submodule_fallback);
-                let mut base_module_name = submodule_fallback.module_name.borrow().to_string();
+                let mut base_module_name = submodule_fallback.module_name().to_string();
 
                 if !base_module_name.is_empty() {
                     base_module_name = format!("{base_module_name}.");
                 }
 
-                *submodule_fallback.module_name.borrow_mut() =
-                    format!("{base_module_name}{symbol_name}").into();
+                submodule_fallback.set_module_name(Rc::new(format!("{base_module_name}{symbol_name}")));
 
                 return resolve_alias_declaration(import_lookup, submodule_fallback, options);
             }
@@ -527,7 +527,7 @@ pub fn resolve_alias_declaration(
         {
             if !saw_py_typed_transition {
                 if symbol.is_private_py_typed_import() {
-                    private_py_typed_importer = Some(prev_declaration.module_name.borrow().to_string());
+                    private_py_typed_importer = Some(prev_declaration.module_name().to_string());
                 }
 
                 // Note that we've seen a transition from a non-py.typed to a py.typed
@@ -538,7 +538,7 @@ pub fn resolve_alias_declaration(
                 // symbol that is resolved so we can tell the user to import from this
                 // location instead.
                 if !symbol.is_private_py_typed_import() && private_py_typed_imported.is_none() {
-                    private_py_typed_imported = Some(cur_declaration.module_name.borrow().to_string());
+                    private_py_typed_imported = Some(cur_declaration.module_name().to_string());
                 }
             }
         }

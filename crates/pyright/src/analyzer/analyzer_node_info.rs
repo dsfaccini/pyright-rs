@@ -1095,7 +1095,7 @@ mod tests {
             defined_constants: JsMap::default(),
             file_id: String::new(),
             file_uri: Uri::empty(),
-            module_name: "".into(),
+            module_name: Rc::default(),
             is_stub_file: false,
             is_typing_stub_file: false,
             is_typing_extensions_stub_file: false,

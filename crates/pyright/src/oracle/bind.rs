@@ -266,7 +266,7 @@ pub fn declaration_value(decl: &Declaration) -> Value {
     let mut fields: Vec<(&'static str, Option<Value>)> = vec![
         ("isInExceptSuite", Some(Value::bool(decl.is_in_except_suite.get()))),
         ("isInInlinedTypedDict", opt(decl.is_in_inlined_typed_dict.get(), Value::bool)),
-        ("moduleName", Some(Value::str(&decl.module_name.borrow()))),
+        ("moduleName", Some(Value::str(&decl.module_name()))),
         ("node", Some(Value::node(decl.node.get()))),
         ("range", Some(Value::range(decl.range.get()))),
         ("type", Some(Value::number(decl.type_ as i32 as f64))),

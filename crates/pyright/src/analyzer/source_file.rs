@@ -1074,7 +1074,7 @@ impl SourceFile {
             defined_constants: config_options.define_constant.clone(),
             file_id: self.file_id.clone(),
             file_uri: self.uri,
-            module_name: self.get_module_name().into(),
+            module_name: Rc::new(self.get_module_name()),
             is_stub_file: self.is_stub_file,
             is_typing_stub_file: self.is_typing_stub_file,
             is_typing_extensions_stub_file: self.is_typing_extensions_stub_file,

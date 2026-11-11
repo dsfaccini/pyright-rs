@@ -34812,7 +34812,7 @@ impl TypeEvaluator {
                 None => {
                     // Build a module type that corresponds to the declaration and
                     // its associated loader actions.
-                    let module_name = resolved_decl.module_name.borrow().clone();
+                    let module_name = resolved_decl.module_name();
                     let module_type =
                         analyzer::types::ModuleType::create(&module_name, &resolved_decl.uri.get(), None);
 

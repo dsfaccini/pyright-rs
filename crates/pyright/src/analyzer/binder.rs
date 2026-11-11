@@ -207,7 +207,7 @@ fn get_called_built_in_name(
             }
 
             if let Some(alias) = declaration.alias() {
-                if &**declaration.module_name.borrow() == "builtins" {
+                if declaration.module_name().as_str() == "builtins" {
                     if let Some(symbol_name) = alias.symbol_name.borrow().as_ref() {
                         if !symbol_name.is_empty() {
                             return Some(symbol_name.clone());
@@ -225,7 +225,7 @@ fn get_called_built_in_name(
             let declaration = declarations.last().copied();
             if let Some(declaration) = declaration {
                 if let Some(alias) = declaration.alias() {
-                    if &**declaration.module_name.borrow() == "builtins"
+                    if declaration.module_name().as_str() == "builtins"
                         && alias.symbol_name.borrow().as_ref().is_none_or(|s| s.is_empty())
                     {
                         return Some(member_access.member.get().d().value().to_string());
@@ -5195,7 +5195,7 @@ impl Binder {
             return false;
         }
 
-        let module_name = imported_module_alias_decl.module_name.borrow().clone();
+        let module_name = imported_module_alias_decl.module_name();
         let first_name_part = imported_module_alias_decl
             .alias()
             .unwrap()
@@ -5239,7 +5239,7 @@ impl Binder {
             }
 
             if let Some(module_name) = module_name {
-                if &**declaration.module_name.borrow() != module_name {
+                if *declaration.module_name() != *module_name {
                     continue;
                 }
             }
@@ -5273,7 +5273,7 @@ impl Binder {
             node.node(),
             cloned_loader_actions.uri.get(),
             get_empty_range(),
-            declaration.module_name.borrow().clone(),
+            declaration.module_name(),
             self._is_in_except_suite,
             details,
         );
