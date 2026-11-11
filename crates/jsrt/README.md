@@ -11,6 +11,8 @@ Every helper is tested against Node 26 through fixtures in `fixtures/`. Regenera
 | object reference, `===` on objects | `P<T>` (`P::new`, `==` is identity) |
 | `Map`, `Set` | `JsMap`, `JsSet` (delete with `shift_remove`) |
 | lookup-only map or set | `FxHashMap`, `FxHashSet` (never iterate) |
+| `Map` that most owners leave empty and the rest fill with a few entries | `LazyJsMap` (one pointer while empty, searched linearly) |
+| `Set` that holds a few elements at a time | `SmallJsSet` (searched linearly) |
 
 ## arrays
 
