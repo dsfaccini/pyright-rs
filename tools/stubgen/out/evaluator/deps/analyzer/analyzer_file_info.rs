@@ -15,8 +15,8 @@ use crate::common::diagnostic_sink::TextRangeDiagnosticSink;
 use crate::common::text_range::TextRange;
 use crate::common::text_range_collection::TextRangeCollection;
 use crate::common::uri::uri::Uri;
+use jsrt::cell::{Cell, RefCell};
 use jsrt::{JsMap, JsSet, P};
-use std::cell::{Cell, RefCell};
 
 // analyzer/analyzerFileInfo.ts:45
 pub struct AnalyzerFileInfo {

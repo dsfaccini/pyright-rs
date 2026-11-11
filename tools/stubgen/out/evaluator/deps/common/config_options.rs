@@ -12,8 +12,8 @@ use crate::common::diagnostic::TaskListToken;
 use crate::common::python_version::PythonVersion;
 use crate::common::uri::uri::Uri;
 use crate::common::uri::uri_utils::FileSpec;
+use jsrt::cell::{Cell, RefCell};
 use jsrt::{JsMap, P};
-use std::cell::{Cell, RefCell};
 
 // common/configOptions.ts:43
 pub struct ExecutionEnvironment {

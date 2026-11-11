@@ -11,8 +11,8 @@
 use crate::common::text_range::Range;
 use crate::common::uri::uri::Uri;
 use crate::parser::parse_nodes::{ExpressionNode, NameNode, ParseNode, RaiseNode, ReturnNode};
+use jsrt::cell::{Cell, RefCell};
 use jsrt::{JsMap, P};
-use std::cell::{Cell, RefCell};
 
 // analyzer/declaration.ts:59
 pub struct Declaration {

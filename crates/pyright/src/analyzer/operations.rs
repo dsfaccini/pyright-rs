@@ -41,6 +41,7 @@ use crate::parser::tokenizer_types::OperatorType;
 use jsrt::JsBigInt;
 use jsrt::{JsMap, P};
 use jsrt::cell::Cell;
+use std::rc::Rc;
 
 thread_local! {
     // analyzer/operations.ts:67
@@ -107,7 +108,7 @@ pub fn validate_binary_operation(
     let mut type_: Option<P<Type>> = None;
     let mut concrete_left_type =
         evaluator.make_top_level_type_vars_concrete(left_type, false, None);
-    let mut deprecated_info: Option<MagicMethodDeprecationInfo> = None;
+    let mut deprecated_info: Option<Rc<MagicMethodDeprecationInfo>> = None;
 
     if BOOLEAN_OPERATOR_MAP.with(|map| map.contains_key(&operator)) {
         // If it's an AND or OR, we need to handle short-circuiting by
@@ -574,7 +575,7 @@ pub fn get_type_of_augmented_assignment(
 
     let operator = node.d().operator.get();
     let diag = DiagnosticAddendum::new();
-    let mut deprecated_info: Option<MagicMethodDeprecationInfo> = None;
+    let mut deprecated_info: Option<Rc<MagicMethodDeprecationInfo>> = None;
 
     let left_type_result =
         evaluator.get_type_of_expression(node.d().left_expr.get(), EvalFlags::None, None);
@@ -810,7 +811,7 @@ pub fn get_type_of_unary_operation(
     };
 
     let mut type_: Option<P<Type>> = None;
-    let mut deprecated_info: Option<MagicMethodDeprecationInfo> = None;
+    let mut deprecated_info: Option<Rc<MagicMethodDeprecationInfo>> = None;
 
     if operator != OperatorType::Not && is_optional_type(expr_type) {
         evaluator.add_diagnostic(
@@ -1537,7 +1538,7 @@ pub(crate) fn validate_containment_operation(
     error_node: ExpressionNode,
     diag: P<DiagnosticAddendum>,
 ) -> P<TypeResult> {
-    let mut deprecated_info: Option<MagicMethodDeprecationInfo> = None;
+    let mut deprecated_info: Option<Rc<MagicMethodDeprecationInfo>> = None;
 
     let type_ = evaluator.map_subtypes_expand_type_vars(
         right_type_result.type_.get(),
@@ -1647,7 +1648,7 @@ pub(crate) fn validate_arithmetic_operation(
     diag: P<DiagnosticAddendum>,
     options: &BinaryOperationOptions,
 ) -> P<TypeResult> {
-    let mut deprecated_info: Option<MagicMethodDeprecationInfo> = None;
+    let mut deprecated_info: Option<Rc<MagicMethodDeprecationInfo>> = None;
     let is_incomplete = left_type_result.is_incomplete.get().unwrap_or(false)
         || right_type_result.is_incomplete.get().unwrap_or(false);
     let (magic_method_name, alt_magic_method_name) = BINARY_OPERATOR_MAP

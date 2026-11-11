@@ -11,8 +11,8 @@
 use crate::parser::parse_nodes::{
     CallNode, ExpressionNode, ImportFromNode, MatchNode, NameNode, ParseNode, SuiteNode,
 };
+use jsrt::cell::{Cell, RefCell};
 use jsrt::{JsSet, P};
-use std::cell::{Cell, RefCell};
 use std::ops::Deref;
 
 // analyzer/codeFlowTypes.ts:59

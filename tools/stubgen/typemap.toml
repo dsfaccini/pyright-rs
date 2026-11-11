@@ -80,6 +80,10 @@ Promise = "$0"
 # Written in place after its caller handed it on (typeEvaluator.ts:1251, 15248, 15855, tuples.ts:159):
 # every holder of the context sees the write, so it is shared, not copied.
 "analyzer/typeUtils.ts:InferenceContext" = "handle"
+# Never written after creation, and copied from result to result: shared, so a result's cold
+# half holds a pointer, not three strings.
+"analyzer/typeEvaluatorTypes.ts:MemberAccessDeprecationInfo" = "rc"
+"analyzer/typeEvaluatorTypes.ts:MagicMethodDeprecationInfo" = "rc"
 # Rewritten from behavior (PLAN.md): one Rust type, its shape chosen by whoever ports common/uri.
 "common/uri/uri.ts:Uri" = "opaque"
 
@@ -250,7 +254,7 @@ interface = "analyzer/codeFlowEngine.ts:CodeFlowAnalyzer"
 "analyzer/types.ts:TypeVarDetailsPriv.scopeName" = "std::rc::Rc<str>"
 "analyzer/types.ts:TypeVarDetailsPriv.nameWithScope" = "std::rc::Rc<str>"
 # Doc strings, copied by every `{ ...shared }` of a function or class: shared, as a JS string is.
-"analyzer/types.ts:FunctionDetailsShared.docString" = "std::rc::Rc<str>"
+"analyzer/types.ts:FunctionDetailsShared.docString" = "Option<std::rc::Rc<str>>"
 "analyzer/types.ts:ClassDetailsShared.docString" = "std::rc::Rc<str>"
 # docs/porting.md "strings": a Python string literal's value can hold a lone surrogate, which
 # printLiteralValue keeps (`JSON.stringify` escapes it).

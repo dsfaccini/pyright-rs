@@ -93,7 +93,7 @@ pub struct MemberAccessTypeResult {
     pub type_: P<Type>,
     pub is_descriptor_applied: Option<bool>,
     pub is_asymmetric_accessor: Option<bool>,
-    pub member_access_deprecation_info: Option<MemberAccessDeprecationInfo>,
+    pub member_access_deprecation_info: Option<Rc<MemberAccessDeprecationInfo>>,
     pub type_errors: Option<bool>,
 }
 
@@ -8315,7 +8315,7 @@ impl TypeEvaluator {
         let mut is_asymmetric_accessor: Option<bool> = None;
         let is_required = false;
         let is_not_required = false;
-        let mut member_access_deprecation_info: Option<MemberAccessDeprecationInfo> = None;
+        let mut member_access_deprecation_info: Option<Rc<MemberAccessDeprecationInfo>> = None;
 
         if usage
             .set_type
@@ -9284,7 +9284,7 @@ impl TypeEvaluator {
         let mut is_descriptor_error = false;
         let mut is_asymmetric_accessor = false;
         let mut is_descriptor_applied = false;
-        let mut member_access_deprecation_info: Option<MemberAccessDeprecationInfo> = None;
+        let mut member_access_deprecation_info: Option<Rc<MemberAccessDeprecationInfo>> = None;
 
         type_ = analyzer::type_utils::map_subtypes(
             type_,
@@ -9823,7 +9823,7 @@ impl TypeEvaluator {
         );
 
         // Collect deprecation information associated with the member access method.
-        let mut deprecation_info: Option<MemberAccessDeprecationInfo> = None;
+        let mut deprecation_info: Option<Rc<MemberAccessDeprecationInfo>> = None;
         if let Some(overloads_used_for_call) = &call_result.overloads_used_for_call {
             if !overloads_used_for_call.is_empty() {
                 let overload_used = overloads_used_for_call[0];
@@ -9835,7 +9835,7 @@ impl TypeEvaluator {
                     .clone()
                     .filter(|message| !message.is_empty());
                 if let Some(deprecated_message) = deprecated_message {
-                    deprecation_info = Some(MemberAccessDeprecationInfo {
+                    deprecation_info = Some(Rc::new(MemberAccessDeprecationInfo {
                         deprecated_message,
                         access_type: if ClassType::is_property_class(concrete_member_type) {
                             "property".to_string()
@@ -9843,7 +9843,7 @@ impl TypeEvaluator {
                             "descriptor".to_string()
                         },
                         access_method: usage.method.clone(),
-                    });
+                    }));
                 }
             }
         }
@@ -22360,7 +22360,7 @@ impl TypeEvaluator {
         let magic_method_supported = Cell::new(true);
         let is_incomplete = Cell::new(false);
         let deprecation_info: RefCell<
-            Option<analyzer::type_evaluator_types::MagicMethodDeprecationInfo>,
+            Option<Rc<analyzer::type_evaluator_types::MagicMethodDeprecationInfo>>,
         > = RefCell::new(None);
         let overloads_used_for_call: RefCell<Vec<FunctionType>> = RefCell::new(Vec::new());
 
@@ -22449,7 +22449,7 @@ impl TypeEvaluator {
                             deprecated_message.filter(|m| !m.is_empty())
                         {
                             if analyzer::types::is_class(concrete_subtype) {
-                                *deprecation_info.borrow_mut() = Some(
+                                *deprecation_info.borrow_mut() = Some(Rc::new(
                                     analyzer::type_evaluator_types::MagicMethodDeprecationInfo {
                                         deprecated_message,
                                         class_name: ClassType(concrete_subtype)
@@ -22460,7 +22460,7 @@ impl TypeEvaluator {
                                             .to_string(),
                                         method_name: method_name.to_string(),
                                     },
-                                );
+                                ));
                             }
                         }
                     }

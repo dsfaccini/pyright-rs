@@ -14,8 +14,8 @@ use crate::analyzer::type_evaluator::TypeCacheEntry;
 use crate::analyzer::type_evaluator_types::TypeResult;
 use crate::analyzer::types::Type;
 use crate::parser::parse_nodes::ParseNode;
-use jsrt::{JsMap, P};
-use std::cell::RefCell;
+use jsrt::cell::RefCell;
+use jsrt::{FxHashMap, JsMap, P};
 
 // analyzer/typeCacheUtils.ts:17
 #[derive(Clone)]
@@ -162,8 +162,8 @@ impl SpeculativeTypeTracker {
 /// cache (codeFlowEngine.ts:314). TypeScript passes the map itself; the holder shares it.
 #[derive(Clone, Copy)]
 pub enum SpeculativeCache {
-    Type(P<RefCell<JsMap<u32, TypeCacheEntry>>>),
-    FlowNodeType(P<RefCell<JsMap<u32, Option<CachedType>>>>),
+    Type(P<RefCell<FxHashMap<u32, TypeCacheEntry>>>),
+    FlowNodeType(P<RefCell<FxHashMap<u32, Option<CachedType>>>>),
 }
 
 // Defined in tools/stubgen/typemap.toml [items].

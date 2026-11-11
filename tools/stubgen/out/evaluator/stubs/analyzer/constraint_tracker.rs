@@ -10,8 +10,9 @@
 )]
 
 use crate::analyzer::types::{Type, TypeVarType};
+use jsrt::cell::RefCell;
 use jsrt::{JsSet, LazyJsMap, P};
-use std::cell::RefCell;
+use std::rc::Rc;
 
 // analyzer/constraintTracker.ts:24
 pub(crate) const MAX_CONSTRAINT_SET_COUNT: u32 = 1024;
@@ -27,7 +28,7 @@ pub struct TypeVarConstraints {
 
 // analyzer/constraintTracker.ts:40
 pub struct ConstraintSet {
-    pub(crate) _type_var_map: RefCell<LazyJsMap<String, TypeVarConstraints>>,
+    pub(crate) _type_var_map: RefCell<LazyJsMap<Rc<str>, TypeVarConstraints>>,
     pub(crate) _scope_ids: RefCell<Option<Box<JsSet<String>>>>,
 }
 

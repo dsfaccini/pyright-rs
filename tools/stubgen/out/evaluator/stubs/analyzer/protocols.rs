@@ -15,7 +15,7 @@ use crate::analyzer::type_evaluator_types::AssignTypeFlags;
 use crate::analyzer::types::{ClassType, ModuleType, Type};
 use crate::common::diagnostic::DiagnosticAddendum;
 use jsrt::P;
-use std::cell::RefCell;
+use jsrt::cell::RefCell;
 
 // analyzer/protocols.ts:55
 #[derive(Clone)]
