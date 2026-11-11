@@ -84,3 +84,15 @@ Five agents work from this baseline: `hot` (CPU hotspots), `build` (compiler and
 | eb9865f, `dist` | `bench/build-dist.sh`: PGO trained on the seven small corpora, BOLT, `panic = "abort"`, x86-64-v2 | 229.7 G instructions (−40.9%), 39.5 s, 11.4 GiB | 8.18 G (−41.4%), 0.81 s, 0.66 GiB |
 
 At 6094c4c `CHECK_MEMORY_MAX=30G oracle/corpus/check.sh` passes on pydantic-ai: output and all 40,176 dumps identical. The eb9865f `dist` binary passes all eight corpora the same way (`PYRIGHT_RS_BIN=target/dist/pyright-rs`). pydantic-ai never trained the PGO profile.
+
+## after the optimization round's merges
+
+`bench/measure.sh`, median of 3, `main` cc3de3f (load average 2 to 3). Both builds match pyright on all eight corpora, output and all 40,176 pydantic-ai dumps.
+
+| build | pydantic-ai | samples |
+|---|---|---|
+| `release` | 266.9 G instructions, 32.1 s, 7.29 GiB | 9.85 G, 0.94 s, 0.54 GiB |
+| `dist` (`bench/build-dist.sh`) | 217.1 G instructions, 28.5 s, 7.29 GiB | 7.93 G, 0.76 s, 0.55 GiB |
+| pyright 1.1.414 | 2:32, 8.65 GiB | 5.5 s, 0.62 GiB |
+
+From the round's baseline (308f470: 388.7 G, 52.3 s, 11.8 GiB on pydantic-ai), `dist` runs 44% fewer instructions, and its peak RSS is 38% lower. `progmem` (cc3de3f) cut the program arena from 4,588 MiB to 1,472 MiB, and freed the tokens that no parse node holds, as pyright drops `tokenizerOutput` after parsing (`sourceFile.ts:781`).
