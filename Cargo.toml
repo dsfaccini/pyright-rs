@@ -17,3 +17,10 @@ lto = "fat"
 [profile.profiling]
 inherits = "release"
 debug = true
+
+# bench/build-dist.sh builds this profile with PGO and BOLT (bench/build-settings.md).
+[profile.dist]
+inherits = "release"
+# About 3% less time once PGO is on. A panic aborts the process instead of
+# exiting with FatalError (pyright::main).
+panic = "abort"
