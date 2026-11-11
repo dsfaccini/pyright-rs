@@ -261,9 +261,11 @@ interface = "analyzer/codeFlowEngine.ts:CodeFlowAnalyzer"
 "analyzer/types.ts:TypeBase.addProps.return" = "std::cell::RefMut<'static, crate::analyzer::types::TypeBaseProps>"
 # The type caches are passed by reference to the speculative type tracker, which deletes from the
 # very map it was given (typeCacheUtils.ts:133); the return-inference ones are swapped per call.
-"analyzer/typeEvaluator.ts:createTypeEvaluator.typeCache" = "jsrt::P<std::cell::RefCell<jsrt::JsMap<u32, crate::analyzer::type_evaluator::TypeCacheEntry>>>"
+# Nothing iterates typeCache, a code-flow node type cache or _speculativeTypeCache, so they are
+# lookup-only hash maps: a delete is O(1), as Map.delete is.
+"analyzer/typeEvaluator.ts:createTypeEvaluator.typeCache" = "jsrt::P<std::cell::RefCell<jsrt::FxHashMap<u32, crate::analyzer::type_evaluator::TypeCacheEntry>>>"
 "analyzer/typeEvaluator.ts:createTypeEvaluator.typeFormTypeCache" = "jsrt::P<std::cell::RefCell<jsrt::JsMap<u32, Vec<crate::analyzer::type_evaluator::TypeFormTypeCacheEntry>>>>"
-"analyzer/typeEvaluator.ts:createTypeEvaluator.returnTypeInferenceTypeCache" = "Option<jsrt::P<std::cell::RefCell<jsrt::JsMap<u32, crate::analyzer::type_evaluator::TypeCacheEntry>>>>"
+"analyzer/typeEvaluator.ts:createTypeEvaluator.returnTypeInferenceTypeCache" = "Option<jsrt::P<std::cell::RefCell<jsrt::FxHashMap<u32, crate::analyzer::type_evaluator::TypeCacheEntry>>>>"
 "analyzer/typeEvaluator.ts:createTypeEvaluator.returnTypeInferenceTypeFormTypeCache" = "Option<jsrt::P<std::cell::RefCell<jsrt::JsMap<u32, Vec<crate::analyzer::type_evaluator::TypeFormTypeCacheEntry>>>>>"
 "analyzer/typeEvaluator.ts:createTypeEvaluator.getTypeFormTypeCache.return" = "jsrt::P<std::cell::RefCell<jsrt::JsMap<u32, Vec<crate::analyzer::type_evaluator::TypeFormTypeCacheEntry>>>>"
 # The speculative tracker deletes entries from the very cache it was handed (typeCacheUtils.ts:133):
@@ -349,8 +351,8 @@ plain = []
 /// cache (codeFlowEngine.ts:314). TypeScript passes the map itself; the holder shares it.
 #[derive(Clone, Copy)]
 pub enum SpeculativeCache {
-    Type(jsrt::P<std::cell::RefCell<jsrt::JsMap<u32, crate::analyzer::type_evaluator::TypeCacheEntry>>>),
-    FlowNodeType(jsrt::P<std::cell::RefCell<jsrt::JsMap<u32, Option<crate::analyzer::code_flow_engine::CachedType>>>>),
+    Type(jsrt::P<std::cell::RefCell<jsrt::FxHashMap<u32, crate::analyzer::type_evaluator::TypeCacheEntry>>>),
+    FlowNodeType(jsrt::P<std::cell::RefCell<jsrt::FxHashMap<u32, Option<crate::analyzer::code_flow_engine::CachedType>>>>),
 }
 """
 # TypeResult::new and Clone rely on the Cell and RefCell imports its fields give the module.

@@ -85,7 +85,7 @@ use crate::parser::parse_nodes::RaiseNode;
 use crate::parser::parse_nodes::StatementListNode;
 use crate::parser::parse_nodes::StringListNode;
 use crate::parser::parse_nodes::StringNode;
-use jsrt::{JsMap, JsSet, P};
+use jsrt::{FxHashMap, JsMap, JsSet, P};
 use std::cell::{Cell, OnceCell, RefCell};
 use std::rc::Rc;
 
@@ -178,7 +178,7 @@ pub enum CachedType {
 #[derive(jsrt::Trace)]
 #[trace(eval)]
 pub struct CodeFlowTypeCache {
-    pub cache: P<RefCell<JsMap<u32, Option<CachedType>>>>,
+    pub cache: P<RefCell<FxHashMap<u32, Option<CachedType>>>>,
     pub pending_nodes: RefCell<JsSet<u32>>,
     pub closed_finally_gate_nodes: RefCell<JsSet<u32>>,
 }
@@ -1510,7 +1510,7 @@ impl CodeFlowAnalyzer {
             Some(flow_node_type_cache) => flow_node_type_cache,
             None => {
                 let flow_node_type_cache = P::new_eval(CodeFlowTypeCache {
-                    cache: P::new_eval(RefCell::new(JsMap::default())),
+                    cache: P::new_eval(RefCell::new(FxHashMap::default())),
                     pending_nodes: RefCell::new(JsSet::default()),
                     closed_finally_gate_nodes: RefCell::new(JsSet::default()),
                 });
@@ -1790,7 +1790,7 @@ impl CodeFlowAnalyzer {
                 self.flow_node_type_cache
                     .cache
                     .borrow_mut()
-                    .shift_remove(&flow_node.id);
+                    .remove(&flow_node.id);
             }
 
             // (nested) analyzer/codeFlowEngine.ts:410 cleanIncompleteUnknownForCacheEntry

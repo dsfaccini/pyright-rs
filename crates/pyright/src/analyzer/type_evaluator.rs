@@ -56,7 +56,7 @@ use crate::parser::parse_nodes::{
     StringListNode, StringNode, TypeAliasNode, TypeAnnotationNode, TypeParameterListNode,
     TypeParameterNode, UnpackNode, WithItemNode, YieldFromNode, YieldNode,
 };
-use jsrt::{JsMap, JsSet, JsString, P};
+use jsrt::{FxHashMap, JsMap, JsSet, JsString, P};
 use std::cell::{Cell, OnceCell, RefCell};
 use std::rc::Rc;
 
@@ -367,7 +367,7 @@ pub struct TypeEvaluator {
     // analyzer/typeEvaluator.ts:675
     pub(crate) code_flow_analyzer_cache: RefCell<JsMap<u32, Vec<CodeFlowAnalyzerCacheEntry>>>,
     // analyzer/typeEvaluator.ts:676
-    pub(crate) type_cache: Cell<P<RefCell<JsMap<u32, TypeCacheEntry>>>>,
+    pub(crate) type_cache: Cell<P<RefCell<FxHashMap<u32, TypeCacheEntry>>>>,
     // analyzer/typeEvaluator.ts:677
     pub(crate) type_form_type_cache: Cell<P<RefCell<JsMap<u32, Vec<TypeFormTypeCacheEntry>>>>>,
     // analyzer/typeEvaluator.ts:678
@@ -388,7 +388,7 @@ pub struct TypeEvaluator {
     pub(crate) return_type_inference_context_stack: RefCell<Vec<ReturnTypeInferenceContext>>,
     // analyzer/typeEvaluator.ts:686
     pub(crate) return_type_inference_type_cache:
-        Cell<Option<P<RefCell<JsMap<u32, TypeCacheEntry>>>>>,
+        Cell<Option<P<RefCell<FxHashMap<u32, TypeCacheEntry>>>>>,
     // analyzer/typeEvaluator.ts:687
     pub(crate) return_type_inference_type_form_type_cache:
         Cell<Option<P<RefCell<JsMap<u32, Vec<TypeFormTypeCacheEntry>>>>>>,
@@ -417,7 +417,7 @@ pub fn create_type_evaluator(
     ));
     let speculative_type_tracker = P::new_eval(RefCell::new(SpeculativeTypeTracker {
         _speculative_context_stack: Vec::new(),
-        _speculative_type_cache: JsMap::default(),
+        _speculative_type_cache: FxHashMap::default(),
         _active_dependent_types: Vec::new(),
     }));
 
@@ -451,7 +451,7 @@ pub fn create_type_evaluator(
         assign_class_to_self_stack: RefCell::new(Vec::new()),
         function_recursion_map: RefCell::new(JsMap::default()),
         code_flow_analyzer_cache: RefCell::new(JsMap::default()),
-        type_cache: Cell::new(P::new_eval(RefCell::new(JsMap::default()))),
+        type_cache: Cell::new(P::new_eval(RefCell::new(FxHashMap::default()))),
         type_form_type_cache: Cell::new(P::new_eval(RefCell::new(JsMap::default()))),
         effective_type_cache: RefCell::new(JsMap::default()),
         expected_type_cache: RefCell::new(JsMap::default()),
@@ -539,7 +539,7 @@ impl TypeEvaluator {
     pub fn dispose_evaluator(&self) {
         *self.function_recursion_map.borrow_mut() = JsMap::default();
         *self.code_flow_analyzer_cache.borrow_mut() = JsMap::default();
-        self.type_cache.set(P::new_eval(RefCell::new(JsMap::default())));
+        self.type_cache.set(P::new_eval(RefCell::new(FxHashMap::default())));
         self.type_form_type_cache.set(P::new_eval(RefCell::new(JsMap::default())));
         *self.effective_type_cache.borrow_mut() = JsMap::default();
         *self.expected_type_cache.borrow_mut() = JsMap::default();
@@ -35970,7 +35970,7 @@ impl TypeEvaluator {
                     .push(ReturnTypeInferenceContext { function_node, code_flow_analyzer });
 
                 // `try` body; the `finally` block follows it.
-                self.return_type_inference_type_cache.set(Some(P::new_eval(RefCell::new(JsMap::default()))));
+                self.return_type_inference_type_cache.set(Some(P::new_eval(RefCell::new(FxHashMap::default()))));
                 self.return_type_inference_type_form_type_cache.set(Some(P::new_eval(RefCell::new(JsMap::default()))));
 
                 let mut all_arg_types_are_unknown = true;

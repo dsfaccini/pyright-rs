@@ -11,7 +11,7 @@ use crate::analyzer::types::TypeSameOptions;
 use crate::analyzer::types::is_type_same;
 use crate::common::debug::assert;
 use crate::parser::parse_nodes::ParseNode;
-use jsrt::{JsMap, P};
+use jsrt::{FxHashMap, P};
 use std::cell::RefCell;
 
 // analyzer/typeCacheUtils.ts:17
@@ -118,7 +118,7 @@ pub fn add_contextual_type_cache_entry<T: Clone + ContextualTypeCacheEntry>(
 #[derive(jsrt::Trace)]
 pub struct SpeculativeTypeTracker {
     pub(crate) _speculative_context_stack: Vec<SpeculativeContext>,
-    pub(crate) _speculative_type_cache: JsMap<u32, Vec<P<SpeculativeTypeEntry>>>,
+    pub(crate) _speculative_type_cache: FxHashMap<u32, Vec<P<SpeculativeTypeEntry>>>,
     pub(crate) _active_dependent_types: Vec<DependentType>,
 }
 
@@ -165,10 +165,10 @@ impl SpeculativeTypeTracker {
         for entry in context.unwrap().entries_to_undo {
             match entry.cache {
                 SpeculativeCache::Type(cache) => {
-                    cache.borrow_mut().shift_remove(&entry.id);
+                    cache.borrow_mut().remove(&entry.id);
                 }
                 SpeculativeCache::FlowNodeType(cache) => {
-                    cache.borrow_mut().shift_remove(&entry.id);
+                    cache.borrow_mut().remove(&entry.id);
                 }
             }
         }
@@ -316,8 +316,8 @@ impl SpeculativeTypeTracker {
 #[derive(Clone, Copy)]
 #[derive(jsrt::Trace)]
 pub enum SpeculativeCache {
-    Type(P<RefCell<JsMap<u32, TypeCacheEntry>>>),
-    FlowNodeType(P<RefCell<JsMap<u32, Option<CachedType>>>>),
+    Type(P<RefCell<FxHashMap<u32, TypeCacheEntry>>>),
+    FlowNodeType(P<RefCell<FxHashMap<u32, Option<CachedType>>>>),
 }
 
 // Defined in tools/stubgen/typemap.toml [items].
