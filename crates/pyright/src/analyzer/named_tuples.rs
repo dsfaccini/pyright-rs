@@ -424,7 +424,7 @@ pub fn create_named_tuple_type(
                         if is_class_instance(name_type)
                             && ClassType::is_built_in(
                                 ClassType(name_type),
-                                Some(&["str".to_string()]),
+                                Some(&["str"]),
                             )
                             && is_literal_type(ClassType(name_type))
                         {
@@ -699,7 +699,7 @@ pub fn update_named_tuple_base_class(
         .into_iter()
         .map(|base_class| {
             if !is_instantiable_class(base_class)
-                || !ClassType::is_built_in(ClassType(base_class), Some(&["NamedTuple".to_string()]))
+                || !ClassType::is_built_in(ClassType(base_class), Some(&["NamedTuple"]))
             {
                 return base_class;
             }
@@ -800,7 +800,7 @@ pub fn update_named_tuple_base_class(
                     if !is_instantiable_class(named_tuple_base_class)
                         || !ClassType::is_built_in(
                             ClassType(named_tuple_base_class),
-                            Some(&["tuple".to_string()]),
+                            Some(&["tuple"]),
                         )
                     {
                         return named_tuple_base_class;

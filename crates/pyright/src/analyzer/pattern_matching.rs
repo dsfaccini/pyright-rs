@@ -582,7 +582,7 @@ pub(crate) fn narrow_type_based_on_mapping_pattern(
     let type_ = transform_possible_recursive_type_alias(Some(type_), 0).unwrap();
     let pattern_entries = pattern.d().entries.borrow().clone();
     let str_class =
-        |class_type: ClassType| ClassType::is_built_in(class_type, Some(&["str".to_string()]));
+        |class_type: ClassType| ClassType::is_built_in(class_type, Some(&["str"]));
 
     if !is_positive_test {
         // Handle the case where the pattern consists only of a "**x" entry.
@@ -887,7 +887,7 @@ pub(crate) fn get_positional_match_arg_names(
                 // Are all the args string literals?
                 if tuple_args.iter().all(|arg| {
                     is_class_instance(arg.type_)
-                        && ClassType::is_built_in(ClassType(arg.type_), Some(&["str".to_string()]))
+                        && ClassType::is_built_in(ClassType(arg.type_), Some(&["str"]))
                         && is_literal_type(ClassType(arg.type_))
                 }) {
                     return tuple_args
@@ -919,7 +919,7 @@ pub(crate) fn narrow_type_based_on_literal_pattern(
         .type_
         .get();
     let bool_class =
-        |class_type: ClassType| ClassType::is_built_in(class_type, Some(&["bool".to_string()]));
+        |class_type: ClassType| ClassType::is_built_in(class_type, Some(&["bool"]));
 
     if !is_positive_test {
         return evaluator.map_subtypes_expand_type_vars(
@@ -1075,8 +1075,8 @@ pub(crate) fn is_int_literal_pattern_equal_to_bool(
 ) -> bool {
     // Numeric literal patterns use equality, so 0 and 1 also match False and True.
     // The inverse isn't true because singleton bool patterns use identity.
-    if !ClassType::is_built_in(pattern_type, Some(&["int".to_string()]))
-        || !ClassType::is_built_in(subject_type, Some(&["bool".to_string()]))
+    if !ClassType::is_built_in(pattern_type, Some(&["int"]))
+        || !ClassType::is_built_in(subject_type, Some(&["bool"]))
     {
         return false;
     }
@@ -1194,7 +1194,7 @@ pub(crate) fn narrow_type_based_on_class_pattern(
 
     let pattern_args = pattern.d().args.borrow().clone();
     let is_built_in = |class_type: ClassType, name: &str| {
-        ClassType::is_built_in(class_type, Some(&[name.to_string()]))
+        ClassType::is_built_in(class_type, Some(&[name]))
     };
 
     // Are there any positional arguments? If so, try to get the mappings for
@@ -2136,7 +2136,7 @@ pub(crate) fn get_sequence_pattern_info(
         })
     };
     let is_built_in = |class_type: ClassType, name: &str| {
-        ClassType::is_built_in(class_type, Some(&[name.to_string()]))
+        ClassType::is_built_in(class_type, Some(&[name]))
     };
     let is_indeterminate_entry = |t: &TupleTypeArg| {
         t.is_unbounded || is_unpacked_type_var_tuple(t.type_) || is_unpacked_type_var(t.type_)
@@ -2814,7 +2814,7 @@ pub fn assign_type_to_pattern_targets(
                                     if is_class_instance(key_subtype)
                                         && ClassType::is_built_in(
                                             ClassType(key_subtype),
-                                            Some(&["str".to_string()]),
+                                            Some(&["str"]),
                                         )
                                         && is_literal_type(ClassType(key_subtype))
                                     {
@@ -3175,7 +3175,7 @@ pub fn get_pattern_subtype_narrowing_callback(
 ) -> Option<PatternSubtypeNarrowingCallback> {
     let evaluator_handle: P<TypeEvaluator> = *evaluator.evaluator_interface.get().unwrap();
     let is_built_in = |class_type: ClassType, name: &str| {
-        ClassType::is_built_in(class_type, Some(&[name.to_string()]))
+        ClassType::is_built_in(class_type, Some(&[name]))
     };
 
     // Look for a subject expression of the form <reference>[<literal>] where
@@ -3199,7 +3199,7 @@ pub fn get_pattern_subtype_narrowing_callback(
                 let index_class = ClassType(index_type);
                 if ClassType::is_built_in(
                     index_class,
-                    Some(&["int".to_string(), "str".to_string()]),
+                    Some(&["int", "str"]),
                 ) {
                     let unnarrowed_reference_type_result = evaluator.get_type_of_expression(
                         index_node.d().left_expr.get(),

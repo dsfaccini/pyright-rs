@@ -150,7 +150,7 @@ pub(crate) fn is_data_class_keyword_only_separator(
         }),
     );
     is_class_instance(annotated_type)
-        && ClassType::is_built_in(ClassType(annotated_type), Some(&["KW_ONLY".to_string()]))
+        && ClassType::is_built_in(ClassType(annotated_type), Some(&["KW_ONLY"]))
 }
 
 // analyzer/dataClasses.ts:120
@@ -599,7 +599,7 @@ pub fn synthesize_data_class_methods(
                             if is_class_instance(value_type)
                                 && ClassType::is_built_in(
                                     ClassType(value_type),
-                                    Some(&["str".to_string()]),
+                                    Some(&["str"]),
                                 )
                                 && is_literal_type(ClassType(value_type))
                             {
@@ -2114,7 +2114,7 @@ pub fn validate_data_class_transform_decorator(
                     .type_
                     .get();
                 let tuple_type_args = if !is_class_instance(value_type)
-                    || !ClassType::is_built_in(ClassType(value_type), Some(&["tuple".to_string()]))
+                    || !ClassType::is_built_in(ClassType(value_type), Some(&["tuple"]))
                 {
                     None
                 } else {

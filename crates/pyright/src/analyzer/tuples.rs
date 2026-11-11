@@ -874,7 +874,7 @@ pub(crate) fn get_tuple_slice_param(
             .type_
             .get();
         if !is_class_instance(val_type)
-            || !ClassType::is_built_in(ClassType(val_type), Some(&["int".to_string()]))
+            || !ClassType::is_built_in(ClassType(val_type), Some(&["int"]))
             || !is_literal_type(ClassType(val_type))
         {
             return None;

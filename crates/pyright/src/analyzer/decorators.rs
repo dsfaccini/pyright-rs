@@ -101,45 +101,45 @@ pub fn get_function_info_from_decorators(
 
         if is_function(decorator_type) {
             let decorator_function = FunctionType(decorator_type);
-            if FunctionType::is_built_in(decorator_function, Some(&["abstractmethod".to_string()]))
+            if FunctionType::is_built_in(decorator_function, Some(&["abstractmethod"]))
             {
                 if is_in_class {
                     flags |= FunctionTypeFlags::AbstractMethod;
                 }
-            } else if FunctionType::is_built_in(decorator_function, Some(&["final".to_string()])) {
+            } else if FunctionType::is_built_in(decorator_function, Some(&["final"])) {
                 flags |= FunctionTypeFlags::Final;
-            } else if FunctionType::is_built_in(decorator_function, Some(&["override".to_string()]))
+            } else if FunctionType::is_built_in(decorator_function, Some(&["override"]))
             {
                 flags |= FunctionTypeFlags::Overridden;
             } else if FunctionType::is_built_in(
                 decorator_function,
-                Some(&["type_check_only".to_string()]),
+                Some(&["type_check_only"]),
             ) {
                 flags |= FunctionTypeFlags::TypeCheckOnly;
             } else if FunctionType::is_built_in(
                 decorator_function,
-                Some(&["no_type_check".to_string()]),
+                Some(&["no_type_check"]),
             ) {
                 flags |= FunctionTypeFlags::NoTypeCheck;
-            } else if FunctionType::is_built_in(decorator_function, Some(&["overload".to_string()]))
+            } else if FunctionType::is_built_in(decorator_function, Some(&["overload"]))
             {
                 flags |= FunctionTypeFlags::Overloaded;
             }
         } else if is_class(decorator_type) {
             let decorator_class = ClassType(decorator_type);
             if TypeBase::is_instantiable(decorator_type) {
-                if ClassType::is_built_in(decorator_class, Some(&["staticmethod".to_string()])) {
+                if ClassType::is_built_in(decorator_class, Some(&["staticmethod"])) {
                     if is_in_class {
                         flags |= FunctionTypeFlags::StaticMethod;
                     }
                 } else if ClassType::is_built_in(
                     decorator_class,
-                    Some(&["classmethod".to_string()]),
+                    Some(&["classmethod"]),
                 ) && is_in_class
                 {
                     flags |= FunctionTypeFlags::ClassMethod;
                 }
-            } else if ClassType::is_built_in(decorator_class, Some(&["deprecated".to_string()])) {
+            } else if ClassType::is_built_in(decorator_class, Some(&["deprecated"])) {
                 deprecation_message = decorator_class
                     .d()
                     .priv_
@@ -186,7 +186,7 @@ pub fn apply_function_decorator(
     if is_function(decorator_type)
         && FunctionType::is_built_in(
             FunctionType(decorator_type),
-            Some(&["disjoint_base".to_string()]),
+            Some(&["disjoint_base"]),
         )
     {
         evaluator.add_diagnostic(
@@ -205,7 +205,7 @@ pub fn apply_function_decorator(
         || (is_function(decorator_type)
             && FunctionType::is_built_in(
                 FunctionType(decorator_type),
-                Some(&["overload".to_string()]),
+                Some(&["overload"]),
             )))
         && is_function(input_function_type)
     {
@@ -236,7 +236,7 @@ pub fn apply_function_decorator(
             if decorator_call_function.d().shared.get().name == "__dataclass_transform__"
                 || FunctionType::is_built_in(
                     decorator_call_function,
-                    Some(&["dataclass_transform".to_string()]),
+                    Some(&["dataclass_transform"]),
                 )
             {
                 undecorated_type
@@ -272,11 +272,11 @@ pub fn apply_function_decorator(
     // Check for some built-in decorator types with known semantics.
     if is_function(decorator_type) {
         let decorator_function = FunctionType(decorator_type);
-        if FunctionType::is_built_in(decorator_function, Some(&["abstractmethod".to_string()])) {
+        if FunctionType::is_built_in(decorator_function, Some(&["abstractmethod"])) {
             return input_function_type;
         }
 
-        if FunctionType::is_built_in(decorator_function, Some(&["type_check_only".to_string()])) {
+        if FunctionType::is_built_in(decorator_function, Some(&["type_check_only"])) {
             let undecorated_shared = undecorated_type.d().shared.get();
             undecorated_shared
                 .flags
@@ -498,7 +498,7 @@ pub fn apply_class_decorator(
             if decorator_call_function.d().shared.get().name == "__dataclass_transform__"
                 || FunctionType::is_built_in(
                     decorator_call_function,
-                    Some(&["dataclass_transform".to_string()]),
+                    Some(&["dataclass_transform"]),
                 )
             {
                 original_class_type
@@ -569,7 +569,7 @@ pub fn apply_class_decorator(
     } else if is_function(decorator_type) {
         let decorator_function = FunctionType(decorator_type);
         let original_shared = original_class_type.d().shared.get();
-        if FunctionType::is_built_in(decorator_function, Some(&["disjoint_base".to_string()])) {
+        if FunctionType::is_built_in(decorator_function, Some(&["disjoint_base"])) {
             if ClassType::is_typed_dict_class(original_class_type) {
                 evaluator.add_diagnostic(
                     DiagnosticRule::reportGeneralTypeIssues,
@@ -593,7 +593,7 @@ pub fn apply_class_decorator(
             return input_class_type;
         }
 
-        if FunctionType::is_built_in(decorator_function, Some(&["final".to_string()])) {
+        if FunctionType::is_built_in(decorator_function, Some(&["final"])) {
             original_shared
                 .flags
                 .set(original_shared.flags.get() | ClassTypeFlags::Final);
@@ -604,14 +604,14 @@ pub fn apply_class_decorator(
             return input_class_type;
         }
 
-        if FunctionType::is_built_in(decorator_function, Some(&["type_check_only".to_string()])) {
+        if FunctionType::is_built_in(decorator_function, Some(&["type_check_only"])) {
             original_shared
                 .flags
                 .set(original_shared.flags.get() | ClassTypeFlags::TypeCheckOnly);
             return input_class_type;
         }
 
-        if FunctionType::is_built_in(decorator_function, Some(&["runtime_checkable".to_string()])) {
+        if FunctionType::is_built_in(decorator_function, Some(&["runtime_checkable"])) {
             original_shared
                 .flags
                 .set(original_shared.flags.get() | ClassTypeFlags::RuntimeCheckable);
@@ -627,7 +627,7 @@ pub fn apply_class_decorator(
         }
     } else if is_class_instance(decorator_type) {
         let decorator_class = ClassType(decorator_type);
-        if ClassType::is_built_in(decorator_class, Some(&["deprecated".to_string()])) {
+        if ClassType::is_built_in(decorator_class, Some(&["deprecated"])) {
             let deprecated_message = decorator_class
                 .d()
                 .priv_
@@ -676,7 +676,7 @@ pub(crate) fn get_type_of_decorator(
     if is_instantiable_class(decorator_type_result.type_.get())
         && ClassType::is_built_in(
             ClassType(decorator_type_result.type_.get()),
-            Some(&["classmethod".to_string()]),
+            Some(&["classmethod"]),
         )
         && is_property(function_or_class_type)
     {

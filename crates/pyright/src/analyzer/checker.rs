@@ -157,8 +157,8 @@ impl ParseTreeVisitor<bool> for Checker {
                         let base_class_type = self._evaluator.get_type(arg.d().value_expr.get());
                         if let Some(base_class_type) = base_class_type {
                             if analyzer::types::is_instantiable_class(base_class_type)
-                                && !ClassType::is_built_in(ClassType(base_class_type), Some(&["Protocol".to_string()]))
-                                && !ClassType::is_built_in(ClassType(base_class_type), Some(&["Generic".to_string()]))
+                                && !ClassType::is_built_in(ClassType(base_class_type), Some(&["Protocol"]))
+                                && !ClassType::is_built_in(ClassType(base_class_type), Some(&["Generic"]))
                                 && !ClassType::is_protocol_class(ClassType(base_class_type))
                             {
                                 self._evaluator.add_diagnostic(
@@ -766,7 +766,7 @@ impl ParseTreeVisitor<bool> for Checker {
                             if analyzer::types::is_class_instance(return_type)
                                 && ClassType::is_built_in(
                                     ClassType(return_type),
-                                    Some(&["Coroutine".to_string(), "CoroutineType".to_string()]),
+                                    Some(&["Coroutine", "CoroutineType"]),
                                 )
                             {
                                 self._evaluator.add_diagnostic(
@@ -1084,7 +1084,7 @@ impl ParseTreeVisitor<bool> for Checker {
         if analyzer::types::is_class_instance(yield_from_type)
             && ClassType::is_built_in(
                 ClassType(yield_from_type),
-                Some(&["Coroutine".to_string(), "CoroutineType".to_string()]),
+                Some(&["Coroutine", "CoroutineType"]),
             )
         {
             // Handle the case of old-style (pre-await) coroutines.
@@ -1215,7 +1215,7 @@ impl ParseTreeVisitor<bool> for Checker {
             let annotation_type = self._evaluator.get_type_of_annotation(annotation, None);
 
             if analyzer::types::is_class_instance(annotation_type)
-                && ClassType::is_built_in(ClassType(annotation_type), Some(&["TypeAlias".to_string()]))
+                && ClassType::is_built_in(ClassType(annotation_type), Some(&["TypeAlias"]))
             {
                 let scope = analyzer::scope_utils::get_scope_for_node(node.0, self._node_info.reader());
                 if let Some(scope) = scope {
@@ -1292,7 +1292,7 @@ impl ParseTreeVisitor<bool> for Checker {
                         return;
                     };
                     if !analyzer::types::is_class_instance(subscript_type)
-                        || !ClassType::is_built_in(ClassType(subscript_type), Some(&["int".to_string()]))
+                        || !ClassType::is_built_in(ClassType(subscript_type), Some(&["int"]))
                         || !analyzer::type_utils::is_literal_type(ClassType(subscript_type))
                     {
                         return;
@@ -2144,7 +2144,7 @@ impl Checker {
 
                 // If it's a bool (the common case), we're good.
                 if analyzer::types::is_class_instance(expanded_subtype)
-                    && ClassType::is_built_in(ClassType(expanded_subtype), Some(&["bool".to_string()]))
+                    && ClassType::is_built_in(ClassType(expanded_subtype), Some(&["bool"]))
                 {
                     return None;
                 }
@@ -2160,7 +2160,7 @@ impl Checker {
                 }
 
                 if analyzer::types::is_class_instance(bool_return_type)
-                    && ClassType::is_built_in(ClassType(bool_return_type), Some(&["bool".to_string()]))
+                    && ClassType::is_built_in(ClassType(bool_return_type), Some(&["bool"]))
                 {
                     return None;
                 }
@@ -2233,7 +2233,7 @@ impl Checker {
                 if !analyzer::types::is_class_instance(subtype)
                     || !ClassType::is_built_in(
                         ClassType(subtype),
-                        Some(&["Coroutine".to_string(), "CoroutineType".to_string()]),
+                        Some(&["Coroutine", "CoroutineType"]),
                     )
                 {
                     is_coroutine = false;
@@ -2578,7 +2578,7 @@ impl Checker {
                                 analyzer::types::is_class(*base)
                                     && ClassType::is_built_in(
                                         ClassType(*base),
-                                        Some(&["int".to_string(), "str".to_string(), "bytes".to_string()]),
+                                        Some(&["int", "str", "bytes"]),
                                     )
                             })
                     {
@@ -2787,7 +2787,7 @@ impl Checker {
             && analyzer::types::is_class_instance(declared_return_type)
             && ClassType::is_built_in(
                 ClassType(declared_return_type),
-                Some(&["AwaitableGenerator".to_string()]),
+                Some(&["AwaitableGenerator"]),
             ) {
             // Handle the old-style (pre-await) generator case
             // if the return type explicitly uses AwaitableGenerator.
@@ -5063,7 +5063,7 @@ impl Checker {
         let _ = is_instance_check;
         let mut is_supported = true;
         let evaluator = self._evaluator;
-        let is_built_in = |class_type: ClassType, name: &str| ClassType::is_built_in(class_type, Some(&[name.to_string()]));
+        let is_built_in = |class_type: ClassType, name: &str| ClassType::is_built_in(class_type, Some(&[name]));
 
         analyzer::type_utils::do_for_each_subtype(
             type_,
@@ -5805,7 +5805,7 @@ impl Checker {
             return;
         };
 
-        let is_built_in = |class_type: ClassType, name: &str| ClassType::is_built_in(class_type, Some(&[name.to_string()]));
+        let is_built_in = |class_type: ClassType, name: &str| ClassType::is_built_in(class_type, Some(&[name]));
 
         let mut guard_subtypes: Vec<ClassType> = Vec::new();
         analyzer::type_utils::do_for_each_subtype(
@@ -7157,7 +7157,7 @@ impl Checker {
             // would be misleading. Filter it out.
             let bases = candidates
                 .iter()
-                .filter(|candidate| !ClassType::is_built_in(**candidate, Some(&["object".to_string()])))
+                .filter(|candidate| !ClassType::is_built_in(**candidate, Some(&["object"])))
                 .map(|candidate| format!("\"{}\"", candidate.d().shared.get().name))
                 .collect::<Vec<_>>()
                 .join(", ");
@@ -7187,7 +7187,7 @@ impl Checker {
 
             if !ClassType::is_built_in(
                 ClassType(base_class),
-                Some(&["Generic".to_string(), "Protocol".to_string(), "object".to_string()]),
+                Some(&["Generic", "Protocol", "object"]),
             ) {
                 filtered_base_classes.push(ClassType(base_class));
             }
@@ -7316,8 +7316,8 @@ impl Checker {
         let class_base_classes = class_type.d().shared.get().base_classes.borrow().clone();
         for base_class in class_base_classes {
             if analyzer::types::is_class(base_class)
-                && !ClassType::is_built_in(ClassType(base_class), Some(&["Generic".to_string()]))
-                && !ClassType::is_built_in(ClassType(base_class), Some(&["Protocol".to_string()]))
+                && !ClassType::is_built_in(ClassType(base_class), Some(&["Generic"]))
+                && !ClassType::is_built_in(ClassType(base_class), Some(&["Protocol"]))
             {
                 base_classes.push(ClassType(base_class));
             }
@@ -8707,7 +8707,7 @@ impl Checker {
                 // as named keys.
                 if ClassType::is_built_in(
                     base_class,
-                    Some(&["_TypedDict".to_string(), "TypedDictFallback".to_string()]),
+                    Some(&["_TypedDict", "TypedDictFallback"]),
                 ) {
                     return;
                 }
@@ -9549,8 +9549,8 @@ impl Checker {
         // If the declared type is LiteralString and the class is str, exempt this case.
         // It's used in the typeshed stubs.
         if analyzer::types::is_class_instance(param_type)
-            && ClassType::is_built_in(ClassType(param_type), Some(&["LiteralString".to_string()]))
-            && ClassType::is_built_in(class_type, Some(&["str".to_string()]))
+            && ClassType::is_built_in(ClassType(param_type), Some(&["LiteralString"]))
+            && ClassType::is_built_in(class_type, Some(&["str"]))
         {
             return;
         }
@@ -9610,7 +9610,7 @@ impl Checker {
         let is_async = enclosing_function_node.d().is_async.get();
         let generator_type: Option<P<Type>> = if !is_async
             && analyzer::types::is_class_instance(declared_return_type)
-            && ClassType::is_built_in(ClassType(declared_return_type), Some(&["AwaitableGenerator".to_string()]))
+            && ClassType::is_built_in(ClassType(declared_return_type), Some(&["AwaitableGenerator"]))
         {
             // Handle the old-style (pre-await) generator case
             // if the return type explicitly uses AwaitableGenerator.

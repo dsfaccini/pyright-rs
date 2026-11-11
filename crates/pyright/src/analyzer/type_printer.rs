@@ -1188,7 +1188,7 @@ pub(crate) fn print_object_type_for_class_internal(
     };
 
     // Special-case NoneType to convert it to None.
-    if ClassType::is_built_in(type_, Some(&["NoneType".to_string()])) {
+    if ClassType::is_built_in(type_, Some(&["NoneType"])) {
         obj_name = "None".to_string();
     }
 
@@ -1236,7 +1236,7 @@ pub(crate) fn print_object_type_for_class_internal(
                         && is_class_instance(type_arg.type_)
                         && ClassType::is_built_in(
                             ClassType(type_arg.type_),
-                            Some(&["tuple".to_string()]),
+                            Some(&["tuple"]),
                         ) {
                         ClassType(type_arg.type_)
                             .d()
@@ -1419,7 +1419,7 @@ pub(crate) fn print_function_parts_internal(
             let tuple_type_args = if is_class_instance(specialized_param_type)
                 && ClassType::is_built_in(
                     ClassType(specialized_param_type),
-                    Some(&["tuple".to_string()]),
+                    Some(&["tuple"]),
                 ) {
                 ClassType(specialized_param_type)
                     .d()

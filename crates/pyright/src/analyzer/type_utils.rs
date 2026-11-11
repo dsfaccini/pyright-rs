@@ -215,13 +215,13 @@ pub fn is_optional_type(type_: P<Type>) -> bool {
 // analyzer/typeUtils.ts:303
 pub fn is_none_instance(type_: P<Type>) -> bool {
     crate::analyzer::types::is_class_instance(type_)
-        && ClassType::is_built_in(ClassType(type_), Some(&["NoneType".to_string()]))
+        && ClassType::is_built_in(ClassType(type_), Some(&["NoneType"]))
 }
 
 // analyzer/typeUtils.ts:307
 pub fn is_none_type_class(type_: P<Type>) -> bool {
     crate::analyzer::types::is_instantiable_class(type_)
-        && ClassType::is_built_in(ClassType(type_), Some(&["NoneType".to_string()]))
+        && ClassType::is_built_in(ClassType(type_), Some(&["NoneType"]))
 }
 
 // analyzer/typeUtils.ts:313
@@ -696,9 +696,9 @@ pub(crate) fn compare_types(a: P<Type>, b: P<Type>, recursion_count: u32) -> i32
             }
 
             // Always sort NoneType at the end.
-            if ClassType::is_built_in(a_class, Some(&["NoneType".to_string()])) {
+            if ClassType::is_built_in(a_class, Some(&["NoneType"])) {
                 return 1;
-            } else if ClassType::is_built_in(b_class, Some(&["NoneType".to_string()])) {
+            } else if ClassType::is_built_in(b_class, Some(&["NoneType"])) {
                 return -1;
             }
 
@@ -1248,7 +1248,7 @@ pub fn get_unknown_for_type_var(
 pub fn get_unknown_for_type_var_tuple(tuple_class_type: ClassType) -> P<Type> {
     crate::common::debug::assert(
         crate::analyzer::types::is_instantiable_class(tuple_class_type.0)
-            && ClassType::is_built_in(tuple_class_type, Some(&["tuple".to_string()])),
+            && ClassType::is_built_in(tuple_class_type, Some(&["tuple"])),
         None,
     );
 
@@ -1391,7 +1391,7 @@ pub fn is_literal_like_type(type_: ClassType) -> bool {
         return true;
     }
 
-    if ClassType::is_built_in(type_, Some(&["LiteralString".to_string()])) {
+    if ClassType::is_built_in(type_, Some(&["LiteralString"])) {
         return true;
     }
 
@@ -1675,7 +1675,7 @@ pub fn is_stub_only_subscriptable(class_type: ClassType) -> bool {
 
 // analyzer/typeUtils.ts:1460
 pub fn is_tuple_class(type_: ClassType) -> bool {
-    ClassType::is_built_in(type_, Some(&["tuple".to_string()]))
+    ClassType::is_built_in(type_, Some(&["tuple"]))
 }
 
 // analyzer/typeUtils.ts:1467
@@ -1933,7 +1933,7 @@ pub fn get_protocol_symbols_recursive(
     // a separate class at runtime. The typeshed stubs model it
     // this way, and we don't want it to be treated as a protocol
     // or abstract class.
-    if ClassType::is_built_in(class_type, Some(&["NamedTuple".to_string()])) {
+    if ClassType::is_built_in(class_type, Some(&["NamedTuple"])) {
         return;
     }
 
@@ -2049,7 +2049,7 @@ pub fn look_up_class_member(
     // define any instance variables, and it's by far the most common metaclass.
     if let Some(metaclass) = metaclass {
         if crate::analyzer::types::is_class(metaclass)
-            && !ClassType::is_built_in(ClassType(metaclass), Some(&["type".to_string()]))
+            && !ClassType::is_built_in(ClassType(metaclass), Some(&["type"]))
         {
             let mut meta_member_itr =
                 get_class_member_iterator(metaclass, member_name, MemberAccessFlags::SkipClassMembers, None);
@@ -2371,7 +2371,7 @@ pub fn get_class_iterator(
             // Should we ignore members on the 'object' base class?
             if flags.any(ClassIteratorFlags::SkipObjectBaseClass) {
                 if crate::analyzer::types::is_instantiable_class(specialized_mro_class) {
-                    if ClassType::is_built_in(ClassType(specialized_mro_class), Some(&["object".to_string()])) {
+                    if ClassType::is_built_in(ClassType(specialized_mro_class), Some(&["object"])) {
                         finished = true;
                         return None;
                     }
@@ -2381,7 +2381,7 @@ pub fn get_class_iterator(
             // Should we ignore members on the 'type' base class?
             if flags.any(ClassIteratorFlags::SkipTypeBaseClass) {
                 if crate::analyzer::types::is_instantiable_class(specialized_mro_class) {
-                    if ClassType::is_built_in(ClassType(specialized_mro_class), Some(&["type".to_string()])) {
+                    if ClassType::is_built_in(ClassType(specialized_mro_class), Some(&["type"])) {
                         finished = true;
                         return None;
                     }
@@ -2685,7 +2685,7 @@ pub fn derives_from_stdlib_class(class_type: ClassType, class_name: &str) -> boo
     let mro = class_type.d().shared.get().mro.borrow().clone();
     mro.iter().any(|mro_class| {
         crate::analyzer::types::is_class(*mro_class)
-            && ClassType::is_built_in(ClassType(*mro_class), Some(&[class_name.to_string()]))
+            && ClassType::is_built_in(ClassType(*mro_class), Some(&[class_name]))
     })
 }
 
@@ -2780,7 +2780,7 @@ pub fn get_generator_yield_type(declared_return_type: P<Type>, is_async: bool) -
 
                 if expected_classes.iter().any(|classes| {
                     let class_name = if is_async { classes[0] } else { classes[1] };
-                    ClassType::is_built_in(ClassType(subtype), Some(&[class_name.to_string()]))
+                    ClassType::is_built_in(ClassType(subtype), Some(&[class_name]))
                 }) {
                     let type_args = ClassType(subtype).d().priv_.borrow().type_args.clone();
                     return Some(match type_args {
@@ -2805,7 +2805,7 @@ pub fn is_instantiable_metaclass(type_: P<Type>) -> bool {
         let mro = ClassType(type_).d().shared.get().mro.borrow().clone();
         mro.iter().any(|mro_class| {
             crate::analyzer::types::is_class(*mro_class)
-                && ClassType::is_built_in(ClassType(*mro_class), Some(&["type".to_string()]))
+                && ClassType::is_built_in(ClassType(*mro_class), Some(&["type"]))
         })
     }
 }
@@ -2816,7 +2816,7 @@ pub fn is_metaclass_instance(type_: P<Type>) -> bool {
         let mro = ClassType(type_).d().shared.get().mro.borrow().clone();
         mro.iter().any(|mro_class| {
             crate::analyzer::types::is_class(*mro_class)
-                && ClassType::is_built_in(ClassType(*mro_class), Some(&["type".to_string()]))
+                && ClassType::is_built_in(ClassType(*mro_class), Some(&["type"]))
         })
     }
 }
@@ -2880,7 +2880,7 @@ pub fn convert_to_instance(type_: P<Type>, include_subclasses: bool) -> P<Type> 
                 crate::analyzer::types::TypeCategory::Class => {
                     let class_subtype = ClassType(subtype);
                     // Handle type[x] as a special case.
-                    if ClassType::is_built_in(class_subtype, Some(&["type".to_string()])) {
+                    if ClassType::is_built_in(class_subtype, Some(&["type"])) {
                         let type_args = class_subtype.d().priv_.borrow().type_args.clone();
                         if crate::analyzer::types::TypeBase::is_instance(subtype) {
                             match type_args {
@@ -3625,9 +3625,9 @@ pub fn make_unpacked(type_: P<Type>) -> P<Type> {
 pub fn get_generator_type_args(return_type: P<Type>) -> Option<Vec<P<Type>>> {
     if crate::analyzer::types::is_class_instance(return_type) {
         let class_type = ClassType(return_type);
-        if ClassType::is_built_in(class_type, Some(&["Generator".to_string(), "AsyncGenerator".to_string()])) {
+        if ClassType::is_built_in(class_type, Some(&["Generator", "AsyncGenerator"])) {
             return class_type.d().priv_.borrow().type_args.clone();
-        } else if ClassType::is_built_in(class_type, Some(&["AwaitableGenerator".to_string()])) {
+        } else if ClassType::is_built_in(class_type, Some(&["AwaitableGenerator"])) {
             // AwaitableGenerator has four type arguments, and the first 3
             // correspond to the generator.
             return class_type
@@ -3980,7 +3980,7 @@ pub fn compute_mro_linearization(class_type: ClassType) -> bool {
             if crate::analyzer::types::is_instantiable_class(base_class) {
                 // Generic has some special-case logic (see description of __mro_entries__
                 // in PEP 560) that we need to account for here.
-                if ClassType::is_built_in(ClassType(base_class), Some(&["Generic".to_string()])) {
+                if ClassType::is_built_in(ClassType(base_class), Some(&["Generic"])) {
                     // If the class is a Protocol or TypedDict, the generic is ignored for
                     // the purposes of computing the MRO.
                     if ClassType::is_protocol_class(class_type) || ClassType::is_typed_dict_class(class_type) {
@@ -4945,7 +4945,7 @@ pub trait TypeVarTransformer {
         // Handle the common case where the class has no type parameters.
         if type_params.is_empty()
             && !ClassType::is_special_built_in(class_type, None)
-            && !ClassType::is_built_in(class_type, Some(&["type".to_string()][..]))
+            && !ClassType::is_built_in(class_type, Some(&["type"]))
         {
             return class_type.0;
         }

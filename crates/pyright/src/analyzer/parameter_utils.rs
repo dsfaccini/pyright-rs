@@ -568,7 +568,7 @@ pub fn is_param_spec_kwargs(param_spec: TypeVarType, arg_type: P<Type>) -> bool 
             }
 
             if is_class_instance(arg_subtype)
-                && ClassType::is_built_in(ClassType(arg_subtype), Some(&["dict".to_string()]))
+                && ClassType::is_built_in(ClassType(arg_subtype), Some(&["dict"]))
             {
                 let type_args = ClassType(arg_subtype).d().priv_.borrow().type_args.clone();
                 if let Some(type_args) = type_args {
@@ -576,7 +576,7 @@ pub fn is_param_spec_kwargs(param_spec: TypeVarType, arg_type: P<Type>) -> bool 
                         && is_class_instance(type_args[0])
                         && ClassType::is_built_in(
                             ClassType(type_args[0]),
-                            Some(&["str".to_string()]),
+                            Some(&["str"]),
                         )
                         && is_any_or_unknown(type_args[1])
                     {

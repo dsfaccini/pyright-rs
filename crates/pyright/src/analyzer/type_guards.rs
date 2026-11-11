@@ -213,7 +213,7 @@ pub fn get_type_narrowing_callback(
                             .get();
 
                         if is_instantiable_class(call_type)
-                            && ClassType::is_built_in(class_of(call_type), Some(&names(&["type"])))
+                            && ClassType::is_built_in(class_of(call_type), Some(&["type"]))
                         {
                             let rhs_result =
                                 evaluator.get_type_of_expression(right_expr, EvalFlags::None, None);
@@ -322,7 +322,7 @@ pub fn get_type_narrowing_callback(
 
                         if is_class_instance(index_type) && is_literal_type(class_of(index_type)) {
                             let index_class = class_of(index_type);
-                            if ClassType::is_built_in(index_class, Some(&names(&["str"]))) {
+                            if ClassType::is_built_in(index_class, Some(&["str"])) {
                                 let right_type = evaluator
                                     .get_type_of_expression(right_expr, EvalFlags::None, None)
                                     .type_
@@ -347,7 +347,7 @@ pub fn get_type_narrowing_callback(
                                         })
                                     }));
                                 }
-                            } else if ClassType::is_built_in(index_class, Some(&names(&["int"]))) {
+                            } else if ClassType::is_built_in(index_class, Some(&["int"])) {
                                 let right_type_result = evaluator.get_type_of_expression(
                                     right_expr,
                                     EvalFlags::None,
@@ -362,7 +362,7 @@ pub fn get_type_narrowing_callback(
                                     // Narrowing can be applied only for bool or enum literals.
                                     if ClassType::is_built_in(
                                         class_of(right_type),
-                                        Some(&names(&["bool"])),
+                                        Some(&["bool"]),
                                     ) {
                                         can_narrow = true;
                                     } else if matches!(
@@ -451,7 +451,7 @@ pub fn get_type_narrowing_callback(
 
                         if is_class_instance(index_type) && is_literal_type(class_of(index_type)) {
                             let index_class = class_of(index_type);
-                            if ClassType::is_built_in(index_class, Some(&names(&["str", "int"]))) {
+                            if ClassType::is_built_in(index_class, Some(&["str", "int"])) {
                                 let right_type_result = evaluator.get_type_of_expression(
                                     right_expr,
                                     EvalFlags::None,
@@ -463,7 +463,7 @@ pub fn get_type_narrowing_callback(
                                     return Some(Rc::new(move |type_: P<Type>| {
                                         let narrowed_type = if ClassType::is_built_in(
                                             index_class,
-                                            Some(&["str".to_string()]),
+                                            Some(&["str"]),
                                         ) {
                                             narrow_type_for_discriminated_dict_entry_comparison(
                                                 ev.get(),
@@ -553,7 +553,7 @@ pub fn get_type_narrowing_callback(
 
                 if is_class_instance(right_type)
                     && (ClassType::is_enum_class(class_of(right_type))
-                        || ClassType::is_built_in(class_of(right_type), Some(&names(&["bool"]))))
+                        || ClassType::is_built_in(class_of(right_type), Some(&["bool"])))
                     && literal_value_of(right_type).is_some()
                 {
                     let right_class = class_of(right_type);
@@ -703,7 +703,7 @@ pub fn get_type_narrowing_callback(
                 let left_type = left_type_result.type_.get();
 
                 if is_class_instance(left_type)
-                    && ClassType::is_built_in(class_of(left_type), Some(&names(&["str"])))
+                    && ClassType::is_built_in(class_of(left_type), Some(&["str"]))
                     && is_literal_type(class_of(left_type))
                 {
                     let adj_is_positive_test = if operator == OperatorType::In {
@@ -750,11 +750,11 @@ pub fn get_type_narrowing_callback(
                 if let Some(call_function) = FunctionType::cast(call_type)
                     && FunctionType::is_built_in(
                         call_function,
-                        Some(&names(&["isinstance", "issubclass"])),
+                        Some(&["isinstance", "issubclass"]),
                     )
                 {
                     let is_instance_check =
-                        FunctionType::is_built_in(call_function, Some(&names(&["isinstance"])));
+                        FunctionType::is_built_in(call_function, Some(&["isinstance"]));
                     let arg1_type_result = evaluator.get_type_of_expression(
                         arg1_expr,
                         EvalFlags::IsInstanceArgDefaults,
@@ -811,7 +811,7 @@ pub fn get_type_narrowing_callback(
                 let call_type = call_type_result.type_.get();
 
                 if is_instantiable_class(call_type)
-                    && ClassType::is_built_in(class_of(call_type), Some(&names(&["bool"])))
+                    && ClassType::is_built_in(class_of(call_type), Some(&["bool"]))
                 {
                     return Some(Rc::new(move |type_: P<Type>| {
                         Some(TypeNarrowingResult {
@@ -838,7 +838,7 @@ pub fn get_type_narrowing_callback(
                     if is_class_instance(return_type) {
                         return ClassType::is_built_in(
                             class_of(return_type),
-                            Some(&names(&["TypeGuard", "TypeIs"])),
+                            Some(&["TypeGuard", "TypeIs"]),
                         );
                     }
                     if is_union(return_type) {
@@ -849,7 +849,7 @@ pub fn get_type_narrowing_callback(
                                 if !is_class_instance(subtype)
                                     || !ClassType::is_built_in(
                                         class_of(subtype),
-                                        Some(&names(&["TypeGuard", "TypeIs"])),
+                                        Some(&["TypeGuard", "TypeIs"]),
                                     )
                                 {
                                     is_all_guards = false;
@@ -896,14 +896,14 @@ pub fn get_type_narrowing_callback(
                     if is_class_instance(function_return_type)
                         && ClassType::is_built_in(
                             class_of(function_return_type),
-                            Some(&names(&["TypeGuard", "TypeIs"])),
+                            Some(&["TypeGuard", "TypeIs"]),
                         )
                         && type_args_of(function_return_type)
                             .is_some_and(|type_args| !type_args.is_empty())
                     {
                         is_strict_type_guard = ClassType::is_built_in(
                             class_of(function_return_type),
-                            Some(&names(&["TypeIs"])),
+                            Some(&["TypeIs"]),
                         );
                         type_guard_type = Some(type_args_of(function_return_type).unwrap()[0]);
                     } else if is_union(function_return_type) {
@@ -916,7 +916,7 @@ pub fn get_type_narrowing_callback(
                                 if is_class_instance(subtype)
                                     && ClassType::is_built_in(
                                         class_of(subtype),
-                                        Some(&names(&["TypeGuard", "TypeIs"])),
+                                        Some(&["TypeGuard", "TypeIs"]),
                                     )
                                     && type_args_of(subtype)
                                         .is_some_and(|type_args| !type_args.is_empty())
@@ -1551,7 +1551,7 @@ pub(crate) fn narrow_type_for_is_ellipsis(
         is_class_instance(subtype)
             && ClassType::is_built_in(
                 ClassType::cast(subtype).unwrap(),
-                Some(&["EllipsisType".to_string(), "ellipsis".to_string()]),
+                Some(&["EllipsisType", "ellipsis"]),
             )
     };
 
@@ -1679,7 +1679,7 @@ pub fn get_is_instance_class_types(
                 if is_instantiable_class(subtype)
                     && ClassType::is_built_in(
                         ClassType::cast(subtype).unwrap(),
-                        Some(&["Callable".to_string()]),
+                        Some(&["Callable"]),
                     )
                 {
                     subtype = convert_to_instantiable(get_unknown_type_for_callable().0, true);
@@ -1853,7 +1853,7 @@ pub(crate) fn narrow_type_for_instance_or_subclass_internal(
                 let is_type_instance = is_class_instance(subtype)
                     && ClassType::is_built_in(
                         ClassType::cast(subtype).unwrap(),
-                        Some(&["type".to_string()]),
+                        Some(&["type"]),
                     );
 
                 // Handle metaclass instances specially.
@@ -2003,7 +2003,7 @@ pub(crate) fn narrow_type_for_instance(
                     // This will normally be treated as type[Any], which is compatible with
                     // any metaclass, but we specifically want to treat type as the class
                     // type[object] in this case.
-                    if ClassType::is_built_in(filter_metaclass_class, Some(&names(&["type"])))
+                    if ClassType::is_built_in(filter_metaclass_class, Some(&["type"]))
                         && !filter_metaclass_class
                             .d()
                             .priv_
@@ -2014,7 +2014,7 @@ pub(crate) fn narrow_type_for_instance(
                         if !is_class(metaclass_type)
                             || !ClassType::is_built_in(
                                 class_of(metaclass_type),
-                                Some(&names(&["type"])),
+                                Some(&["type"]),
                             )
                         {
                             is_metaclass_overlap = false;
@@ -2100,7 +2100,7 @@ pub(crate) fn narrow_type_for_instance(
 
                 // Special-case the TypeForm special form. This represents a variety
                 // of runtime classes that will not appear to overlap with TypeForm.
-                if ClassType::is_built_in(class_of(runtime_var_type), Some(&names(&["TypeForm"]))) {
+                if ClassType::is_built_in(class_of(runtime_var_type), Some(&["TypeForm"])) {
                     is_class_relationship_indeterminate = true;
                     filter_is_subclass = true;
                 }
@@ -2134,7 +2134,7 @@ pub(crate) fn narrow_type_for_instance(
                     {
                         // If the runtime variable type is a type[T], handle a filter
                         // of 'type' as a special case.
-                        if !ClassType::is_built_in(concrete_filter_class, Some(&names(&["type"])))
+                        if !ClassType::is_built_in(concrete_filter_class, Some(&["type"]))
                             || TypeBase::get_instantiable_depth(runtime_var_type) == 0
                         {
                             is_class_relationship_indeterminate = true;
@@ -2580,7 +2580,7 @@ pub(crate) fn narrow_type_for_instance(
                 return true;
             }
             is_instantiable_class(*t)
-                && ClassType::is_built_in(class_of(*t), Some(&names(&["NoneType"])))
+                && ClassType::is_built_in(class_of(*t), Some(&["NoneType"]))
         })
     };
 
@@ -2639,7 +2639,7 @@ pub(crate) fn narrow_type_for_instance(
 
             if is_module(subtype)
                 || (is_class_instance(subtype)
-                    && ClassType::is_built_in(class_of(subtype), Some(&names(&["ModuleType"]))))
+                    && ClassType::is_built_in(class_of(subtype), Some(&["ModuleType"])))
             {
                 // Handle type narrowing for runtime-checkable protocols
                 // when applied to modules.
@@ -2723,7 +2723,7 @@ pub(crate) fn intersect_same_class_type(
     assert(type2.d().priv_.borrow().literal_value.is_none(), None);
 
     // Handle tuples specially.
-    if ClassType::is_built_in(type1, Some(&["tuple".to_string()])) {
+    if ClassType::is_built_in(type1, Some(&["tuple"])) {
         return intersect_tuple_types(type1, type1).map(|type_| ClassType::cast(type_).unwrap());
     }
 
@@ -2976,7 +2976,7 @@ pub(crate) fn narrow_type_for_container_type(
     // Narrowing in the negative case is possible only with tuples
     // with a known length.
     if !is_class_instance(container_type)
-        || !ClassType::is_built_in(ClassType(container_type), Some(&["tuple".to_string()]))
+        || !ClassType::is_built_in(ClassType(container_type), Some(&["tuple"]))
     {
         return reference_type;
     }
@@ -3061,7 +3061,7 @@ pub fn get_element_type_for_container_narrowing(container_type: P<Type>) -> Opti
     use crate::analyzer::types::{combine_types, is_class_instance};
 
     // We support contains narrowing only for certain built-in types that have been specialized.
-    let supported_containers: Vec<String> = [
+    let supported_containers = [
         "list",
         "set",
         "frozenset",
@@ -3070,10 +3070,7 @@ pub fn get_element_type_for_container_narrowing(container_type: P<Type>) -> Opti
         "dict",
         "defaultdict",
         "OrderedDict",
-    ]
-    .iter()
-    .map(|name| name.to_string())
-    .collect();
+    ];
     if !is_class_instance(container_type)
         || !ClassType::is_built_in(ClassType(container_type), Some(&supported_containers))
     {
@@ -3898,7 +3895,7 @@ pub(crate) fn narrow_type_for_class_comparison(
                     && TypeBase::is_instance(subtype)
                     && ClassType::is_built_in(
                         ClassType(concrete_subtype),
-                        Some(&["type".to_string()]),
+                        Some(&["type"]),
                     )
                 {
                     let type_args = ClassType(concrete_subtype).d().priv_.borrow().type_args.clone();
@@ -3923,7 +3920,7 @@ pub(crate) fn narrow_type_for_class_comparison(
                     if TypeBase::is_instance(concrete_subtype) {
                         return if ClassType::is_built_in(
                             concrete_class,
-                            Some(&["object".to_string()]),
+                            Some(&["object"]),
                         ) {
                             Some(class_type.0)
                         } else {
@@ -4034,7 +4031,7 @@ pub(crate) fn is_filter_superclass(
     // Handle the special case where the variable type is a TypedDict and
     // we're filtering against 'dict'. TypedDict isn't derived from dict,
     // but at runtime, isinstance returns True.
-    if ClassType::is_built_in(concrete_filter_type, Some(&["dict".to_string()]))
+    if ClassType::is_built_in(concrete_filter_type, Some(&["dict"]))
         && ClassType::is_typed_dict_class(concrete_var_type)
     {
         return true;
@@ -4072,11 +4069,11 @@ pub(crate) fn is_primitive_backed_enum_and_primitive(
 
     // Exclude bool, which derives from int but whose literal values are distinct
     // from the corresponding int literals.
-    if ClassType::is_built_in(primitive_type, Some(&["int".to_string()])) {
+    if ClassType::is_built_in(primitive_type, Some(&["int"])) {
         return derives_from_stdlib_class(enum_type, "int");
     }
 
-    if ClassType::is_built_in(primitive_type, Some(&["str".to_string()])) {
+    if ClassType::is_built_in(primitive_type, Some(&["str"])) {
         return derives_from_stdlib_class(enum_type, "str");
     }
 
@@ -4185,7 +4182,7 @@ pub(crate) fn narrow_type_for_literal_comparison(
 
                     let is_singleton = ClassType::is_enum_class(literal_type)
                         || is_sentinel_literal(subtype)
-                        || ClassType::is_built_in(literal_type, Some(&["bool".to_string()]));
+                        || ClassType::is_built_in(literal_type, Some(&["bool"]));
 
                     // For negative tests, we can eliminate the literal value if it doesn't match,
                     // but only for equality tests or for 'is' tests that involve enums, bools, or sentinels.
@@ -4250,7 +4247,7 @@ pub(crate) fn narrow_type_for_literal_comparison(
                 if is_class_instance(subtype)
                     && ClassType::is_built_in(
                         ClassType(subtype),
-                        Some(&["LiteralString".to_string()]),
+                        Some(&["LiteralString"]),
                     )
                 {
                     return Some(literal_type.0);
@@ -4297,7 +4294,7 @@ pub fn enumerate_literals_for_type(
     use crate::analyzer::enums::transform_type_for_enum_member;
     use crate::analyzer::types::{LiteralValue, is_class, is_class_instance};
 
-    if ClassType::is_built_in(type_, Some(&["bool".to_string()])) {
+    if ClassType::is_built_in(type_, Some(&["bool"])) {
         // Booleans have only two types: True and False.
         return Some(vec![
             ClassType::clone_with_literal(type_, /* value */ Some(LiteralValue::Boolean(true))),
@@ -4312,7 +4309,7 @@ pub fn enumerate_literals_for_type(
             let mro = type_.d().shared.get().mro.borrow().clone();
             mro.iter().any(|mro_class| {
                 is_class(*mro_class)
-                    && ClassType::is_built_in(ClassType(*mro_class), Some(&["Flag".to_string()]))
+                    && ClassType::is_built_in(ClassType(*mro_class), Some(&["Flag"]))
             })
         } {
             return None;
