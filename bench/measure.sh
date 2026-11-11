@@ -4,6 +4,8 @@
 # work loads the machine; wall time does not.
 #
 # Usage: bench/measure.sh [CORPUS] [RUNS]   (defaults: pydantic-ai 3)
+#   Instructions repeat to within 0.1% between runs, so RUNS=1 is enough to compare
+#   instructions; use 3 when wall time matters. Every pydantic-ai run holds the shared lock.
 # Environment:
 #   PYRIGHT_RS_BIN  binary to measure (default: this tree's target/release/pyright-rs,
 #                   built first)
