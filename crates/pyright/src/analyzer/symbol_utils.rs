@@ -4,26 +4,21 @@
 
 use crate::analyzer::declaration::Declaration;
 use crate::analyzer::declaration::DeclarationType;
+use crate::analyzer::declaration_utils::has_type_for_declaration;
 use crate::analyzer::symbol::Symbol;
 use jsrt::P;
 
 // analyzer/symbolUtils.ts:13
 pub fn get_last_typed_declaration_for_symbol(symbol: P<Symbol>) -> Option<P<Declaration>> {
-    let typed_decls = symbol.get_typed_declarations();
-
-    if !typed_decls.is_empty() {
-        return Some(typed_decls[typed_decls.len() - 1]);
-    }
-
-    None
+    // The last of `getTypedDeclarations()`: its filter only reads each declaration, so the
+    // last declaration that passes it is found from the end, without the filtered array.
+    symbol.get_declarations().iter().rev().copied().find(|decl| has_type_for_declaration(decl))
 }
 
 // analyzer/symbolUtils.ts:25
 pub fn is_typed_dict_member_accessed_through_index(symbol: P<Symbol>) -> bool {
-    let typed_decls = symbol.get_typed_declarations();
-
-    if !typed_decls.is_empty() {
-        let last_decl = typed_decls[typed_decls.len() - 1];
+    // The last of `getTypedDeclarations()`, found as in `get_last_typed_declaration_for_symbol`.
+    if let Some(last_decl) = get_last_typed_declaration_for_symbol(symbol) {
         if last_decl.type_ == DeclarationType::Variable {
             return true;
         }
