@@ -371,7 +371,10 @@ pub struct TypeEvaluator {
     // analyzer/typeEvaluator.ts:677
     pub(crate) type_form_type_cache: Cell<P<RefCell<JsMap<u32, Vec<TypeFormTypeCacheEntry>>>>>,
     // analyzer/typeEvaluator.ts:678
-    pub(crate) effective_type_cache: RefCell<JsMap<u32, JsMap<String, P<EffectiveTypeResult>>>>,
+    /// Keyed by symbol id, then by `effectiveTypeCacheKey`, the string
+    /// `${usageNodeId ?? '.'}${useLastDecl ? '*' : ''}`, held as the pair it encodes. Nothing
+    /// iterates either map.
+    pub(crate) effective_type_cache: RefCell<FxHashMap<u32, FxHashMap<(Option<u32>, bool), P<EffectiveTypeResult>>>>,
     // analyzer/typeEvaluator.ts:679
     pub(crate) expected_type_cache: RefCell<JsMap<u32, ExpectedTypeCacheEntry>>,
     // analyzer/typeEvaluator.ts:680
@@ -453,7 +456,7 @@ pub fn create_type_evaluator(
         code_flow_analyzer_cache: RefCell::new(JsMap::default()),
         type_cache: Cell::new(P::new_eval(RefCell::new(FxHashMap::default()))),
         type_form_type_cache: Cell::new(P::new_eval(RefCell::new(JsMap::default()))),
-        effective_type_cache: RefCell::new(JsMap::default()),
+        effective_type_cache: RefCell::new(FxHashMap::default()),
         expected_type_cache: RefCell::new(JsMap::default()),
         asymmetric_accessor_assignment_cache: RefCell::new(JsSet::default()),
         deferred_class_completions: RefCell::new(Vec::new()),
@@ -541,7 +544,7 @@ impl TypeEvaluator {
         *self.code_flow_analyzer_cache.borrow_mut() = JsMap::default();
         self.type_cache.set(P::new_eval(RefCell::new(FxHashMap::default())));
         self.type_form_type_cache.set(P::new_eval(RefCell::new(JsMap::default())));
-        *self.effective_type_cache.borrow_mut() = JsMap::default();
+        *self.effective_type_cache.borrow_mut() = FxHashMap::default();
         *self.expected_type_cache.borrow_mut() = JsMap::default();
         *self.asymmetric_accessor_assignment_cache.borrow_mut() = JsSet::default();
     }
@@ -35201,14 +35204,7 @@ impl TypeEvaluator {
         // one replaces it, and such a call is an ancestor of this one), so the flag is enough.
         let had_cache_entries = self.effective_type_cache.borrow().contains_key(&symbol.id);
         let usage_node_id = usage_node.map(|usage_node| usage_node.id.get());
-        let effective_type_cache_key = format!(
-            "{}{}",
-            match usage_node_id {
-                None => ".".to_owned(),
-                Some(usage_node_id) => usage_node_id.to_string(),
-            },
-            if use_last_decl { "*" } else { "" }
-        );
+        let effective_type_cache_key = (usage_node_id, use_last_decl);
         let cache_entry = self
             .effective_type_cache
             .borrow()
@@ -35226,13 +35222,13 @@ impl TypeEvaluator {
             // Add the entry to the cache so we don't need to compute it next time.
             let mut effective_type_cache = self.effective_type_cache.borrow_mut();
             if !had_cache_entries {
-                effective_type_cache.insert(symbol.id, JsMap::default());
+                effective_type_cache.insert(symbol.id, FxHashMap::default());
             }
 
             effective_type_cache
                 .get_mut(&symbol.id)
                 .unwrap()
-                .insert(effective_type_cache_key.clone(), result);
+                .insert(effective_type_cache_key, result);
         };
 
         // Infer the type.
@@ -35397,7 +35393,7 @@ impl TypeEvaluator {
             decls_to_consider.clear();
         }
 
-        let result = self.get_type_of_symbol_for_decls(symbol, &decls_to_consider, &effective_type_cache_key);
+        let result = self.get_type_of_symbol_for_decls(symbol, &decls_to_consider, effective_type_cache_key);
         result.includes_variable_decl.set(Some(includes_variable_decl));
         result.includes_illegal_type_alias_decl.set(Some(includes_illegal_type_alias_decl));
 
@@ -35414,7 +35410,7 @@ impl TypeEvaluator {
         &self,
         symbol: P<Symbol>,
         decls: &[P<Declaration>],
-        type_cache_key: &str,
+        type_cache_key: (Option<u32>, bool),
     ) -> P<EffectiveTypeResult> {
         let mut types_to_combine: Vec<P<Type>> = Vec::new();
         let mut is_incomplete = false;
@@ -35490,7 +35486,7 @@ impl TypeEvaluator {
             .effective_type_cache
             .borrow()
             .get(&symbol.id)
-            .and_then(|cache_entries| cache_entries.get(type_cache_key).copied())
+            .and_then(|cache_entries| cache_entries.get(&type_cache_key).copied())
             .and_then(|cache_entry| cache_entry.evaluation_attempts);
         let evaluation_attempts = previous_evaluation_attempts.unwrap_or(0) + 1;
 
