@@ -14,6 +14,7 @@ use crate::common::uri::Uri;
 
 // analyzer/importResolverTypes.ts:12
 #[derive(Clone, Debug)]
+#[derive(jsrt::Trace)]
 pub struct SupportedVersionInfo {
     pub min: PythonVersion,
     pub max: Option<PythonVersion>,

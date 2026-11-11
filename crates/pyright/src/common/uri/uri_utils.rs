@@ -15,6 +15,7 @@ use crate::common::uri::Uri;
 
 // common/uri/uriUtils.ts:22
 #[derive(Clone, Debug)]
+#[derive(jsrt::Trace)]
 pub struct FileSpec {
     pub wildcard_root: Uri,
     pub reg_exp: Regex,

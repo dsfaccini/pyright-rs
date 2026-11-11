@@ -75,6 +75,8 @@ thread_local! {
 pub(crate) const MAX_SEQUENCE_PATTERN_TUPLE_EXPANSION_SUBTYPES: u32 = 128;
 
 // analyzer/patternMatching.ts:117
+#[derive(jsrt::Trace)]
+#[trace(eval)]
 pub struct SequencePatternInfo {
     pub subtype: Cell<P<Type>>,
     pub is_definite_no_match: bool,
@@ -86,6 +88,8 @@ pub struct SequencePatternInfo {
 }
 
 // analyzer/patternMatching.ts:127
+#[derive(jsrt::Trace)]
+#[trace(eval)]
 pub struct MappingPatternInfo {
     pub subtype: Cell<P<Type>>,
     pub is_definitely_mapping: bool,
@@ -3413,6 +3417,7 @@ pub(crate) fn report_unnecessary_pattern(
 
 // Inline object type at MappingPatternInfo.dictTypeArgs.
 #[derive(Clone)]
+#[derive(jsrt::Trace)]
 pub struct MappingPatternInfoDictTypeArgs {
     pub key: P<Type>,
     pub value: P<Type>,

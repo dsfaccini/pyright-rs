@@ -71,6 +71,8 @@ pub struct GetTypeArgsOptions {
 }
 
 // analyzer/typeEvaluator.ts:399
+#[derive(jsrt::Trace)]
+#[trace(eval)]
 pub struct MatchArgsToParamsResult {
     pub overload: FunctionType,
     pub overload_index: i32,
@@ -116,6 +118,7 @@ pub struct AliasMapEntry {
 
 // analyzer/typeEvaluator.ts:446
 #[derive(Clone)]
+#[derive(jsrt::Trace)]
 pub struct AssignClassToSelfInfo {
     pub class: ClassType,
     pub assumed_variance: Variance,
@@ -149,6 +152,7 @@ pub struct EffectiveReturnTypeOptions {
 
 // analyzer/typeEvaluator.ts:471
 #[derive(Clone)]
+#[derive(jsrt::Trace)]
 pub struct SignatureTrackerStackEntry {
     pub tracker: P<UniqueSignatureTracker>,
     pub root_node: P<ParseNode>,
@@ -192,6 +196,7 @@ thread_local! {
 
 // analyzer/typeEvaluator.ts:507
 #[derive(Clone)]
+#[derive(jsrt::Trace)]
 pub struct SymbolResolutionStackEntry {
     pub symbol_id: u32,
     pub declaration: P<Declaration>,
@@ -201,6 +206,7 @@ pub struct SymbolResolutionStackEntry {
 
 // analyzer/typeEvaluator.ts:521
 #[derive(Clone)]
+#[derive(jsrt::Trace)]
 pub struct ReturnTypeInferenceContext {
     pub function_node: FunctionNode,
     pub code_flow_analyzer: P<CodeFlowAnalyzer>,
@@ -266,6 +272,7 @@ pub const MAX_CODE_COMPLEXITY: f64 = 768.0;
 
 // analyzer/typeEvaluator.ts:616
 #[derive(Clone)]
+#[derive(jsrt::Trace)]
 pub struct EvaluatorOptions {
     pub print_type_flags: PrintTypeFlags,
     pub log_calls: bool,
@@ -276,6 +283,8 @@ pub struct EvaluatorOptions {
 }
 
 // analyzer/typeEvaluator.ts:629
+#[derive(jsrt::Trace)]
+#[trace(eval)]
 pub struct DeferredClassCompletion {
     pub depends_upon: ClassType,
     pub classes_to_complete: RefCell<Vec<ClassNode>>,
@@ -283,6 +292,7 @@ pub struct DeferredClassCompletion {
 
 // analyzer/typeEvaluator.ts:634
 #[derive(Clone)]
+#[derive(jsrt::Trace)]
 pub struct TypeCacheEntry {
     pub type_result: P<TypeResult>,
     pub incomplete_gen_count: u32,
@@ -291,6 +301,7 @@ pub struct TypeCacheEntry {
 
 // analyzer/typeEvaluator.ts:640
 #[derive(Clone)]
+#[derive(jsrt::Trace)]
 pub struct TypeFormTypeCacheEntry {
     pub type_result: P<TypeResult>,
     pub incomplete_gen_count: u32,
@@ -300,6 +311,7 @@ pub struct TypeFormTypeCacheEntry {
 
 // analyzer/typeEvaluator.ts:642
 #[derive(Clone)]
+#[derive(jsrt::Trace)]
 pub struct CodeFlowAnalyzerCacheEntry {
     pub type_at_start: Option<P<TypeResult>>,
     pub code_flow_analyzer: P<CodeFlowAnalyzer>,
@@ -307,6 +319,7 @@ pub struct CodeFlowAnalyzerCacheEntry {
 
 // analyzer/typeEvaluator.ts:647
 #[derive(Clone, Default)]
+#[derive(jsrt::Trace)]
 pub struct FunctionRecursionInfo {
     pub caller_node: Option<ExpressionNode>,
 }
@@ -315,6 +328,7 @@ pub struct FunctionRecursionInfo {
 
 // analyzer/typeEvaluator.ts:653
 #[derive(Clone)]
+#[derive(jsrt::Trace)]
 pub struct SuppressedNodeStackEntry {
     pub node: P<ParseNode>,
     pub suppressed_diags: Option<Vec<String>>,
@@ -322,14 +336,19 @@ pub struct SuppressedNodeStackEntry {
 
 // analyzer/typeEvaluator.ts:658
 #[derive(Clone)]
+#[derive(jsrt::Trace)]
 pub struct ExpectedTypeCacheEntry {
     pub type_: P<Type>,
     pub candidates: Vec<P<Type>>,
 }
 
 // analyzer/typeEvaluator.ts:663
+#[derive(jsrt::Trace)]
+#[trace(eval)]
 pub struct TypeEvaluator {
     // analyzer/typeEvaluator.ts:664
+    /// Captures the `Program`, a program handle.
+    #[trace(skip)]
     pub(crate) import_lookup: ImportLookup,
     // analyzer/typeEvaluator.ts:665
     pub(crate) evaluator_options: EvaluatorOptions,
@@ -11658,7 +11677,9 @@ impl TypeEvaluator {
         }
 
         // Start with all of the usage variances unknown.
-        let usage_variances: P<RefCell<Vec<Variance>>> = P::new_eval(RefCell::new(
+        // On the program heap: a value that holds no handle cannot live on the
+        // evaluator heap (`jsrt::Trace::EVAL`).
+        let usage_variances: P<RefCell<Vec<Variance>>> = P::new(RefCell::new(
             type_params.iter().map(|_| Variance::Unknown).collect(),
         ));
 

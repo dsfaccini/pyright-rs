@@ -14,6 +14,7 @@ pub(crate) const MAX_CONSTRAINT_SET_COUNT: u32 = 1024;
 
 // analyzer/constraintTracker.ts:27
 #[derive(Clone)]
+#[derive(jsrt::Trace)]
 pub struct TypeVarConstraints {
     pub type_var: TypeVarType,
     pub lower_bound: Option<P<Type>>,
@@ -22,6 +23,8 @@ pub struct TypeVarConstraints {
 }
 
 // analyzer/constraintTracker.ts:40
+#[derive(jsrt::Trace)]
+#[trace(eval)]
 pub struct ConstraintSet {
     pub(crate) _type_var_map: RefCell<LazyJsMap<String, TypeVarConstraints>>,
     pub(crate) _scope_ids: RefCell<Option<Box<JsSet<String>>>>,
@@ -228,6 +231,8 @@ impl ConstraintSet {
 }
 
 // analyzer/constraintTracker.ts:185
+#[derive(jsrt::Trace)]
+#[trace(eval)]
 pub struct ConstraintTracker {
     pub(crate) _constraint_sets: RefCell<Box<[P<ConstraintSet>]>>,
 }

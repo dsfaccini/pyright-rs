@@ -66,6 +66,7 @@ use std::sync::LazyLock;
 
 // analyzer/enums.ts:40
 #[derive(Clone)]
+#[derive(jsrt::Trace)]
 pub struct EnumEvalStackEntry {
     pub class_type: ClassType,
     pub member_name: String,
@@ -75,7 +76,11 @@ thread_local! {
     // analyzer/enums.ts:47
     // This stack is used to prevent infinite recursion when evaluating
     // enum members that refer to other enum members.
-    pub(crate) static ENUM_EVAL_STACK: RefCell<Vec<EnumEvalStackEntry>> = const { RefCell::new(Vec::new()) };
+    pub(crate) static ENUM_EVAL_STACK: RefCell<Vec<EnumEvalStackEntry>> = {
+        // Holds evaluator handles while a file is checked: a collector root.
+        jsrt::heap::add_root(|t| ENUM_EVAL_STACK.with(|s| jsrt::Trace::trace(s, t)));
+        RefCell::new(Vec::new())
+    };
 }
 
 // analyzer/enums.ts:50

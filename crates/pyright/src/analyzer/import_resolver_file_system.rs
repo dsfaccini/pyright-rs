@@ -12,6 +12,7 @@ use crate::common::uri::Uri;
 use crate::common::uri::uri_utils::{is_directory, is_file, try_realpath, try_stat};
 
 // analyzer/importResolverFileSystem.ts:17
+#[derive(jsrt::Trace)]
 struct CachedDir {
     entries_by_name: FxHashMap<String, Dirent>,
     entries_array: Vec<Dirent>,
@@ -28,6 +29,7 @@ pub fn create_import_resolver_file_system(
 // analyzer/importResolverFileSystem.ts:27
 /// Cached entries live in the arena; `invalidate_cache` drops the maps that
 /// point at them.
+#[derive(jsrt::Trace)]
 pub struct ImportResolverFileSystemImpl {
     _cached_dir_info_for_path: RefCell<FxHashMap<Uri, P<CachedDir>>>,
     _cached_files_for_path: RefCell<FxHashMap<Uri, P<Vec<Uri>>>>,

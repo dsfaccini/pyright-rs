@@ -12,6 +12,7 @@ use crate::common::debug::fail;
 // analyzer/scope.ts:16
 #[repr(i32)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(jsrt::Trace)]
 pub enum ScopeType {
     // Used for PEP 695-style type parameters.
     TypeParameter,
@@ -36,6 +37,7 @@ pub enum ScopeType {
 // analyzer/scope.ts:37
 #[repr(i32)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(jsrt::Trace)]
 pub enum NameBindingType {
     // With "nonlocal" keyword
     Nonlocal,
@@ -47,6 +49,7 @@ pub enum NameBindingType {
 // analyzer/scope.ts:46
 // Provides information for recursive scope lookups.
 #[derive(Clone, Copy, Debug)]
+#[derive(jsrt::Trace)]
 pub struct SymbolWithScope {
     // Found symbol
     pub symbol: P<Symbol>,
@@ -92,6 +95,7 @@ pub struct LookupSymbolOptions {
 
 // analyzer/scope.ts:85
 #[derive(Clone, Copy, Debug, Default)]
+#[derive(jsrt::Trace)]
 pub struct ChainedModuleLevelLookupContext {
     pub is_outside_caller_module: Option<bool>,
     pub is_beyond_execution_scope: Option<bool>,
@@ -104,6 +108,7 @@ pub type ScopeChainedModuleLevelLookup =
     Rc<dyn Fn(&str, Option<ChainedModuleLevelLookupContext>) -> Option<SymbolWithScope>>;
 
 // analyzer/scope.ts:97
+#[derive(jsrt::Trace)]
 pub struct Scope {
     // The scope type, as defined in the enumeration.
     pub type_: ScopeType,
@@ -118,6 +123,8 @@ pub struct Scope {
 
     // An optional lookup for chained module-level scopes (notebook cells)
     // consulted after the current scope is checked.
+    /// Set only for notebook cells, which the CLI never checks.
+    #[trace(skip)]
     pub chained_module_level_scope_lookup: Option<ScopeChainedModuleLevelLookup>,
 
     // Association between names and symbols.

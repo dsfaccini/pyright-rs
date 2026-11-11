@@ -18,6 +18,7 @@ use crate::common::text_range::{HasTextRange, TextRange};
 // parser/tokenizerTypes.ts:16
 #[repr(i32)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(jsrt::Trace)]
 pub enum TokenType {
     Invalid,
     EndOfStream,
@@ -51,6 +52,7 @@ pub enum TokenType {
 // parser/tokenizerTypes.ts:46
 #[repr(i32)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(jsrt::Trace)]
 pub enum NewLineType {
     CarriageReturn,
     LineFeed,
@@ -61,6 +63,7 @@ pub enum NewLineType {
 // parser/tokenizerTypes.ts:53
 #[repr(i32)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(jsrt::Trace)]
 pub enum OperatorType {
     // These operators are used with tokens
     // of type TokenType.Operator.
@@ -176,6 +179,7 @@ impl OperatorFlags {
 // parser/tokenizerTypes.ts:112
 #[repr(i32)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(jsrt::Trace)]
 pub enum KeywordType {
     And,
     As,
@@ -230,6 +234,7 @@ pub const SOFT_KEYWORDS: [KeywordType; 5] = [
 
 // parser/tokenizerTypes.ts:163
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
+#[derive(jsrt::Trace)]
 pub struct StringTokenFlags(pub u32);
 
 impl StringTokenFlags {
@@ -263,6 +268,7 @@ flag_ops!(StringTokenFlags);
 // parser/tokenizerTypes.ts:187
 #[repr(i32)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(jsrt::Trace)]
 pub enum CommentType {
     Regular,
     IPythonMagic,
@@ -273,6 +279,7 @@ pub enum CommentType {
 
 // parser/tokenizerTypes.ts:195
 #[derive(Clone, Debug, PartialEq)]
+#[derive(jsrt::Trace)]
 pub struct Comment {
     pub type_: CommentType,
     pub value: String,
@@ -302,6 +309,7 @@ impl HasTextRange for Comment {
 }
 
 // parser/tokenizerTypes.ts:208
+#[derive(jsrt::Trace)]
 pub struct Token {
     pub type_: TokenType,
     pub start: i32,
@@ -315,6 +323,7 @@ pub struct Token {
 }
 
 /// The fields that each specific token interface adds to `Token`.
+#[derive(jsrt::Trace)]
 pub enum TokenDetails {
     None,
     Indent(IndentTokenDetails),
@@ -374,7 +383,7 @@ impl Token {
 
 macro_rules! token_handle {
     ($handle:ident, $variant:ident, $details:ident) => {
-        #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+        #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, jsrt::Trace)]
         pub struct $handle(pub P<Token>);
 
         impl $handle {
@@ -419,6 +428,7 @@ macro_rules! token_handle {
 }
 
 // parser/tokenizerTypes.ts:232
+#[derive(jsrt::Trace)]
 pub struct IndentTokenDetails {
     pub indent_amount: i32,
     pub is_indent_ambiguous: bool,
@@ -448,6 +458,7 @@ impl IndentToken {
 }
 
 // parser/tokenizerTypes.ts:269
+#[derive(jsrt::Trace)]
 pub struct DedentTokenDetails {
     pub indent_amount: i32,
     pub matches_indent: bool,
@@ -480,6 +491,7 @@ impl DedentToken {
 }
 
 // parser/tokenizerTypes.ts:308
+#[derive(jsrt::Trace)]
 pub struct NewLineTokenDetails {
     pub new_line_type: NewLineType,
 }
@@ -504,6 +516,7 @@ impl NewLineToken {
 }
 
 // parser/tokenizerTypes.ts:339
+#[derive(jsrt::Trace)]
 pub struct KeywordTokenDetails {
     pub keyword_type: KeywordType,
 }
@@ -533,6 +546,7 @@ impl KeywordToken {
 }
 
 // parser/tokenizerTypes.ts:374
+#[derive(jsrt::Trace)]
 pub struct StringTokenDetails {
     pub flags: StringTokenFlags,
 
@@ -580,6 +594,7 @@ impl StringToken {
 }
 
 // parser/tokenizerTypes.ts:425
+#[derive(jsrt::Trace)]
 pub struct FStringStartTokenDetails {
     pub flags: StringTokenFlags,
 
@@ -622,6 +637,7 @@ impl FStringStartToken {
 }
 
 // parser/tokenizerTypes.ts:470
+#[derive(jsrt::Trace)]
 pub struct FStringMiddleTokenDetails {
     pub flags: StringTokenFlags,
 
@@ -652,6 +668,7 @@ impl FStringMiddleToken {
 }
 
 // parser/tokenizerTypes.ts:492
+#[derive(jsrt::Trace)]
 pub struct FStringEndTokenDetails {
     pub flags: StringTokenFlags,
 }
@@ -671,6 +688,7 @@ impl FStringEndToken {
 }
 
 // parser/tokenizerTypes.ts:510
+#[derive(jsrt::Trace)]
 pub struct NumberTokenDetails {
     pub value: NumberValue,
     pub is_integer: bool,
@@ -703,6 +721,7 @@ impl NumberToken {
 }
 
 // parser/tokenizerTypes.ts:549
+#[derive(jsrt::Trace)]
 pub struct OperatorTokenDetails {
     pub operator_type: OperatorType,
 }
@@ -727,6 +746,7 @@ impl OperatorToken {
 }
 
 // parser/tokenizerTypes.ts:580
+#[derive(jsrt::Trace)]
 pub struct IdentifierTokenDetails {
     pub value: String,
 }

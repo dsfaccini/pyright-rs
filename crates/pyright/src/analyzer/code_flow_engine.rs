@@ -129,6 +129,7 @@ pub struct FlowNodeTypeOptions {
 
 // analyzer/codeFlowEngine.ts:130
 #[derive(Clone)]
+#[derive(jsrt::Trace)]
 pub struct IncompleteSubtypeInfo {
     pub type_: P<Type>,
     pub is_incomplete: bool,
@@ -137,6 +138,8 @@ pub struct IncompleteSubtypeInfo {
 }
 
 // analyzer/codeFlowEngine.ts:137
+#[derive(jsrt::Trace)]
+#[trace(eval)]
 pub struct IncompleteType {
     pub is_incomplete_type: Option<bool>,
     pub type_: Cell<Option<P<Type>>>,
@@ -146,6 +149,8 @@ pub struct IncompleteType {
 }
 
 // analyzer/codeFlowEngine.ts:158
+#[derive(jsrt::Trace)]
+#[trace(eval)]
 pub struct ReachabilityCacheEntry {
     pub reachability: Cell<Option<Reachability>>,
     pub reachability_from: RefCell<JsMap<u32, Reachability>>,
@@ -163,12 +168,15 @@ pub fn is_incomplete_type(cached_type: &CachedType) -> bool {
 
 // analyzer/codeFlowEngine.ts:168
 #[derive(Clone)]
+#[derive(jsrt::Trace)]
 pub enum CachedType {
     Type(P<Type>),
     IncompleteType(P<IncompleteType>),
 }
 
 // analyzer/codeFlowEngine.ts:170
+#[derive(jsrt::Trace)]
+#[trace(eval)]
 pub struct CodeFlowTypeCache {
     pub cache: P<RefCell<JsMap<u32, Option<CachedType>>>>,
     pub pending_nodes: RefCell<JsSet<u32>>,
@@ -191,6 +199,8 @@ pub(crate) const MAX_CONVERGENCE_ATTEMPT_LIMIT: u32 = 256;
 pub(crate) const ENABLE_PRINT_CONVERGENCE_LIMIT_HIT: bool = false;
 
 // analyzer/codeFlowEngine.ts:203
+#[derive(jsrt::Trace)]
+#[trace(eval)]
 pub struct CodeFlowEngine {
     // analyzer/codeFlowEngine.ts:204
     pub(crate) evaluator: P<TypeEvaluator>,
@@ -1476,6 +1486,8 @@ impl CodeFlowEngine {
 }
 
 // analyzer/codeFlowEngine.ts:220
+#[derive(jsrt::Trace)]
+#[trace(eval)]
 pub struct CodeFlowAnalyzer {
     // The CodeFlowEngine whose `createCodeFlowAnalyzer` built this CodeFlowAnalyzer.
     pub(crate) code_flow_engine: P<CodeFlowEngine>,

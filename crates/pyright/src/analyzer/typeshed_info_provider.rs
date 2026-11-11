@@ -23,6 +23,7 @@ pub fn create_default_typeshed_info_provider(
 }
 
 // analyzer/typeshedInfoProvider.ts:24
+#[derive(jsrt::Trace)]
 pub struct DefaultTypeshedInfoProvider {
     _typeshed_root_cache: RefCell<FxHashMap<String, Option<Uri>>>,
     _typeshed_subdirectory_cache: RefCell<FxHashMap<String, Option<Uri>>>,

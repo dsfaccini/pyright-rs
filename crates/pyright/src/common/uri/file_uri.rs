@@ -14,6 +14,7 @@ use crate::common::uri::memoization::cache_static_func;
 use crate::common::uri::uri::{Uri, UriData, UriKind};
 
 // common/uri/fileUri.ts:32
+#[derive(jsrt::Trace)]
 pub struct FileUriData {
     pub(crate) file_path: String,
     pub(crate) query: String,

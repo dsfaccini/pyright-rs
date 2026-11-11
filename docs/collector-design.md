@@ -18,12 +18,12 @@ Recommendation 1 in `docs/research/memory-advice.md` gives the motivation; this 
 
 ## heap layout
 
-- Two address ranges, reserved once per process with `mmap(MAP_NORESERVE)`: 256 GiB for the evaluator heap, 64 GiB for the program heap. Pages are committed on first touch. "Is this handle in the evaluator heap" is one subtraction and one compare.
+- Two address ranges, reserved once per process with `mmap(MAP_NORESERVE)`: 256 GiB for the evaluator heap, 64 GiB for typed program blocks. Pages are committed on first touch. "Is this handle in the evaluator heap" is one subtraction and one compare.
 - Each range is cut into 64 KiB blocks. A block belongs to one thread and holds objects of one Rust type, in fixed slots of `size_of` rounded up to the alignment (at least 8 bytes, so every `P` has its own address).
 - Block metadata lives in a side table indexed by block number: the type, the slot size, a bump index, a free list, and bitmaps for live and marked slots (plus dead slots in check mode). No per-object header: `Type` keeps its `size_of`.
-- `P::new` and `P::new_eval` find the type's allocator through a per-thread table keyed by `TypeId`, then pop the block's free list or bump.
-- The program heap uses the same blocks and is never swept. It replaces bumpalo because the collector enumerates program objects by type (below), which a bump arena cannot do.
-- `libc` provides `mmap` and `madvise`.
+- Every `P::new_eval` goes to a typed block. A `P::new` goes to a typed block when its type has `HOLDS_EVAL` (below), because the collector scans those objects as roots; every other program object stays in the bump arena, which parse and bind speed depends on. The choice is made at compile time from the const.
+- The allocator id of a non-generic type sits in a static the derive emits (`jsrt::ClassSlot`), so finding the type's blocks is one load. A generic type allocated directly (`RefCell<Vec<P<Type>>>`) falls back to a per-thread `TypeId` map.
+- `libc` provides `mmap` and `madvise`. Code: `crates/jsrt/src/heap.rs`, `trace.rs`, `arena.rs`; the derive in `crates/jsrt_derive`.
 
 ## tracing
 
@@ -37,21 +37,23 @@ pub unsafe trait Trace {
 
 - `P<T>` has `HOLDS_EVAL = T::EVAL`. Its `trace` marks the target when the address is in the evaluator range. Marking sets the slot's mark bit and pushes the object on a mark stack; the object's type comes from its block, so a `P<dyn Trait>` traces like any other.
 - `#[derive(jsrt::Trace)]` (new proc-macro crate `crates/jsrt_derive`, on the `syn` and `quote` already in `Cargo.lock`): `HOLDS_EVAL` is the OR over the fields; `trace` visits the fields whose type has `HOLDS_EVAL`.
-- `#[trace(eval)]` on a type sets `EVAL`. `P::new_eval` does not compile for a type without it. Generic containers (`RefCell<T>`, `Vec<T>`, maps) count as `EVAL`, since the evaluator allocates `RefCell<Vec<P<Type>>>` directly.
+- `#[trace(eval)]` on a type sets `EVAL`. `P::new_eval` does not compile for a type without it, so a `P<T>` whose `T` lacks `EVAL` never points into the evaluator heap.
+- A std or dependency type has `EVAL = HOLDS_EVAL`: the evaluator allocates `RefCell<Vec<P<Type>>>` directly, and a `P<RefCell<JsSet<String>>>` (the binder's code-flow expressions) stays a program handle. A list of variances holds no handle, so `TypeAliasSharedInfo.computed_variance` is allocated with `P::new`.
 - Field attributes:
   - `#[trace(skip)]`: an opaque value, such as a stored closure or a `&'static dyn` service.
   - `#[trace(program)]`: the field's type allows an evaluator handle, but the field only ever holds program handles (`AnalyzerNodeInfo.declaration`: the binder's declarations). Check mode verifies it.
-- `#[trace(holds_eval)]` on a type forces `HOLDS_EVAL`, for a type that contains itself without a `P` (the const would otherwise be a cycle).
+- `#[trace(holds_eval)]` on a type forces `HOLDS_EVAL`, for a type that contains itself without a `P` (the const would otherwise be a cycle): `TypeResultWithNode`.
 - `jsrt` implements `Trace` for the std and dependency types the port stores: `Option`, `Vec`, `Box`, `Rc`, `Cell<T: Copy>`, `RefCell`, `OnceCell`, `JsMap`, `JsSet`, `FxHashMap`, `FxHashSet`, tuples, arrays, strings, numbers, `fn` pointers and `&'static T` (holds no evaluator handle; check mode verifies it).
 - `RefCell` contents are read with `try_borrow_unguarded`. A `RefCell` mutably borrowed at a collection panics.
 
 ## roots
 
-- **The program heap.** It is never collected, so every program object is a root. The collector scans every program block whose type has `HOLDS_EVAL`. `ParseNode`, `Token`, `AnalyzerNodeInfo` and `FlowNode` (about 30 M objects on pydantic-ai) hold no evaluator handle, so their blocks are skipped. `Program`, `Symbol`, `Declaration` and `SourceFile` are scanned; the current `TypeEvaluator` and its caches (`typeCache`, `speculativeTypeTracker`, `codeFlowAnalyzerCache`, ...) are reached through `Program.evaluator`.
-- **Thread-locals.** A thread-local that holds an evaluator handle registers a root with `jsrt::arena::add_root(fn(&mut Tracer))` in its initializer: `ENUM_EVAL_STACK` (`enums.rs`), `PROTOCOL_ASSIGNMENT_STACK` (`protocols.rs`). Both are empty between files; tracing them costs nothing and does not depend on that.
+- **The program heap.** It is never collected, so every program object is a root. The collector scans every typed program block, that is every program object whose type has `HOLDS_EVAL`. `ParseNode`, `Token`, `AnalyzerNodeInfo`, `FlowNode`, `Declaration` and `Scope` hold no evaluator handle and stay in the bump arena. `AnalyzerNodeInfo.declaration` and `Declaration.submodule_fallback` are `#[trace(program)]`: only the binder sets them. `Program` and `Symbol` are scanned; the current `TypeEvaluator` and its caches (`typeCache`, `speculativeTypeTracker`, `codeFlowAnalyzerCache`, ...) are reached through `Program.evaluator`.
+- **Thread-locals.** A thread-local that holds an evaluator handle registers a root with `jsrt::heap::add_root(fn(&mut Tracer))` in its initializer: `ENUM_EVAL_STACK` (`enums.rs`), `PROTOCOL_ASSIGNMENT_STACK` (`protocols.rs`). Both are empty between files; tracing them costs nothing and does not depend on that.
 - **Permanent objects** go on the program heap: the singleton instances in `types.rs` (of `UnboundType`, `UnknownType`, `NeverType` and `AnyType`) move from `P::new_eval` to `P::new`.
 - **The stack.** At the collection point the frames above `Program.analyze` hold program handles only (`pyright.rs`, `service.rs`, `background_analysis_program.rs`, `analysis.rs`).
-- **Stored closures** are opaque (`#[trace(skip)]`). Each may capture program handles only: `ImportLookup` captures the `Program`, `ImportLookupResult.doc_string` a module node, the `getModuleName` callback of each `SourceFile` the `Program`. Type-narrowing callbacks capture evaluator handles but never outlive the call that made them.
+- **Stored closures** are opaque (`#[trace(skip)]`). Each may capture program handles only: `ImportLookup` captures the `Program`, `ImportLookupResult.doc_string` a module node, the `getModuleName` callback of each `SourceFile` the `Program`; file-system filters and cleanups capture no heap handle; `Scope.chained_module_level_scope_lookup` is set only for notebook cells. Type-narrowing callbacks capture evaluator handles but are only passed and returned, never stored.
+- **Trait objects.** `P<dyn AnalyzerNodeInfoReader>` is a program handle (`EVAL = false`); `P<dyn FunctionReturnTypeCallback>` can be the evaluator (`EVAL = true`).
 
 ## sweep
 
@@ -62,7 +64,7 @@ pub unsafe trait Trace {
 ## trigger
 
 - Before each file, collect when the evaluator slot bytes allocated since the last collection reach `max(live bytes after the last collection, 1 GiB)`. The evaluator heap then stays under twice the live set plus one file.
-- `PYRIGHT_RS_GC_MIN_MIB` overrides the 1 GiB floor.
+- `PYRIGHT_RS_GC_MIN_MIB` overrides the 1 GiB floor. Check mode collects on the floor alone, 64 MiB by default; `PYRIGHT_RS_GC_MIN_MIB=0` collects before every file that follows an allocation.
 - `PYRIGHT_RS_GC_LOG=1` prints each collection: live bytes before and after, objects freed, milliseconds.
 
 ## switch and check mode
@@ -71,29 +73,24 @@ pub unsafe trait Trace {
 
 - `off`: no collection. Allocation still goes through the typed blocks.
 - `on`: collect as above.
-- `check`: collect as `on`, and:
+- `check`: needs a build with `--features jsrt/gc-check` (`CHECK_FEATURES=jsrt/gc-check oracle/corpus/check.sh`). Collect as `on`, and:
   - a swept slot is dropped, filled with a poison byte, marked dead, and never reused; its block is never released;
   - dereferencing (`Deref`, `P::get`), comparing (`==`, `P::ptr_eq`) or hashing a `P` to a dead slot panics with the type name;
   - marking a handle to a free or dead slot panics;
-  - the root scan visits every program block and every field, and panics when an evaluator handle sits in a type without `HOLDS_EVAL`, in a `#[trace(program)]` field, or behind a `&'static`;
-  - the floor drops to 64 MiB, so collections run often.
+  - every program object goes to a typed block, and the root scan visits every field of every one, and panics when an evaluator handle sits in a `#[trace(program)]` field, behind a `&'static`, or in a `P<T>` whose `T` lacks `EVAL`;
+  - collections run on the floor alone (above), so they run often.
 
-The `P` hooks cost a load of a process-wide flag on every dereference. If that costs more than 1% wall time on pydantic-ai with collection off, check mode becomes a cargo feature instead of a runtime mode.
+The `P` hooks are compiled only into a `gc-check` build: as a runtime flag, the load on every dereference cost about 5% wall time on the samples corpus (1.88 s against 1.80 s without it, collection off).
 
 ## rollout
 
-1. Machinery with `PYRIGHT_RS_GC=off` as the default: allocator, `Trace`, derive, roots, check mode, `docs/porting.md` rules. `main` keeps passing.
+1. Machinery with `PYRIGHT_RS_GC=off` as the default: allocator, `Trace`, derive, roots, check mode, `docs/porting.md` rules. `main` keeps passing. Gate: with collection off, samples wall time and `oracle_bind --timing` parse and bind time on pydantic-ai within noise of `main`. Compare builds with `CARGO_PROFILE_RELEASE_CODEGEN_UNITS=1` too: with the default 16 codegen units, adding the `Trace` impls alone moved parse and bind time by 5% (it reshuffles which functions can inline into each other), and with one unit the difference was under 1%.
 2. Check mode on the seven corpora, output identical.
 3. `on` becomes the default once step 2 passes; pydantic-ai runs to completion under the 30G cap, output identical to the reference.
 
 ## rules for ported code
 
-These go into `docs/porting.md`, "memory", with step 1:
-
-- Derive `jsrt::Trace` on every struct and enum that a heap object holds. Add `#[trace(eval)]` to a type allocated with `P::new_eval`.
-- A stored closure captures program handles only. Mark its field `#[trace(skip)]` and name what it captures.
-- A thread-local that holds an evaluator handle registers a root.
-- An object that lives for the whole run goes on the program heap.
+`docs/porting.md`, "memory", holds them.
 
 ## rejected
 

@@ -6,6 +6,8 @@ edition = "2024"
 [dependencies]
 bumpalo = "3.20.3"
 indexmap = "2.14.2"
+jsrt_derive = { version = "0.1.0", path = "../jsrt_derive" }
+libc = "0.2.191"
 num-bigint = "0.5.1"
 num-traits = "0.2.19"
 regex = "1.13.1"
@@ -18,3 +20,7 @@ unicode-normalization = "=0.1.25"
 [dev-dependencies]
 regex = "1.13.1"
 serde_json = "1.0.154"
+
+[features]
+# Check mode of the evaluator heap collector (PYRIGHT_RS_GC=check).
+gc-check = []

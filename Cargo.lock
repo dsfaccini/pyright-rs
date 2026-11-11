@@ -63,6 +63,8 @@ version = "0.1.0"
 dependencies = [
  "bumpalo",
  "indexmap",
+ "jsrt_derive",
+ "libc",
  "num-bigint",
  "num-traits",
  "regex",
@@ -72,6 +74,21 @@ dependencies = [
  "toml",
  "unicode-normalization",
 ]
+
+[[package]]
+name = "jsrt_derive"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
+]
+
+[[package]]
+name = "libc"
+version = "0.2.191"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "65cd87c9a6d60536580b316ad985726104730a5151c99845f2490428ef91240a"
 
 [[package]]
 name = "memchr"

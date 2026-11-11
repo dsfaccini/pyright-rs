@@ -16,6 +16,7 @@ use std::cell::RefCell;
 
 // analyzer/typeCacheUtils.ts:17
 #[derive(Clone)]
+#[derive(jsrt::Trace)]
 pub struct SpeculativeEntry {
     pub cache: SpeculativeCache,
     pub id: u32,
@@ -23,6 +24,7 @@ pub struct SpeculativeEntry {
 
 // analyzer/typeCacheUtils.ts:22
 #[derive(Clone)]
+#[derive(jsrt::Trace)]
 pub struct SpeculativeContext {
     pub speculative_root_node: P<ParseNode>,
     pub entries_to_undo: Vec<SpeculativeEntry>,
@@ -32,6 +34,7 @@ pub struct SpeculativeContext {
 
 // analyzer/typeCacheUtils.ts:29
 #[derive(Clone)]
+#[derive(jsrt::Trace)]
 pub struct DependentType {
     pub speculative_root_node: P<ParseNode>,
     pub dependent_type: P<Type>,
@@ -46,6 +49,8 @@ pub trait ContextualTypeCacheEntry {
 }
 
 // analyzer/typeCacheUtils.ts:43
+#[derive(jsrt::Trace)]
+#[trace(eval)]
 pub struct SpeculativeTypeEntry {
     pub expected_type: Option<P<Type>>,
     pub type_result: P<TypeResult>,
@@ -110,6 +115,7 @@ pub fn add_contextual_type_cache_entry<T: Clone + ContextualTypeCacheEntry>(
 }
 
 // analyzer/typeCacheUtils.ts:98
+#[derive(jsrt::Trace)]
 pub struct SpeculativeTypeTracker {
     pub(crate) _speculative_context_stack: Vec<SpeculativeContext>,
     pub(crate) _speculative_type_cache: JsMap<u32, Vec<P<SpeculativeTypeEntry>>>,
@@ -308,6 +314,7 @@ impl SpeculativeTypeTracker {
 /// (typeCacheUtils.ts:133): an evaluator type cache (typeEvaluator.ts:912) or a code-flow node type
 /// cache (codeFlowEngine.ts:314). TypeScript passes the map itself; the holder shares it.
 #[derive(Clone, Copy)]
+#[derive(jsrt::Trace)]
 pub enum SpeculativeCache {
     Type(P<RefCell<JsMap<u32, TypeCacheEntry>>>),
     FlowNodeType(P<RefCell<JsMap<u32, Option<CachedType>>>>),

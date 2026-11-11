@@ -5,6 +5,7 @@ use std::cell::Cell;
 use super::text_range::{HasTextRange, TextRange};
 
 // common/textRangeCollection.ts:17
+#[derive(jsrt::Trace)]
 pub struct TextRangeCollection<T: HasTextRange + Copy> {
     _items: Vec<T>,
 

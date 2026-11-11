@@ -7,6 +7,8 @@ use jsrt::{LazyJsMap, P};
 use std::cell::RefCell;
 
 // analyzer/constraintSolution.ts:15
+#[derive(jsrt::Trace)]
+#[trace(eval)]
 pub struct ConstraintSolutionSet {
     pub(crate) _type_var_map: RefCell<LazyJsMap<String, Option<P<Type>>>>,
 }

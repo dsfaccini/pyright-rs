@@ -16,6 +16,7 @@ use jsrt::{JsMap, P, flag_ops};
 
 // analyzer/typePrinter.ts:54
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Default)]
+#[derive(jsrt::Trace)]
 pub struct PrintTypeFlags(pub u32);
 
 impl PrintTypeFlags {
@@ -1978,4 +1979,15 @@ pub fn get_print_type_flags(config_options: P<ConfigOptions>) -> PrintTypeFlags 
 /// `(type: FunctionType) => Type`, held as `P<dyn FunctionReturnTypeCallback>`.
 pub trait FunctionReturnTypeCallback {
     fn call(&self, type_: FunctionType) -> P<Type>;
+}
+
+/// The evaluator, an evaluator-heap object, implements it. Held only as a
+/// `P<dyn FunctionReturnTypeCallback>`, which marks the object; the object's
+/// own type traces it.
+unsafe impl jsrt::Trace for dyn FunctionReturnTypeCallback {
+    const HOLDS_EVAL: bool = true;
+    const EVAL: bool = true;
+    fn trace(&self, _: &mut jsrt::Tracer) {
+        unreachable!("a dyn FunctionReturnTypeCallback is traced through its P");
+    }
 }

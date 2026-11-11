@@ -18,6 +18,7 @@ use crate::common::uri::Uri;
 
 // analyzer/analyzerFileInfo.ts:22
 #[derive(Clone, Debug)]
+#[derive(jsrt::Trace)]
 pub struct AbsoluteModuleDescriptor {
     pub importing_file_uri: Uri,
     pub name_parts: Vec<String>,
@@ -25,6 +26,7 @@ pub struct AbsoluteModuleDescriptor {
 
 /// The `Uri | AbsoluteModuleDescriptor` argument of `ImportLookup`.
 #[derive(Clone, Debug)]
+#[derive(jsrt::Trace)]
 pub enum ImportLookupKey {
     Uri(Uri),
     Module(AbsoluteModuleDescriptor),
@@ -32,17 +34,21 @@ pub enum ImportLookupKey {
 
 // analyzer/analyzerFileInfo.ts:27
 #[derive(Clone, Copy, Debug, Default)]
+#[derive(jsrt::Trace)]
 pub struct LookupImportOptions {
     pub skip_file_needed_check: bool,
     pub skip_parsing: Option<bool>,
 }
 
 // analyzer/analyzerFileInfo.ts:37
+#[derive(jsrt::Trace)]
 pub struct ImportLookupResult {
     pub symbol_table: SymbolTable,
     pub dunder_all_names: Option<Vec<String>>,
     pub uses_unsupported_dunder_all_form: bool,
     /// A getter in TypeScript: computed when read.
+    /// Captures a module node, a program handle.
+    #[trace(skip)]
     pub doc_string: Rc<dyn Fn() -> Option<String>>,
     pub is_in_py_typed_package: bool,
 }
@@ -51,7 +57,10 @@ pub struct ImportLookupResult {
 pub type ImportLookup = Rc<dyn Fn(ImportLookupKey, Option<LookupImportOptions>) -> Option<ImportLookupResult>>;
 
 // analyzer/analyzerFileInfo.ts:45
+#[derive(jsrt::Trace)]
 pub struct AnalyzerFileInfo {
+    /// Captures the `Program`, a program handle.
+    #[trace(skip)]
     pub import_lookup: ImportLookup,
     pub future_imports: JsSet<String>,
     pub builtins_scope: Option<P<Scope>>,

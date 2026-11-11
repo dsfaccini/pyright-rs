@@ -29,6 +29,7 @@ pub const MAX_INFERRED_CONTAINER_DEPTH: u32 = 8;
 
 // analyzer/typeEvaluatorTypes.ts:66
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Default)]
+#[derive(jsrt::Trace)]
 pub struct EvalFlags(pub u32);
 
 impl EvalFlags {
@@ -97,6 +98,8 @@ pub struct PrefetchedTypes {
 }
 
 // analyzer/typeEvaluatorTypes.ts:228
+#[derive(jsrt::Trace)]
+#[trace(eval)]
 pub struct TypeResult {
     pub type_: Cell<P<Type>>,
     pub is_incomplete: Cell<Option<bool>>,
@@ -114,6 +117,7 @@ const _: () = assert!(size_of::<TypeResult>() <= 40);
 
 // analyzer/typeEvaluatorTypes.ts:228
 #[derive(Clone, Default)]
+#[derive(jsrt::Trace)]
 pub struct TypeResultCold {
     pub bind_to_self_type: Option<P<Type>>,
     pub unpacked_type: Option<P<Type>>,
@@ -180,6 +184,8 @@ impl TypeResult {
 
 // analyzer/typeEvaluatorTypes.ts:289
 #[derive(Clone)]
+#[derive(jsrt::Trace)]
+#[trace(holds_eval)]
 pub struct TypeResultWithNode {
     pub type_: P<Type>,
     pub is_incomplete: Option<bool>,
@@ -204,6 +210,7 @@ pub struct TypeResultWithNode {
 
 // analyzer/typeEvaluatorTypes.ts:296
 #[derive(Clone)]
+#[derive(jsrt::Trace)]
 pub struct MemberAccessDeprecationInfo {
     pub access_type: String,
     pub access_method: String,
@@ -212,6 +219,7 @@ pub struct MemberAccessDeprecationInfo {
 
 // analyzer/typeEvaluatorTypes.ts:302
 #[derive(Clone)]
+#[derive(jsrt::Trace)]
 pub struct MagicMethodDeprecationInfo {
     pub class_name: String,
     pub method_name: String,
@@ -277,6 +285,8 @@ pub struct ArgBase {
 }
 
 // analyzer/typeEvaluatorTypes.ts:356
+#[derive(jsrt::Trace)]
+#[trace(eval)]
 pub struct ArgWithType {
     pub arg_category: ArgCategory,
     pub node: Option<ArgumentNode>,
@@ -288,6 +298,8 @@ pub struct ArgWithType {
 }
 
 // analyzer/typeEvaluatorTypes.ts:360
+#[derive(jsrt::Trace)]
+#[trace(eval)]
 pub struct ArgWithExpression {
     pub arg_category: ArgCategory,
     pub node: Option<ArgumentNode>,
@@ -300,12 +312,15 @@ pub struct ArgWithExpression {
 
 // analyzer/typeEvaluatorTypes.ts:364
 #[derive(Clone)]
+#[derive(jsrt::Trace)]
 pub enum Arg {
     ArgWithType(P<ArgWithType>),
     ArgWithExpression(P<ArgWithExpression>),
 }
 
 // analyzer/typeEvaluatorTypes.ts:366
+#[derive(jsrt::Trace)]
+#[trace(eval)]
 pub struct EffectiveTypeResult {
     pub type_: Cell<P<Type>>,
     pub is_incomplete: bool,
@@ -318,6 +333,7 @@ pub struct EffectiveTypeResult {
 
 // analyzer/typeEvaluatorTypes.ts:376
 #[derive(Clone)]
+#[derive(jsrt::Trace)]
 pub struct ValidateArgTypeParams {
     pub param_category: ParamCategory,
     pub param_type: P<Type>,
@@ -430,6 +446,7 @@ pub struct SolveConstraintsOptions {
 // analyzer/typeEvaluatorTypes.ts:509
 #[repr(i32)]
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+#[derive(jsrt::Trace)]
 pub enum Reachability {
     Reachable = 0,
     UnreachableStructural = 1,
@@ -499,6 +516,7 @@ pub struct SymbolDeclInfo {
 
 // analyzer/typeEvaluatorTypes.ts:574
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Default)]
+#[derive(jsrt::Trace)]
 pub struct AssignTypeFlags(pub u32);
 
 impl AssignTypeFlags {
@@ -527,6 +545,7 @@ flag_ops!(AssignTypeFlags);
 
 // Inline object type at PartialPrefetchedTypes.
 #[derive(Clone, Default)]
+#[derive(jsrt::Trace)]
 pub struct PartialPrefetchedTypes {
     pub none_type_class: Option<P<Type>>,
     pub object_class: Option<P<Type>>,

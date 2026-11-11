@@ -19,6 +19,7 @@ pub use bigint::{JsBigInt, parse_bigint};
 /// `==` and `Hash` follow JS `SameValueZero`, the key equality of `Map` and
 /// `Set`: a number never equals a bigint, `0 == -0`, and `NaN == NaN`.
 #[derive(Clone, Debug)]
+#[derive(jsrt::Trace)]
 pub enum NumberValue {
     Number(f64),
     BigInt(JsBigInt),

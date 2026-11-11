@@ -45,6 +45,7 @@ impl PythonPlatform {
 
 // common/configOptions.ts:43
 #[derive(Clone, Debug)]
+#[derive(jsrt::Trace)]
 pub struct ExecutionEnvironment {
     pub root: Option<Uri>,
     pub name: String,
@@ -80,6 +81,7 @@ impl ExecutionEnvironment {
 
 // common/configOptions.ts:89
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(jsrt::Trace)]
 pub enum DiagnosticLevel {
     None,
     Information,
@@ -111,6 +113,7 @@ impl DiagnosticLevel {
 // common/configOptions.ts:91
 #[allow(non_camel_case_types)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(jsrt::Trace)]
 pub enum SignatureDisplayType {
     compact,
     formatted,
@@ -120,6 +123,7 @@ pub enum SignatureDisplayType {
 /// Field names are the TypeScript names in snake_case. `get_*`/`set_*` reach a
 /// field by its `DiagnosticRule`, as the TypeScript does with `ruleSet[rule]`.
 #[derive(Clone, Debug, PartialEq)]
+#[derive(jsrt::Trace)]
 pub struct DiagnosticRuleSet {
     pub print_unknown_as_any: bool,
     pub omit_type_args_if_unknown: bool,
@@ -1055,6 +1059,7 @@ pub fn match_file_specs(config_options: &ConfigOptions, uri: Uri, is_file: bool)
 
 /// A `defineConstant` value.
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(jsrt::Trace)]
 pub enum DefineConstantValue {
     Bool(bool),
     String(String),
@@ -1066,6 +1071,7 @@ pub type TypeCheckingMode = String;
 
 // common/configOptions.ts:952
 #[derive(Clone, Debug)]
+#[derive(jsrt::Trace)]
 pub struct ConfigOptions {
     pub project_root: Uri,
     pub python_path: Option<Uri>,

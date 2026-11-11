@@ -16,6 +16,7 @@ use crate::common::case_sensitivity_detector::CaseSensitivityDetector;
 use crate::common::path_utils::{combine_paths, is_rooted_disk_path, normalize_slashes};
 use crate::common::uri::file_uri::{FileUriData, create_file_uri};
 
+#[derive(jsrt::Trace)]
 pub(crate) enum UriKind {
     File(FileUriData),
     /// `ConstantUri`; `EmptyUri` is the constant with key `<empty>`.
@@ -24,6 +25,7 @@ pub(crate) enum UriKind {
     },
 }
 
+#[derive(jsrt::Trace)]
 pub struct UriData {
     pub(crate) key: String,
     pub(crate) kind: UriKind,
@@ -68,6 +70,7 @@ impl UriData {
 /// for constant Uris. Hashing uses the key, so a `Uri` can stand in for the
 /// `uri.key` strings pyright uses as map keys.
 #[derive(Clone, Copy)]
+#[derive(jsrt::Trace)]
 pub struct Uri(pub(crate) P<UriData>);
 
 impl PartialEq for Uri {

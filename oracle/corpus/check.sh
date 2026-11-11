@@ -8,6 +8,8 @@
 # Environment:
 #   CHECK_MEMORY_MAX  memory cap per run, as systemd MemoryMax (default 28G);
 #                     a run over the cap is killed and reported as unreadable.
+#   CHECK_FEATURES    cargo features for the build, e.g. jsrt/gc-check for
+#                     PYRIGHT_RS_GC=check (docs/collector-design.md).
 # Exit status: 0 when every corpus matches, 1 otherwise.
 set -u
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)
@@ -15,7 +17,7 @@ REF=$HOME/pyright-rs-data/reference
 OUT=$1; shift
 corpora=${*:-samples typeshed primer-attrs primer-bidict primer-more-itertools primer-packaging primer-python-chess}
 export PYRIGHT_RS_MODULE_PATH=${PYRIGHT_RS_MODULE_PATH:-$HOME/pyright-oracle/packages/pyright/dist}
-cargo build -q --release --manifest-path "$ROOT/Cargo.toml" || exit 1
+cargo build -q --release ${CHECK_FEATURES:+--features "$CHECK_FEATURES"} --manifest-path "$ROOT/Cargo.toml" || exit 1
 status=0
 for c in $corpora; do
   echo "== $c"

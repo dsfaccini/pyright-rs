@@ -21,6 +21,7 @@ use crate::parser::tokenizer_types::OperatorType;
 
 // analyzer/codeFlowTypes.ts:35
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
+#[derive(jsrt::Trace)]
 pub struct FlowFlags(pub u32);
 
 impl FlowFlags {
@@ -67,6 +68,7 @@ pub fn get_unique_flow_node_id() -> u32 {
 }
 
 // analyzer/codeFlowTypes.ts:65
+#[derive(jsrt::Trace)]
 pub struct FlowNode {
     pub flags: Cell<FlowFlags>,
     pub id: u32,
@@ -75,6 +77,7 @@ pub struct FlowNode {
 
 /// The interface the binder built the node as. `Plain` is a bare `FlowNode`
 /// (start and unreachable nodes).
+#[derive(jsrt::Trace)]
 pub enum FlowNodeDetails {
     Plain,
     Label(FlowLabelDetails),
@@ -122,7 +125,7 @@ impl FlowNode {
 
 macro_rules! flow_handle {
     ($handle:ident, $details:ident, $($variant:ident),+) => {
-        #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+        #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, jsrt::Trace)]
         pub struct $handle(pub P<FlowNode>);
 
         impl $handle {
@@ -154,6 +157,7 @@ macro_rules! flow_handle {
 }
 
 // analyzer/codeFlowTypes.ts:70
+#[derive(jsrt::Trace)]
 pub struct FlowLabelDetails {
     pub antecedents: RefCell<Vec<P<FlowNode>>>,
 
@@ -195,6 +199,7 @@ impl FlowLabelDetails {
 }
 
 // analyzer/codeFlowTypes.ts:82
+#[derive(jsrt::Trace)]
 pub struct FlowBranchLabelDetails {
     pub label: FlowLabelDetails,
 
@@ -237,6 +242,7 @@ macro_rules! simple_flow_handle {
 
 // analyzer/codeFlowTypes.ts:91
 // FlowAssignment represents a node that assigns a value.
+#[derive(jsrt::Trace)]
 pub struct FlowAssignmentDetails {
     pub node: CodeFlowReferenceExpressionNode,
     pub antecedent: P<FlowNode>,
@@ -252,6 +258,7 @@ simple_flow_handle!(FlowAssignment, FlowAssignmentDetails, Assignment);
 // to determine that the annotation refers to a symbol within
 // an outer scope.
 // analyzer/codeFlowTypes.ts:105
+#[derive(jsrt::Trace)]
 pub struct FlowVariableAnnotationDetails {
     pub antecedent: P<FlowNode>,
 }
@@ -264,6 +271,7 @@ simple_flow_handle!(
 // analyzer/codeFlowTypes.ts:111
 // Similar to FlowAssignment but used specifically for
 // wildcard "from X import *" statements.
+#[derive(jsrt::Trace)]
 pub struct FlowWildcardImportDetails {
     pub node: ImportFromNode,
     pub names: Vec<String>,
@@ -278,6 +286,7 @@ simple_flow_handle!(
 // analyzer/codeFlowTypes.ts:117
 // FlowCondition represents a condition that is known to
 // be true or false at the node's location in the control flow.
+#[derive(jsrt::Trace)]
 pub struct FlowConditionDetails {
     pub expression: ExpressionNode,
     pub reference: Option<NameNode>,
@@ -287,6 +296,7 @@ simple_flow_handle!(FlowCondition, FlowConditionDetails, Condition);
 
 // analyzer/codeFlowTypes.ts:125
 /// `statement` is a `CaseNode | MatchNode`.
+#[derive(jsrt::Trace)]
 pub struct FlowNarrowForPatternDetails {
     pub subject_expression: ExpressionNode,
     pub statement: P<ParseNode>,
@@ -302,6 +312,7 @@ simple_flow_handle!(
 // FlowExhaustedMatch represents a control flow gate that is "closed"
 // if a match statement can be statically proven to exhaust all cases
 // (i.e. the narrowed type of the subject expression is Never at the bottom).
+#[derive(jsrt::Trace)]
 pub struct FlowExhaustedMatchDetails {
     pub node: MatchNode,
     pub subject_expression: ExpressionNode,
@@ -316,6 +327,7 @@ simple_flow_handle!(
 // analyzer/codeFlowTypes.ts:142
 // Records a call, which may raise exceptions, thus affecting
 // the code flow and making subsequent code unreachable.
+#[derive(jsrt::Trace)]
 pub struct FlowCallDetails {
     pub node: CallNode,
     pub antecedent: P<FlowNode>,
@@ -325,6 +337,7 @@ simple_flow_handle!(FlowCall, FlowCallDetails, Call);
 // analyzer/codeFlowTypes.ts:149
 // See comment in the visitTry method in binder.ts for a full
 // explanation of the FlowPreFinally and FlowPostFinally nodes.
+#[derive(jsrt::Trace)]
 pub struct FlowPreFinallyGateDetails {
     pub antecedent: P<FlowNode>,
 }
@@ -335,6 +348,7 @@ simple_flow_handle!(
 );
 
 // analyzer/codeFlowTypes.ts:153
+#[derive(jsrt::Trace)]
 pub struct FlowPostFinallyDetails {
     pub antecedent: P<FlowNode>,
     pub finally_node: SuiteNode,
@@ -343,6 +357,7 @@ pub struct FlowPostFinallyDetails {
 simple_flow_handle!(FlowPostFinally, FlowPostFinallyDetails, PostFinally);
 
 // analyzer/codeFlowTypes.ts:159
+#[derive(jsrt::Trace)]
 pub struct FlowPostContextManagerLabelDetails {
     pub label: FlowLabelDetails,
     pub expressions: Vec<ExpressionNode>,

@@ -12,7 +12,7 @@ The generator maps it, and every function configured under `[factories]`, as fol
 
 - The factory becomes one struct, named after the interface it returns: `TypeEvaluator`, in `analyzer/type_evaluator.rs`.
 - The TypeScript interface `TypeEvaluator` gets no Rust item of its own. Every reference to it names the struct.
-- `createTypeEvaluator` becomes `create_type_evaluator(..) -> P<TypeEvaluator>`. The evaluator lives in the leak arena because other objects store it (below). Its parameters are taken by value: the struct stores them.
+- `createTypeEvaluator` becomes `create_type_evaluator(..) -> P<TypeEvaluator>`. The evaluator lives on the evaluator heap because other objects store it (below). Its parameters are taken by value: the struct stores them.
 - `wrapWithLogger` is dropped (`drop_params`). It only adds timing and call logging, which the check path does not print.
 
 ### fields

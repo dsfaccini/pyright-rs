@@ -85,6 +85,7 @@ impl ParseOptions {
 }
 
 // parser/parser.ts:189
+#[derive(jsrt::Trace)]
 pub struct ParserOutput {
     pub parse_tree: ModuleNode,
     pub string_annotations: StringAnnotationInfo,
@@ -114,6 +115,7 @@ pub struct ParseExpressionTextResults {
 
 // parser/parser.ts:214
 #[derive(Clone, Debug)]
+#[derive(jsrt::Trace)]
 pub struct ModuleImport {
     pub name_node: ModuleNameNode,
     pub leading_dots: i32,

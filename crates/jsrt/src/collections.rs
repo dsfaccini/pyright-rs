@@ -17,7 +17,7 @@ pub type FxHashSet<T> = rustc_hash::FxHashSet<T>;
 /// JS `Map` that allocates its table on the first insert, so an empty one is one pointer.
 /// For maps most of their owners never fill (`ConstraintSet._typeVarMap`). Iteration order and
 /// lookups are those of [`JsMap`].
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, jsrt::Trace)]
 pub struct LazyJsMap<K, V>(Option<Box<JsMap<K, V>>>);
 
 impl<K, V> Default for LazyJsMap<K, V> {

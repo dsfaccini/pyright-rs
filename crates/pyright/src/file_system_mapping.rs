@@ -32,15 +32,19 @@ pub fn create_file_system_mapping_state() -> FileSystemMappingState {
 
 // fileSystemMapping.ts:43
 /// Shared: `entryMap` and `reverseEntryMap` hold the same entry.
+#[derive(jsrt::Trace)]
 struct MappedEntry {
     mapped_uri: Uri,
     original_uri: Uri,
+    /// File-system filters capture no evaluator handle.
+    #[trace(skip)]
     filter: MapDirectoryFilter,
 }
 
 // fileSystemMapping.ts:49
 /// `originalUriCache` is a `WeakMap` keyed by the Uri object, so it is keyed
 /// by `Uri::object_id`: an equal Uri that is another object misses, as in pyright.
+#[derive(jsrt::Trace)]
 struct MappingData {
     entry_map: RefCell<JsMap<Uri, P<MappedEntry>>>,
     reverse_entry_map: RefCell<JsMap<Uri, P<MappedEntry>>>,
@@ -49,6 +53,7 @@ struct MappingData {
 
 // fileSystemMapping.ts:55
 #[derive(Clone, Copy)]
+#[derive(jsrt::Trace)]
 struct OriginalUriResolution {
     entry: P<MappedEntry>,
     original_uri: Uri,
@@ -57,6 +62,7 @@ struct OriginalUriResolution {
 // fileSystemMapping.ts:61
 /// `noOriginalUriResolution` (fileSystemMapping.ts:60) is the first variant.
 #[derive(Clone, Copy)]
+#[derive(jsrt::Trace)]
 enum CachedOriginalUriResolution {
     NoOriginalUriResolution,
     Resolution(OriginalUriResolution),

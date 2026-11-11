@@ -71,6 +71,8 @@ impl ClassIteratorFlags {
 flag_ops!(ClassIteratorFlags);
 
 // analyzer/typeUtils.ts:189
+#[derive(jsrt::Trace)]
+#[trace(eval)]
 pub struct InferenceContext {
     pub expected_type: Cell<P<Type>>,
     pub is_type_incomplete: Option<bool>,
@@ -116,6 +118,8 @@ pub struct AddConditionOptions {
 pub(crate) const MAX_TUPLE_TYPE_ARG_RECURSION_DEPTH: u32 = 10;
 
 // analyzer/typeUtils.ts:249
+#[derive(jsrt::Trace)]
+#[trace(eval)]
 pub struct UniqueSignatureTracker {
     pub(crate) _tracked_signatures: RefCell<Vec<SignatureWithOffsets>>,
 }

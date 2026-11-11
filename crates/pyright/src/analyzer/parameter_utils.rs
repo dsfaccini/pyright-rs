@@ -39,6 +39,7 @@ pub fn is_typed_kwargs(param: &FunctionParam, effective_param_type: P<Type>) -> 
 // analyzer/parameterUtils.ts:41
 #[repr(i32)]
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+#[derive(jsrt::Trace)]
 pub enum ParamKind {
     Positional = 0,
     Standard = 1,
@@ -47,6 +48,8 @@ pub enum ParamKind {
 }
 
 // analyzer/parameterUtils.ts:48
+#[derive(jsrt::Trace)]
+#[trace(eval)]
 pub struct VirtualParamDetails {
     pub param: FunctionParam,
     pub type_: P<Type>,

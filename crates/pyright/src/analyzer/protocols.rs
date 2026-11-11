@@ -50,6 +50,7 @@ use std::cell::RefCell;
 
 // analyzer/protocols.ts:55
 #[derive(Clone)]
+#[derive(jsrt::Trace)]
 pub struct ProtocolAssignmentStackEntry {
     pub src_type: ClassType,
     pub dest_type: ClassType,
@@ -57,6 +58,7 @@ pub struct ProtocolAssignmentStackEntry {
 
 // analyzer/protocols.ts:60
 #[derive(Clone)]
+#[derive(jsrt::Trace)]
 pub struct ProtocolCompatibility {
     pub src_type: Option<ClassType>,
     pub dest_type: ClassType,
@@ -74,7 +76,11 @@ pub struct ProtocolCompatibilityCheckState {
 
 thread_local! {
     // analyzer/protocols.ts:78
-    pub(crate) static PROTOCOL_ASSIGNMENT_STACK: RefCell<Vec<ProtocolAssignmentStackEntry>> = const { RefCell::new(Vec::new()) };
+    pub(crate) static PROTOCOL_ASSIGNMENT_STACK: RefCell<Vec<ProtocolAssignmentStackEntry>> = {
+        // Holds evaluator handles while a file is checked: a collector root.
+        jsrt::heap::add_root(|t| PROTOCOL_ASSIGNMENT_STACK.with(|s| jsrt::Trace::trace(s, t)));
+        RefCell::new(Vec::new())
+    };
 }
 
 // analyzer/protocols.ts:81

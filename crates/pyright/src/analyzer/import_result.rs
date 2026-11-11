@@ -8,6 +8,7 @@ use crate::common::uri::Uri;
 // analyzer/importResult.ts:13
 #[repr(i32)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(jsrt::Trace)]
 pub enum ImportType {
     BuiltIn,
     ThirdParty,
@@ -16,6 +17,7 @@ pub enum ImportType {
 
 // analyzer/importResult.ts:19
 #[derive(Clone, Debug)]
+#[derive(jsrt::Trace)]
 pub struct ImplicitImport {
     pub is_stub_file: bool,
     pub is_native_lib: bool,
@@ -28,6 +30,7 @@ pub struct ImplicitImport {
 /// Shared: the resolver caches it and parse nodes point at it. Build one,
 /// then wrap it in `P`.
 #[derive(Clone, Debug)]
+#[derive(jsrt::Trace)]
 pub struct ImportResult {
     pub import_name: String,
     pub is_relative: bool,
