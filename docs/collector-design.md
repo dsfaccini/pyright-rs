@@ -14,7 +14,7 @@ Recommendation 1 in `docs/research/memory-advice.md` gives the motivation; this 
 - **When.** Before each file in `Program.analyze`'s loop over the source file list (`program.ts:766`). No evaluator or checker frame is live there, so no stack scanning.
 - **Precise.** Every type a heap object holds implements `jsrt::Trace`, through `#[derive(jsrt::Trace)]`. The collector visits only typed fields, never raw words.
 - **Non-moving.** A live object keeps its address. `P` stays `Copy`; `P::ptr_eq`, `==` and `Hash` keep their meaning.
-- **Stop-the-world, single thread.** Each thread has its own heaps, as now. The CLI checks on one thread.
+- **Stop-the-world.** Each thread has its own heaps, as now. The CLI checks on one thread. Marking runs on that thread and on parked helper threads while it waits (below); sweeping runs on that thread alone.
 
 ## heap layout
 
@@ -59,6 +59,15 @@ pub unsafe trait Trace {
 - **Trait objects.** `P<dyn AnalyzerNodeInfoReader>` is a program handle (`EVAL = false`); `P<dyn FunctionReturnTypeCallback>` can be the evaluator (`EVAL = true`).
 - **Other threads.** `P` is neither `Send` nor `Sync`: a block belongs to one thread, and only that thread's collector frees it.
 
+## parallel marking
+
+- `PYRIGHT_RS_GC_THREADS` threads mark, the collecting thread included: by default the available parallelism, at most 4. At 1 the collecting thread marks alone.
+- The collecting thread traces the registered roots first, since they are its thread-locals. Then every thread takes program blocks to scan from a shared counter, and traces from its own mark stack.
+- A thread whose stack holds at least two packets of 512 entries hands its oldest packet to a shared pool while some thread is idle. A thread with no work takes a packet; the mark ends when every thread is idle and the pool is empty.
+- Mark bits are set with an atomic `fetch_or`, so only one thread pushes an object. Tracing only reads objects: `RefCell` contents through `try_borrow_unguarded`, `Cell` through `get`, `Rc` without touching its counts. The mutator is stopped, so nothing writes while helpers read.
+- Helper threads are started on the first parallel mark and parked on a condition variable between collections. A panic on any thread (a borrowed `RefCell`, a check-mode assertion) stops the others and unwinds on the collecting thread, which clears the marks as for a serial mark.
+- The set of marked objects is reachability, so it does not depend on the thread count; the sweep visits blocks in the same order as before.
+
 ## sweep
 
 - A live, unmarked evaluator slot is dropped in place. `drop_in_place` frees the `Vec`, `String` and map buffers it owns, and releases its `Rc`s. Its live bit clears, so the allocation cursor hands the slot out again.
@@ -85,7 +94,8 @@ pub unsafe trait Trace {
   - dereferencing (`Deref`, `P::get`), comparing (`==`, `P::ptr_eq`) or hashing a `P` to a dead slot panics with the type name;
   - marking a handle to a free or dead slot panics;
   - every program object goes to a typed block, and the root scan visits every field of every one, and panics when an evaluator handle sits in a `#[trace(program)]` field, behind a `&'static`, or in a `P<T>` whose `T` lacks `EVAL`;
-  - collections run on the floor alone (above), so they run often.
+  - collections run on the floor alone (above), so they run often;
+  - a parallel mark is followed by a serial one, and the collection panics when their mark bits differ.
 
 The `P` hooks are compiled only into a `gc-check` build: as a runtime flag, the load on every dereference cost about 5% wall time on the samples corpus (1.88 s against 1.80 s without it, collection off).
 

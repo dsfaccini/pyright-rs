@@ -12,7 +12,7 @@ use std::cell::{Cell, UnsafeCell};
 use std::collections::HashMap;
 use std::panic::{AssertUnwindSafe, catch_unwind, resume_unwind};
 use std::ptr;
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering::Relaxed};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering::Relaxed, Ordering::SeqCst};
 use std::sync::{Mutex, MutexGuard, OnceLock, PoisonError};
 use std::time::Instant;
 
@@ -48,6 +48,8 @@ struct Config {
     ratio: f64,
     /// `PYRIGHT_RS_GC_LOG`: 0 silent, 1 a line per collection, 2 also a table per class.
     log: u8,
+    /// Threads that mark, the collecting thread included (`PYRIGHT_RS_GC_THREADS`).
+    threads: usize,
 }
 
 static CONFIG: OnceLock<Config> = OnceLock::new();
@@ -88,7 +90,9 @@ fn config() -> &'static Config {
             Ok("2") => 2,
             Ok(_) => 1,
         };
-        Config { mode, min_bytes: min_mib << 20, ratio, log }
+        let default_threads = std::thread::available_parallelism().map_or(1, |n| n.get().min(4));
+        let threads = env_number("PYRIGHT_RS_GC_THREADS").unwrap_or(default_threads).max(1);
+        Config { mode, min_bytes: min_mib << 20, ratio, log, threads }
     })
 }
 
@@ -642,6 +646,8 @@ pub struct Tracer {
     eval_base: usize,
     eval_len: usize,
     meta: *mut BlockMeta,
+    /// The work of a parallel mark, or null while marking on one thread.
+    shared: *const MarkShared,
 }
 
 impl Tracer {
@@ -672,15 +678,29 @@ impl Tracer {
         let i = meta.index(offset & (BLOCK - 1));
         let (w, bit, words) = (i / 64, 1u64 << (i % 64), meta.words as usize);
         // SAFETY: `i` is a slot of the block, and its bitmaps hold `words` words each.
+        // In a parallel mark every thread sets mark bits atomically.
         unsafe {
             let mark = meta.bits.add(words + w);
-            if *mark & bit != 0 {
-                return;
+            if self.shared.is_null() {
+                if *mark & bit != 0 {
+                    return;
+                }
+                if *meta.bits.add(w) & bit == 0 {
+                    dangling(meta, w, bit);
+                }
+                *mark |= bit;
+            } else {
+                let mark = AtomicU64::from_ptr(mark);
+                if mark.load(Relaxed) & bit != 0 {
+                    return;
+                }
+                if *meta.bits.add(w) & bit == 0 {
+                    dangling(meta, w, bit);
+                }
+                if mark.fetch_or(bit, Relaxed) & bit != 0 {
+                    return;
+                }
             }
-            if *meta.bits.add(w) & bit == 0 {
-                dangling(meta, w, bit);
-            }
-            *mark |= bit;
         }
         let addr = self.eval_base + (offset & !(BLOCK - 1)) + i * meta.slot as usize;
         self.stack.push((addr, meta.trace));
@@ -722,6 +742,216 @@ impl Tracer {
             len -= 1;
             // SAFETY: `addr` is a live slot of the type `trace` was made for.
             unsafe { trace.unwrap_unchecked()(addr, self) };
+            if !self.shared.is_null() && self.stack.len() >= 2 {
+                self.share();
+            }
+        }
+    }
+
+    /// Parallel mark: while a thread waits for work, hands it the top half of the
+    /// mark stack, at most `PACKET` entries.
+    #[inline]
+    fn share(&mut self) {
+        // SAFETY: `shared` outlives the mark.
+        let shared = unsafe { &*self.shared };
+        let hungry = shared.hungry.load(Relaxed);
+        if hungry == 0 || shared.pooled.load(Relaxed) >= hungry {
+            return;
+        }
+        let n = (self.stack.len() / 2).min(PACKET);
+        let packet = self.stack.split_off(self.stack.len() - n);
+        lock(&shared.pool).packets.push(packet);
+        shared.pooled.fetch_add(1, SeqCst);
+        shared.wake.notify_one();
+    }
+}
+
+/// Mark-stack entries handed between threads at a time.
+const PACKET: usize = 512;
+
+/// The work of a parallel mark: root objects to scan, donated mark-stack
+/// packets, and the threads waiting for one.
+struct MarkShared {
+    /// Program blocks to scan as roots: base, slots in use, slot size, trace.
+    roots: Vec<(usize, usize, usize, TraceFn)>,
+    next_root: AtomicUsize,
+    pool: Mutex<Pool>,
+    /// Signalled when a packet arrives and when the mark ends.
+    wake: std::sync::Condvar,
+    /// Mirrors of `Pool`'s counts, read without the lock.
+    pooled: AtomicUsize,
+    hungry: AtomicUsize,
+    threads: usize,
+    abort: AtomicBool,
+    panic: Mutex<Option<Box<dyn std::any::Any + Send>>>,
+    scanned: AtomicUsize,
+    edges: AtomicUsize,
+}
+
+#[derive(Default)]
+struct Pool {
+    packets: Vec<Vec<(usize, TraceFn)>>,
+    /// Threads with no work; the mark ends when all of them have none.
+    idle: usize,
+    done: bool,
+}
+
+/// One thread's part of a parallel mark: scan root objects and trace until every
+/// thread runs out of work.
+fn mark_work(t: &mut Tracer, shared: &MarkShared) {
+    let mut scanned = 0;
+    'work: loop {
+        t.drain();
+        if shared.abort.load(Relaxed) {
+            break;
+        }
+        let i = shared.next_root.fetch_add(1, Relaxed);
+        if let Some(&(base, count, slot, trace)) = shared.roots.get(i) {
+            for k in 0..count {
+                // SAFETY: slot `k` of a program block holds an object of the type `trace` was made for.
+                unsafe { trace(base + k * slot, t) };
+            }
+            scanned += count;
+            continue;
+        }
+        let mut pool = lock(&shared.pool);
+        pool.idle += 1;
+        loop {
+            if shared.abort.load(Relaxed) || pool.done {
+                break 'work;
+            }
+            if let Some(packet) = pool.packets.pop() {
+                pool.idle -= 1;
+                shared.hungry.store(pool.idle, SeqCst);
+                shared.pooled.fetch_sub(1, SeqCst);
+                drop(pool);
+                t.stack.extend(packet);
+                continue 'work;
+            }
+            if pool.idle == shared.threads {
+                pool.done = true;
+                shared.wake.notify_all();
+                break 'work;
+            }
+            shared.hungry.store(pool.idle, SeqCst);
+            pool = shared.wake.wait(pool).unwrap_or_else(PoisonError::into_inner);
+        }
+    }
+    shared.scanned.fetch_add(scanned, Relaxed);
+    shared.edges.fetch_add(t.edges, Relaxed);
+}
+
+/// Runs `mark_work` on this thread and on the helpers, catching a panic in any
+/// of them; the first one is kept and the others stop.
+fn mark_work_caught(t: &mut Tracer, shared: &MarkShared) {
+    if let Err(panic) = catch_unwind(AssertUnwindSafe(|| mark_work(t, shared))) {
+        shared.abort.store(true, SeqCst);
+        lock(&shared.panic).get_or_insert(panic);
+        let _pool = lock(&shared.pool);
+        shared.wake.notify_all();
+    }
+}
+
+/// What a helper thread needs to build its `Tracer`.
+#[derive(Clone, Copy)]
+struct MarkJob {
+    shared: usize,
+    owner: u32,
+    check: bool,
+    eval_base: usize,
+    eval_len: usize,
+    meta: usize,
+}
+
+struct HelperState {
+    generation: u64,
+    wanted: usize,
+    running: usize,
+    job: Option<MarkJob>,
+}
+
+/// Threads that help mark, parked between collections.
+struct Helpers {
+    state: Mutex<HelperState>,
+    start: std::sync::Condvar,
+    done: std::sync::Condvar,
+    spawned: Mutex<usize>,
+}
+
+static HELPERS: Helpers = Helpers {
+    state: Mutex::new(HelperState { generation: 0, wanted: 0, running: 0, job: None }),
+    start: std::sync::Condvar::new(),
+    done: std::sync::Condvar::new(),
+    spawned: Mutex::new(0),
+};
+
+impl Helpers {
+    /// Runs `job` on `n` helper threads and `main` on this one; returns when all finish.
+    fn run(&'static self, n: usize, job: MarkJob, main: impl FnOnce()) {
+        {
+            let mut spawned = lock(&self.spawned);
+            while *spawned < n {
+                let index = *spawned;
+                std::thread::Builder::new()
+                    .name(format!("gc-mark-{index}"))
+                    .spawn(move || self.serve(index))
+                    .expect("collector: cannot start a marking thread");
+                *spawned += 1;
+            }
+        }
+        {
+            let mut state = lock(&self.state);
+            state.generation += 1;
+            state.wanted = n;
+            state.running = n;
+            state.job = Some(job);
+        }
+        self.start.notify_all();
+        main();
+        let mut state = lock(&self.state);
+        while state.running > 0 {
+            state = self.done.wait(state).unwrap_or_else(PoisonError::into_inner);
+        }
+        state.job = None;
+    }
+
+    fn serve(&self, index: usize) {
+        let mut seen = 0;
+        loop {
+            let job = {
+                let mut state = lock(&self.state);
+                while state.generation == seen {
+                    state = self.start.wait(state).unwrap_or_else(PoisonError::into_inner);
+                }
+                seen = state.generation;
+                if index >= state.wanted {
+                    continue;
+                }
+                state.job.expect("collector: a marking thread started without a job")
+            };
+            // SAFETY: the collecting thread keeps `shared` alive until every helper reports done.
+            let shared = unsafe { &*(job.shared as *const MarkShared) };
+            let mut t = Tracer {
+                stack: Vec::new(),
+                edges: 0,
+                check: job.check,
+                program_only: 0,
+                owner: job.owner,
+                eval_base: job.eval_base,
+                eval_len: job.eval_len,
+                meta: job.meta as *mut BlockMeta,
+                shared,
+            };
+            // A trace function must not allocate: on a helper, an allocation would
+            // land on the helper's own heap, so its heap counts as in use too.
+            HEAP.with(|cell| cell.busy.set(true));
+            mark_work_caught(&mut t, shared);
+            HEAP.with(|cell| cell.busy.set(false));
+            let mut state = lock(&self.state);
+            state.running -= 1;
+            if state.running == 0 {
+                self.done.notify_all();
+            }
         }
     }
 }
@@ -761,7 +991,7 @@ pub fn collect_if_due() -> bool {
         if heap.since_gc == 0 || heap.since_gc < threshold {
             return false;
         }
-        heap.collect(check, config.log);
+        heap.collect(check, config.log, config.threads);
         true
     })
 }
@@ -772,7 +1002,8 @@ pub fn collect(check: bool) {
         CHECK_HANDLES.store(true, Relaxed);
     }
     let log = config().log;
-    with_heap(|heap| heap.collect(check, log));
+    let threads = config().threads;
+    with_heap(|heap| heap.collect(check, log, threads));
 }
 
 thread_local! {
@@ -855,7 +1086,7 @@ struct ClassStat {
 }
 
 impl ThreadHeap {
-    fn collect(&mut self, check: bool, log: u8) {
+    fn collect(&mut self, check: bool, log: u8, threads: usize) {
         let start = Instant::now();
         let before = if log > 0 { (rss_bytes(), malloc_bytes()) } else { (0, 0) };
         let ranges = ranges();
@@ -868,11 +1099,21 @@ impl ThreadHeap {
             eval_base: ranges.eval.base,
             eval_len: ranges.eval.len,
             meta: ranges.eval.meta,
+            shared: ptr::null(),
         };
 
         // A panic while marking (check mode's assertions, a borrowed RefCell) must not
         // leave mark bits behind: the next collection would skip those objects' children.
-        let marked = catch_unwind(AssertUnwindSafe(|| self.mark(&mut t, check)));
+        let marked = catch_unwind(AssertUnwindSafe(|| {
+            if threads == 1 {
+                return self.mark(&mut t, check);
+            }
+            let scanned = self.mark_parallel(&mut t, check, threads);
+            if check {
+                self.verify_parallel_mark(&mut t);
+            }
+            scanned
+        }));
         let scanned = match marked {
             Ok(scanned) => scanned,
             Err(panic) => {
@@ -966,6 +1207,88 @@ impl ThreadHeap {
             t.drain();
         }
         scanned
+    }
+
+    /// Marks on `threads` threads: this one and parked helpers. Same result as [`Self::mark`].
+    fn mark_parallel(&self, t: &mut Tracer, check: bool, threads: usize) -> usize {
+        let program = &ranges().program;
+        let mut roots = Vec::new();
+        for class in self.program.iter().flatten() {
+            if !class.info.holds_eval && !check {
+                continue;
+            }
+            let slot = class.info.slot as usize;
+            for &block in &class.blocks {
+                let count = unsafe { program.meta(block).bump } as usize;
+                roots.push((program.block_base(block), count, slot, class.info.trace));
+            }
+        }
+        let shared = MarkShared {
+            roots,
+            next_root: AtomicUsize::new(0),
+            pool: Mutex::new(Pool::default()),
+            wake: std::sync::Condvar::new(),
+            pooled: AtomicUsize::new(0),
+            hungry: AtomicUsize::new(0),
+            threads,
+            abort: AtomicBool::new(false),
+            panic: Mutex::new(None),
+            scanned: AtomicUsize::new(0),
+            edges: AtomicUsize::new(0),
+        };
+        t.shared = &shared;
+        // The registered roots trace thread-locals, so they run on this thread.
+        let roots = catch_unwind(AssertUnwindSafe(|| {
+            for root in &self.roots {
+                root(t);
+            }
+        }));
+        if let Err(panic) = roots {
+            t.shared = ptr::null();
+            resume_unwind(panic);
+        }
+        let job = MarkJob {
+            shared: &shared as *const MarkShared as usize,
+            owner: t.owner,
+            check: t.check,
+            eval_base: t.eval_base,
+            eval_len: t.eval_len,
+            meta: t.meta as usize,
+        };
+        let edges = t.edges;
+        t.edges = 0;
+        HELPERS.run(threads - 1, job, || mark_work_caught(t, &shared));
+        t.shared = ptr::null();
+        t.edges = edges + shared.edges.load(Relaxed);
+        if let Some(panic) = lock(&shared.panic).take() {
+            resume_unwind(panic);
+        }
+        shared.scanned.load(Relaxed)
+    }
+
+    /// Check mode: marks again on one thread and panics when the parallel mark differs.
+    fn verify_parallel_mark(&self, t: &mut Tracer) {
+        let eval = &ranges().eval;
+        let mut parallel = Vec::new();
+        for class in self.eval.iter().flatten() {
+            for &block in &class.blocks {
+                let meta = unsafe { eval.meta(block) };
+                let words = meta.words as usize;
+                parallel.push(unsafe { std::slice::from_raw_parts(meta.bits.add(words), words) }.to_vec());
+            }
+        }
+        self.clear_marks();
+        self.mark(t, true);
+        let mut k = 0;
+        for class in self.eval.iter().flatten() {
+            for &block in &class.blocks {
+                let meta = unsafe { eval.meta(block) };
+                let words = meta.words as usize;
+                let serial = unsafe { std::slice::from_raw_parts(meta.bits.add(words), words) };
+                assert!(serial == parallel[k], "collector check: the parallel mark differs from the serial one in a block of {}", meta.name);
+                k += 1;
+            }
+        }
     }
 
     fn clear_marks(&self) {
@@ -1275,6 +1598,36 @@ mod tests {
         }
     }
 
+    /// A parallel mark keeps what a serial one keeps, on a graph large enough to
+    /// spread over the helpers: chains hang off many program roots, half of them cut.
+    #[test]
+    fn parallel_mark_matches_serial() {
+        let _serial = serial();
+        let drops = Rc::new(());
+        let roots: Vec<_> = (0..2000).map(|_| P::new(Holder { node: Cell::new(None) })).collect();
+        for (r, root) in roots.iter().enumerate() {
+            let mut chain = None;
+            for id in 0..100 {
+                chain = Some(node(chain, &drops, id));
+            }
+            if r % 2 == 0 {
+                root.node.set(chain);
+            }
+        }
+        with_heap(|heap| heap.collect(false, 0, 4));
+        assert_eq!(Rc::strong_count(&drops), 1 + 1000 * 100);
+        for root in roots.iter().step_by(2) {
+            root.node.set(root.node.get().unwrap().next.get());
+        }
+        with_heap(|heap| heap.collect(false, 0, 1));
+        assert_eq!(Rc::strong_count(&drops), 1 + 1000 * 99);
+        for root in &roots {
+            root.node.set(None);
+        }
+        with_heap(|heap| heap.collect(false, 0, 4));
+        assert_eq!(Rc::strong_count(&drops), 1);
+    }
+
     #[derive(jsrt::Trace)]
     #[trace(eval)]
     struct AllocatesWhileTraced;
@@ -1295,5 +1648,18 @@ mod tests {
         let _serial = serial();
         let _root = P::new(AllocatingRoot(AllocatesWhileTraced));
         collect(false);
+    }
+
+    /// Whichever thread traces the root, the allocation panics.
+    #[test]
+    fn allocation_inside_a_parallel_mark_panics() {
+        let _serial = serial();
+        let roots: Vec<_> = (0..4096).map(|_| P::new(Holder { node: Cell::new(None) })).collect();
+        let _root = P::new(AllocatingRoot(AllocatesWhileTraced));
+        let unwound = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| with_heap(|heap| heap.collect(false, 0, 4))));
+        let message = unwound.expect_err("the allocation did not panic");
+        let message = message.downcast_ref::<String>().map(String::as_str).or(message.downcast_ref::<&str>().copied());
+        assert_eq!(message, Some("collector: the heap was used inside an allocation or a collection"));
+        drop(roots);
     }
 }
