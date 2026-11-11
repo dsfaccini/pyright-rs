@@ -46,7 +46,7 @@ use crate::localization::localize::LocAddendum;
 use jsrt::JsMap;
 use jsrt::JsSet;
 use jsrt::P;
-use std::cell::RefCell;
+use jsrt::cell::RefCell;
 
 // analyzer/protocols.ts:55
 #[derive(Clone)]

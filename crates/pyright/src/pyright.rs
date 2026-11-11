@@ -741,7 +741,8 @@ fn log_diagnostic_to_console(diag: &PyrightJsonDiagnostic, prefix: &str) {
 // pyright.ts:1404
 /// Runs the CLI on a thread with a 1 GiB stack, since the analyzer recurses
 /// as deeply as pyright does on V8's stack.
-/// Rust-only: with `PYRIGHT_RS_ALLOC_STATS` set, prints per-type arena use to stderr.
+/// Rust-only: with `PYRIGHT_RS_ALLOC_STATS` set, prints per-type arena use to stderr;
+/// with `PYRIGHT_RS_GC_CENSUS`, the census's last report.
 pub fn main() -> i32 {
     let argv: Vec<String> = std::env::args().skip(1).collect();
     let handle = std::thread::Builder::new()
@@ -753,6 +754,8 @@ pub fn main() -> i32 {
             oracle_init();
             let code = process_args(&argv) as i32;
             jsrt::arena::print_alloc_stats();
+            // Last: the census drops every heap object of this thread.
+            jsrt::heap::census_at_exit();
             code
         })
         .expect("spawn the analysis thread");

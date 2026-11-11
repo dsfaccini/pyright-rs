@@ -1,6 +1,6 @@
 //! Port of `packages/pyright-internal/src/common/timing.ts`.
 
-use std::cell::Cell;
+use jsrt::cell::Cell;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use jsrt::number::number_to_string;

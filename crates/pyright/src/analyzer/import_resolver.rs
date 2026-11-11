@@ -13,7 +13,7 @@
 //! (`TempFile`), and `isStdlibModule`, `_buildStdlibCache`,
 //! `getTypeshedThirdPartyPath` and `getNativeModuleName`, which nothing calls.
 
-use std::cell::{Cell, RefCell};
+use jsrt::cell::{Cell, RefCell};
 
 use jsrt::{FxHashSet, JsMap, JsSet, JsStr, P};
 

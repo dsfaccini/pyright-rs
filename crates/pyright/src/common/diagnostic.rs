@@ -3,7 +3,7 @@
 //! JSON (de)serialization (`toJsonObj`, `fromJsonObj`) serves the language
 //! server's background threads and is not ported.
 
-use std::cell::RefCell;
+use jsrt::cell::RefCell;
 
 use jsrt::P;
 
@@ -204,7 +204,7 @@ pub struct DiagnosticAddendum {
     // `_messages`, `_childAddenda` and `_range`, allocated on the first write: about half of all
     // addenda stay empty (python-chess and samples corpora, 2026-11-10).
     content: RefCell<Option<Box<AddendumContent>>>,
-    nest_level: std::cell::Cell<Option<i32>>,
+    nest_level: jsrt::cell::Cell<Option<i32>>,
 }
 // The evaluator creates millions of addenda (PLAN.md step 6).
 const _: () = assert!(size_of::<DiagnosticAddendum>() <= 24);
@@ -223,8 +223,8 @@ impl DiagnosticAddendum {
         P::new_eval(DiagnosticAddendum::default())
     }
 
-    fn content_mut(&self) -> std::cell::RefMut<'_, AddendumContent> {
-        std::cell::RefMut::map(self.content.borrow_mut(), |content| {
+    fn content_mut(&self) -> jsrt::cell::RefMut<'_, AddendumContent> {
+        jsrt::cell::RefMut::map(self.content.borrow_mut(), |content| {
             &mut **content.get_or_insert_with(Default::default)
         })
     }

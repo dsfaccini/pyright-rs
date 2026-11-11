@@ -203,30 +203,30 @@ interface = "analyzer/codeFlowEngine.ts:CodeFlowAnalyzer"
 "analyzer/binder.ts:Binder._deferBinding.callback" = "Box<dyn FnOnce(&mut crate::analyzer::binder::Binder)>"
 # One code-flow expression set is shared by the binder, its deferred tasks and the node-info store,
 # and the binder keeps adding to it after storing it.
-"analyzer/binder.ts:DeferredBindingTask.codeFlowExpressions" = "jsrt::P<std::cell::RefCell<jsrt::JsSet<String>>>"
-"analyzer/binder.ts:Binder._currentScopeCodeFlowExpressions" = "Option<jsrt::P<std::cell::RefCell<jsrt::JsSet<String>>>>"
-"analyzer/binder.ts:Binder._trackCodeFlowExpressions.return" = "jsrt::P<std::cell::RefCell<jsrt::JsSet<String>>>"
-"analyzer/codeFlowTypes.ts:FlowLabel.affectedExpressions" = "Option<jsrt::P<std::cell::RefCell<jsrt::JsSet<String>>>>"
-"analyzer/analyzerNodeInfo.ts:AnalyzerNodeInfo.codeFlowExpressions" = "jsrt::P<std::cell::RefCell<jsrt::JsSet<String>>>"
-"analyzer/analyzerNodeInfo.ts:AnalyzerNodeInfoAccessor.getCodeFlowExpressions.return" = "Option<jsrt::P<std::cell::RefCell<jsrt::JsSet<String>>>>"
-"analyzer/analyzerNodeInfo.ts:AnalyzerNodeInfoAccessor.setCodeFlowExpressions.expressions" = "jsrt::P<std::cell::RefCell<jsrt::JsSet<String>>>"
-"analyzer/analyzerNodeInfo.ts:getCodeFlowExpressions.return" = "Option<jsrt::P<std::cell::RefCell<jsrt::JsSet<String>>>>"
-"analyzer/analyzerNodeInfo.ts:setCodeFlowExpressions.expressions" = "jsrt::P<std::cell::RefCell<jsrt::JsSet<String>>>"
+"analyzer/binder.ts:DeferredBindingTask.codeFlowExpressions" = "jsrt::P<jsrt::cell::RefCell<jsrt::JsSet<String>>>"
+"analyzer/binder.ts:Binder._currentScopeCodeFlowExpressions" = "Option<jsrt::P<jsrt::cell::RefCell<jsrt::JsSet<String>>>>"
+"analyzer/binder.ts:Binder._trackCodeFlowExpressions.return" = "jsrt::P<jsrt::cell::RefCell<jsrt::JsSet<String>>>"
+"analyzer/codeFlowTypes.ts:FlowLabel.affectedExpressions" = "Option<jsrt::P<jsrt::cell::RefCell<jsrt::JsSet<String>>>>"
+"analyzer/analyzerNodeInfo.ts:AnalyzerNodeInfo.codeFlowExpressions" = "jsrt::P<jsrt::cell::RefCell<jsrt::JsSet<String>>>"
+"analyzer/analyzerNodeInfo.ts:AnalyzerNodeInfoAccessor.getCodeFlowExpressions.return" = "Option<jsrt::P<jsrt::cell::RefCell<jsrt::JsSet<String>>>>"
+"analyzer/analyzerNodeInfo.ts:AnalyzerNodeInfoAccessor.setCodeFlowExpressions.expressions" = "jsrt::P<jsrt::cell::RefCell<jsrt::JsSet<String>>>"
+"analyzer/analyzerNodeInfo.ts:getCodeFlowExpressions.return" = "Option<jsrt::P<jsrt::cell::RefCell<jsrt::JsSet<String>>>>"
+"analyzer/analyzerNodeInfo.ts:setCodeFlowExpressions.expressions" = "jsrt::P<jsrt::cell::RefCell<jsrt::JsSet<String>>>"
 # Arrays held by reference. `{ ...type.shared }` and `FunctionType.clone` copy the reference, and
 # `expandTypedKwargs` splices and pushes the clone's arrays, which changes the original function too
 # (typeEvaluator.ts:2919-2923, 2944).
-"analyzer/types.ts:FunctionDetailsShared.parameters" = "jsrt::P<std::cell::RefCell<Vec<crate::analyzer::types::FunctionParam>>>"
-"analyzer/types.ts:SpecializedFunctionTypes.parameterTypes" = "jsrt::P<std::cell::RefCell<Vec<jsrt::P<crate::analyzer::types::Type>>>>"
-"analyzer/types.ts:SpecializedFunctionTypes.parameterDefaultTypes" = "Option<jsrt::P<std::cell::RefCell<Vec<Option<jsrt::P<crate::analyzer::types::Type>>>>>>"
+"analyzer/types.ts:FunctionDetailsShared.parameters" = "jsrt::P<jsrt::cell::RefCell<Vec<crate::analyzer::types::FunctionParam>>>"
+"analyzer/types.ts:SpecializedFunctionTypes.parameterTypes" = "jsrt::P<jsrt::cell::RefCell<Vec<jsrt::P<crate::analyzer::types::Type>>>>"
+"analyzer/types.ts:SpecializedFunctionTypes.parameterDefaultTypes" = "Option<jsrt::P<jsrt::cell::RefCell<Vec<Option<jsrt::P<crate::analyzer::types::Type>>>>>>"
 # A tuple's type arguments, held by reference. `TypeBase.cloneType` spreads `priv`, so every clone
 # shares the array, and `getSequencePatternInfo` splices it in place (patternMatching.ts:1558-1684):
 # the splice reaches every clone that shares it. `ClassType.specialize` copies it (types.ts:963).
-"analyzer/types.ts:ClassDetailsPriv.tupleTypeArgs" = "jsrt::P<std::cell::RefCell<Vec<crate::analyzer::types::TupleTypeArg>>>"
+"analyzer/types.ts:ClassDetailsPriv.tupleTypeArgs" = "jsrt::P<jsrt::cell::RefCell<Vec<crate::analyzer::types::TupleTypeArg>>>"
 # A type alias caches its variance array before inferring it and fills it in place
 # (typeEvaluator.ts:8355-8484): a re-entrant read during the traversal sees the partial array.
-"analyzer/types.ts:TypeAliasSharedInfo.computedVariance" = "Option<jsrt::P<std::cell::RefCell<Vec<crate::analyzer::types::Variance>>>>"
-"analyzer/typeEvaluator.ts:createTypeEvaluator.inferVarianceForTypeAlias.return" = "Option<jsrt::P<std::cell::RefCell<Vec<crate::analyzer::types::Variance>>>>"
-"analyzer/typeEvaluator.ts:createTypeEvaluator.updateUsageVariancesRecursive.usageVariances" = "jsrt::P<std::cell::RefCell<Vec<crate::analyzer::types::Variance>>>"
+"analyzer/types.ts:TypeAliasSharedInfo.computedVariance" = "Option<jsrt::P<jsrt::cell::RefCell<Vec<crate::analyzer::types::Variance>>>>"
+"analyzer/typeEvaluator.ts:createTypeEvaluator.inferVarianceForTypeAlias.return" = "Option<jsrt::P<jsrt::cell::RefCell<Vec<crate::analyzer::types::Variance>>>>"
+"analyzer/typeEvaluator.ts:createTypeEvaluator.updateUsageVariancesRecursive.usageVariances" = "jsrt::P<jsrt::cell::RefCell<Vec<crate::analyzer::types::Variance>>>"
 # Records and maps pyright creates on first write (`undefined` until then): boxed, so a type that
 # never sets one pays a pointer, not the record (PLAN.md step 6, exact-size variants).
 # A type's own records: one pointer until the first write ([mutable] keeps them out of a RefCell).
@@ -258,25 +258,25 @@ interface = "analyzer/codeFlowEngine.ts:CodeFlowAnalyzer"
 # VirtualParamDetails.
 "analyzer/types.ts:FunctionParam.name" = "Option<std::rc::Rc<str>>"
 # Getters that return live state their callers write to.
-"analyzer/types.ts:TypeBase.addProps.return" = "std::cell::RefMut<'static, crate::analyzer::types::TypeBaseProps>"
+"analyzer/types.ts:TypeBase.addProps.return" = "jsrt::cell::RefMut<'static, crate::analyzer::types::TypeBaseProps>"
 # The type caches are passed by reference to the speculative type tracker, which deletes from the
 # very map it was given (typeCacheUtils.ts:133); the return-inference ones are swapped per call.
 # Nothing iterates typeCache, a code-flow node type cache or _speculativeTypeCache, so they are
 # lookup-only hash maps: a delete is O(1), as Map.delete is.
-"analyzer/typeEvaluator.ts:createTypeEvaluator.typeCache" = "jsrt::P<std::cell::RefCell<jsrt::FxHashMap<u32, crate::analyzer::type_evaluator::TypeCacheEntry>>>"
-"analyzer/typeEvaluator.ts:createTypeEvaluator.typeFormTypeCache" = "jsrt::P<std::cell::RefCell<jsrt::JsMap<u32, Vec<crate::analyzer::type_evaluator::TypeFormTypeCacheEntry>>>>"
-"analyzer/typeEvaluator.ts:createTypeEvaluator.returnTypeInferenceTypeCache" = "Option<jsrt::P<std::cell::RefCell<jsrt::FxHashMap<u32, crate::analyzer::type_evaluator::TypeCacheEntry>>>>"
-"analyzer/typeEvaluator.ts:createTypeEvaluator.returnTypeInferenceTypeFormTypeCache" = "Option<jsrt::P<std::cell::RefCell<jsrt::JsMap<u32, Vec<crate::analyzer::type_evaluator::TypeFormTypeCacheEntry>>>>>"
-"analyzer/typeEvaluator.ts:createTypeEvaluator.getTypeFormTypeCache.return" = "jsrt::P<std::cell::RefCell<jsrt::JsMap<u32, Vec<crate::analyzer::type_evaluator::TypeFormTypeCacheEntry>>>>"
+"analyzer/typeEvaluator.ts:createTypeEvaluator.typeCache" = "jsrt::P<jsrt::cell::RefCell<jsrt::FxHashMap<u32, crate::analyzer::type_evaluator::TypeCacheEntry>>>"
+"analyzer/typeEvaluator.ts:createTypeEvaluator.typeFormTypeCache" = "jsrt::P<jsrt::cell::RefCell<jsrt::JsMap<u32, Vec<crate::analyzer::type_evaluator::TypeFormTypeCacheEntry>>>>"
+"analyzer/typeEvaluator.ts:createTypeEvaluator.returnTypeInferenceTypeCache" = "Option<jsrt::P<jsrt::cell::RefCell<jsrt::FxHashMap<u32, crate::analyzer::type_evaluator::TypeCacheEntry>>>>"
+"analyzer/typeEvaluator.ts:createTypeEvaluator.returnTypeInferenceTypeFormTypeCache" = "Option<jsrt::P<jsrt::cell::RefCell<jsrt::JsMap<u32, Vec<crate::analyzer::type_evaluator::TypeFormTypeCacheEntry>>>>>"
+"analyzer/typeEvaluator.ts:createTypeEvaluator.getTypeFormTypeCache.return" = "jsrt::P<jsrt::cell::RefCell<jsrt::JsMap<u32, Vec<crate::analyzer::type_evaluator::TypeFormTypeCacheEntry>>>>"
 # The speculative tracker deletes entries from the very cache it was handed (typeCacheUtils.ts:133):
 # an evaluator type cache (typeEvaluator.ts:912) or a code-flow node type cache (codeFlowEngine.ts:314).
 "analyzer/typeCacheUtils.ts:SpeculativeEntry.cache" = "crate::analyzer::type_cache_utils::SpeculativeCache"
 "analyzer/typeCacheUtils.ts:SpeculativeTypeTracker.trackEntry.cache" = "crate::analyzer::type_cache_utils::SpeculativeCache"
-"analyzer/codeFlowEngine.ts:CodeFlowTypeCache.cache" = "jsrt::P<std::cell::RefCell<jsrt::JsMap<u32, Option<crate::analyzer::code_flow_engine::CachedType>>>>"
+"analyzer/codeFlowEngine.ts:CodeFlowTypeCache.cache" = "jsrt::P<jsrt::cell::RefCell<jsrt::JsMap<u32, Option<crate::analyzer::code_flow_engine::CachedType>>>>"
 # One speculative tracker is shared by the evaluator and its code flow engine (typeEvaluator.ts:30591):
 # contexts the evaluator enters decide what the engine's `trackEntry` and `isSpeculative` see.
-"analyzer/typeEvaluator.ts:createTypeEvaluator.speculativeTypeTracker" = "jsrt::P<std::cell::RefCell<crate::analyzer::type_cache_utils::SpeculativeTypeTracker>>"
-"analyzer/codeFlowEngine.ts:getCodeFlowEngine.speculativeTypeTracker" = "jsrt::P<std::cell::RefCell<crate::analyzer::type_cache_utils::SpeculativeTypeTracker>>"
+"analyzer/typeEvaluator.ts:createTypeEvaluator.speculativeTypeTracker" = "jsrt::P<jsrt::cell::RefCell<crate::analyzer::type_cache_utils::SpeculativeTypeTracker>>"
+"analyzer/codeFlowEngine.ts:getCodeFlowEngine.speculativeTypeTracker" = "jsrt::P<jsrt::cell::RefCell<crate::analyzer::type_cache_utils::SpeculativeTypeTracker>>"
 # `object` in types.ts; protocols.ts keeps its protocol compatibility cache there (protocols.ts:297).
 "analyzer/types.ts:ClassDetailsShared.protocolCompatibility" = "jsrt::JsMap<String, Vec<crate::analyzer::protocols::ProtocolCompatibility>>"
 # Object-literal dictionaries keyed by operator, only looked up, never iterated.
@@ -351,8 +351,8 @@ plain = []
 /// cache (codeFlowEngine.ts:314). TypeScript passes the map itself; the holder shares it.
 #[derive(Clone, Copy)]
 pub enum SpeculativeCache {
-    Type(jsrt::P<std::cell::RefCell<jsrt::FxHashMap<u32, crate::analyzer::type_evaluator::TypeCacheEntry>>>),
-    FlowNodeType(jsrt::P<std::cell::RefCell<jsrt::FxHashMap<u32, Option<crate::analyzer::code_flow_engine::CachedType>>>>),
+    Type(jsrt::P<jsrt::cell::RefCell<jsrt::FxHashMap<u32, crate::analyzer::type_evaluator::TypeCacheEntry>>>),
+    FlowNodeType(jsrt::P<jsrt::cell::RefCell<jsrt::FxHashMap<u32, Option<crate::analyzer::code_flow_engine::CachedType>>>>),
 }
 """
 # TypeResult::new and Clone rely on the Cell and RefCell imports its fields give the module.

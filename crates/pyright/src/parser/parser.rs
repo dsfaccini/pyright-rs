@@ -5362,7 +5362,7 @@ impl Parser {
 
     // parser/parser.ts:4492
     fn _parse_test_list_with_comprehension(&mut self, is_generator: bool) -> ListResult {
-        let saw_comprehension = std::cell::Cell::new(false);
+        let saw_comprehension = jsrt::cell::Cell::new(false);
 
         self._parse_expression_list_generic(
             &mut |this| {
@@ -5742,10 +5742,10 @@ impl Parser {
             // shared TypeScript `d` object does. Nothing writes to either `d` after this.
             let dest_expr = P::new(ParseNode {
                 node_type: left_expr.node_type,
-                start: std::cell::Cell::new(left_expr.start.get()),
-                length: std::cell::Cell::new(left_expr.length.get()),
-                id: std::cell::Cell::new(left_expr.id.get()),
-                parent: std::cell::Cell::new(left_expr.parent.get()),
+                start: jsrt::cell::Cell::new(left_expr.start.get()),
+                length: jsrt::cell::Cell::new(left_expr.length.get()),
+                id: jsrt::cell::Cell::new(left_expr.id.get()),
+                parent: jsrt::cell::Cell::new(left_expr.parent.get()),
                 a: left_expr.a,
                 d: left_expr.d.clone(),
             });

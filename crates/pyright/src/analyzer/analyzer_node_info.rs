@@ -7,7 +7,7 @@
 // `P` hashes by address, so its interior mutability never changes a key.
 #![allow(clippy::mutable_key_type)]
 
-use std::cell::{Cell, RefCell};
+use jsrt::cell::{Cell, RefCell};
 
 use jsrt::{FxHashMap, FxHashSet, JsSet, P};
 

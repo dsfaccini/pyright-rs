@@ -9,6 +9,10 @@ mimalloc = "0.1.52"
 regex = "1.13.1"
 serde_json = { version = "1.0.154", features = ["preserve_order"] }
 
+[features]
+# Counts the bytes each thread holds in the global allocator, for the collection log.
+count-malloc = []
+
 [[bin]]
 name = "pyright-rs"
 path = "src/main.rs"

@@ -1,7 +1,7 @@
 //! Port of `packages/pyright-internal/src/analyzer/analyzerFileInfo.ts`.
 //!
 
-use std::cell::RefCell;
+use jsrt::cell::RefCell;
 use std::rc::Rc;
 
 use jsrt::{FxHashSet, JsMap, JsSet, P};

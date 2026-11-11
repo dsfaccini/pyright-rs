@@ -3,7 +3,7 @@
 //! Edit mode (`_preEditData`, `restore`) serves the language server and is not
 //! ported: the CLI never enters edit mode, so every `mutate` writes in place.
 
-use std::cell::{Ref, RefCell, RefMut};
+use jsrt::cell::{Ref, RefCell, RefMut};
 
 use jsrt::{JsSet, P};
 

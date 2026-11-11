@@ -43,7 +43,7 @@ use crate::localization::localize::LocMessage;
 use crate::parser::parse_nodes::ParseNodeType;
 use crate::parser::parse_nodes::{ExpressionNode, SliceNode, TupleNode};
 use jsrt::P;
-use std::cell::Cell;
+use jsrt::cell::Cell;
 
 // analyzer/tuples.ts:54
 pub(crate) const MAX_INFERRED_TUPLE_ENTRY_COUNT: u32 = 256;

@@ -3,7 +3,7 @@
 //! `createReadStream`, `readFile` and `readFileText` (streams and async I/O)
 //! are not ported: the check reads with `readFileSync`.
 
-use std::cell::RefCell;
+use jsrt::cell::RefCell;
 
 use jsrt::{FxHashMap, JsMap, P};
 

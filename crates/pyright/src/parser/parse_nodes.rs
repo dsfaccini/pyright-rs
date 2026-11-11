@@ -12,7 +12,7 @@
 //! - A field typed as one node type holds that type's handle; a field typed as a
 //!   union (`ExpressionNode`, `SuiteNode | IfNode`, ...) holds `P<ParseNode>`.
 
-use std::cell::{Cell, RefCell};
+use jsrt::cell::{Cell, RefCell};
 use std::ops::Deref;
 
 use jsrt::{JsString, P};

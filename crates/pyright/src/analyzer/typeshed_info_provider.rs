@@ -1,6 +1,6 @@
 //! Port of `packages/pyright-internal/src/analyzer/typeshedInfoProvider.ts`.
 
-use std::cell::RefCell;
+use jsrt::cell::RefCell;
 
 use jsrt::{FxHashMap, JsMap, JsSet, JsStr, P};
 

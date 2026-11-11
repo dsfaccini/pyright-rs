@@ -1,6 +1,6 @@
 //! Port of `packages/pyright-internal/src/common/diagnosticSink.ts`.
 
-use std::cell::RefCell;
+use jsrt::cell::RefCell;
 
 use jsrt::{JsMap, P};
 

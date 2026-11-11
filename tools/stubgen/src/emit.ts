@@ -302,7 +302,7 @@ export class FileEmitter {
         if (coldFields.length) {
             fields.push(`    // Fields few objects set ([cold] in tools/stubgen/typemap.toml): read with \`cold()\`, write with \`cold_mut()\`.`);
             if (mode === 'handle') {
-                this.uses.add(['std::cell::RefCell']);
+                this.uses.add(['jsrt::cell::RefCell']);
                 fields.push(`    pub cold: RefCell<Option<Box<${name}Cold>>>,`);
             } else {
                 fields.push(`    pub cold: Option<Box<${name}Cold>>,`);
@@ -348,12 +348,12 @@ export class FileEmitter {
             `impl ${name} {`,
             ...(handle
                 ? [
-                      `    pub fn cold(&self) -> std::cell::Ref<'_, ${cold}> {`,
-                      `        std::cell::Ref::map(self.cold.borrow(), |cold| cold.as_deref().unwrap_or(&${cold}::EMPTY))`,
+                      `    pub fn cold(&self) -> jsrt::cell::Ref<'_, ${cold}> {`,
+                      `        jsrt::cell::Ref::map(self.cold.borrow(), |cold| cold.as_deref().unwrap_or(&${cold}::EMPTY))`,
                       '    }',
                       '',
-                      `    pub fn cold_mut(&self) -> std::cell::RefMut<'_, ${cold}> {`,
-                      '        std::cell::RefMut::map(self.cold.borrow_mut(), |cold| &mut **cold.get_or_insert_with(Default::default))',
+                      `    pub fn cold_mut(&self) -> jsrt::cell::RefMut<'_, ${cold}> {`,
+                      '        jsrt::cell::RefMut::map(self.cold.borrow_mut(), |cold| &mut **cold.get_or_insert_with(Default::default))',
                       '    }',
                       '',
                       '    /// `field = value`, without allocating the cold half to hold a `None`.',
@@ -1453,7 +1453,7 @@ export class FileEmitter {
                     if (init && ts.isObjectLiteralExpression(init)) {
                         ifaceObject = init;
                     }
-                    this.uses.add(['jsrt::P', 'std::cell::OnceCell']);
+                    this.uses.add(['jsrt::P', 'jsrt::cell::OnceCell']);
                     fields.push(`    ${this.marker(d)}`, `    // \`${n}\`: the object ${f.func} returns, which is this struct.`, `    pub(crate) ${fieldName(n)}: OnceCell<P<${name}>>,`);
                     continue;
                 }
@@ -1478,7 +1478,7 @@ export class FileEmitter {
                 const later = selfSeen && init !== undefined && refersTo(init, f.selfNames);
                 let ty: string;
                 if (later) {
-                    this.uses.add(['std::cell::OnceCell']);
+                    this.uses.add(['jsrt::cell::OnceCell']);
                     ty = `OnceCell<${render(t, 'field', this.uses)}>`;
                 } else {
                     const forced = this.gen.table.mutable.get(`${this.file}:${siteRoot}.${n}`);
@@ -1500,7 +1500,7 @@ export class FileEmitter {
         // A nested factory stores a handle to this struct, which `&self` cannot produce: keep one.
         const hasNested = methods.some((m) => this.gen.factoryByFunc.has(`${this.file}:${f.func}.${m.name?.text}`));
         if (hasNested && !selfSeen) {
-            this.uses.add(['jsrt::P', 'std::cell::OnceCell']);
+            this.uses.add(['jsrt::P', 'jsrt::cell::OnceCell']);
             fields.push(`    // This struct's own handle, set once it is in the arena: a nested factory stores it.`, `    pub(crate) handle: OnceCell<P<${name}>>,`);
         }
         if (this.mode === 'stubs' || this.wants(name)) {

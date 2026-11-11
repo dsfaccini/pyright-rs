@@ -12,7 +12,7 @@ use crate::analyzer::types::is_type_same;
 use crate::common::debug::assert;
 use crate::parser::parse_nodes::ParseNode;
 use jsrt::{FxHashMap, P};
-use std::cell::RefCell;
+use jsrt::cell::RefCell;
 
 // analyzer/typeCacheUtils.ts:17
 #[derive(Clone)]

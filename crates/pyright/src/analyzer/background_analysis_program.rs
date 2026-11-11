@@ -3,7 +3,7 @@
 //! The CLI runs analysis in the foreground, so the `IBackgroundAnalysis`
 //! branches are not ported.
 
-use std::cell::{Cell, RefCell};
+use jsrt::cell::Cell;
 
 use jsrt::P;
 
@@ -19,7 +19,7 @@ use crate::common::uri::Uri;
 // analyzer/backgroundAnalysisProgram.ts:32
 pub struct BackgroundAnalysisProgram {
     program: P<Program>,
-    on_analysis_completion: RefCell<Option<AnalysisCompleteCallback>>,
+    on_analysis_completion: std::cell::RefCell<Option<AnalysisCompleteCallback>>,
     service_provider: ServiceProvider,
     config_options: Cell<P<ConfigOptions>>,
     import_resolver: Cell<P<ImportResolver>>,
@@ -37,7 +37,7 @@ impl BackgroundAnalysisProgram {
     ) -> BackgroundAnalysisProgram {
         BackgroundAnalysisProgram {
             program: Program::new(import_resolver, config_options, service_provider, disable_checker),
-            on_analysis_completion: RefCell::new(None),
+            on_analysis_completion: std::cell::RefCell::new(None),
             service_provider,
             config_options: Cell::new(config_options),
             import_resolver: Cell::new(import_resolver),

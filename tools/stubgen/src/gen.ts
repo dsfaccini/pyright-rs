@@ -501,7 +501,7 @@ export class Gen {
 
     // Maps a declared type, or the checker's inferred type when there is no annotation.
     // A [sites] entry: the Rust type, verbatim in every position. Qualified paths in it
-    // (`jsrt::P`, `std::cell::RefCell`) become imports.
+    // (`jsrt::P`, `jsrt::cell::RefCell`) become imports.
     siteOverride(site: Site): IR | undefined {
         const override = this.table.sites.get(`${site.file}:${site.key}`);
         if (override === undefined) {
@@ -1411,7 +1411,7 @@ export function usesOfIR(a: IR): string[] {
     return [...u.set];
 }
 
-// `jsrt::P<std::cell::RefCell<T>>` -> `P<RefCell<T>>`.
+// `jsrt::P<jsrt::cell::RefCell<T>>` -> `P<RefCell<T>>`.
 export function shortenPaths(rust: string): string {
     return rust.replace(/\b(?:crate|jsrt|std)(?:::[A-Za-z_][A-Za-z0-9_]*)*::([A-Za-z_][A-Za-z0-9_]*)/g, '$1');
 }

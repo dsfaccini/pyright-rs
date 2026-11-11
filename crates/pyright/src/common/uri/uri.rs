@@ -4,7 +4,7 @@
 //! ported: the CLI only sees file paths.
 
 use jsrt::JsStr;
-use std::cell::{OnceCell, RefCell};
+use jsrt::cell::{OnceCell, RefCell};
 use std::fmt;
 use std::hash::{Hash, Hasher};
 

@@ -4,7 +4,7 @@
 
 use crate::analyzer::types::{Type, TypeVarType};
 use jsrt::{LazyJsMap, NonEmptyList, P};
-use std::cell::RefCell;
+use jsrt::cell::RefCell;
 use std::rc::Rc;
 
 // analyzer/constraintSolution.ts:15

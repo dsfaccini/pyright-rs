@@ -1,6 +1,6 @@
 //! Port of `packages/pyright-internal/src/analyzer/scope.ts`.
 
-use std::cell::{Cell, RefCell};
+use jsrt::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use jsrt::{JsMap, P};

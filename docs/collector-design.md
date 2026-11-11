@@ -14,13 +14,14 @@ Recommendation 1 in `docs/research/memory-advice.md` gives the motivation; this 
 - **When.** Before each file in `Program.analyze`'s loop over the source file list (`program.ts:766`). No evaluator or checker frame is live there, so no stack scanning.
 - **Precise.** Every type a heap object holds implements `jsrt::Trace`, through `#[derive(jsrt::Trace)]`. The collector visits only typed fields, never raw words.
 - **Non-moving.** A live object keeps its address. `P` stays `Copy`; `P::ptr_eq`, `==` and `Hash` keep their meaning.
-- **Stop-the-world, single thread.** Each thread has its own heaps, as now. The CLI checks on one thread.
+- **Stop-the-world.** Each thread has its own heaps, as now. The CLI checks on one thread. Marking runs on that thread and on parked helper threads while it waits (below); sweeping runs on that thread alone.
 
 ## heap layout
 
 - Two address ranges, reserved once per process with `mmap(PROT_NONE, MAP_NORESERVE)`: 256 GiB for the evaluator heap, 64 GiB for typed program blocks. Under an address-space limit (`ulimit -v`) they shrink to a quarter and a sixteenth of it, and a refused reservation is retried at half the size. Blocks become readable and writable 512 at a time (`mprotect`), so strict overcommit charges only what is handed out; pages are backed on first touch. "Is this handle in the evaluator heap" is one subtraction and one compare.
 - Each range is cut into 64 KiB blocks. A block belongs to one thread and holds objects of one Rust type, in fixed slots of `size_of` rounded up to the alignment (at least 8 bytes, so every `P` has its own address).
-- Block metadata lives in a side table indexed by block number: the type, the slot size, a bump index, a free list, and bitmaps for live and marked slots (plus dead slots in check mode). No per-object header: `Type` keeps its `size_of`.
+- Block metadata lives in a side table indexed by block number: the type, the slot size, a bump index (program blocks), and bitmaps for live and marked slots (plus dead slots in check mode). No per-object header: `Type` keeps its `size_of`.
+- An evaluator class allocates from a cursor over its current block's live bitmap: the free slots of one 64-slot word, taken lowest first. Allocation never reads the slot it hands out, which after a sweep is no longer in cache; a free list threaded through the slots would cost a cache miss per allocation.
 - Every `P::new_eval` goes to a typed block. A `P::new` goes to a typed block when its type has `HOLDS_EVAL` (below), because the collector scans those objects as roots; every other program object stays in the bump arena, which parse and bind speed depends on. The choice is made at compile time from the const.
 - The allocator id of a non-generic type sits in a static the derive emits (`jsrt::ClassSlot`), so finding the type's blocks is one load. A generic type allocated directly (`RefCell<Vec<P<Type>>>`) falls back to a per-thread `TypeId` map.
 - `libc` provides `mmap` and `madvise`. Code: `crates/jsrt/src/heap.rs`, `trace.rs`, `arena.rs`; the derive in `crates/jsrt_derive`.
@@ -36,6 +37,7 @@ pub unsafe trait Trace {
 ```
 
 - `P<T>` has `HOLDS_EVAL = T::EVAL`. Its `trace` marks the target when the address is in the evaluator range. Marking sets the slot's mark bit and pushes the object on a mark stack; the object's type comes from its block, so a `P<dyn Trait>` traces like any other.
+- Objects leave the mark stack through a FIFO of eight, prefetched when they enter it, so the cache misses of several objects overlap (Cher, Hosking and Vijaykumar, "Software Prefetching for Mark-Sweep Garbage Collection"). The test for an already marked object comes first; the checks for a dangling handle run only on objects marked for the first time.
 - `#[derive(jsrt::Trace)]` (new proc-macro crate `crates/jsrt_derive`, on the `syn` and `quote` already in `Cargo.lock`): `HOLDS_EVAL` is the OR over the fields; `trace` visits the fields whose type has `HOLDS_EVAL`.
 - `#[trace(eval)]` on a type sets `EVAL`. `P::new_eval` does not compile for a type without it, so a `P<T>` whose `T` lacks `EVAL` never points into the evaluator heap.
 - A std or dependency type has `EVAL = HOLDS_EVAL`: the evaluator allocates `RefCell<Vec<P<Type>>>` directly, and a `P<RefCell<JsSet<String>>>` (the binder's code-flow expressions) stays a program handle. A list of variances holds no handle, so `TypeAliasSharedInfo.computed_variance` is allocated with `P::new`.
@@ -57,19 +59,57 @@ pub unsafe trait Trace {
 - **Trait objects.** `P<dyn AnalyzerNodeInfoReader>` is a program handle (`EVAL = false`); `P<dyn FunctionReturnTypeCallback>` can be the evaluator (`EVAL = true`).
 - **Other threads.** `P` is neither `Send` nor `Sync`: a block belongs to one thread, and only that thread's collector frees it.
 
+## parallel marking
+
+- `PYRIGHT_RS_GC_THREADS` threads mark, the collecting thread included: by default the available parallelism, at most 8. At 1 the collecting thread marks alone.
+- The collecting thread traces the registered roots first, since they are its thread-locals. Then every thread takes program blocks to scan from a shared counter, and traces from its own mark stack.
+- While some thread is idle and the shared pool holds fewer packets than there are idle threads, a thread with at least two entries on its mark stack hands the newest half of them, at most 512, to the pool as a packet. A thread with no work takes a packet; the mark ends when every thread is idle and the pool is empty.
+- Mark bits are set with an atomic `fetch_or`, so only one thread pushes an object. Tracing only reads objects: `RefCell` contents through `try_borrow_unguarded`, `Cell` through `get`, `Rc` without touching its counts. The mutator is stopped, so nothing writes while helpers read.
+- Helper threads are started on the first parallel mark and parked on a condition variable between collections. They serve one collection at a time: a thread that collects while another thread's collection holds them marks alone. A panic on any thread (a borrowed `RefCell`, a check-mode assertion) stops the others and unwinds on the collecting thread, which clears the marks as for a serial mark.
+- The set of marked objects is reachability, so it does not depend on the thread count; the sweep visits blocks in the same order as before.
+
+## write barrier
+
+- `jsrt::cell::{Cell, RefCell, OnceCell}` wrap the std cells with the same API. Before a write that can store an evaluator handle (`Cell::set`, `replace`, `swap`; `RefCell::borrow_mut`, `try_borrow_mut`, `replace`, `replace_with`, `take`, `swap`; `OnceCell::set`, `get_or_init` on an empty cell), they call `jsrt::heap::remember` with the cell's address. `Cell::take` stores the default value, which holds no handle because `P` has no `Default`, so it skips the barrier. A cell whose value type has `HOLDS_EVAL` false skips the call at compile time.
+- `remember` marks a card: one byte per 512 bytes of each reserved range, in a card table reserved next to the block metadata and committed with the blocks. An address outside the typed blocks (the stack, a buffer) marks nothing. With generational collection off, the barrier's range lengths stay 0 and it marks nothing.
+- A mutable borrow marks the card when it starts; no collection runs while a borrow is live, so writes through the `RefMut` are covered.
+- The barrier finds the written object by the cell's address, so no heap object may keep such a cell in a buffer it owns. `Trace` carries two consts the derive computes: `HAS_CELL` (holds a cell that can hold an evaluator handle) and `CELL_OUT_OF_LINE` (such a cell sits behind a `Vec`, `Box`, `Rc`, `VecDeque` or map). `P::new_eval` and `P::new` assert `!CELL_OUT_OF_LINE` at compile time. `OptionRefCell` boxes its `RefCell` but runs the barrier on its own address, so it counts as in line; a cell inside its value sits in the box, so `OptionRefCell<T>` is out of line when `T` holds one. A `#[trace(holds_eval)]` type claims no cells (the const would be a cycle): it must hold none, and its derived `trace` asserts at compile time that no field has `HAS_CELL`.
+- The std cells' `Trace` impls assert at compile time that their value holds no evaluator handle, so a std cell in a heap object is a compile error.
+
+## generational collection
+
+On by default; `PYRIGHT_RS_GC_GENERATIONAL=0` turns it off, and every collection is then major.
+
+- **Sticky marks.** The sweep leaves every survivor marked. A marked object is old; an object allocated since the last collection is unmarked, so young.
+- **Minor collection.** Traces from the registered roots, the program objects allocated since the last collection (each program block keeps the slots a collection traced), and the old program and evaluator objects on marked cards. Marking stops at old objects, which are already marked. The sweep drops only unmarked objects, so old objects survive, garbage or not.
+- **Major collection.** Clears every mark bit and traces from every root, as without generations.
+- **When.** A collection is due every `PYRIGHT_RS_GC_MIN_MIB` of evaluator slots. It is major when the live slot bytes reach `(1 + PYRIGHT_RS_GC_MAJOR_RATIO) ×` those after the last major collection (default ratio 1), and the first time. A mark interrupted by a panic leaves marks that no longer tell old objects apart, so the next collection is major.
+- Every collection ends with clean cards and every program object old.
+- Old garbage waits for a major collection; a young object that only old garbage reaches survives until then too.
+
 ## sweep
 
-- A live, unmarked evaluator slot is dropped in place. `drop_in_place` frees the `Vec`, `String` and map buffers it owns, and releases its `Rc`s. The slot then joins its block's free list.
+- A live, unmarked evaluator slot is dropped in place. `drop_in_place` frees the `Vec`, `String` and map buffers it owns, and releases its `Rc`s. Its live bit clears, so the allocation cursor hands the slot out again.
+- Dropping misses the cache on the buffers a dead object owns. `Trace::prefetch_owned`, which the derive writes like `trace`, prefetches a value's `Vec`, `String`, `Box`, `Rc` and `IndexMap` buffers; the sweep calls it on the dead object four slots ahead of the one it drops.
 - No port type implements `Drop`, and the std drops never dereference a `P`, so the order in which dead objects drop does not matter.
 - Allocation, root registration and collection never nest: the heap panics when a root, `Trace` impl or drop allocates.
 - A panic while marking (check mode's assertions, a borrowed `RefCell`) clears the marks before it unwinds, so a later collection traces everything again. A panic while sweeping aborts the process.
-- A block left with no live slot returns to the process's free-block pool, and `madvise(MADV_DONTNEED)` returns its pages to the OS.
+- A block left with no live slot returns to the process's free-block pool. Up to `PYRIGHT_RS_GC_WARM_MIB` of such blocks (default 256) keep their pages, and new blocks come from them first, so allocating into them does not fault; `madvise(MADV_DONTNEED)` returns the pages of the rest to the OS.
 
 ## trigger
 
-- Before each file, collect when the evaluator slot bytes allocated since the last collection reach `max(ratio × live slot bytes after the last collection, floor)`. Defaults: ratio 1 and floor 1 GiB; check mode ratio 0 and floor 64 MiB. `PYRIGHT_RS_GC_RATIO` and `PYRIGHT_RS_GC_MIN_MIB` override them; both at 0 collect before every file that follows an allocation.
+- Generational collection is due every `floor` ("generational collection", **When**). Without generations, collect before each file when the evaluator slot bytes allocated since the last collection reach `max(ratio × live slot bytes after the last collection, floor)`. Defaults: ratio 1, and floor 512 MiB with generations and 1 GiB without; check mode ratio 0 and floor 64 MiB. `PYRIGHT_RS_GC_RATIO` and `PYRIGHT_RS_GC_MIN_MIB` override them; both at 0 collect before every file that follows an allocation.
 - The trigger counts slots only. The `Vec`, `String` and map buffers that dead objects own come on top: on pydantic-ai each collection frees 1.1 to 1.6 GB of them next to about 1 GB of slots.
-- `PYRIGHT_RS_GC_LOG=1` prints each collection: milliseconds (and those spent marking), program objects scanned, objects freed, live slot bytes, slot bytes allocated since the last collection, and the system allocator's bytes in use before and after (glibc).
+- `PYRIGHT_RS_GC_LOG=1` prints each collection: the time since start, milliseconds (and those spent marking), program objects scanned, objects freed, live slot bytes, slot bytes allocated since the last collection, evaluator and typed program block bytes, program arena bytes and chunk bytes, the bytes the collecting thread holds in the global allocator before and after (only with the `pyright` crate's `count-malloc` feature), and the resident set before and after with the share of each reserved range. `PYRIGHT_RS_GC_LOG=2` also prints a table of live and freed objects per type.
+- The global allocator bytes come from `jsrt::heap::CountingAlloc`, which wraps the `pyright-rs` binary's mimalloc under `count-malloc` and counts per thread. Counting every allocation costs about 0.6% of the instructions on pydantic-ai, so the default build does not count.
+
+## census
+
+`PYRIGHT_RS_GC_CENSUS=1` prints where the resident set goes (`crates/jsrt/src/heap/census.rs`). It changes no result.
+
+- A thread samples the resident set every 5 ms and keeps the peak between collections, while marking and while sweeping; they print at exit.
+- After each collection's mark, and once the check loop ends (about the run's peak on pydantic-ai), it prints the resident bytes of the evaluator range, split into slots, free slots and warm released blocks; of the program range; of block metadata and cards; of the program arena's used chunks; of file-backed mappings and the stack; and the rest, which is mostly the malloc heap. After a mark it also splits slots into reachable and garbage. Residency comes from `mincore`.
+- Malloc bytes need the `pyright` crate's `count-malloc` feature (`cargo build --release --features pyright/count-malloc`). With it, each sweep prints the buffer bytes its garbage owned, and at exit, after the output, the census runs a major collection and then drops every evaluator object and every typed program object, type by type, reading the malloc counter: the slot and buffer bytes of each type, largest first. Without the feature it says the bytes are not counted and drops nothing.
 
 ## switch and check mode
 
@@ -82,7 +122,9 @@ pub unsafe trait Trace {
   - dereferencing (`Deref`, `P::get`), comparing (`==`, `P::ptr_eq`) or hashing a `P` to a dead slot panics with the type name;
   - marking a handle to a free or dead slot panics;
   - every program object goes to a typed block, and the root scan visits every field of every one, and panics when an evaluator handle sits in a `#[trace(program)]` field, behind a `&'static`, or in a `P<T>` whose `T` lacks `EVAL`;
-  - collections run on the floor alone (above), so they run often.
+  - collections run on the floor alone (above), so they run often;
+  - a parallel mark is followed by a serial one, and the collection panics when their mark bits differ;
+  - a minor collection's mark is followed by a full one from every root, and the collection panics on an object the full mark reaches but the minor one missed: a write the barrier did not see. The minor mark is then restored, so old garbage stays as in `on`.
 
 The `P` hooks are compiled only into a `gc-check` build: as a runtime flag, the load on every dereference cost about 5% wall time on the samples corpus (1.88 s against 1.80 s without it, collection off).
 
@@ -106,5 +148,6 @@ The `P` hooks are compiled only into a `gc-check` build: as a runtime flag, the 
 
 ## sources
 
+- Cher, Hosking and Vijaykumar, "Software Prefetching for Mark-Sweep Garbage Collection: Hardware Analysis and Software Redesign" (ASPLOS 2004), the prefetch FIFO: https://hosking.github.io/links/Cher+2004ASPLOS.pdf
 - Immix, mark-region collection with line and block marking: https://www.steveblackburn.org/pubs/papers/immix-pldi-2008.pdf
 - Bacon, Cheng and Rajan, "A Unified Theory of Garbage Collection" (tracing as the dual of reference counting): https://dl.acm.org/doi/10.1145/1028976.1028982

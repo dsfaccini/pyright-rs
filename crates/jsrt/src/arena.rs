@@ -102,6 +102,7 @@ impl<T: Trace + 'static> P<T> {
     /// Moves `value` into the current thread's program heap, which is never
     /// collected. Drop never runs for it.
     pub fn new(value: T) -> P<T> {
+        const { assert!(!T::CELL_OUT_OF_LINE, "the write barrier cannot find this type's objects: a cell holding evaluator handles sits in a buffer") };
         ALLOCATED.with(|n| n.set(n.get() + size_of::<T>()));
         record::<T>(false);
         if heap::typed_program::<T>() {
@@ -120,6 +121,7 @@ impl<T: Trace + 'static> P<T> {
     /// drops it once no root reaches it. `T` needs `#[trace(eval)]`.
     pub fn new_eval(value: T) -> P<T> {
         const { assert!(T::EVAL, "P::new_eval needs #[trace(eval)] on the type") };
+        const { assert!(!T::CELL_OUT_OF_LINE, "the write barrier cannot find this type's objects: a cell holding evaluator handles sits in a buffer") };
         EVAL_ALLOCATED.with(|n| n.set(n.get() + size_of::<T>()));
         record::<T>(true);
         let slot = heap::alloc::<T>(true);
@@ -186,6 +188,24 @@ unsafe impl<T: ?Sized + Trace + 'static> Trace for P<T> {
 /// Bytes moved into the current thread's program heap so far.
 pub fn arena_allocated_bytes() -> usize {
     ALLOCATED.with(Cell::get)
+}
+
+/// Bytes of the chunks the current thread's program arena holds, used or not.
+pub fn arena_chunk_bytes() -> usize {
+    ARENA.with(|arena| arena.allocated_bytes())
+}
+
+/// Census: bytes used in the current thread's arena chunks, and how many of those are resident.
+pub(crate) fn arena_chunks_resident() -> (usize, usize) {
+    ARENA.with(|arena| {
+        let (mut used, mut resident) = (0, 0);
+        // SAFETY: only reads the chunk bounds; nothing allocates in the arena meanwhile.
+        for (ptr, len) in unsafe { arena.iter_allocated_chunks_raw() } {
+            used += len;
+            resident += heap::resident(ptr as usize, len);
+        }
+        (used, resident)
+    })
 }
 
 /// Bytes moved into the current thread's evaluator heap so far.

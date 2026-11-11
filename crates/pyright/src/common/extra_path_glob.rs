@@ -3,7 +3,7 @@
 //! The watch-target helpers serve `--watch` and the language server and are
 //! not ported.
 
-use std::cell::{Cell, RefCell};
+use jsrt::cell::{Cell, RefCell};
 use std::cmp::Ordering;
 
 use jsrt::{JsMap, JsSet, JsStr, NormalizationForm};

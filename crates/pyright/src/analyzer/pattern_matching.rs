@@ -48,7 +48,7 @@ use crate::parser::parse_nodes::{
     PatternMappingNode, PatternSequenceNode, PatternValueNode, TupleNode,
 };
 use jsrt::{JsBigInt, JsMap, P};
-use std::cell::Cell;
+use jsrt::cell::Cell;
 use std::rc::Rc;
 
 thread_local! {
@@ -2204,7 +2204,7 @@ pub(crate) fn get_sequence_pattern_info(
                             .borrow()
                             .tuple_type_args
                             .unwrap_or_else(|| {
-                                P::new_eval(std::cell::RefCell::new(vec![TupleTypeArg {
+                                P::new_eval(jsrt::cell::RefCell::new(vec![TupleTypeArg {
                                     type_: UnknownType::create(false).0,
                                     is_unbounded: true,
                                     is_optional: None,

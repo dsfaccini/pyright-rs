@@ -2,7 +2,7 @@
 //! `serviceProviderExtensions.ts` on the CLI path, as plain fields.
 //! Ports `common/serviceProvider.ts` only as far as the check uses it.
 
-use std::cell::OnceCell;
+use jsrt::cell::OnceCell;
 
 use jsrt::P;
 

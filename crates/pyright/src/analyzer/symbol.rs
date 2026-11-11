@@ -1,6 +1,6 @@
 //! Port of `packages/pyright-internal/src/analyzer/symbol.ts`.
 
-use std::cell::{Cell, Ref, RefCell};
+use jsrt::cell::{Cell, Ref, RefCell};
 use std::rc::Rc;
 
 use jsrt::{JsMap, P};
