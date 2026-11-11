@@ -2083,15 +2083,14 @@ pub fn get_class_member_iterator(
     member_name: &str,
     flags: MemberAccessFlags,
     skip_mro_class: Option<ClassType>,
-) -> Box<dyn Iterator<Item = ClassMember>> {
+) -> impl Iterator<Item = ClassMember> + '_ {
     // A TypeScript generator: each `next()` runs the body up to its next `yield`, so the
     // MRO walk and its partial specializations happen only as far as the caller reads.
-    let member_name = member_name.to_string();
     let declared_types_only = flags.any(MemberAccessFlags::DeclaredTypesOnly);
     let mut skipped_undeclared_type = false;
     let mut started = false;
     let mut finished = false;
-    let mut class_itr: Option<Box<dyn Iterator<Item = Vec<P<Type>>>>> = None;
+    let mut class_itr = None;
     // The MRO class being searched, its specialized form and symbol table, whether its typed
     // dict entries are skipped, and whether its instance members were looked at yet.
     let mut current: Option<(P<Type>, ClassType, SymbolTable, bool, bool)> = None;
@@ -2109,7 +2108,7 @@ pub fn get_class_member_iterator(
         skipped_undeclared_type: false,
     };
 
-    Box::new(std::iter::from_fn(move || {
+    std::iter::from_fn(move || {
         if finished {
             return None;
         }
@@ -2158,7 +2157,7 @@ pub fn get_class_member_iterator(
                     current = Some((mro_class, specialized_mro_class, member_fields, skip_td_entry, true));
 
                     if !flags.any(MemberAccessFlags::SkipInstanceMembers) {
-                        let symbol = member_fields.get(&member_name);
+                        let symbol = member_fields.get(member_name);
 
                         if let Some(symbol) = symbol {
                             if symbol.is_instance_member() && !skip_td_entry {
@@ -2175,7 +2174,7 @@ pub fn get_class_member_iterator(
                                         ),
                                         class_type: specialized_mro_class.0,
                                         unspecialized_class_type: mro_class,
-                                        is_read_only: is_member_read_only(specialized_mro_class, &member_name),
+                                        is_read_only: is_member_read_only(specialized_mro_class, member_name),
                                         is_type_declared: has_declared_type,
                                         skipped_undeclared_type,
                                     });
@@ -2190,7 +2189,7 @@ pub fn get_class_member_iterator(
                 // Next look at class members.
                 current = None;
                 if !flags.any(MemberAccessFlags::SkipClassMembers) {
-                    let mut symbol = member_fields.get(&member_name);
+                    let mut symbol = member_fields.get(member_name);
 
                     if let Some(found_symbol) = symbol {
                         if found_symbol.is_class_member() && !skip_td_entry {
@@ -2260,12 +2259,10 @@ pub fn get_class_member_iterator(
                 continue;
             }
 
-            let Some(next_class) = class_itr.as_mut().and_then(|class_itr| class_itr.next()) else {
+            let Some((mro_class, specialized_mro_class)) = class_itr.as_mut().and_then(|class_itr| class_itr.next()) else {
                 finished = true;
                 return None;
             };
-            let mro_class = next_class[0];
-            let specialized_mro_class = next_class[1];
 
             if !crate::analyzer::types::is_instantiable_class(mro_class) {
                 if !declared_types_only {
@@ -2295,10 +2292,10 @@ pub fn get_class_member_iterator(
                     .get()
                     .typed_dict_entries
                     .get()
-                    .is_some_and(|entries| entries.known_items.borrow().contains_key(&member_name));
+                    .is_some_and(|entries| entries.known_items.borrow().contains_key(member_name));
             current = Some((mro_class, specialized_mro_class, member_fields, skip_td_entry, false));
         }
-    }))
+    })
 }
 
 // analyzer/typeUtils.ts:1970
@@ -2323,7 +2320,7 @@ pub fn get_class_iterator(
     class_type: P<Type>,
     flags: ClassIteratorFlags,
     skip_mro_class: Option<ClassType>,
-) -> Box<dyn Iterator<Item = Vec<P<Type>>>> {
+) -> impl Iterator<Item = (P<Type>, P<Type>)> {
     // A TypeScript generator: each `next()` runs the body up to its next `yield`. The MRO is
     // read by index, as `for..of` reads a live array.
     let mut started = false;
@@ -2331,7 +2328,7 @@ pub fn get_class_iterator(
     let mut index = 0;
     let mut found_skip_mro_class = skip_mro_class.is_none();
 
-    Box::new(std::iter::from_fn(move || {
+    std::iter::from_fn(move || {
         if finished {
             return None;
         }
@@ -2396,9 +2393,9 @@ pub fn get_class_iterator(
                 finished = true;
             }
 
-            return Some(vec![mro_class, specialized_mro_class]);
+            return Some((mro_class, specialized_mro_class));
         }
-    }))
+    })
 }
 
 // analyzer/typeUtils.ts:2035
