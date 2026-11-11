@@ -6,7 +6,7 @@
 
 use jsrt::cell::{Cell, RefCell};
 
-use jsrt::{JsMap, JsSet, OptionRefCell, P};
+use jsrt::{Atom, JsMap, JsSet, OptionRefCell, P};
 
 use super::analyzer_file_info::{AnalyzerFileInfo, ImportLookupKey};
 use super::analyzer_node_info::{AnalyzerNodeInfoAccessor, DunderAllInfo};
@@ -17,7 +17,7 @@ use super::code_flow_types::{
     FlowFlags, FlowLabel, FlowLabelDetails, FlowNarrowForPatternDetails, FlowNode,
     FlowPlain, FlowPostContextManagerLabel, FlowPostContextManagerLabelDetails,
     FlowPostFinallyDetails, FlowPreFinallyGate, FlowPreFinallyGateDetails,
-    FlowVariableAnnotationDetails, FlowWildcardImportDetails, WILDCARD_IMPORT_REFERENCE_KEY,
+    FlowVariableAnnotationDetails, FlowWildcardImportDetails, wildcard_import_reference_key,
     create_key_for_reference, get_unique_flow_node_id,
     is_code_flow_supported_for_reference,
 };
@@ -76,7 +76,7 @@ struct MemberAccessInfo {
 // analyzer/binder.ts:145
 struct DeferredBindingTask {
     scope: P<Scope>,
-    code_flow_expressions: P<RefCell<JsSet<String>>>,
+    code_flow_expressions: P<RefCell<JsSet<Atom>>>,
     callback: Box<dyn FnOnce(&mut Binder)>,
 }
 
@@ -101,7 +101,7 @@ struct NarrowExprOptions {
 }
 
 /// A new, empty shared `Set<string>`.
-fn new_string_set() -> P<RefCell<JsSet<String>>> {
+fn new_string_set() -> P<RefCell<JsSet<Atom>>> {
     P::new(RefCell::new(JsSet::default()))
 }
 
@@ -322,7 +322,7 @@ pub struct Binder {
 
     // Set of expressions within the current execution scope
     // and require code flow analysis to resolve.
-    _current_scope_code_flow_expressions: Option<P<RefCell<JsSet<String>>>>,
+    _current_scope_code_flow_expressions: Option<P<RefCell<JsSet<Atom>>>>,
 
     // If we're actively binding a match statement, this is the current
     // match expression.
@@ -444,7 +444,7 @@ impl Binder {
     }
 
     /// `this._currentScopeCodeFlowExpressions!`.
-    fn cur_code_flow_expressions(&self) -> P<RefCell<JsSet<String>>> {
+    fn cur_code_flow_expressions(&self) -> P<RefCell<JsSet<Atom>>> {
         self._current_scope_code_flow_expressions.unwrap()
     }
 
@@ -1628,7 +1628,7 @@ impl ParseTreeVisitor<bool> for Binder {
             this._add_antecedent(pre_for_label, this.cur_flow());
 
             // Add any target expressions since they are modified in the loop.
-            let values: Vec<String> = target_expressions.borrow().iter().cloned().collect();
+            let values: Vec<Atom> = target_expressions.borrow().iter().copied().collect();
             for value in values {
                 if let Some(expressions) = this._current_scope_code_flow_expressions {
                     expressions.borrow_mut().insert(value);
@@ -2376,7 +2376,7 @@ impl ParseTreeVisitor<bool> for Binder {
                 if let Some(expressions) = self._current_scope_code_flow_expressions {
                     expressions
                         .borrow_mut()
-                        .insert(WILDCARD_IMPORT_REFERENCE_KEY.to_string());
+                        .insert(wildcard_import_reference_key());
                 }
 
                 let lookup_info = (self._file_info.import_lookup)(ImportLookupKey::Uri(resolved_path), None);
@@ -4239,7 +4239,7 @@ impl Binder {
     }
 
     // analyzer/binder.ts:3736
-    fn _track_code_flow_expressions(&mut self, callback: impl FnOnce(&mut Binder)) -> P<RefCell<JsSet<String>>> {
+    fn _track_code_flow_expressions(&mut self, callback: impl FnOnce(&mut Binder)) -> P<RefCell<JsSet<Atom>>> {
         let saved_expressions = self._current_scope_code_flow_expressions;
         self._current_scope_code_flow_expressions = Some(new_string_set());
         callback(self);
@@ -4247,7 +4247,7 @@ impl Binder {
         let scoped_expressions = self.cur_code_flow_expressions();
 
         if let Some(saved_expressions) = saved_expressions {
-            let values: Vec<String> = scoped_expressions.borrow().iter().cloned().collect();
+            let values: Vec<Atom> = scoped_expressions.borrow().iter().copied().collect();
             let mut saved = saved_expressions.borrow_mut();
             for value in values {
                 saved.insert(value);

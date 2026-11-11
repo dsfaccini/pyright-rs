@@ -32350,7 +32350,7 @@ impl TypeEvaluator {
         let has_reference = code_flow_expressions.is_some_and(|expressions| {
             let expressions = expressions.borrow();
             expressions.contains(&reference_key)
-                || expressions.contains(analyzer::code_flow_types::WILDCARD_IMPORT_REFERENCE_KEY)
+                || expressions.contains(&analyzer::code_flow_types::wildcard_import_reference_key())
         });
         if !has_reference {
             return FlowNodeTypeResult::create(/* type */ None, /* isIncomplete */ false, None, None);

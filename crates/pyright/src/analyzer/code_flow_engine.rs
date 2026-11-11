@@ -85,7 +85,7 @@ use crate::parser::parse_nodes::RaiseNode;
 use crate::parser::parse_nodes::StatementListNode;
 use crate::parser::parse_nodes::StringListNode;
 use crate::parser::parse_nodes::StringNode;
-use jsrt::{FxHashMap, FxHashSet, JsMap, JsSet, P};
+use jsrt::{Atom, FxHashMap, FxHashSet, JsMap, JsSet, P};
 use jsrt::cell::{Cell, OnceCell, RefCell};
 use std::rc::Rc;
 
@@ -1493,19 +1493,19 @@ pub struct CodeFlowAnalyzer {
     // The CodeFlowEngine whose `createCodeFlowAnalyzer` built this CodeFlowAnalyzer.
     pub(crate) code_flow_engine: P<CodeFlowEngine>,
     // analyzer/codeFlowEngine.ts:221
-    pub(crate) flow_node_type_cache_set: RefCell<JsMap<String, P<CodeFlowTypeCache>>>,
+    pub(crate) flow_node_type_cache_set: RefCell<JsMap<Atom, P<CodeFlowTypeCache>>>,
 }
 
 impl CodeFlowAnalyzer {
     // analyzer/codeFlowEngine.ts:223
     pub(crate) fn get_flow_node_type_cache_for_reference(
         &self,
-        reference_key: &str,
+        reference_key: Atom,
     ) -> P<CodeFlowTypeCache> {
         let flow_node_type_cache = self
             .flow_node_type_cache_set
             .borrow()
-            .get(reference_key)
+            .get(&reference_key)
             .copied();
         match flow_node_type_cache {
             Some(flow_node_type_cache) => flow_node_type_cache,
@@ -1517,7 +1517,7 @@ impl CodeFlowAnalyzer {
                 });
                 self.flow_node_type_cache_set
                     .borrow_mut()
-                    .insert(reference_key.to_string(), flow_node_type_cache);
+                    .insert(reference_key, flow_node_type_cache);
                 flow_node_type_cache
             }
         }
@@ -1526,7 +1526,7 @@ impl CodeFlowAnalyzer {
     // analyzer/codeFlowEngine.ts:243
     pub(crate) fn is_get_type_from_code_flow_pending(
         &self,
-        reference_key_filter: Option<&str>,
+        reference_key_filter: Option<Atom>,
     ) -> bool {
         let Some(reference_key_filter) = reference_key_filter else {
             return false;
@@ -1536,7 +1536,7 @@ impl CodeFlowAnalyzer {
         }
 
         for (key, value) in self.flow_node_type_cache_set.borrow().iter() {
-            if key != reference_key_filter && !value.pending_nodes.borrow().is_empty() {
+            if *key != reference_key_filter && !value.pending_nodes.borrow().is_empty() {
                 return true;
             }
         }
@@ -1560,9 +1560,9 @@ impl CodeFlowAnalyzer {
             evaluator: &'a TypeEvaluator,
             reference: Option<CodeFlowReferenceExpressionNode>,
             options: Option<&'a FlowNodeTypeOptions>,
-            reference_key: Option<String>,
-            subexpression_reference_keys: RefCell<Option<Vec<String>>>,
-            reference_key_with_symbol_id: String,
+            reference_key: Option<Atom>,
+            subexpression_reference_keys: RefCell<Option<Vec<Atom>>>,
+            reference_key_with_symbol_id: Atom,
             flow_node_type_cache: P<CodeFlowTypeCache>,
         }
 
@@ -1580,7 +1580,7 @@ impl CodeFlowAnalyzer {
             fn subexpression_reference_keys(
                 &self,
                 reference: CodeFlowReferenceExpressionNode,
-            ) -> Vec<String> {
+            ) -> Vec<Atom> {
                 let mut keys = self.subexpression_reference_keys.borrow_mut();
                 keys.get_or_insert_with(|| create_keys_for_reference_subexpressions(reference))
                     .clone()
@@ -2836,7 +2836,7 @@ impl CodeFlowAnalyzer {
                         if saw_incomplete
                             && !saw_pending
                             && !self.analyzer.is_get_type_from_code_flow_pending(Some(
-                                &self.reference_key_with_symbol_id,
+                                self.reference_key_with_symbol_id,
                             ))
                             && effective_type.is_some_and(|effective_type| {
                                 !is_incomplete_unknown(effective_type)
@@ -2971,12 +2971,12 @@ impl CodeFlowAnalyzer {
             options.and_then(|options| options.target_symbol_id),
         ) {
             (Some(reference_key), Some(target_symbol_id)) => {
-                format!("{reference_key}.{target_symbol_id}")
+                Atom::new(&format!("{reference_key}.{target_symbol_id}"))
             }
-            _ => ".".to_string(),
+            _ => jsrt::atom!("."),
         };
         let flow_node_type_cache =
-            self.get_flow_node_type_cache_for_reference(&reference_key_with_symbol_id);
+            self.get_flow_node_type_cache_for_reference(reference_key_with_symbol_id);
 
         let query = Query {
             analyzer: self,
