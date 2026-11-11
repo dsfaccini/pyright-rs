@@ -44,6 +44,7 @@ Dumps off, median of three runs, peak RSS the maximum. pyright: the fork, `node 
 | 897d847 | `Type` shrunk (`shrink` agent) | 144 bytes | killed after 58 s | about 0.53 GB/s |
 | 69f39c5 | also `TypeResult` 104 bytes, constraint sets and `DiagnosticAddendum` 16–32 bytes | 144 bytes | completes: 1:02 wall, 27.8 GB peak; pyright 2:32, 9.1 GB | about 0.45 GB/s |
 | a687113 | all of `shrink` (sizes below) | 128 bytes | completes: 0:55 wall, 25.6 GB peak, output identical | about 0.47 GB/s |
+| 2990cef | collector on by default (`collector` agent) | 128 bytes | completes: 1:06 wall, 12.5 GB peak (collector agent's run; off: 0:54, 25.7 GB) | bounded by collections |
 
 At 897d847, 12 GiB into the evaluator heap: `TypeResult` 4.5 GB (17.0M × 264 bytes), `Type` 2.9 GB (20.1M × 144), `ConstraintSet` 1.6 GB, `ConstraintSolutionSet` 1.2 GB, `DiagnosticAddendum` 1.0 GB.
 
@@ -53,3 +54,7 @@ A run with the types and diag dumps on was killed at 30 GB after 1:49, 965 of 6,
 `shrink` agent, final `size_of` in bytes, each locked by a compile-time assert: `Type` 584 → 128, `TypeResult` 264 → 40, `ConstraintSet` 128 → 32, `ConstraintSolutionSet` 64 → 16, `DiagnosticAddendum` 88 → 24, `VirtualParamDetails` 88 → 80, `FunctionDetailsShared` 280 → 192, `ConstraintTracker` 32 → 24, `FunctionParam` 56 → 48.
 
 At a687113 the arena stats count about 7 GB of evaluator objects at the end of the run, but RSS peaks at 25.6 GB. Most of the rest is buffers those objects own on the system heap (`Vec`, `Box`, maps), which the stats do not count. The collector frees them when it drops dead objects.
+
+## pydantic-ai gate at 2990cef
+
+`CHECK_MEMORY_MAX=30G oracle/corpus/check.sh <dir> pydantic-ai`, run by the main session: `--outputjson` identical, and all 40,176 dump files identical (6,696 files × tokens, tree, bind, flow, types, diag). With the dumps on, 2:57 wall and 18.4 GB peak. pyright-rs output now matches pyright 1.1.414 on all eight corpora.
