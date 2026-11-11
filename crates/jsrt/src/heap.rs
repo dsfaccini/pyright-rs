@@ -101,8 +101,8 @@ fn config() -> &'static Config {
         let default_threads = std::thread::available_parallelism().map_or(1, |n| n.get().min(4));
         let threads = env_number("PYRIGHT_RS_GC_THREADS").unwrap_or(default_threads).max(1);
         let generational = match std::env::var("PYRIGHT_RS_GC_GENERATIONAL").as_deref() {
-            Err(_) | Ok("") | Ok("0") => false,
-            Ok("1") => true,
+            Ok("0") => false,
+            Err(_) | Ok("") | Ok("1") => true,
             Ok(other) => panic!("PYRIGHT_RS_GC_GENERATIONAL must be 0 or 1, not {other:?}"),
         };
         let major_ratio: f64 = env_number("PYRIGHT_RS_GC_MAJOR_RATIO").unwrap_or(1.0);
@@ -1898,7 +1898,7 @@ mod tests {
         Collection { check, log: 0, threads: 4, minor, generational: true }
     }
 
-    /// Turns the write barrier on, as `PYRIGHT_RS_GC_GENERATIONAL=1` does at start.
+    /// Turns the write barrier on, as generational collection does at start.
     fn enable_barrier() {
         let ranges = ranges();
         BARRIER.eval_base.store(ranges.eval.base, Relaxed);
