@@ -249,6 +249,9 @@ interface = "analyzer/codeFlowEngine.ts:CodeFlowAnalyzer"
 "analyzer/types.ts:TypeVarDetailsPriv.scopeId" = "std::rc::Rc<str>"
 "analyzer/types.ts:TypeVarDetailsPriv.scopeName" = "std::rc::Rc<str>"
 "analyzer/types.ts:TypeVarDetailsPriv.nameWithScope" = "std::rc::Rc<str>"
+# Doc strings, copied by every `{ ...shared }` of a function or class: shared, as a JS string is.
+"analyzer/types.ts:FunctionDetailsShared.docString" = "std::rc::Rc<str>"
+"analyzer/types.ts:ClassDetailsShared.docString" = "std::rc::Rc<str>"
 # docs/porting.md "strings": a Python string literal's value can hold a lone surrogate, which
 # printLiteralValue keeps (`JSON.stringify` escapes it).
 "analyzer/types.ts:LiteralValue#3" = "jsrt::JsString"

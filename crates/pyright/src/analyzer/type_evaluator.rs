@@ -27873,7 +27873,7 @@ impl TypeEvaluator {
             analyzer::parse_tree_utils::get_type_source_id(error_node),
             /* declaredMetaclass */ None,
             effective_metaclass,
-            doc_string.as_deref(),
+            doc_string,
         );
 
         *new_class_type.d().shared.get().base_classes.borrow_mut() = Rc::new(vec![type1.0, type2.0]);
@@ -27948,7 +27948,7 @@ impl TypeEvaluator {
         }
 
         let doc_string = analyzer::parse_tree_utils::get_doc_string(&node.d().suite.get().d().statements.borrow())
-            .map(|s| s.to_string_lossy());
+            .map(|s| Rc::from(s.to_string_lossy()));
         let class_type = ClassType::create_instantiable(
             class_name,
             &analyzer::parse_tree_utils::get_class_full_name(node.0, &file_info.module_name, class_name),
@@ -27958,7 +27958,7 @@ impl TypeEvaluator {
             analyzer::parse_tree_utils::get_type_source_id(node.0),
             /* declaredMetaclass */ None,
             /* effectiveMetaclass */ None,
-            doc_string.as_deref(),
+            doc_string,
         );
         let shared = class_type.d().shared.get();
         let add_flags = |flags: analyzer::types::ClassTypeFlags| shared.flags.set(shared.flags.get() | flags);
@@ -29727,13 +29727,13 @@ impl TypeEvaluator {
         }
 
         let doc_string = analyzer::parse_tree_utils::get_doc_string(&node.d().suite.get().d().statements.borrow())
-            .map(|s| s.to_string_lossy());
+            .map(|s| Rc::from(s.to_string_lossy()));
         let function_type = FunctionType::create_instance(
             function_name,
             &self.get_function_full_name(node.0, &file_info.module_name, function_name),
             &file_info.module_name,
             function_flags | FunctionTypeFlags::PartiallyEvaluated,
-            doc_string.as_deref(),
+            doc_string,
         );
         let shared = function_type.d().shared.get();
         let add_flags = |flags: FunctionTypeFlags| shared.flags.set(shared.flags.get() | flags);
@@ -40467,7 +40467,7 @@ impl TypeEvaluator {
                             "",
                             "",
                             effective_src_shared.flags.get() | FunctionTypeFlags::SynthesizedMethod,
-                            doc_string.as_deref(),
+                            doc_string,
                         );
                         let remaining_shared = remaining_function.d().shared.get();
                         let deprecated_message = effective_src_shared.cold().deprecated_message.clone();

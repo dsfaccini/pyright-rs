@@ -951,7 +951,8 @@ pub struct ClassDetailsShared {
     pub fields: Cell<SymbolTable>,
     pub type_params: RefCell<Rc<Vec<TypeVarType>>>,
     pub type_var_scope_id: RefCell<Option<TypeVarScopeId>>,
-    pub doc_string: Option<String>,
+    /// Shared by the copies `{ ...shared }` makes, as the TypeScript string is.
+    pub doc_string: Option<Rc<str>>,
     pub data_class_entries: RefCell<Option<Vec<P<DataClassEntry>>>>,
     pub data_class_behaviors: Cell<Option<P<DataClassBehaviors>>>,
     pub named_tuple_entries: RefCell<Option<JsSet<String>>>,
@@ -1119,7 +1120,7 @@ impl ClassType {
         type_source_id: i32,
         declared_metaclass: Option<P<Type>>,
         effective_metaclass: Option<P<Type>>,
-        doc_string: Option<&str>,
+        doc_string: Option<Rc<str>>,
     ) -> ClassType {
         ClassType(P::new_eval(Type {
             category: TypeCategory::Class,
@@ -1143,7 +1144,7 @@ impl ClassType {
                     fields: Cell::new(SymbolTable::new()),
                     type_params: RefCell::new(Rc::new(Vec::new())),
                     type_var_scope_id: RefCell::new(None),
-                    doc_string: doc_string.map(str::to_string),
+                    doc_string,
                     data_class_entries: RefCell::new(None),
                     data_class_behaviors: Cell::new(None),
                     named_tuple_entries: RefCell::new(None),
@@ -2456,7 +2457,8 @@ const _: () = assert!(size_of::<FunctionDetailsShared>() <= 192);
 #[derive(Clone, Default)]
 #[derive(jsrt::Trace)]
 pub struct FunctionDetailsSharedCold {
-    pub doc_string: Option<String>,
+    /// Shared by the copies `{ ...shared }` makes, as the TypeScript string is.
+    pub doc_string: Option<Rc<str>>,
     pub deprecated_message: Option<String>,
     pub decorator_data_class_behaviors: Option<P<DataClassBehaviors>>,
     pub inferred_return_type: Option<FunctionDetailsSharedInferredReturnType>,
@@ -2588,7 +2590,7 @@ impl FunctionType {
         full_name: &str,
         module_name: &str,
         function_flags: FunctionTypeFlags,
-        doc_string: Option<&str>,
+        doc_string: Option<Rc<str>>,
     ) -> FunctionType {
         FunctionType::create(
             name,
@@ -2603,7 +2605,7 @@ impl FunctionType {
     // analyzer/types.ts:1833
     pub fn create_instantiable(
         function_flags: FunctionTypeFlags,
-        doc_string: Option<&str>,
+        doc_string: Option<Rc<str>>,
     ) -> FunctionType {
         FunctionType::create(
             "",
@@ -2638,7 +2640,7 @@ impl FunctionType {
         module_name: &str,
         function_flags: FunctionTypeFlags,
         type_flags: TypeFlags,
-        doc_string: Option<&str>,
+        doc_string: Option<Rc<str>>,
     ) -> FunctionType {
         FunctionType(P::new_eval(Type {
             category: TypeCategory::Function,
@@ -2658,7 +2660,7 @@ impl FunctionType {
                     declaration: Cell::new(None),
                     type_var_scope_id: RefCell::new(None),
                     cold: FunctionDetailsSharedCold {
-                        doc_string: doc_string.map(str::to_string),
+                        doc_string,
                         deprecated_message: None,
                         decorator_data_class_behaviors: None,
                         inferred_return_type: None,
@@ -3027,7 +3029,7 @@ impl FunctionType {
     }
 
     // analyzer/types.ts:2074
-    pub fn clone_with_doc_string(type_: FunctionType, doc_string: Option<String>) -> FunctionType {
+    pub fn clone_with_doc_string(type_: FunctionType, doc_string: Option<Rc<str>>) -> FunctionType {
         let new_function = FunctionType(TypeBase::clone_type(type_.0));
 
         // Make a shallow clone of the details.

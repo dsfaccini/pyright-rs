@@ -5,6 +5,7 @@ Shrink the live evaluator data that sets pydantic-ai's peak RSS: types, function
 ## Signature changes
 
 - `TypeBase::set_special_form`, `set_instantiable_depth`, `set_type_alias_info`, `set_type_form` and `set_condition` write `None` without allocating `Type.props`, and `TypeBase::clone_type` leaves the clone's props unallocated when the source's are empty. Every read of `props` is `props?.<field>` in the TypeScript, so an empty props object and none read the same.
+- `FunctionDetailsSharedCold.doc_string` and `ClassDetailsShared.doc_string` are `Option<Rc<str>>`, shared by the copies `{ ...shared }` makes. `FunctionType::create`, `create_instance`, `create_instantiable`, `clone_with_doc_string` and `ClassType::create_instantiable` take `Option<Rc<str>>`.
 
 ## Shared-file edits
 
@@ -38,3 +39,4 @@ Field counts on the same run (a temporary diagnostic, not committed):
 |---|---|---|---|---|
 | `main` d91164c | 245.01 G | 7.10 GiB | 9.31 G | 0.50 GiB |
 | empty `props` stay unallocated | 242.42 G (−1.06%) | 6.83 GiB | 9.26 G | 0.50 GiB |
+| doc strings shared (`Rc<str>`) | 242.29 G (−0.05%) | 6.37 GiB | 9.26 G | 0.50 GiB |

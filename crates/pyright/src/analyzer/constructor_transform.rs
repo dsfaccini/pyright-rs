@@ -648,7 +648,7 @@ pub(crate) fn apply_partial_transform_to_function(
         &partial_shared.full_name,
         &partial_shared.module_name,
         partial_shared.flags.get(),
-        specialized_doc_string.as_deref(),
+        specialized_doc_string,
     );
 
     let first_partial_param = partial_shared.parameters.get().borrow().first().cloned();
