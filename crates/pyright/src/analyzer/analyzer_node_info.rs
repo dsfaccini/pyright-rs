@@ -105,7 +105,9 @@ pub trait AnalyzerNodeInfoWriter: AnalyzerNodeInfoReader {
 #[derive(Default)]
 #[derive(jsrt::Trace)]
 pub struct AnalyzerNodeInfoStore {
-    _info_by_tree: RefCell<FxHashMap<ParseTreeKey, FxHashMap<P<ParseNode>, P<AnalyzerNodeInfo>>>>,
+    /// `_infoByTree`, keyed by node alone: a node's tree key `a` never changes, so the node
+    /// identifies its tree's inner map.
+    _info_by_node: RefCell<FxHashMap<P<ParseNode>, P<AnalyzerNodeInfo>>>,
     _file_info_by_tree: RefCell<FxHashMap<ParseTreeKey, P<AnalyzerFileInfo>>>,
 }
 
@@ -118,10 +120,7 @@ impl AnalyzerNodeInfoStore {
 impl AnalyzerNodeInfoReader for AnalyzerNodeInfoStore {
     // analyzer/analyzerNodeInfo.ts:116
     fn get(&self, node: P<ParseNode>) -> Option<P<AnalyzerNodeInfo>> {
-        self._info_by_tree
-            .borrow()
-            .get(&node.a)
-            .and_then(|tree_info| tree_info.get(&node).copied())
+        self._info_by_node.borrow().get(&node).copied()
     }
 
     // analyzer/analyzerNodeInfo.ts:120
@@ -133,10 +132,9 @@ impl AnalyzerNodeInfoReader for AnalyzerNodeInfoStore {
 impl AnalyzerNodeInfoWriter for AnalyzerNodeInfoStore {
     // analyzer/analyzerNodeInfo.ts:124
     fn get_or_create(&self, node: P<ParseNode>) -> P<AnalyzerNodeInfo> {
-        let mut info_by_tree = self._info_by_tree.borrow_mut();
-        let tree_info = info_by_tree.entry(node.a).or_default();
-
-        *tree_info
+        *self
+            ._info_by_node
+            .borrow_mut()
             .entry(node)
             .or_insert_with(|| P::new(AnalyzerNodeInfo::default()))
     }
