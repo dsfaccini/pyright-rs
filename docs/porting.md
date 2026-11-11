@@ -64,7 +64,7 @@ Every Rust-only environment variable is listed here. When you add a cache or sho
 |---|---|---|
 | `PYRIGHT_RS_MODULE_PATH` | a directory | holds `typeshed-fallback`; default: the executable's directory |
 | `PYRIGHT_RS_GC` | `off`, `on` (default), `check` | collection of the evaluator heap (`docs/collector-design.md`); `check` needs the `jsrt/gc-check` feature |
-| `PYRIGHT_RS_GC_LOG` | `1` | prints each collection |
+| `PYRIGHT_RS_GC_LOG` | `1`, `2` | prints each collection; `2` also prints the live and freed objects per type |
 | `PYRIGHT_RS_GC_RATIO`, `PYRIGHT_RS_GC_MIN_MIB` | numbers | the collection trigger; both 0 collect before every file |
 | `PYRIGHT_RS_NODE_INFO_STORE_CACHE` | `on` (default), `off`, `check` | `AnalyzerNodeInfoContextImpl::_store_for` reuses the store of its last lookup |
 | `PYRIGHT_RS_ALLOC_STATS` | `1`, or a number n | prints objects and bytes per type and heap at exit; with n, also each time the evaluator heap grows by another n GiB |

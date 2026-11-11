@@ -46,10 +46,13 @@ struct Config {
     mode: GcMode,
     min_bytes: usize,
     ratio: f64,
-    log: bool,
+    /// `PYRIGHT_RS_GC_LOG`: 0 silent, 1 a line per collection, 2 also a table per class.
+    log: u8,
 }
 
 static CONFIG: OnceLock<Config> = OnceLock::new();
+/// When the heap was first used: the collection log's time origin.
+static START: OnceLock<Instant> = OnceLock::new();
 /// Check mode's hooks on `P` and on program allocation exist only in a build
 /// with `--features jsrt/gc-check`: a flag read on every dereference costs
 /// about 5% wall time on the samples corpus.
@@ -64,6 +67,7 @@ fn env_number<N: std::str::FromStr>(name: &str) -> Option<N> {
 
 fn config() -> &'static Config {
     CONFIG.get_or_init(|| {
+        START.get_or_init(Instant::now);
         let mode = match std::env::var("PYRIGHT_RS_GC").as_deref() {
             Ok("off") => GcMode::Off,
             Err(_) | Ok("") | Ok("on") => GcMode::On,
@@ -79,7 +83,12 @@ fn config() -> &'static Config {
             }
             CHECK_HANDLES.store(true, Relaxed);
         }
-        Config { mode, min_bytes: min_mib << 20, ratio, log: std::env::var_os("PYRIGHT_RS_GC_LOG").is_some() }
+        let log = match std::env::var("PYRIGHT_RS_GC_LOG").as_deref() {
+            Err(_) | Ok("") | Ok("0") => 0,
+            Ok("2") => 2,
+            Ok(_) => 1,
+        };
+        Config { mode, min_bytes: min_mib << 20, ratio, log }
     })
 }
 
@@ -574,6 +583,8 @@ type TraceFn = unsafe fn(usize, &mut Tracer);
 /// Finds the evaluator objects reachable from the roots.
 pub struct Tracer {
     stack: Vec<(usize, TraceFn)>,
+    /// Handles into the evaluator heap visited, marked or not.
+    edges: usize,
     check: bool,
     program_only: u32,
     owner: u32,
@@ -599,6 +610,7 @@ impl Tracer {
     }
 
     fn mark_eval(&mut self, offset: usize) {
+        self.edges += 1;
         assert!(self.program_only == 0, "collector check: a #[trace(program)] field holds an evaluator handle");
         // SAFETY: checked below that this thread owns the block.
         let meta = unsafe { &mut *self.meta.add(offset >> BLOCK_SHIFT) };
@@ -672,25 +684,93 @@ pub fn collect(check: bool) {
     with_heap(|heap| heap.collect(check, log));
 }
 
-/// Bytes the system allocator has handed out and not taken back, when it reports them.
-fn malloc_in_use() -> Option<usize> {
-    #[cfg(all(target_os = "linux", target_env = "gnu"))]
-    {
-        // SAFETY: `mallinfo2` only reads allocator statistics.
-        let info = unsafe { libc::mallinfo2() };
-        Some(info.uordblks + info.hblkhd)
+thread_local! {
+    /// Bytes this thread allocated through [`CountingAlloc`] less the bytes it freed.
+    static MALLOC_BYTES: Cell<isize> = const { Cell::new(0) };
+}
+
+/// A global allocator that counts the bytes each thread holds in `A`, for the
+/// collection log: the buffers evaluator objects own live there.
+pub struct CountingAlloc<A>(pub A);
+
+#[inline]
+fn count_malloc(bytes: isize) {
+    // A const thread-local without a destructor stays usable while the thread exits.
+    MALLOC_BYTES.with(|n| n.set(n.get() + bytes));
+}
+
+// SAFETY: forwards every call to `A`; counting never allocates.
+unsafe impl<A: std::alloc::GlobalAlloc> std::alloc::GlobalAlloc for CountingAlloc<A> {
+    #[inline]
+    unsafe fn alloc(&self, layout: std::alloc::Layout) -> *mut u8 {
+        count_malloc(layout.size() as isize);
+        unsafe { self.0.alloc(layout) }
     }
-    #[cfg(not(all(target_os = "linux", target_env = "gnu")))]
-    None
+
+    #[inline]
+    unsafe fn alloc_zeroed(&self, layout: std::alloc::Layout) -> *mut u8 {
+        count_malloc(layout.size() as isize);
+        unsafe { self.0.alloc_zeroed(layout) }
+    }
+
+    #[inline]
+    unsafe fn dealloc(&self, ptr: *mut u8, layout: std::alloc::Layout) {
+        count_malloc(-(layout.size() as isize));
+        unsafe { self.0.dealloc(ptr, layout) }
+    }
+
+    #[inline]
+    unsafe fn realloc(&self, ptr: *mut u8, layout: std::alloc::Layout, new_size: usize) -> *mut u8 {
+        count_malloc(new_size as isize - layout.size() as isize);
+        unsafe { self.0.realloc(ptr, layout, new_size) }
+    }
+}
+
+/// Bytes this thread holds in the global allocator when it is a [`CountingAlloc`], else 0.
+fn malloc_bytes() -> usize {
+    MALLOC_BYTES.with(Cell::get).max(0) as usize
+}
+
+/// The process's resident set size in bytes.
+fn rss_bytes() -> usize {
+    let statm = std::fs::read_to_string("/proc/self/statm").unwrap_or_default();
+    let pages: usize = statm.split_whitespace().nth(1).and_then(|n| n.parse().ok()).unwrap_or(0);
+    // SAFETY: `sysconf` only reads a system constant.
+    pages * unsafe { libc::sysconf(libc::_SC_PAGESIZE) } as usize
+}
+
+/// Resident bytes of the mappings that start inside `range`.
+fn rss_in(range: &Range) -> usize {
+    let smaps = std::fs::read_to_string("/proc/self/smaps").unwrap_or_default();
+    let (mut inside, mut total) = (false, 0usize);
+    for line in smaps.lines() {
+        if let Some((start, _)) = line.split_once('-')
+            && let Ok(start) = usize::from_str_radix(start, 16)
+        {
+            inside = start.wrapping_sub(range.base) < range.len;
+        } else if inside && let Some(kib) = line.strip_prefix("Rss:") {
+            total += kib.trim().trim_end_matches("kB").trim().parse::<usize>().unwrap_or(0) << 10;
+        }
+    }
+    total
+}
+
+/// Per-class counts of one sweep, for `PYRIGHT_RS_GC_LOG=2`.
+struct ClassStat {
+    name: &'static str,
+    slot: usize,
+    live: usize,
+    freed: usize,
 }
 
 impl ThreadHeap {
-    fn collect(&mut self, check: bool, log: bool) {
+    fn collect(&mut self, check: bool, log: u8) {
         let start = Instant::now();
-        let malloc_before = if log { malloc_in_use() } else { None };
+        let before = if log > 0 { (rss_bytes(), malloc_bytes()) } else { (0, 0) };
         let ranges = ranges();
         let mut t = Tracer {
             stack: Vec::new(),
+            edges: 0,
             check,
             program_only: 0,
             owner: self.owner,
@@ -712,28 +792,59 @@ impl ThreadHeap {
         let mark_ms = start.elapsed().as_millis();
 
         // A panic while sweeping leaves blocks half-swept; nothing can be trusted after it.
-        let swept = catch_unwind(AssertUnwindSafe(|| self.sweep(check)));
+        let mut stats = Vec::new();
+        let swept = catch_unwind(AssertUnwindSafe(|| self.sweep(check, (log > 1).then_some(&mut stats))));
         let Ok((freed, live_bytes)) = swept else {
             eprintln!("collector: a drop panicked during the sweep; aborting");
             std::process::abort();
         };
 
         self.collections += 1;
-        if log {
-            let malloc = match (malloc_before, malloc_in_use()) {
-                (Some(before), Some(after)) => format!(", malloc {} -> {} MiB", before >> 20, after >> 20),
-                _ => String::new(),
+        if log > 0 {
+            let blocks = |classes: &[Option<Class>]| classes.iter().flatten().map(|c| c.blocks.len()).sum::<usize>() << BLOCK_SHIFT;
+            // A thread that allocated holds some bytes, so 0 before and after means nothing counts.
+            let malloc = match (before.1, malloc_bytes()) {
+                (0, 0) => "not counted".to_string(),
+                (before, after) => format!("{} -> {} MiB", before >> 20, after >> 20),
             };
             eprintln!(
-                "gc {}: {} ms ({} ms mark), {} program objects scanned, {} objects freed, evaluator slots {} MiB live (+{} MiB allocated since the last collection){malloc}",
+                "gc {}: at {:.1} s, {} ms ({} ms mark), {} program objects scanned, {} objects freed, \
+                 evaluator slots {} MiB live (+{} MiB allocated since the last collection) in {} MiB of blocks, \
+                 typed program blocks {} MiB, program arena {} MiB in {} MiB of chunks, malloc {}, \
+                 rss {} -> {} MiB (evaluator range {} MiB, program range {} MiB)",
                 self.collections,
+                START.get_or_init(Instant::now).elapsed().as_secs_f64(),
                 start.elapsed().as_millis(),
                 mark_ms,
                 scanned,
                 freed,
                 live_bytes >> 20,
                 self.since_gc >> 20,
+                blocks(&self.eval) >> 20,
+                blocks(&self.program) >> 20,
+                crate::arena::arena_allocated_bytes() >> 20,
+                crate::arena::arena_chunk_bytes() >> 20,
+                malloc,
+                before.0 >> 20,
+                rss_bytes() >> 20,
+                rss_in(&ranges.eval) >> 20,
+                rss_in(&ranges.program) >> 20,
             );
+        }
+        if log > 1 {
+            eprintln!("  {} handles into the evaluator heap traced", t.edges);
+            stats.sort_by_key(|c| std::cmp::Reverse((c.live + c.freed) * c.slot));
+            for c in stats.iter().take(30) {
+                eprintln!(
+                    "  {:>10} live ({:>5} MiB) {:>10} freed ({:>5} MiB) {:>5} B  {}",
+                    c.live,
+                    (c.live * c.slot) >> 20,
+                    c.freed,
+                    (c.freed * c.slot) >> 20,
+                    c.slot,
+                    c.name
+                );
+            }
         }
         self.live_bytes = live_bytes;
         self.since_gc = 0;
@@ -779,7 +890,7 @@ impl ThreadHeap {
 
     /// Drops every live, unmarked evaluator object. Returns the objects freed and the
     /// slot bytes still live.
-    fn sweep(&mut self, check: bool) -> (usize, usize) {
+    fn sweep(&mut self, check: bool, mut stats: Option<&mut Vec<ClassStat>>) -> (usize, usize) {
         let eval = &ranges().eval;
         let (mut freed, mut live_bytes) = (0usize, 0usize);
         for class in self.eval.iter_mut().flatten() {
@@ -787,6 +898,7 @@ impl ThreadHeap {
             class.current = NONE;
             let slot = class.info.slot as usize;
             let mut kept = Vec::with_capacity(class.blocks.len());
+            let (freed_before, live_before) = (freed, live_bytes);
             for &block in &class.blocks {
                 let base = eval.block_base(block);
                 let meta = unsafe { eval.meta(block) };
@@ -828,6 +940,10 @@ impl ThreadHeap {
                 }
             }
             class.blocks = kept;
+            if let Some(stats) = stats.as_deref_mut() {
+                let (name, slot) = (class.info.name, slot);
+                stats.push(ClassStat { name, slot, live: (live_bytes - live_before) / slot, freed: freed - freed_before });
+            }
         }
         (freed, live_bytes)
     }

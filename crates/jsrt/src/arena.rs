@@ -188,6 +188,11 @@ pub fn arena_allocated_bytes() -> usize {
     ALLOCATED.with(Cell::get)
 }
 
+/// Bytes of the chunks the current thread's program arena holds, used or not.
+pub fn arena_chunk_bytes() -> usize {
+    ARENA.with(|arena| arena.allocated_bytes())
+}
+
 /// Bytes moved into the current thread's evaluator heap so far.
 pub fn eval_arena_allocated_bytes() -> usize {
     EVAL_ALLOCATED.with(Cell::get)
