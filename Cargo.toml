@@ -10,6 +10,9 @@ license = "MIT"
 debug = "line-tables-only"
 # One codegen unit: timings stay comparable across unrelated edits.
 codegen-units = 1
+# Optimizes pyright with jsrt, std and the other crates as one module: about 15%
+# less time on pydantic-ai for about 12 s more build.
+lto = "fat"
 
 [profile.profiling]
 inherits = "release"
