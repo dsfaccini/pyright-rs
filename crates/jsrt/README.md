@@ -49,6 +49,7 @@ On `str`, `js_slice`, `js_substring`, `js_substr` and `js_split` return `Cow<str
 | JavaScript | Rust |
 |---|---|
 | `String(x)`, `x.toString()`, `${x}` for a number | `number::number_to_string(x)` |
+| `` s += `${n}` `` for an integer, without allocating | `number::push_integer(&mut s, n)` |
 | `x.toString(radix)` | `number::number_to_string_radix(x, radix)` |
 | `parseInt(s, radix)` | `number::parse_int(s, radix)` (0 for an omitted radix) |
 | `parseFloat(s)` | `number::parse_float(s)` |

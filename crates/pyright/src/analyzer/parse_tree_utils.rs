@@ -3309,7 +3309,13 @@ pub fn get_scope_id_for_node(node: P<ParseNode>, node_info: &dyn AnalyzerNodeInf
     }
 
     let file_info = analyzer_node_info::get_file_info(node, node_info);
-    format!("{}.{}-{}", file_info.file_id, node.start.get(), name)
+    let mut scope_id = String::with_capacity(file_info.file_id.len() + name.len() + 12);
+    scope_id.push_str(&file_info.file_id);
+    scope_id.push('.');
+    jsrt::number::push_integer(&mut scope_id, node.start.get().into());
+    scope_id.push('-');
+    scope_id.push_str(name);
+    scope_id
 }
 
 // Walks up the parse tree and finds all scopes that can provide
