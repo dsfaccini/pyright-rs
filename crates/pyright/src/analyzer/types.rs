@@ -1486,6 +1486,7 @@ impl ClassType {
     }
 
     // analyzer/types.ts:1167
+    #[inline]
     pub fn is_built_in(class_type: ClassType, class_name: Option<&[&str]>) -> bool {
         let shared = class_type.d().shared.get();
         if !shared.flags.get().any(ClassTypeFlags::BuiltIn) {
@@ -1493,14 +1494,21 @@ impl ClassType {
         }
 
         if let Some(class_name) = class_name {
-            let priv_ = class_type.d().priv_.borrow();
-            let alias_name = priv_.cold().alias_name.as_deref();
-            return class_name.iter().any(|&name| {
-                name == shared.name || name == shared.full_name || Some(name) == alias_name
-            });
+            return ClassType::is_built_in_named(class_type, &shared, class_name);
         }
 
         true
+    }
+
+    /// The name test of `is_built_in`. The alias name sits in the cold half, so
+    /// it is read only when no name matches `name` or `fullName`.
+    fn is_built_in_named(class_type: ClassType, shared: &ClassDetailsShared, class_name: &[&str]) -> bool {
+        if class_name.iter().any(|&name| name == shared.name || name == shared.full_name) {
+            return true;
+        }
+        let priv_ = class_type.d().priv_.borrow();
+        let alias_name = priv_.cold().alias_name.as_deref();
+        alias_name.is_some_and(|alias_name| class_name.contains(&alias_name))
     }
 
     // analyzer/types.ts:1185
