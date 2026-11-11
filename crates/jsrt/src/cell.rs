@@ -362,7 +362,7 @@ unsafe impl<T: Trace> Trace for OptionRefCell<T> {
     #[inline]
     fn prefetch_owned(&self) {
         if let Some(cell) = self.0.get() {
-            heap::prefetch(ptr::from_ref::<std::cell::RefCell<Option<T>>>(cell).cast::<u8>() as usize);
+            heap::prefetch(ptr::from_ref::<std::cell::RefCell<Option<T>>>(cell));
         }
     }
     #[inline]

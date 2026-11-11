@@ -125,13 +125,13 @@ impl ThreadHeap {
             (pool.warm.clone(), pool.committed << BLOCK_SHIFT)
         };
         let program_committed = lock(&ranges.program.blocks).committed << BLOCK_SHIFT;
-        let eval_rss = resident(ranges.eval.base, eval_committed);
-        let warm_rss: usize = warm.iter().map(|&block| resident(ranges.eval.block_base(block), BLOCK)).sum();
-        let program_rss = resident(ranges.program.base, program_committed);
-        let meta_rss = resident(ranges.eval.meta as usize, (eval_committed >> BLOCK_SHIFT) * size_of::<BlockMeta>())
-            + resident(ranges.eval.cards, eval_committed >> CARD_SHIFT)
-            + resident(ranges.program.meta as usize, (program_committed >> BLOCK_SHIFT) * size_of::<BlockMeta>())
-            + resident(ranges.program.cards, program_committed >> CARD_SHIFT);
+        let eval_rss = resident(ranges.eval.base.addr(), eval_committed);
+        let warm_rss: usize = warm.iter().map(|&block| resident(ranges.eval.block_base(block).addr(), BLOCK)).sum();
+        let program_rss = resident(ranges.program.base.addr(), program_committed);
+        let meta_rss = resident(ranges.eval.meta.addr(), (eval_committed >> BLOCK_SHIFT) * size_of::<BlockMeta>())
+            + resident(ranges.eval.cards.addr(), eval_committed >> CARD_SHIFT)
+            + resident(ranges.program.meta.addr(), (program_committed >> BLOCK_SHIFT) * size_of::<BlockMeta>())
+            + resident(ranges.program.cards.addr(), program_committed >> CARD_SHIFT);
         let (arena_used, arena_rss) = crate::arena::arena_chunks_resident();
         let chunks = crate::arena::arena_chunk_bytes();
         let (file, stack) = file_and_stack_rss();
@@ -209,7 +209,7 @@ impl ThreadHeap {
                     let base = range.block_base(block);
                     let mut drop_slot = |i: usize| {
                         // SAFETY: an object of this class; nothing reads either heap after this.
-                        unsafe { (class.info.drop)(base + i * slot) };
+                        unsafe { (class.info.drop)(base.wrapping_add(i * slot)) };
                         count += 1;
                     };
                     if program {

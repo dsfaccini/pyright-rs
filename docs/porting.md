@@ -60,6 +60,12 @@ pyright allocates about 23 times what it keeps alive: 194 GB over a pydantic-ai 
 - Tokens live in their tokenizer output's scratch region, and the output frees the tokens no parse node holds when it drops, at the end of `SourceFile.parse`, as pyright drops its `tokenizerOutput`. Names, strings and f-string parts, which parse nodes nearly always hold, go to the program heap directly.
 - The collector's switches are under "switches" below.
 
+## unsafe code
+
+- Keep provenance. Derive every pointer into memory pyright-rs allocates itself from the pointer its allocator returned: a heap range's `base`, `meta` or `cards`, a region chunk, `vm::map`. Move it with `add`, `wrapping_add` or `map_addr`. Never cast an integer to a pointer: Miri runs with `-Zmiri-strict-provenance`, where such a pointer can access nothing. Integer addresses are fine for arithmetic and comparison (`ptr.addr()`).
+- Give code that Miri cannot run a `cfg(miri)` stand-in that keeps the logic around it, as `jsrt/src/vm.rs` does for the virtual-memory calls.
+- Put a `// SAFETY:` comment on every unsafe block, saying why its contract holds.
+
 ## switches
 
 Every Rust-only environment variable is listed here. When you add a cache or shortcut that pyright lacks, add its switch to this list (`AGENTS.md`, "gates").

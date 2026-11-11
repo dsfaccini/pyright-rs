@@ -522,8 +522,8 @@ impl TokenScratch {
 impl Drop for TokenScratch {
     fn drop(&mut self) {
         /// Drops the token at `at` unless it was kept; returns its size.
-        unsafe fn drop_unkept<D, C>(at: usize) -> usize {
-            let token = at as *mut ScratchToken<D, C>;
+        unsafe fn drop_unkept<D, C>(at: *mut u8) -> usize {
+            let token = at.cast::<ScratchToken<D, C>>();
             // SAFETY: the caller passes the address of a live `ScratchToken<D>`.
             unsafe {
                 if (*token).kept.get().is_none() {
@@ -538,14 +538,15 @@ impl Drop for TokenScratch {
             while at < end {
                 // SAFETY: the region holds only `ScratchToken`s, back to back: each
                 // has a size that is a multiple of its alignment, 8.
-                let token = unsafe { &(*(at as *const ScratchToken<NoInterface>)).alloc.token };
-                at += unsafe {
+                let token = unsafe { &(*at.cast::<ScratchToken<NoInterface>>()).alloc.token };
+                let size = unsafe {
                     with_interface!(token.kind, D => if token.has_comments {
                         drop_unkept::<D, Comments>(at)
                     } else {
                         drop_unkept::<D, ()>(at)
                     })
                 };
+                at = at.wrapping_add(size);
             }
         });
     }

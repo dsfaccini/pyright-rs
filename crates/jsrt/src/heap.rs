@@ -12,7 +12,7 @@ use std::cell::{Cell, UnsafeCell};
 use std::collections::HashMap;
 use std::panic::{AssertUnwindSafe, catch_unwind, resume_unwind};
 use std::ptr;
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering::Relaxed, Ordering::SeqCst};
+use std::sync::atomic::{AtomicBool, AtomicPtr, AtomicU32, AtomicU64, AtomicUsize, Ordering::Relaxed, Ordering::SeqCst};
 use std::sync::{Mutex, MutexGuard, OnceLock, PoisonError};
 use std::time::Instant;
 
@@ -171,12 +171,12 @@ impl BlockMeta {
 
     /// The next program slot. Program blocks are never swept, so they only bump.
     #[inline]
-    fn bump(&mut self, base: usize) -> Option<usize> {
+    fn bump(&mut self, base: *mut u8) -> Option<*mut u8> {
         if self.bump == self.count {
             return None;
         }
         self.bump += 1;
-        Some(base + (self.bump as usize - 1) * self.slot as usize)
+        Some(base.wrapping_add((self.bump as usize - 1) * self.slot as usize))
     }
 
     /// Evaluator blocks: the slots of bitmap word `w` that are neither live nor dead.
@@ -203,13 +203,15 @@ struct RangeBlocks {
     free: Vec<u32>,
 }
 
+/// Every pointer into a range derives from its `base`, `meta` or `cards`, which keep
+/// the provenance of the whole mapping (`docs/porting.md`, "unsafe code").
 struct Range {
     name: &'static str,
-    base: usize,
+    base: *mut u8,
     len: usize,
     meta: *mut BlockMeta,
     /// One byte per `CARD` bytes of the range, set by the write barrier.
-    cards: usize,
+    cards: *mut u8,
     blocks: Mutex<RangeBlocks>,
 }
 
@@ -232,9 +234,9 @@ impl Range {
             if let Some(base) = vm::map(len + BLOCK, false) {
                 if let Some(meta) = vm::map(meta_len, false) {
                     if let Some(cards) = vm::map(len >> CARD_SHIFT, false) {
-                        let base = (base as usize).next_multiple_of(BLOCK);
+                        let base = base.map_addr(|addr| addr.next_multiple_of(BLOCK));
                         let blocks = Mutex::new(RangeBlocks { next: 0, committed: 0, warm: Vec::new(), free: Vec::new() });
-                        return Range { name, base, len, meta: meta.cast::<BlockMeta>(), cards: cards as usize, blocks };
+                        return Range { name, base, len, meta: meta.cast::<BlockMeta>(), cards, blocks };
                     }
                     // SAFETY: mapped above and not used.
                     unsafe { vm::unmap(meta, meta_len) };
@@ -248,8 +250,8 @@ impl Range {
     }
 
     #[inline]
-    fn block_base(&self, block: u32) -> usize {
-        self.base + ((block as usize) << BLOCK_SHIFT)
+    fn block_base(&self, block: u32) -> *mut u8 {
+        self.base.wrapping_add((block as usize) << BLOCK_SHIFT)
     }
 
     #[allow(clippy::mut_from_ref)]
@@ -261,7 +263,7 @@ impl Range {
     /// The cards of a committed block.
     #[allow(clippy::mut_from_ref)]
     unsafe fn cards(&self, block: u32) -> &mut [u8] {
-        unsafe { std::slice::from_raw_parts_mut((self.cards + block as usize * CARDS_PER_BLOCK) as *mut u8, CARDS_PER_BLOCK) }
+        unsafe { std::slice::from_raw_parts_mut(self.cards.add(block as usize * CARDS_PER_BLOCK), CARDS_PER_BLOCK) }
     }
 
     /// A free block: a released one, or the next one, committing more when needed.
@@ -274,9 +276,9 @@ impl Range {
         if block == blocks.committed {
             let count = COMMIT_BLOCKS.min((self.len >> BLOCK_SHIFT) - block);
             let committed = count > 0
-                && vm::commit(self.block_base(block as u32) as *mut u8, count << BLOCK_SHIFT)
+                && vm::commit(self.block_base(block as u32), count << BLOCK_SHIFT)
                 && vm::commit(self.meta.wrapping_add(block).cast(), count * size_of::<BlockMeta>())
-                && vm::commit((self.cards + block * CARDS_PER_BLOCK) as *mut u8, count * CARDS_PER_BLOCK);
+                && vm::commit(self.cards.wrapping_add(block * CARDS_PER_BLOCK), count * CARDS_PER_BLOCK);
             if !committed {
                 drop(blocks);
                 panic!("collector: the {} heap reservation of {} MiB is full or cannot be committed", self.name, self.len >> 20);
@@ -297,7 +299,7 @@ impl Range {
         }
         drop(blocks);
         // SAFETY: the block is committed, owned by this thread, and holds no live object.
-        unsafe { vm::discard(self.block_base(block) as *mut u8, BLOCK) };
+        unsafe { vm::discard(self.block_base(block), BLOCK) };
         lock(&self.blocks).free.push(block);
     }
 }
@@ -314,21 +316,21 @@ static RANGES: OnceLock<Ranges> = OnceLock::new();
 struct Barrier {
     eval_base: AtomicUsize,
     eval_len: AtomicUsize,
-    eval_cards: AtomicUsize,
-    eval_meta: AtomicUsize,
+    eval_cards: AtomicPtr<u8>,
+    eval_meta: AtomicPtr<BlockMeta>,
     program_base: AtomicUsize,
     program_len: AtomicUsize,
-    program_cards: AtomicUsize,
+    program_cards: AtomicPtr<u8>,
 }
 
 static BARRIER: Barrier = Barrier {
     eval_base: AtomicUsize::new(0),
     eval_len: AtomicUsize::new(0),
-    eval_cards: AtomicUsize::new(0),
-    eval_meta: AtomicUsize::new(0),
+    eval_cards: AtomicPtr::new(ptr::null_mut()),
+    eval_meta: AtomicPtr::new(ptr::null_mut()),
     program_base: AtomicUsize::new(0),
     program_len: AtomicUsize::new(0),
-    program_cards: AtomicUsize::new(0),
+    program_cards: AtomicPtr::new(ptr::null_mut()),
 };
 
 /// The write barrier: the cell at `addr` was written, or is about to be, with a
@@ -345,10 +347,10 @@ pub fn remember(addr: usize) {
         // SAFETY: the cell is in a live object, so its block is committed, owned by
         // this thread and has bitmaps; the card table covers the committed blocks.
         unsafe {
-            let meta = &*(BARRIER.eval_meta.load(Relaxed) as *const BlockMeta).add(offset >> BLOCK_SHIFT);
+            let meta = &*BARRIER.eval_meta.load(Relaxed).add(offset >> BLOCK_SHIFT);
             let i = meta.index(offset & (BLOCK - 1));
             if *meta.bits.add(meta.words as usize + i / 64) & (1 << (i % 64)) != 0 {
-                *((BARRIER.eval_cards.load(Relaxed) + (offset >> CARD_SHIFT)) as *mut u8) = 1;
+                *BARRIER.eval_cards.load(Relaxed).add(offset >> CARD_SHIFT) = 1;
             }
         }
         return;
@@ -356,7 +358,7 @@ pub fn remember(addr: usize) {
     let offset = addr.wrapping_sub(BARRIER.program_base.load(Relaxed));
     if offset < BARRIER.program_len.load(Relaxed) {
         // SAFETY: as above.
-        unsafe { *((BARRIER.program_cards.load(Relaxed) + (offset >> CARD_SHIFT)) as *mut u8) = 1 };
+        unsafe { *BARRIER.program_cards.load(Relaxed).add(offset >> CARD_SHIFT) = 1 };
     }
 }
 
@@ -370,11 +372,11 @@ fn ranges() -> &'static Ranges {
             eval: Range::reserve("evaluator", EVAL_RESERVE, limit / 4),
         };
         if config().generational && config().mode != GcMode::Off {
-            BARRIER.eval_base.store(ranges.eval.base, Relaxed);
+            BARRIER.eval_base.store(ranges.eval.base.addr(), Relaxed);
             BARRIER.eval_cards.store(ranges.eval.cards, Relaxed);
-            BARRIER.eval_meta.store(ranges.eval.meta as usize, Relaxed);
+            BARRIER.eval_meta.store(ranges.eval.meta, Relaxed);
             BARRIER.eval_len.store(ranges.eval.len, Relaxed);
-            BARRIER.program_base.store(ranges.program.base, Relaxed);
+            BARRIER.program_base.store(ranges.program.base.addr(), Relaxed);
             BARRIER.program_cards.store(ranges.program.cards, Relaxed);
             BARRIER.program_len.store(ranges.program.len, Relaxed);
         }
@@ -392,8 +394,8 @@ struct TypeInfo {
     slot: u32,
     recip: u32,
     count: u32,
-    drop: unsafe fn(usize),
-    prefetch_owned: unsafe fn(usize),
+    drop: unsafe fn(*mut u8),
+    prefetch_owned: unsafe fn(*mut u8),
     trace: TraceFn,
 }
 
@@ -415,16 +417,16 @@ impl ClassSlot {
     }
 }
 
-unsafe fn drop_erased<T>(addr: usize) {
-    unsafe { ptr::drop_in_place(addr as *mut T) }
+unsafe fn drop_erased<T>(object: *mut u8) {
+    unsafe { ptr::drop_in_place(object.cast::<T>()) }
 }
 
-unsafe fn prefetch_owned_erased<T: Trace>(addr: usize) {
-    unsafe { (*(addr as *const T)).prefetch_owned() }
+unsafe fn prefetch_owned_erased<T: Trace>(object: *mut u8) {
+    unsafe { (*object.cast::<T>()).prefetch_owned() }
 }
 
-unsafe fn trace_erased<T: Trace>(addr: usize, t: &mut Tracer) {
-    unsafe { (*(addr as *const T)).trace(t) }
+unsafe fn trace_erased<T: Trace>(object: *mut u8, t: &mut Tracer) {
+    unsafe { (*object.cast::<T>()).trace(t) }
 }
 
 fn register<T: Trace + 'static>() -> u32 {
@@ -468,7 +470,7 @@ struct Class {
     word: u32,
     free: u64,
     live: *mut u64,
-    base: usize,
+    base: *mut u8,
     blocks: Vec<u32>,
     partial: Vec<u32>,
 }
@@ -548,7 +550,7 @@ fn with_heap<R>(f: impl FnOnce(&mut ThreadHeap) -> R) -> R {
 /// A slot for one `T` in a typed block of the evaluator heap (`eval`) or the program heap.
 #[inline]
 pub(crate) fn alloc<T: Trace + 'static>(eval: bool) -> *mut T {
-    with_heap(|heap| unsafe { heap.alloc::<T>(eval) }) as *mut T
+    with_heap(|heap| unsafe { heap.alloc::<T>(eval) }).cast::<T>()
 }
 
 impl ThreadHeap {
@@ -568,7 +570,7 @@ impl ThreadHeap {
     }
 
     #[inline]
-    unsafe fn alloc<T: Trace + 'static>(&mut self, eval: bool) -> usize {
+    unsafe fn alloc<T: Trace + 'static>(&mut self, eval: bool) -> *mut u8 {
         let id = self.type_id::<T>() as usize;
         if eval {
             if let Some(Some(class)) = self.eval.get_mut(id)
@@ -590,7 +592,7 @@ impl ThreadHeap {
     }
 
     #[cold]
-    unsafe fn alloc_slow(&mut self, id: usize, eval: bool) -> usize {
+    unsafe fn alloc_slow(&mut self, id: usize, eval: bool) -> *mut u8 {
         let owner = self.owner;
         let range = if eval { &ranges().eval } else { &ranges().program };
         let classes = if eval { &mut self.eval } else { &mut self.program };
@@ -603,7 +605,7 @@ impl ThreadHeap {
             word: 0,
             free: 0,
             live: ptr::null_mut(),
-            base: 0,
+            base: ptr::null_mut(),
             blocks: Vec::new(),
             partial: Vec::new(),
         });
@@ -650,11 +652,11 @@ impl Class {
     /// # Safety
     /// `free != 0`, and `live` points at the live bits of word `word` of `current`.
     #[inline]
-    unsafe fn take(&mut self) -> usize {
+    unsafe fn take(&mut self) -> *mut u8 {
         let j = self.free.trailing_zeros();
         self.free &= self.free - 1;
         unsafe { *self.live |= 1 << j };
-        self.base + (self.word as usize * 64 + j as usize) * self.info.slot as usize
+        self.base.wrapping_add((self.word as usize * 64 + j as usize) * self.info.slot as usize)
     }
 }
 
@@ -716,7 +718,7 @@ pub(crate) fn check_handle(addr: usize) {
 #[inline(never)]
 fn check_handle_slow(addr: usize) {
     let range = &ranges().eval;
-    let offset = addr.wrapping_sub(range.base);
+    let offset = addr.wrapping_sub(range.base.addr());
     if offset >= range.len {
         return;
     }
@@ -734,15 +736,15 @@ fn check_handle_slow(addr: usize) {
 // ---------------------------------------------------------------------------
 // collection
 
-type TraceFn = unsafe fn(usize, &mut Tracer);
+type TraceFn = unsafe fn(*mut u8, &mut Tracer);
 
 /// Finds the evaluator objects reachable from the roots.
 pub struct Tracer {
-    stack: Vec<(usize, TraceFn)>,
+    stack: Vec<(*mut u8, TraceFn)>,
     check: bool,
     program_only: u32,
     owner: u32,
-    eval_base: usize,
+    eval_base: *mut u8,
     eval_len: usize,
     meta: *mut BlockMeta,
     /// The work of a parallel mark, or null while marking on one thread.
@@ -759,7 +761,7 @@ impl Tracer {
     /// Marks the object at `addr` when it is on the evaluator heap.
     #[inline]
     pub fn mark(&mut self, addr: usize) {
-        let offset = addr.wrapping_sub(self.eval_base);
+        let offset = addr.wrapping_sub(self.eval_base.addr());
         if offset < self.eval_len {
             self.mark_eval(offset);
         }
@@ -800,8 +802,8 @@ impl Tracer {
                 }
             }
         }
-        let addr = self.eval_base + (offset & !(BLOCK - 1)) + i * meta.slot as usize;
-        self.stack.push((addr, meta.trace));
+        let object = self.eval_base.wrapping_add((offset & !(BLOCK - 1)) + i * meta.slot as usize);
+        self.stack.push((object, meta.trace));
     }
 
     /// Check mode: traces a `#[trace(program)]` field and panics on an evaluator handle in it.
@@ -814,7 +816,7 @@ impl Tracer {
     /// Check mode: panics when a handle the type claims is never on the evaluator heap is.
     pub fn expect_program(&self, addr: usize, what: &str) {
         assert!(
-            addr.wrapping_sub(self.eval_base) >= self.eval_len,
+            addr.wrapping_sub(self.eval_base.addr()) >= self.eval_len,
             "collector check: a {what} handle that its type keeps off the evaluator heap points into it"
         );
     }
@@ -823,7 +825,7 @@ impl Tracer {
     /// whose entries are prefetched, so the cache misses of several objects overlap.
     fn drain(&mut self) {
         const AHEAD: usize = 8;
-        let mut ring = [(0usize, None::<TraceFn>); AHEAD];
+        let mut ring = [(ptr::null_mut::<u8>(), None::<TraceFn>); AHEAD];
         let (mut head, mut len) = (0usize, 0usize);
         loop {
             while len < AHEAD {
@@ -873,7 +875,7 @@ const ROOT_CHUNK: usize = 64;
 /// packets, and the threads waiting for one.
 struct MarkShared {
     /// Root objects, taken `ROOT_CHUNK` at a time.
-    roots: Vec<(usize, TraceFn)>,
+    roots: Vec<(*mut u8, TraceFn)>,
     next_root: AtomicUsize,
     pool: Mutex<Pool>,
     /// Signalled when a packet arrives and when the mark ends.
@@ -888,7 +890,7 @@ struct MarkShared {
 
 #[derive(Default)]
 struct Pool {
-    packets: Vec<Vec<(usize, TraceFn)>>,
+    packets: Vec<Vec<(*mut u8, TraceFn)>>,
     /// Threads with no work; the mark ends when all of them have none.
     idle: usize,
     done: bool,
@@ -950,13 +952,17 @@ fn mark_work_caught(t: &mut Tracer, shared: &MarkShared) {
 /// What a helper thread needs to build its `Tracer`.
 #[derive(Clone, Copy)]
 struct MarkJob {
-    shared: usize,
+    shared: *const MarkShared,
     owner: u32,
     check: bool,
-    eval_base: usize,
+    eval_base: *mut u8,
     eval_len: usize,
-    meta: usize,
+    meta: *mut BlockMeta,
 }
+
+// SAFETY: the collecting thread keeps `shared` alive, and its heap unchanged,
+// until every helper reports done (`Helpers::run`).
+unsafe impl Send for MarkJob {}
 
 struct HelperState {
     generation: u64,
@@ -1029,7 +1035,7 @@ impl Helpers {
                 state.job.expect("collector: a marking thread started without a job")
             };
             // SAFETY: the collecting thread keeps `shared` alive until every helper reports done.
-            let shared = unsafe { &*(job.shared as *const MarkShared) };
+            let shared = unsafe { &*job.shared };
             let mut t = Tracer {
                 stack: Vec::new(),
                     check: job.check,
@@ -1037,7 +1043,7 @@ impl Helpers {
                 owner: job.owner,
                 eval_base: job.eval_base,
                 eval_len: job.eval_len,
-                meta: job.meta as *mut BlockMeta,
+                meta: job.meta,
                 shared,
             };
             // A trace function must not allocate: on a helper, an allocation would
@@ -1064,14 +1070,14 @@ fn dangling(meta: &BlockMeta, w: usize, bit: u64) -> ! {
 }
 
 #[inline(always)]
-pub(crate) fn prefetch(addr: usize) {
+pub(crate) fn prefetch<T: ?Sized>(p: *const T) {
     #[cfg(target_arch = "x86_64")]
     // SAFETY: a prefetch never faults.
     unsafe {
-        std::arch::x86_64::_mm_prefetch(addr as *const i8, std::arch::x86_64::_MM_HINT_T0);
+        std::arch::x86_64::_mm_prefetch(p.cast::<i8>(), std::arch::x86_64::_MM_HINT_T0);
     }
     #[cfg(not(target_arch = "x86_64"))]
-    let _ = addr;
+    let _ = p;
 }
 
 /// Collects when the evaluator heap grew by `max(ratio × live bytes, floor)`
@@ -1176,7 +1182,7 @@ fn rss_in(range: &Range) -> usize {
         if let Some((start, _)) = line.split_once('-')
             && let Ok(start) = usize::from_str_radix(start, 16)
         {
-            inside = start.wrapping_sub(range.base) < range.len;
+            inside = start.wrapping_sub(range.base.addr()) < range.len;
         } else if inside && let Some(kib) = line.strip_prefix("Rss:") {
             total += kib.trim().trim_end_matches("kB").trim().parse::<usize>().unwrap_or(0) << 10;
         }
@@ -1357,7 +1363,7 @@ impl ThreadHeap {
     /// every program object whose type can hold an evaluator handle (in check mode,
     /// every program object). Minor: the program objects allocated since the last
     /// collection, and the old program and evaluator objects on written cards.
-    fn root_objects(&self, check: bool, minor: bool) -> Vec<(usize, TraceFn)> {
+    fn root_objects(&self, check: bool, minor: bool) -> Vec<(*mut u8, TraceFn)> {
         let ranges = ranges();
         let mut roots = Vec::new();
         for class in self.program.iter().flatten() {
@@ -1375,9 +1381,9 @@ impl ThreadHeap {
                 let young = if precise { meta.scanned as usize } else { 0 };
                 if precise {
                     let cards = unsafe { ranges.program.cards(block) };
-                    for_card_slots(cards, slot, young, |i| roots.push((base + i * slot, trace)));
+                    for_card_slots(cards, slot, young, |i| roots.push((base.wrapping_add(i * slot), trace)));
                 }
-                roots.extend((young..meta.bump as usize).map(|i| (base + i * slot, trace)));
+                roots.extend((young..meta.bump as usize).map(|i| (base.wrapping_add(i * slot), trace)));
             }
         }
         if minor {
@@ -1392,7 +1398,7 @@ impl ThreadHeap {
                     // Old objects only: a young one is traced when something reaches it.
                     for_card_slots(cards, slot, meta.count as usize, |i| {
                         if marks[i / 64] & (1 << (i % 64)) != 0 {
-                            roots.push((base + i * slot, trace));
+                            roots.push((base.wrapping_add(i * slot), trace));
                         }
                     });
                 }
@@ -1420,7 +1426,7 @@ impl ThreadHeap {
     }
 
     /// Marks everything `roots` and the registered roots reach, on `threads` threads.
-    fn mark_from(&self, t: &mut Tracer, roots: &[(usize, TraceFn)], threads: usize) {
+    fn mark_from(&self, t: &mut Tracer, roots: &[(*mut u8, TraceFn)], threads: usize) {
         // The helpers serve one collection at a time; a thread that finds them taken marks alone.
         let helpers = match HELPERS.claim.try_lock() {
             _ if threads == 1 => None,
@@ -1465,12 +1471,12 @@ impl ThreadHeap {
             resume_unwind(panic);
         }
         let job = MarkJob {
-            shared: &shared as *const MarkShared as usize,
+            shared: &shared,
             owner: t.owner,
             check: t.check,
             eval_base: t.eval_base,
             eval_len: t.eval_len,
-            meta: t.meta as usize,
+            meta: t.meta,
         };
         HELPERS.run(threads - 1, job, || mark_work_caught(t, &shared));
         t.shared = ptr::null();
@@ -1582,7 +1588,7 @@ impl ThreadHeap {
                         let mut ahead = dead;
                         for _ in 0..SWEEP_AHEAD {
                             if ahead != 0 {
-                                (class.info.prefetch_owned)(base + (w * 64 + ahead.trailing_zeros() as usize) * slot);
+                                (class.info.prefetch_owned)(base.wrapping_add((w * 64 + ahead.trailing_zeros() as usize) * slot));
                                 ahead &= ahead - 1;
                             }
                         }
@@ -1590,14 +1596,14 @@ impl ThreadHeap {
                             let j = dead.trailing_zeros() as usize;
                             dead &= dead - 1;
                             if ahead != 0 {
-                                (class.info.prefetch_owned)(base + (w * 64 + ahead.trailing_zeros() as usize) * slot);
+                                (class.info.prefetch_owned)(base.wrapping_add((w * 64 + ahead.trailing_zeros() as usize) * slot));
                                 ahead &= ahead - 1;
                             }
                             let i = w * 64 + j;
-                            let addr = base + i * slot;
-                            (class.info.drop)(addr);
+                            let object = base.wrapping_add(i * slot);
+                            (class.info.drop)(object);
                             if check {
-                                ptr::write_bytes(addr as *mut u8, POISON, slot);
+                                ptr::write_bytes(object, POISON, slot);
                                 *meta.bits.add(2 * words + w) |= 1 << j;
                             }
                             freed += 1;
@@ -1971,11 +1977,11 @@ mod tests {
     /// Turns the write barrier on, as generational collection does at start.
     fn enable_barrier() {
         let ranges = ranges();
-        BARRIER.eval_base.store(ranges.eval.base, Relaxed);
+        BARRIER.eval_base.store(ranges.eval.base.addr(), Relaxed);
         BARRIER.eval_cards.store(ranges.eval.cards, Relaxed);
-        BARRIER.eval_meta.store(ranges.eval.meta as usize, Relaxed);
+        BARRIER.eval_meta.store(ranges.eval.meta, Relaxed);
         BARRIER.eval_len.store(ranges.eval.len, Relaxed);
-        BARRIER.program_base.store(ranges.program.base, Relaxed);
+        BARRIER.program_base.store(ranges.program.base.addr(), Relaxed);
         BARRIER.program_cards.store(ranges.program.cards, Relaxed);
         BARRIER.program_len.store(ranges.program.len, Relaxed);
     }
@@ -2028,7 +2034,7 @@ mod tests {
         let card = |n: P<Node>| {
             let eval = &ranges().eval;
             // SAFETY: the card of a live evaluator object.
-            unsafe { *((eval.cards + ((n.addr_for_test() - eval.base) >> CARD_SHIFT)) as *const u8) }
+            unsafe { *eval.cards.add((n.addr_for_test() - eval.base.addr()) >> CARD_SHIFT) }
         };
         let drops = Rc::new(());
         let root = P::new(Holder { node: Cell::new(None) });

@@ -78,7 +78,7 @@ unsafe impl Trace for String {
     #[inline]
     fn prefetch_owned(&self) {
         if self.capacity() != 0 {
-            crate::heap::prefetch(self.as_ptr() as usize);
+            crate::heap::prefetch(self.as_ptr());
         }
     }
 }
@@ -161,7 +161,7 @@ unsafe impl<T: Trace> Trace for Vec<T> {
     #[inline]
     fn prefetch_owned(&self) {
         if self.capacity() != 0 {
-            crate::heap::prefetch(self.as_ptr() as usize);
+            crate::heap::prefetch(self.as_ptr());
         }
     }
     const HOLDS_EVAL: bool = T::HOLDS_EVAL;
@@ -188,7 +188,7 @@ unsafe impl<T: Trace> Trace for VecDeque<T> {
 unsafe impl<T: ?Sized + Trace> Trace for Box<T> {
     #[inline]
     fn prefetch_owned(&self) {
-        crate::heap::prefetch(std::ptr::from_ref::<T>(self).cast::<u8>() as usize);
+        crate::heap::prefetch(std::ptr::from_ref::<T>(self));
     }
     const HOLDS_EVAL: bool = T::HOLDS_EVAL;
     const HAS_CELL: bool = T::HAS_CELL;
@@ -205,7 +205,7 @@ unsafe impl<T: ?Sized + Trace> Trace for Rc<T> {
     /// Dropping an `Rc` writes its count, next to the value.
     #[inline]
     fn prefetch_owned(&self) {
-        crate::heap::prefetch(std::ptr::from_ref::<T>(self).cast::<u8>() as usize);
+        crate::heap::prefetch(std::ptr::from_ref::<T>(self));
     }
     const HOLDS_EVAL: bool = T::HOLDS_EVAL;
     const HAS_CELL: bool = T::HAS_CELL;
@@ -261,7 +261,7 @@ unsafe impl<K: Trace, V: Trace, S> Trace for IndexMap<K, V, S> {
     #[inline]
     fn prefetch_owned(&self) {
         if self.capacity() != 0 {
-            crate::heap::prefetch(self.as_slice() as *const _ as *const u8 as usize);
+            crate::heap::prefetch(self.as_slice());
         }
     }
     const HOLDS_EVAL: bool = K::HOLDS_EVAL || V::HOLDS_EVAL;
@@ -282,7 +282,7 @@ unsafe impl<T: Trace, S> Trace for IndexSet<T, S> {
     #[inline]
     fn prefetch_owned(&self) {
         if self.capacity() != 0 {
-            crate::heap::prefetch(self.as_slice() as *const _ as *const u8 as usize);
+            crate::heap::prefetch(self.as_slice());
         }
     }
     const HOLDS_EVAL: bool = T::HOLDS_EVAL;
