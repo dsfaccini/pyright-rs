@@ -10,7 +10,9 @@
 #                 run on; set native to tune for this machine)
 #   DIST_RUSTFLAGS  extra rustc flags for both builds
 #   BOLT_DIR      directory holding llvm-bolt, perf2bolt and merge-fdata
-#                 (default: found on PATH; without them the BOLT step is skipped)
+#                 (default: llvm-bolt's directory on PATH, else devbox's unpacked
+#                 bolt-21 under ~/pyright-rs-data/tools; without them the BOLT step
+#                 is skipped)
 #   DIST_BOLT     0 skips the BOLT step, e.g. on a CPU without a last-branch record
 # Output: target/dist/pyright-rs
 # A pydantic-ai training run holds /tmp/pyright-rs-pydantic-ai.lock, as
@@ -24,7 +26,7 @@ target=$(rustc -vV | sed -n 's/^host: //p')
 flags="-C target-cpu=${DIST_CPU:-x86-64-v2} -C relocation-model=static ${DIST_RUSTFLAGS:-}"
 profdata=$(rustc --print sysroot)/lib/rustlib/$target/bin/llvm-profdata
 [ -x "$profdata" ] || { echo "llvm-profdata missing: rustup component add llvm-tools" >&2; exit 1; }
-bolt_dir=${BOLT_DIR:-$(dirname "$(command -v llvm-bolt || echo .)")}
+bolt_dir=${BOLT_DIR:-$(dirname "$(command -v llvm-bolt || echo "$HOME/pyright-rs-data/tools/bolt-21/usr/lib/llvm-21/bin/llvm-bolt")")}
 bolt=${DIST_BOLT:-1}
 [ "$bolt" = 1 ] && [ ! -x "$bolt_dir/llvm-bolt" ] && { echo "llvm-bolt not found: skipping BOLT" >&2; bolt=0; }
 work=$ROOT/target/dist-work

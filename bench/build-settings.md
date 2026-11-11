@@ -31,9 +31,9 @@ The build measured here matches pyright on all eight corpora, output and every d
 ### what `dist` needs
 
 - `rustup component add llvm-tools`, for `llvm-profdata`.
-- BOLT, optional: `llvm-bolt`, `perf2bolt` and `merge-fdata` on `PATH` or in `BOLT_DIR`.
-  devbox has no BOLT and no root. Ubuntu's package unpacks without root, and its tools link LLVM statically:
-  `apt-get download bolt-21 && dpkg-deb -x bolt-21_*.deb <dir>`, then `BOLT_DIR=<dir>/usr/lib/llvm-21/bin`.
+- BOLT, optional: `llvm-bolt`, `perf2bolt` and `merge-fdata`, in `BOLT_DIR`, else on `PATH`, else in `~/pyright-rs-data/tools/bolt-21/usr/lib/llvm-21/bin`.
+  devbox has no BOLT package installed and no root, so Ubuntu's package is unpacked there; its tools link LLVM statically.
+  To recreate it: `apt-get download bolt-21 && dpkg-deb -x bolt-21_*.deb ~/pyright-rs-data/tools/bolt-21`.
   BOLT 21 reads rustc's LLVM 23 output, and `-update-debug-sections` keeps file and line in panic backtraces.
 - BOLT samples the CPU's last-branch record with `perf record -j any,u`.
   devbox allows it unprivileged (`kernel.perf_event_paranoid` is 1; Zen 4 records 16 branches). `DIST_BOLT=0` skips BOLT elsewhere.
