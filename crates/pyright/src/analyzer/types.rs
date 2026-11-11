@@ -26,7 +26,8 @@ use jsrt::OptionRefCell;
 use jsrt::JsString;
 
 // analyzer/types.ts:17
-#[repr(i32)]
+/// One byte, so that `Type` has room for `cached_requires_specialization` within 128 bytes.
+#[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 #[derive(jsrt::Trace)]
 pub enum TypeCategory {
@@ -189,7 +190,6 @@ pub struct CachedTypeInfo {
     pub instance_type: Option<P<Type>>,
     pub type_base_instantiable_type: Option<P<Type>>,
     pub type_base_instance_type: Option<P<Type>>,
-    pub requires_specialization: Option<bool>,
 }
 
 // analyzer/types.ts:174
@@ -211,6 +211,10 @@ pub struct Type {
     pub flags: Cell<TypeFlags>,
     pub props: OptionRefCell<TypeBaseProps>,
     pub cached: OptionRefCell<CachedTypeInfo>,
+    /// `cached.requiresSpecialization`, held apart from the rest of `cached`: it is read on
+    /// every `requires_specialization` call and is often the only field written. Every
+    /// constructor and `clone_type` reset it, as they reset `cached`.
+    pub cached_requires_specialization: Cell<Option<bool>>,
     // Private: reach details through typed handles and `d()`; create through the create functions.
     d: TypeDetails,
 }
@@ -335,6 +339,7 @@ impl TypeBase {
             flags: type_.flags.clone(),
             props: type_.props.clone(),
             cached: OptionRefCell::new(),
+            cached_requires_specialization: Cell::new(None),
             d,
         })
     }
@@ -572,6 +577,7 @@ pub mod unbound_type {
             flags: Cell::new(TypeFlags::Instantiable | TypeFlags::Instance),
             props: OptionRefCell::new(),
             cached: OptionRefCell::new(),
+            cached_requires_specialization: Cell::new(None),
             d: TypeDetails::Unbound(UnboundTypeDetails {}),
         }));
     }
@@ -637,6 +643,7 @@ impl UnknownType {
             flags: Cell::new(TypeFlags::Instantiable | TypeFlags::Instance),
             props: OptionRefCell::new(),
             cached: OptionRefCell::new(),
+            cached_requires_specialization: Cell::new(None),
             d: TypeDetails::Unknown(UnknownTypeDetails {
                 priv_: UnknownDetailsPriv {
                     is_incomplete,
@@ -674,6 +681,7 @@ pub mod unknown_type {
             flags: Cell::new(TypeFlags::Instantiable | TypeFlags::Instance),
             props: OptionRefCell::new(),
             cached: OptionRefCell::new(),
+            cached_requires_specialization: Cell::new(None),
             d: TypeDetails::Unknown(UnknownTypeDetails {
                 priv_: UnknownDetailsPriv {
                     is_incomplete: false,
@@ -691,6 +699,7 @@ pub mod unknown_type {
             flags: Cell::new(TypeFlags::Instantiable | TypeFlags::Instance),
             props: OptionRefCell::new(),
             cached: OptionRefCell::new(),
+            cached_requires_specialization: Cell::new(None),
             d: TypeDetails::Unknown(UnknownTypeDetails {
                 priv_: UnknownDetailsPriv {
                     is_incomplete: true,
@@ -761,6 +770,7 @@ impl ModuleType {
             flags: Cell::new(TypeFlags::Instantiable),
             props: OptionRefCell::new(),
             cached: OptionRefCell::new(),
+            cached_requires_specialization: Cell::new(None),
             d: TypeDetails::Module(ModuleTypeDetails {
                 priv_: RefCell::new(ModuleDetailsPriv {
                     fields: symbol_table.unwrap_or_else(SymbolTable::new),
@@ -1092,6 +1102,7 @@ impl ClassType {
             flags: Cell::new(TypeFlags::Instantiable),
             props: OptionRefCell::new(),
             cached: OptionRefCell::new(),
+            cached_requires_specialization: Cell::new(None),
             d: TypeDetails::Class(ClassTypeDetails {
                 shared: Cell::new(P::new_eval(ClassDetailsShared {
                     name: name.to_string(),
@@ -2610,6 +2621,7 @@ impl FunctionType {
             flags: Cell::new(type_flags),
             props: OptionRefCell::new(),
             cached: OptionRefCell::new(),
+            cached_requires_specialization: Cell::new(None),
             d: TypeDetails::Function(FunctionTypeDetails {
                 shared: Cell::new(P::new_eval(FunctionDetailsShared {
                     name: name.to_string(),
@@ -3660,6 +3672,7 @@ impl OverloadedType {
             flags: Cell::new(TypeFlags::Instance),
             props: OptionRefCell::new(),
             cached: OptionRefCell::new(),
+            cached_requires_specialization: Cell::new(None),
             d: TypeDetails::Overloaded(OverloadedTypeDetails {
                 priv_: RefCell::new(OverloadedDetailsPriv {
                     _overloads: Vec::new(),
@@ -3780,6 +3793,7 @@ pub mod never_type {
             flags: Cell::new(TypeFlags::Instance | TypeFlags::Instantiable),
             props: OptionRefCell::new(),
             cached: OptionRefCell::new(),
+            cached_requires_specialization: Cell::new(None),
             d: TypeDetails::Never(NeverTypeDetails {
                 priv_: NeverDetailsPriv { is_no_return: false },
             }),
@@ -3794,6 +3808,7 @@ pub mod never_type {
             flags: Cell::new(TypeFlags::Instance | TypeFlags::Instantiable),
             props: OptionRefCell::new(),
             cached: OptionRefCell::new(),
+            cached_requires_specialization: Cell::new(None),
             d: TypeDetails::Never(NeverTypeDetails {
                 priv_: NeverDetailsPriv { is_no_return: true },
             }),
@@ -3871,6 +3886,7 @@ pub mod any_type {
             flags: Cell::new(TypeFlags::Instance | TypeFlags::Instantiable),
             props: OptionRefCell::new(),
             cached: OptionRefCell::new(),
+            cached_requires_specialization: Cell::new(None),
             d: TypeDetails::Any(AnyTypeDetails {
                 priv_: AnyDetailsPriv { is_ellipsis: false },
             }),
@@ -3885,6 +3901,7 @@ pub mod any_type {
             flags: Cell::new(TypeFlags::Instance | TypeFlags::Instantiable),
             props: OptionRefCell::new(),
             cached: OptionRefCell::new(),
+            cached_requires_specialization: Cell::new(None),
             d: TypeDetails::Any(AnyTypeDetails {
                 priv_: AnyDetailsPriv { is_ellipsis: false },
             }),
@@ -3899,6 +3916,7 @@ pub mod any_type {
             flags: Cell::new(TypeFlags::Instance | TypeFlags::Instantiable),
             props: OptionRefCell::new(),
             cached: OptionRefCell::new(),
+            cached_requires_specialization: Cell::new(None),
             d: TypeDetails::Any(AnyTypeDetails {
                 priv_: AnyDetailsPriv { is_ellipsis: true },
             }),
@@ -4100,6 +4118,7 @@ impl UnionType {
             flags: Cell::new(TypeFlags::Instance | TypeFlags::Instantiable),
             props: OptionRefCell::new(),
             cached: OptionRefCell::new(),
+            cached_requires_specialization: Cell::new(None),
             d: TypeDetails::Union(UnionTypeDetails {
                 priv_: RefCell::new(UnionDetailsPriv {
                     subtypes: Rc::default(),
@@ -4826,6 +4845,7 @@ impl TypeVarType {
             flags: Cell::new(type_flags),
             props: OptionRefCell::new(),
             cached: OptionRefCell::new(),
+            cached_requires_specialization: Cell::new(None),
             d: TypeDetails::TypeVar(TypeVarTypeDetails {
                 shared: Cell::new(P::new_eval(TypeVarDetailsShared {
                     kind,

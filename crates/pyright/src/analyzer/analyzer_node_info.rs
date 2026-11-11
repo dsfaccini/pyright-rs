@@ -302,12 +302,35 @@ impl AnalyzerNodeInfoBindingSession for AnalyzerNodeInfoBindingSessionImpl {
     }
 }
 
+/// `PYRIGHT_RS_NODE_INFO_STORE_CACHE`: `on` (the default) lets `_store_for` reuse its last
+/// answer, `off` looks every store up, and `check` looks up again on every reuse and panics
+/// when the answers differ.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum StoreCacheMode {
+    Off,
+    On,
+    Check,
+}
+
+fn store_cache_mode() -> StoreCacheMode {
+    static MODE: std::sync::OnceLock<StoreCacheMode> = std::sync::OnceLock::new();
+    *MODE.get_or_init(|| match std::env::var("PYRIGHT_RS_NODE_INFO_STORE_CACHE").as_deref() {
+        Err(_) | Ok("") | Ok("on") => StoreCacheMode::On,
+        Ok("off") => StoreCacheMode::Off,
+        Ok("check") => StoreCacheMode::Check,
+        Ok(other) => panic!("PYRIGHT_RS_NODE_INFO_STORE_CACHE must be on, off or check, not {other:?}"),
+    })
+}
+
 // analyzer/analyzerNodeInfo.ts:229
 /// `_retiredStores`, the symbol-keyed property TypeScript hangs on a tree
 /// key, is the `_retired_stores` map: tree key to this context's store.
 #[derive(jsrt::Trace)]
 pub struct AnalyzerNodeInfoContextImpl {
     _layers: RefCell<Vec<AnalyzerNodeInfoContextLayer>>,
+    /// The last answer of `_store_for`, which pyright lacks: consecutive reads mostly ask about
+    /// one tree. Every write to `_layers` or `_retired_stores` clears it (`store_cache_mode`).
+    _last_store: Cell<Option<(ParseTreeKey, Option<P<AnalyzerNodeInfoStore>>)>>,
     _disposed: Cell<bool>,
     _current_layer_reader: Cell<Option<&'static CurrentLayerReader>>,
     _retired_stores: RefCell<FxHashMap<ParseTreeKey, P<AnalyzerNodeInfoStore>>>,
@@ -334,6 +357,7 @@ impl AnalyzerNodeInfoContextImpl {
     pub fn new() -> P<AnalyzerNodeInfoContextImpl> {
         let context = P::new(AnalyzerNodeInfoContextImpl {
             _layers: RefCell::new(vec![AnalyzerNodeInfoContextImpl::_create_layer()]),
+            _last_store: Cell::new(None),
             _disposed: Cell::new(false),
             _current_layer_reader: Cell::new(None),
             _retired_stores: RefCell::new(FxHashMap::default()),
@@ -350,7 +374,28 @@ impl AnalyzerNodeInfoContextImpl {
         self._self.get().unwrap()
     }
 
+    /// `_look_up_store`, reusing the last answer when `store_cache_mode` allows.
     fn _store_for(&self, key: ParseTreeKey) -> Option<P<AnalyzerNodeInfoStore>> {
+        let mode = store_cache_mode();
+        if mode != StoreCacheMode::Off {
+            if let Some((cached_key, store)) = self._last_store.get() {
+                if cached_key == key {
+                    if mode == StoreCacheMode::Check {
+                        assert_eq!(store, self._look_up_store(key), "the cached analyzer info store is stale");
+                    }
+                    return store;
+                }
+            }
+        }
+        let store = self._look_up_store(key);
+        if mode != StoreCacheMode::Off {
+            self._last_store.set(Some((key, store)));
+        }
+        store
+    }
+
+    /// The layer walk that `get` and `getFileInfo` share (analyzerNodeInfo.ts:237, 266).
+    fn _look_up_store(&self, key: ParseTreeKey) -> Option<P<AnalyzerNodeInfoStore>> {
         let layers = self._layers.borrow();
 
         // Fast path: no edit-mode overlay is active (the steady-state batch/check
@@ -390,6 +435,7 @@ impl AnalyzerNodeInfoContextImpl {
 
     // analyzer/analyzerNodeInfo.ts:388
     fn _delete_retired_store(&self, key: ParseTreeKey) {
+        self._last_store.set(None);
         self._retired_stores.borrow_mut().remove(&key);
     }
 
@@ -481,6 +527,7 @@ impl AnalyzerNodeInfoContext for AnalyzerNodeInfoContextImpl {
 
     // analyzer/analyzerNodeInfo.ts:311
     fn register_store(&self, root: ModuleNode, store: P<AnalyzerNodeInfoStore>) {
+        self._last_store.set(None);
         self._throw_if_disposed();
         {
             let mut layers = self._layers.borrow_mut();
@@ -493,6 +540,7 @@ impl AnalyzerNodeInfoContext for AnalyzerNodeInfoContextImpl {
 
     // analyzer/analyzerNodeInfo.ts:319
     fn remove(&self, root: ModuleNode) {
+        self._last_store.set(None);
         self._throw_if_disposed();
         {
             let mut layers = self._layers.borrow_mut();
@@ -505,6 +553,7 @@ impl AnalyzerNodeInfoContext for AnalyzerNodeInfoContextImpl {
 
     // analyzer/analyzerNodeInfo.ts:327
     fn retain_removed_store(&self, root: ModuleNode) {
+        self._last_store.set(None);
         self._throw_if_disposed();
         let mut layers = self._layers.borrow_mut();
         let layer = layers.last_mut().unwrap();
@@ -517,6 +566,7 @@ impl AnalyzerNodeInfoContext for AnalyzerNodeInfoContextImpl {
 
     // analyzer/analyzerNodeInfo.ts:340
     fn enter_overlay(&self) {
+        self._last_store.set(None);
         self._throw_if_disposed();
         self._layers
             .borrow_mut()
@@ -525,6 +575,7 @@ impl AnalyzerNodeInfoContext for AnalyzerNodeInfoContextImpl {
 
     // analyzer/analyzerNodeInfo.ts:345
     fn promote_to_previous_layer(&self, root: ModuleNode) {
+        self._last_store.set(None);
         self._throw_if_disposed();
         let mut layers = self._layers.borrow_mut();
         if layers.len() < 2 {
@@ -544,6 +595,7 @@ impl AnalyzerNodeInfoContext for AnalyzerNodeInfoContextImpl {
 
     // analyzer/analyzerNodeInfo.ts:363
     fn discard_overlay(&self) {
+        self._last_store.set(None);
         self._throw_if_disposed();
         let mut layers = self._layers.borrow_mut();
         if layers.len() == 1 {
@@ -555,6 +607,7 @@ impl AnalyzerNodeInfoContext for AnalyzerNodeInfoContextImpl {
 
     // analyzer/analyzerNodeInfo.ts:372
     fn dispose(&self) {
+        self._last_store.set(None);
         self._layers.borrow_mut().clear();
         self._disposed.set(true);
     }

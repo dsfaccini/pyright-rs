@@ -3704,8 +3704,7 @@ pub fn requires_specialization(
     let can_use_cache = !options.and_then(|options| options.ignore_pseudo_generic).unwrap_or(false)
         && !options.and_then(|options| options.ignore_self).unwrap_or(false);
     if can_use_cache {
-        let cached = type_.cached.borrow().as_ref().and_then(|cached| cached.requires_specialization);
-        if let Some(cached) = cached {
+        if let Some(cached) = type_.cached_requires_specialization.get() {
             return cached;
         }
     }
@@ -3713,11 +3712,7 @@ pub fn requires_specialization(
     let result = _requires_specialization(type_, options, recursion_count);
 
     if can_use_cache {
-        let mut cached = type_.cached.borrow_mut();
-        if cached.is_none() {
-            *cached = Some(Default::default());
-        }
-        cached.as_mut().unwrap().requires_specialization = Some(result);
+        type_.cached_requires_specialization.set(Some(result));
     }
 
     result
