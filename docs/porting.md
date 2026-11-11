@@ -116,6 +116,7 @@ pyright allocates about 23 times what it keeps alive: 194 GB over a pydantic-ai 
 
 - Add a crate with `cargo add`, never by editing `Cargo.toml`.
 - Add a crate only when it matches the JavaScript behavior that pyright observes. Record why in your notes file.
+- The build needs a C compiler: `pyright-rs` uses mimalloc as its global allocator (`crates/pyright/src/main.rs`), which `libmimalloc-sys` compiles from C.
 
 ## tests
 

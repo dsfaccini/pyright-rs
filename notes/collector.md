@@ -26,6 +26,7 @@ Collector for the evaluator heap (`PLAN.md` step 6, `docs/collector-design.md`).
 
 - `libc` (jsrt): `mmap` with `MAP_NORESERVE` and `madvise`, for the heap ranges. V8's heap reserves and releases pages the same way.
 - `syn`, `quote`, `proc-macro2` (new crate `jsrt_derive`): the `Trace` derive. All three were already in `Cargo.lock` through `serde_derive`.
+- `mimalloc` (pyright, global allocator of the `pyright-rs` binary; brings `libmimalloc-sys`, `cc`, `find-msvc-tools`, `shlex`): frees faster than glibc, which the sweep spends most of its time in. Output unchanged on the eight corpora. The examples (`oracle_bind`, `oracle_dump`) keep the system allocator.
 
 ## Needs from others
 
@@ -33,4 +34,4 @@ Collector for the evaluator heap (`PLAN.md` step 6, `docs/collector-design.md`).
 
 ## Doubts
 
-- Sweeping drops about 110M dead objects on pydantic-ai, and most of the 8 to 9 s it takes is glibc `free` of the buffers they own. With mimalloc as the global allocator the sweep took 3.0 s instead of 8.4 s, and the whole check 0:50.7 instead of 1:05.9 (GC off: 0:41.5 instead of 0:51.3). Not adopted: a project-wide dependency, decision raised with the main session.
+- Collection costs about 8 s on pydantic-ai with mimalloc (6 collections: 5.0 s marking, 3.1 s sweeping). Marking re-traces the live set each time (1.6 s at 1.3 GB of live slots); sweeping drops about 110M dead objects.
