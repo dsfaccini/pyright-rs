@@ -210,10 +210,16 @@ pub fn apply_function_decorator(
         && is_function(input_function_type)
     {
         let input_shared = FunctionType(input_function_type).d().shared.get();
+        let undecorated_shared = undecorated_type.d().shared.get();
+        // An inner decorator can return an existing function, which may have been printed.
+        if !input_shared.flags.get().any(FunctionTypeFlags::Overloaded)
+            || !undecorated_shared.flags.get().any(FunctionTypeFlags::Overloaded)
+        {
+            crate::analyzer::type_evaluator::note_type_mutation();
+        }
         input_shared
             .flags
             .set(input_shared.flags.get() | FunctionTypeFlags::Overloaded);
-        let undecorated_shared = undecorated_type.d().shared.get();
         undecorated_shared
             .flags
             .set(undecorated_shared.flags.get() | FunctionTypeFlags::Overloaded);

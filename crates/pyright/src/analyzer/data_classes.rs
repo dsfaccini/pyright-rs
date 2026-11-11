@@ -1346,6 +1346,8 @@ pub fn synthesize_data_class_methods(
         .map(|entry| entry.type_.get())
         .collect();
     if update_named_tuple_base_class(class_type, &entry_types, /* isTypeArgExplicit */ true) {
+        // The class's base classes were replaced after the class was built.
+        crate::analyzer::type_evaluator::note_type_mutation();
         // Recompute the MRO based on the updated NamedTuple base class.
         compute_mro_linearization(class_type);
     }
