@@ -227,6 +227,9 @@ pub struct CodeFlowEngine {
     pub(crate) max_convergence_limit_hit: Cell<bool>,
     // This struct's own handle, set once it is in the arena: a nested factory stores it.
     pub(crate) handle: OnceCell<P<CodeFlowEngine>>,
+    /// Rust-only: whether narrowing makes a conditional flow node unreachable, by flow node id
+    /// (`PYRIGHT_RS_REACHABILITY_NARROWING_MEMO`).
+    pub(crate) reachability_narrowing_memo: RefCell<FxHashMap<u32, bool>>,
 }
 
 // analyzer/codeFlowEngine.ts:203
@@ -248,6 +251,7 @@ pub fn get_code_flow_engine(
         no_return_analysis_depth: Cell::new(0),
         context_manager_analysis_depth: Cell::new(0),
         max_convergence_limit_hit: Cell::new(false),
+        reachability_narrowing_memo: RefCell::new(FxHashMap::default()),
         handle: OnceCell::new(),
     });
     let _ = engine.handle.set(engine);
@@ -461,38 +465,90 @@ impl CodeFlowEngine {
                             if symbol_with_scope.is_some_and(|symbol_with_scope| {
                                 symbol_with_scope.symbol.has_typed_declarations()
                             }) {
-                                let mut is_unreachable = false;
+                                // pyright caches a walk's result only under the node the walk started
+                                // from, so walks from different statements narrow the same condition
+                                // again. The port remembers the answer per flow node
+                                // (`PYRIGHT_RS_REACHABILITY_NARROWING_MEMO`) when the narrowing read
+                                // only complete main type cache entries (`uncached_evaluation_count`),
+                                // changed no type, and ran outside speculative and call-site inference
+                                // contexts with no symbol resolution under way, whose circularity
+                                // could make the answer differ later. A later narrowing reads the same
+                                // entries and gives the same answer.
+                                let narrow = || {
+                                    let mut is_unreachable = false;
 
-                                let type_narrowing_callback = get_type_narrowing_callback(
-                                    evaluator,
-                                    condition_reference.0,
-                                    conditional_flow_node.d().expression,
-                                    conditional_flow_node.flags().any(
-                                        FlowFlags::TrueCondition | FlowFlags::TrueNeverCondition,
-                                    ),
-                                    &engine.node_info,
-                                    0,
-                                );
-
-                                if let Some(type_narrowing_callback) = type_narrowing_callback {
-                                    let ref_type_info = evaluator.get_type_of_expression(
+                                    let type_narrowing_callback = get_type_narrowing_callback(
+                                        evaluator,
                                         condition_reference.0,
-                                        EvalFlags::None,
-                                        None,
+                                        conditional_flow_node.d().expression,
+                                        conditional_flow_node.flags().any(
+                                            FlowFlags::TrueCondition | FlowFlags::TrueNeverCondition,
+                                        ),
+                                        &engine.node_info,
+                                        0,
                                     );
 
-                                    let narrowed_type_result =
-                                        type_narrowing_callback(ref_type_info.type_.get());
-                                    let narrowed_type = narrowed_type_result
-                                        .map(|narrowed_type_result| narrowed_type_result.type_)
-                                        .unwrap_or(ref_type_info.type_.get());
+                                    if let Some(type_narrowing_callback) = type_narrowing_callback {
+                                        let ref_type_info = evaluator.get_type_of_expression(
+                                            condition_reference.0,
+                                            EvalFlags::None,
+                                            None,
+                                        );
 
-                                    if is_never(narrowed_type)
-                                        && !ref_type_info.is_incomplete.get().unwrap_or(false)
-                                    {
-                                        is_unreachable = true;
+                                        let narrowed_type_result =
+                                            type_narrowing_callback(ref_type_info.type_.get());
+                                        let narrowed_type = narrowed_type_result
+                                            .map(|narrowed_type_result| narrowed_type_result.type_)
+                                            .unwrap_or(ref_type_info.type_.get());
+
+                                        if is_never(narrowed_type)
+                                            && !ref_type_info.is_incomplete.get().unwrap_or(false)
+                                        {
+                                            is_unreachable = true;
+                                        }
                                     }
-                                }
+
+                                    is_unreachable
+                                };
+                                let mode = jsrt::switch_mode!("PYRIGHT_RS_REACHABILITY_NARROWING_MEMO");
+                                let flow_node_id = cur_flow_node.id;
+                                let remembered = if mode == jsrt::SwitchMode::Off {
+                                    None
+                                } else {
+                                    engine.reachability_narrowing_memo.borrow().get(&flow_node_id).copied()
+                                };
+                                let is_unreachable = match remembered {
+                                    Some(remembered) if mode == jsrt::SwitchMode::On => remembered,
+                                    Some(remembered) => {
+                                        let before = crate::analyzer::type_evaluator::uncached_evaluation_count();
+                                        let epoch = crate::analyzer::type_evaluator::type_mutation_epoch();
+                                        let is_unreachable = narrow();
+                                        assert!(
+                                            is_unreachable == remembered
+                                                && crate::analyzer::type_evaluator::uncached_evaluation_count() == before
+                                                && crate::analyzer::type_evaluator::type_mutation_epoch() == epoch,
+                                            "PYRIGHT_RS_REACHABILITY_NARROWING_MEMO=check: flow node {flow_node_id} narrows again to {is_unreachable}, remembered {remembered}"
+                                        );
+                                        is_unreachable
+                                    }
+                                    None => {
+                                        let rememberable = mode != jsrt::SwitchMode::Off
+                                            && evaluator.symbol_resolution_stack.borrow().is_empty()
+                                            && evaluator.stashed_speculative_stacks.get() == 0
+                                            && !evaluator.is_speculative_mode_in_use(None)
+                                            && evaluator.return_type_inference_type_cache.get().is_none();
+                                        let before = crate::analyzer::type_evaluator::uncached_evaluation_count();
+                                        let epoch = crate::analyzer::type_evaluator::type_mutation_epoch();
+                                        let is_unreachable = narrow();
+                                        if rememberable
+                                            && crate::analyzer::type_evaluator::uncached_evaluation_count() == before
+                                            && crate::analyzer::type_evaluator::type_mutation_epoch() == epoch
+                                        {
+                                            engine.reachability_narrowing_memo.borrow_mut().insert(flow_node_id, is_unreachable);
+                                        }
+                                        is_unreachable
+                                    }
+                                };
 
                                 if is_unreachable {
                                     return self.cache_reachability_result(
