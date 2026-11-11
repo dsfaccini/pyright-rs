@@ -31,15 +31,19 @@ Shrink the live evaluator data that sets pydantic-ai's peak RSS: types, function
 
 `PYRIGHT_RS_GC_CENSUS=1`, `--features pyright/count-malloc`, pydantic-ai, at exit after a major collection. Slot and buffer bytes of the live evaluator objects, MiB.
 
-| item | `main` d91164c |
-|---|---|
-| evaluator total (slots + buffers) | 3,411 |
-| `Type` | 862 + 664 |
-| `FunctionDetailsShared` | 149 + 465 |
-| `TypeResult` | 156 + 127 |
-| the type cache map | 264 |
-| `FunctionParam` vectors | 25 + 196 |
-| `TypeEvaluator` | 103 |
+| item | `main` d91164c | cec53b4 |
+|---|---|---|
+| evaluator total (slots + buffers) | 3,411 | 2,233 |
+| `Type` (all categories) | 862 + 664 | 701 + 450 |
+| of which class types | | 449 + 229 |
+| of which union types | | 89 + 181 |
+| `FunctionDetailsShared` | 149 + 465 | 102 + 24 |
+| `TypeResult` | 156 + 127 | 93 + 69 |
+| the type cache map | 264 | 101 |
+| `FunctionParam` vectors | 25 + 196 | 25 + 157 |
+| `TypeEvaluator` | 103 | 103 |
+
+At cec53b4 the census's end-of-check resident set is 5,727 MiB: evaluator range 1,456, program arena 1,437, malloc heap and the rest 2,769. The major collection at exit freed 185 MiB of malloc that garbage still held.
 
 Field counts on the same run (a temporary diagnostic, not committed):
 
@@ -52,6 +56,15 @@ Field counts on the same run (a temporary diagnostic, not committed):
 ## Attempts
 
 Peak RSS at the default trigger moves with the collection phase: a collection runs every 512 MiB of evaluator slots, and the buffers garbage owns are not counted, so the garbage left at the end of the check (where pydantic-ai peaks) varies by up to about 0.6 GiB. `PYRIGHT_RS_GC_MIN_MIB=64` collects every 64 MiB and tracks the live set more closely; both are listed from `main` baa992f on. The exact-size `Type` change cut the live type slots from 862 to 776 MiB, yet its default-trigger peak rose 0.04 GiB.
+
+The trigger trades instructions for peak RSS. At 731d71b on pydantic-ai, one run each, `PYRIGHT_RS_GC_MIN_MIB`:
+
+| trigger | instructions | peak RSS |
+|---|---|---|
+| 512 (default) | 226.62 G | 5.58 GiB |
+| 256 | 229.91 G (+1.45%) | 5.34 GiB |
+| 128 | 233.54 G (+3.05%) | 5.12 GiB |
+| 64 | 239.32 G (+5.6%) | 5.03 GiB |
 
 | change | pydantic-ai instructions | pydantic-ai peak RSS | samples instructions | samples peak RSS |
 |---|---|---|---|---|
@@ -71,4 +84,6 @@ Peak RSS at the default trigger moves with the collection phase: a collection ru
 | the props and `class_type` commits rebased | 227.17 G | 5.69 / 5.16 GiB | 8.89 G | 0.46 GiB |
 | `Type` exact-size: header plus the details of its category | 226.80 G (−0.16%) | 5.73 / 5.07 GiB | 8.88 G | 0.45 GiB |
 | `LiteralValue` 32 → 16 bytes: class types 104 → 96 bytes | 226.62 G (−0.08%) | 5.58 / 5.03 GiB | 8.87 G | 0.45 GiB |
+| dropped: union literal maps behind one box (union types 104 → 64 bytes); a separate checkout, so its base is 226.65 G, 5.59 / 5.05 GiB | 226.84 G (+0.08%) | 5.63 / 5.01 GiB | 8.89 G | 0.44 GiB |
+| dropped: `expectedTypeCache` an `FxHashMap` of 24-byte entries (`NonEmptyList` candidates) instead of a `JsMap` | 226.57 G (−0.02%) | 5.59 / 5.04 GiB | 8.89 G | 0.44 GiB |
 | dropped: `FunctionDetailsShared` 120 → 96 bytes (`type_params` an `Rc<Vec>`, `type_var_scope_id` a `Cell`) | 231.83 G (+0.16%) | 5.74 GiB | 9.15 G | 0.47 GiB |
