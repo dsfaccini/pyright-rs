@@ -5242,33 +5242,37 @@ pub fn is_type_same(
                 || !ClassType::is_pseudo_generic_class(class_type1)
             {
                 // Make sure the type args match.
-                let type1_tuple_type_args = class_type1.d().priv_.borrow().tuple_type_args.map(|tuple_type_args| tuple_type_args.borrow().clone());
-                let type2_tuple_type_args = class_type2.d().priv_.borrow().tuple_type_args.map(|tuple_type_args| tuple_type_args.borrow().clone());
+                let type1_tuple_type_args = class_type1.d().priv_.borrow().tuple_type_args;
+                let type2_tuple_type_args = class_type2.d().priv_.borrow().tuple_type_args;
 
                 if let (Some(type1_tuple_type_args), Some(type2_tuple_type_args)) =
-                    (&type1_tuple_type_args, &type2_tuple_type_args)
+                    (type1_tuple_type_args, type2_tuple_type_args)
                 {
-                    if type1_tuple_type_args.len() != type2_tuple_type_args.len() {
+                    if type1_tuple_type_args.borrow().len() != type2_tuple_type_args.borrow().len() {
                         return false;
                     }
 
                     // TypeScript skips this loop when both arrays are the same object; the loop
-                    // returns true for that case too.
-                    for i in 0..type1_tuple_type_args.len() {
-                        if !is_type_same(
-                            type1_tuple_type_args[i].type_,
-                            type2_tuple_type_args[i].type_,
-                            recursive_options,
-                            recursion_count,
-                        ) {
+                    // returns true for that case too. It reads the live arrays: their length on
+                    // each pass, each element when the loop reaches it.
+                    let mut i = 0;
+                    while i < type1_tuple_type_args.borrow().len() {
+                        let (type1_arg_type, type1_is_unbounded) = {
+                            let args = type1_tuple_type_args.borrow();
+                            (args[i].type_, args[i].is_unbounded)
+                        };
+                        let (type2_arg_type, type2_is_unbounded) = {
+                            let args = type2_tuple_type_args.borrow();
+                            (args[i].type_, args[i].is_unbounded)
+                        };
+                        if !is_type_same(type1_arg_type, type2_arg_type, recursive_options, recursion_count) {
                             return false;
                         }
 
-                        if type1_tuple_type_args[i].is_unbounded
-                            != type2_tuple_type_args[i].is_unbounded
-                        {
+                        if type1_is_unbounded != type2_is_unbounded {
                             return false;
                         }
+                        i += 1;
                     }
                 } else {
                     let type1_type_args = class_type1.d().priv_.borrow().type_args.clone();
@@ -5343,10 +5347,9 @@ pub fn is_type_same(
             let shared2 = function_type2.d().shared.get();
             let params1_array = shared1.parameters.get();
             let params2_array = shared2.parameters.get();
-            let params1 = params1_array.borrow().clone();
-            let params2 = params2_array.borrow().clone();
+            let params_len = params1_array.borrow().len();
 
-            if params1.len() != params2.len() {
+            if params_len != params2_array.borrow().len() {
                 return false;
             }
 
@@ -5372,19 +5375,22 @@ pub fn is_type_same(
 
             if !have_same_param_signature {
                 // `findIndex` returns -1, never undefined, when there is no separator.
-                let position_only_index1 = params1
+                let position_only_index1 = params1_array
+                    .borrow()
                     .iter()
                     .position(is_position_only_separator)
                     .map_or(-1, |index| index as i64);
-                let position_only_index2 = params2
+                let position_only_index2 = params2_array
+                    .borrow()
                     .iter()
                     .position(is_position_only_separator)
                     .map_or(-1, |index| index as i64);
 
-                // Make sure the parameter details match.
-                for i in 0..params1.len() {
-                    let param1 = &params1[i];
-                    let param2 = &params2[i];
+                // Make sure the parameter details match. Each parameter is read when the loop
+                // reaches it, as TypeScript reads the arrays.
+                for i in 0..params_len {
+                    let param1 = &params1_array.borrow()[i].clone();
+                    let param2 = &params2_array.borrow()[i].clone();
 
                     if param1.category != param2.category {
                         return false;
