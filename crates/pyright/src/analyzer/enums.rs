@@ -232,7 +232,7 @@ pub fn create_enum_type(
         _ => return None,
     };
 
-    let int_class_type = evaluator.get_built_in_type(error_node, "int");
+    let int_class_type = evaluator.get_built_in_type(error_node, jsrt::atom!("int"));
     if !is_instantiable_class(int_class_type) {
         return None;
     }
@@ -862,7 +862,7 @@ pub fn get_type_of_enum_member(
             return None;
         }
 
-        let str_class = evaluator.get_built_in_type(error_node, "str");
+        let str_class = evaluator.get_built_in_type(error_node, jsrt::atom!("str"));
         if !is_instantiable_class(str_class) {
             return None;
         }
@@ -1024,7 +1024,7 @@ pub fn get_enum_auto_value_type(evaluator: &TypeEvaluator, node: ExpressionNode)
             let member_info = evaluator.get_type_of_bound_member(
                 Some(node),
                 ClassType::clone_as_instance(class_type_info.class_type, true),
-                "_generate_next_value_",
+                jsrt::atom!("_generate_next_value_"),
                 &EvaluatorUsage {
                     method: "get".to_string(),
                     set_type: None,
@@ -1061,7 +1061,7 @@ pub fn get_enum_auto_value_type(evaluator: &TypeEvaluator, node: ExpressionNode)
         }
     }
 
-    evaluator.get_built_in_object(node, "int", None)
+    evaluator.get_built_in_object(node, jsrt::atom!("int"), None)
 }
 
 // analyzer/enums.ts:757

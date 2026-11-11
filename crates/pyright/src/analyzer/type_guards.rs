@@ -1545,7 +1545,7 @@ pub(crate) fn narrow_type_for_is_ellipsis(
 
     // `getBuiltInObject` always returns a type, so the TypeScript's `?? getBuiltInObject(node,
     // 'ellipsis') ?? AnyType.create()` fallbacks never run.
-    let ellipsis_type = evaluator.get_built_in_object(node, "EllipsisType", None);
+    let ellipsis_type = evaluator.get_built_in_object(node, jsrt::atom!("EllipsisType"), None);
 
     let is_ellipsis_instance = |subtype: P<Type>| {
         is_class_instance(subtype)

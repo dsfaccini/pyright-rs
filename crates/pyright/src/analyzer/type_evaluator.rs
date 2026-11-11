@@ -1132,13 +1132,13 @@ impl TypeEvaluator {
 
         let file_info = self.node_info.get_file_info(node);
 
-        let object_class = self.get_built_in_type(node, "object");
+        let object_class = self.get_built_in_type(node, jsrt::atom!("object"));
         set(&|p| p.object_class = Some(object_class));
-        let type_class = self.get_built_in_type(node, "type");
+        let type_class = self.get_built_in_type(node, jsrt::atom!("type"));
         set(&|p| p.type_class = Some(type_class));
         let function_class = self
             .get_types_type(node, "FunctionType")
-            .unwrap_or_else(|| self.get_built_in_type(node, "function"));
+            .unwrap_or_else(|| self.get_built_in_type(node, jsrt::atom!("function")));
         set(&|p| p.function_class = Some(function_class));
         let method_class = self.get_types_type(node, "MethodType");
         set(&|p| p.method_class = method_class);
@@ -1160,15 +1160,15 @@ impl TypeEvaluator {
             .get_typeshed_type(node, "NoneType")
             .unwrap_or_else(|| analyzer::types::UnknownType::create(false).0);
         set(&|p| p.none_type_class = Some(none_type_class));
-        let tuple_class = self.get_built_in_type(node, "tuple");
+        let tuple_class = self.get_built_in_type(node, jsrt::atom!("tuple"));
         set(&|p| p.tuple_class = Some(tuple_class));
-        let bool_class = self.get_built_in_type(node, "bool");
+        let bool_class = self.get_built_in_type(node, jsrt::atom!("bool"));
         set(&|p| p.bool_class = Some(bool_class));
-        let int_class = self.get_built_in_type(node, "int");
+        let int_class = self.get_built_in_type(node, jsrt::atom!("int"));
         set(&|p| p.int_class = Some(int_class));
-        let str_class = self.get_built_in_type(node, "str");
+        let str_class = self.get_built_in_type(node, jsrt::atom!("str"));
         set(&|p| p.str_class = Some(str_class));
-        let dict_class = self.get_built_in_type(node, "dict");
+        let dict_class = self.get_built_in_type(node, jsrt::atom!("dict"));
         set(&|p| p.dict_class = Some(dict_class));
         let module_type_class = self.get_typing_type(node, "ModuleType");
         set(&|p| p.module_type_class = module_type_class);
@@ -1978,7 +1978,7 @@ impl TypeEvaluator {
         } else {
             // getBuiltInObject always returns a type, so the `??` fallbacks to 'ellipsis'
             // and Any never run.
-            let ellipsis_type = self.get_built_in_object(node, "EllipsisType", None);
+            let ellipsis_type = self.get_built_in_object(node, jsrt::atom!("EllipsisType"), None);
             type_result = P::new_eval(TypeResult::new(ellipsis_type));
         }
         type_result
@@ -1994,7 +1994,7 @@ impl TypeEvaluator {
         if node.d().is_imaginary.get() {
             type_result = P::new_eval(TypeResult::new(self.get_built_in_object(
                 node.node(),
-                "complex",
+                jsrt::atom!("complex"),
                 None,
             )));
         } else if node.d().is_integer.get() {
@@ -2009,7 +2009,7 @@ impl TypeEvaluator {
             )));
         } else {
             type_result =
-                P::new_eval(TypeResult::new(self.get_built_in_object(node.node(), "float", None)));
+                P::new_eval(TypeResult::new(self.get_built_in_object(node.node(), jsrt::atom!("float"), None)));
         }
         type_result
     }
@@ -2025,7 +2025,7 @@ impl TypeEvaluator {
         let mut iter_expected_type: Option<P<Type>> = None;
 
         if let Some(inference_context) = inference_context {
-            let iterable_type = self.get_built_in_type(node.node(), "Iterable");
+            let iterable_type = self.get_built_in_type(node.node(), jsrt::atom!("Iterable"));
             if analyzer::types::is_instantiable_class(iterable_type) {
                 iter_expected_type = Some(
                     ClassType::clone_as_instance(
@@ -2223,7 +2223,7 @@ impl TypeEvaluator {
                     is_incomplete: Cell::new(Some(is_incomplete)),
                     ..TypeResult::new(self.get_built_in_object(
                         node.node(),
-                        if is_bytes { "bytes" } else { "str" },
+                        if is_bytes { jsrt::atom!("bytes") } else { jsrt::atom!("str") },
                         None,
                     ))
                 }));
@@ -2533,7 +2533,7 @@ impl TypeEvaluator {
                     is_incomplete: Cell::new(Some(is_incomplete)),
                     ..TypeResult::new(self.get_built_in_object(
                         node,
-                        if is_bytes { "bytes" } else { "str" },
+                        if is_bytes { jsrt::atom!("bytes") } else { jsrt::atom!("str") },
                         None,
                     ))
                 });
@@ -3228,7 +3228,7 @@ impl TypeEvaluator {
         &self,
         error_node: Option<ExpressionNode>,
         object_type: ClassType,
-        member_name: &str,
+        member_name: Atom,
         usage: &EvaluatorUsage,
         diag: Option<P<DiagnosticAddendum>>,
         flags: MemberAccessFlags,
@@ -3458,7 +3458,7 @@ impl TypeEvaluator {
         let bound_method_result = self.get_type_of_bound_member(
             error_node,
             class_type,
-            member_name,
+            jsrt::Atom::new(member_name),
             &usage,
             diag,
             MemberAccessFlags::SkipInstanceMembers | MemberAccessFlags::SkipAttributeAccessOverride,
@@ -5188,10 +5188,10 @@ impl TypeEvaluator {
         allow_assignment_to_final_var: bool,
         expected_type_diag_addendum: Option<P<DiagnosticAddendum>>,
     ) {
-        let name_value = name_node.d().value().to_string();
+        let name_value = name_node.d().value();
 
         let Some(symbol_with_scope) =
-            self.look_up_symbol_recursive(name_node.node(), &name_value, false, false)
+            self.look_up_symbol_recursive(name_node.node(), name_node.d().value_atom(), false, false)
         else {
             // This can happen when we are evaluating a piece of code that was
             // determined to be unreachable by the binder.
@@ -5309,7 +5309,7 @@ impl TypeEvaluator {
             let scope = self.get_scope_for_node(name_node.node());
             if scope.is_some_and(|scope| scope.type_ == analyzer::scope::ScopeType::Class) {
                 if analyzer::types::TypeBase::is_instance(dest_type)
-                    && !analyzer::symbol_name_utils::is_constant_name(&name_value)
+                    && !analyzer::symbol_name_utils::is_constant_name(name_value)
                     && !self.is_final_variable(symbol_with_scope.symbol)
                 {
                     dest_type =
@@ -6688,7 +6688,7 @@ impl TypeEvaluator {
                 let unpack_node = UnpackNode::cast(target).unwrap();
                 let list_type = self.get_built_in_object(
                     unpack_node.d().expr.get(),
-                    "list",
+                    jsrt::atom!("list"),
                     Some(&[type_result.type_.get()]),
                 );
                 self.assign_type_to_expression(
@@ -6783,7 +6783,7 @@ impl TypeEvaluator {
 
     // analyzer/typeEvaluator.ts:4981
     pub fn verify_raise_exception_type(&self, node: ExpressionNode, allow_none: bool) {
-        let base_exception_type = self.get_built_in_type(node, "BaseException");
+        let base_exception_type = self.get_built_in_type(node, jsrt::atom!("BaseException"));
         let exception_type = self
             .get_type_of_expression(node, EvalFlags::None, None)
             .type_
@@ -7021,7 +7021,7 @@ impl TypeEvaluator {
     // analyzer/typeEvaluator.ts:5127
     pub(crate) fn get_type_of_name(&self, node: NameNode, flags: EvalFlags) -> P<TypeResult> {
         let file_info = self.node_info.get_file_info(node.node());
-        let name = node.d().value().to_string();
+        let name = node.d().value_atom();
         let symbol: P<Symbol>;
         let mut type_: P<Type>;
         let mut is_incomplete = false;
@@ -7031,7 +7031,7 @@ impl TypeEvaluator {
         // see if it has a declared type.
         let mut symbol_with_scope = self.look_up_symbol_recursive(
             node.node(),
-            &name,
+            name,
             !allow_forward_references,
             allow_forward_references && flags.any(EvalFlags::TypeExpression),
         );
@@ -7123,7 +7123,7 @@ impl TypeEvaluator {
                     // Is this a module-level scope? If so, see if it's an alias of a builtin.
                     if symbol_with_scope.scope.type_ == analyzer::scope::ScopeType::Module {
                         common::debug::assert(symbol_with_scope.scope.parent.is_some(), None);
-                        let built_in_symbol = symbol_with_scope.scope.parent.unwrap().look_up_symbol(&name);
+                        let built_in_symbol = symbol_with_scope.scope.parent.unwrap().look_up_symbol(name);
                         if let Some(built_in_symbol) = built_in_symbol {
                             let built_in_effective_type =
                                 self.get_effective_type_of_symbol_for_usage(built_in_symbol, None, false);
@@ -8305,7 +8305,7 @@ impl TypeEvaluator {
         )
         .unwrap();
         let member = node.d().member.get();
-        let member_name = member.d().value().to_string();
+        let member_name = member.d().value_atom();
         let mut diag = DiagnosticAddendum::new();
         let file_info = self.node_info.get_file_info(node.node());
         let mut type_: Option<P<Type>> = None;
@@ -8565,7 +8565,7 @@ impl TypeEvaluator {
                     type_result = self.get_type_of_bound_member(
                         Some(member.node()),
                         ClassType(base_type),
-                        &member_name,
+                        member_name,
                         usage,
                         Some(diag),
                         if !flags.any(EvalFlags::TypeExpression) {
@@ -8789,7 +8789,7 @@ impl TypeEvaluator {
                             let type_result = self.get_type_of_bound_member(
                                 Some(member.node()),
                                 ClassType(subtype),
-                                &member_name,
+                                member_name,
                                 usage,
                                 Some(diag),
                                 MemberAccessFlags::Default,
@@ -8960,7 +8960,7 @@ impl TypeEvaluator {
                             ClassType(base_type).d().shared.get().typed_dict_entries.get();
                         if let Some(typed_dict_entries) = typed_dict_entries {
                             let has_td_key =
-                                typed_dict_entries.known_items.borrow().contains_key(&member_name);
+                                typed_dict_entries.known_items.borrow().contains_key(member_name.as_str());
                             if has_td_key {
                                 let sub_diag = DiagnosticAddendum::new();
                                 sub_diag.add_message(
@@ -9030,7 +9030,7 @@ impl TypeEvaluator {
         &self,
         error_node: Option<ExpressionNode>,
         class_type: ClassType,
-        member_name: &str,
+        member_name: Atom,
         usage: &EvaluatorUsage,
         diag: Option<P<DiagnosticAddendum>>,
         flags: MemberAccessFlags,
@@ -9065,7 +9065,7 @@ impl TypeEvaluator {
                         error_node,
                         class_type,
                         usage,
-                        member_name,
+                        &member_name,
                         self_type,
                     );
                     if let Some(general_attr_type) = general_attr_type {
@@ -9091,7 +9091,7 @@ impl TypeEvaluator {
             if let Some(diag) = diag {
                 diag.add_message(
                     crate::localization::localize::LocAddendum::member_unknown()
-                        .format(&[("name", member_name)]),
+                        .format(&[("name", &member_name)]),
                 );
             }
             return None;
@@ -9105,7 +9105,7 @@ impl TypeEvaluator {
             if let Some(diag) = diag {
                 diag.add_message(
                     crate::localization::localize::LocAddendum::member_is_init_var()
-                        .format(&[("name", member_name)]),
+                        .format(&[("name", &member_name)]),
                 );
             }
             return None;
@@ -9233,7 +9233,7 @@ impl TypeEvaluator {
                 if let Some(diag) = diag {
                     diag.add_message(
                         crate::localization::localize::LocAddendum::member_unknown()
-                            .format(&[("name", member_name)]),
+                            .format(&[("name", &member_name)]),
                     );
                 }
                 return None;
@@ -9305,7 +9305,7 @@ impl TypeEvaluator {
                         self_type,
                         flags,
                         error_node.unwrap(),
-                        member_name,
+                        &member_name,
                         usage,
                         diag,
                     );
@@ -9337,7 +9337,7 @@ impl TypeEvaluator {
                         class_type,
                         self_type,
                         flags,
-                        member_name,
+                        &member_name,
                         usage,
                         diag,
                         recursion_count,
@@ -9367,7 +9367,7 @@ impl TypeEvaluator {
                     if let Some(diag) = diag {
                         diag.add_message(
                             crate::localization::localize::LocAddendum::member_set_class_var()
-                                .format(&[("name", member_name)]),
+                                .format(&[("name", &member_name)]),
                         );
                     }
                     is_descriptor_error = true;
@@ -9401,7 +9401,7 @@ impl TypeEvaluator {
                                 if let Some(diag) = diag {
                                     diag.add_message(
                                         crate::localization::localize::LocMessage::final_reassigned()
-                                            .format(&[("name", member_name)]),
+                                            .format(&[("name", &member_name)]),
                                     );
                                 }
                                 is_descriptor_error = true;
@@ -9419,7 +9419,7 @@ impl TypeEvaluator {
                     if let Some(diag) = diag {
                         diag.add_message(
                             crate::localization::localize::LocAddendum::read_only_attribute()
-                                .format(&[("name", member_name)]),
+                                .format(&[("name", &member_name)]),
                         );
                     }
                     is_descriptor_error = true;
@@ -9461,7 +9461,7 @@ impl TypeEvaluator {
                                 crate::localization::localize::LocAddendum::member_assignment()
                                     .format(&[
                                         ("type", &self.print_type(set_type.type_.get(), None)),
-                                        ("name", member_name),
+                                        ("name", &member_name),
                                         ("classType", &self.print_object_type_for_class(class_type)),
                                     ]),
                             );
@@ -9548,7 +9548,7 @@ impl TypeEvaluator {
         let method_type_result = self.get_type_of_bound_member(
             Some(error_node),
             concrete_member_type,
-            access_method_name,
+            jsrt::Atom::new(access_method_name),
             &EvaluatorUsage {
                 method: "get".to_string(),
                 set_type: None,
@@ -10146,7 +10146,7 @@ impl TypeEvaluator {
             self.get_type_of_bound_member(
                 Some(error_node),
                 class_type,
-                name,
+                jsrt::Atom::new(name),
                 &get_usage,
                 None,
                 MemberAccessFlags::SkipInstanceMembers
@@ -17300,7 +17300,7 @@ impl TypeEvaluator {
                     .borrow()
                     .is_empty()
                 {
-                    let object_type = self.get_built_in_type(error_node, "object");
+                    let object_type = self.get_built_in_type(error_node, jsrt::atom!("object"));
                     Rc::make_mut(&mut *new_class_type
                         .d()
                         .shared
@@ -17363,7 +17363,7 @@ impl TypeEvaluator {
         let call_method_result = self.get_type_of_bound_member(
             Some(error_node),
             expanded_call_type,
-            "__call__",
+            jsrt::atom!("__call__"),
             /* usage */
             &EvaluatorUsage {
                 method: "get".to_string(),
@@ -18591,7 +18591,7 @@ impl TypeEvaluator {
                             });
                         }
                     } else {
-                        let str_obj_type = self.get_built_in_object(error_node, "str", None);
+                        let str_obj_type = self.get_built_in_object(error_node, jsrt::atom!("str"), None);
                         let supports_keys_and_get_item_class = self
                             .prefetched
                             .borrow()
@@ -22315,7 +22315,7 @@ impl TypeEvaluator {
             || const_type == parser::tokenizer_types::KeywordType::False
             || const_type == parser::tokenizer_types::KeywordType::Debug
         {
-            type_ = Some(self.get_built_in_object(node.0, "bool", None));
+            type_ = Some(self.get_built_in_object(node.0, jsrt::atom!("bool"), None));
 
             // For True and False, we can create truthy and falsy
             // versions of 'bool'.
@@ -22769,7 +22769,7 @@ impl TypeEvaluator {
             expected_key_type = inference_context.expected_type.get();
             expected_value_type = inference_context.expected_type.get();
         } else {
-            let built_in_dict = self.get_built_in_object(node.0, "dict", None);
+            let built_in_dict = self.get_built_in_object(node.0, jsrt::atom!("dict"), None);
             if !analyzer::types::is_class_instance(built_in_dict) {
                 return None;
             }
@@ -22871,7 +22871,7 @@ impl TypeEvaluator {
 
         let type_ = self.get_built_in_object(
             node.0,
-            "dict",
+            jsrt::atom!("dict"),
             Some(&[specialized_key_type, specialized_value_type]),
         );
         Some(P::new_eval(TypeResult {
@@ -23015,7 +23015,7 @@ impl TypeEvaluator {
             is_empty_container = true;
         }
 
-        let dict_class = self.get_built_in_type(node.0, "dict");
+        let dict_class = self.get_built_in_type(node.0, jsrt::atom!("dict"));
         let type_ = if analyzer::types::is_instantiable_class(dict_class) {
             ClassType::clone_as_instance(
                 ClassType::specialize(
@@ -24979,7 +24979,7 @@ impl TypeEvaluator {
             }
         }
 
-        let slice_type = self.get_built_in_object(node.0, "slice", None);
+        let slice_type = self.get_built_in_object(node.0, jsrt::atom!("slice"), None);
 
         if !analyzer::types::is_class_instance(slice_type) {
             return P::new_eval(TypeResult::new(slice_type));
@@ -27628,7 +27628,7 @@ impl TypeEvaluator {
                     );
 
                     if let Some(const_expr_value) = const_expr_value {
-                        let bool_type = self.get_built_in_object(node.0, "bool", None);
+                        let bool_type = self.get_built_in_object(node.0, jsrt::atom!("bool"), None);
                         if analyzer::types::is_class_instance(bool_type) {
                             right_hand_type = ClassType::clone_with_literal(
                                 ClassType(bool_type),
@@ -28465,7 +28465,7 @@ impl TypeEvaluator {
             && !base_classes.iter().any(|base_class| analyzer::types::is_class(*base_class))
         {
             // If there are no other (known) base classes, the class implicitly derives from object.
-            let object_type = self.get_built_in_type(node.0, "object");
+            let object_type = self.get_built_in_type(node.0, jsrt::atom!("object"));
             Rc::make_mut(&mut *shared.base_classes.borrow_mut()).push(object_type);
         }
 
@@ -29229,7 +29229,7 @@ impl TypeEvaluator {
         // If we haven't found an effective metaclass, assume "type", which
         // is the metaclass for "object".
         let effective_metaclass = effective_metaclass.unwrap_or_else(|| {
-            let type_metaclass = self.get_built_in_type(error_node, "type");
+            let type_metaclass = self.get_built_in_type(error_node, jsrt::atom!("type"));
             if analyzer::types::is_instantiable_class(type_metaclass) {
                 type_metaclass
             } else {
@@ -29503,7 +29503,7 @@ impl TypeEvaluator {
             let init_subclass_method_info = self.get_type_of_bound_member(
                 Some(name_node.0),
                 class_type,
-                "__init_subclass__",
+                jsrt::atom!("__init_subclass__"),
                 /* usage */
                 &EvaluatorUsage {
                     method: "get".to_string(),
@@ -30444,8 +30444,8 @@ impl TypeEvaluator {
                 }
 
                 // Wrap the type in a dict with str keys.
-                let dict_type = self.get_built_in_type(node, "dict");
-                let str_type = self.get_built_in_object(node, "str", None);
+                let dict_type = self.get_built_in_type(node, jsrt::atom!("dict"));
+                let str_type = self.get_built_in_object(node, jsrt::atom!("str"), None);
 
                 if analyzer::types::is_instantiable_class(dict_type) && analyzer::types::is_class_instance(str_type) {
                     return ClassType::clone_as_instance(
@@ -31028,9 +31028,9 @@ impl TypeEvaluator {
             target_type = self.get_built_in_object(
                 node.0,
                 if includes_base_exception {
-                    "BaseExceptionGroup"
+                    jsrt::atom!("BaseExceptionGroup")
                 } else {
-                    "ExceptionGroup"
+                    jsrt::atom!("ExceptionGroup")
                 },
                 Some(&[target_type]),
             );
@@ -33244,7 +33244,7 @@ impl TypeEvaluator {
     }
 
     // analyzer/typeEvaluator.ts:23221
-    pub fn get_built_in_type(&self, node: P<ParseNode>, name: &str) -> P<Type> {
+    pub fn get_built_in_type(&self, node: P<ParseNode>, name: impl AtomKey) -> P<Type> {
         let scope = self.get_scope_for_node(node);
         if let Some(scope) = scope {
             let built_in_scope = analyzer::scope_utils::get_built_in_scope(scope);
@@ -33261,7 +33261,7 @@ impl TypeEvaluator {
     pub fn get_built_in_object(
         &self,
         node: P<ParseNode>,
-        name: &str,
+        name: impl AtomKey,
         type_args: Option<&[P<Type>]>,
     ) -> P<Type> {
         let name_type = self.get_built_in_type(node, name);
@@ -34164,8 +34164,8 @@ impl TypeEvaluator {
                     }));
                 }
 
-                let str_type = self.get_built_in_object(declaration.node.get(), "str", None);
-                let int_type = self.get_built_in_object(declaration.node.get(), "int", None);
+                let str_type = self.get_built_in_object(declaration.node.get(), jsrt::atom!("str"), None);
+                let int_type = self.get_built_in_object(declaration.node.get(), jsrt::atom!("int"), None);
                 if analyzer::types::is_class_instance(int_type) && analyzer::types::is_class_instance(str_type) {
                     if intrinsic_type == "str" {
                         return declared(Some(str_type));
@@ -34183,7 +34183,7 @@ impl TypeEvaluator {
                     }
 
                     if intrinsic_type == "MutableSequence[str]" {
-                        let sequence_type = self.get_built_in_type(declaration.node.get(), "MutableSequence");
+                        let sequence_type = self.get_built_in_type(declaration.node.get(), jsrt::atom!("MutableSequence"));
                         if analyzer::types::is_instantiable_class(sequence_type) {
                             return declared(Some(
                                 ClassType::clone_as_instance(
@@ -34203,7 +34203,7 @@ impl TypeEvaluator {
                     }
 
                     if intrinsic_type == "dict[str, Any]" {
-                        let dict_type = self.get_built_in_type(declaration.node.get(), "dict");
+                        let dict_type = self.get_built_in_type(declaration.node.get(), jsrt::atom!("dict"));
                         if analyzer::types::is_instantiable_class(dict_type) {
                             return declared(Some(
                                 ClassType::clone_as_instance(

@@ -1102,8 +1102,8 @@ pub fn synthesize_data_class_methods(
 
     // Synthesize the __match_args__ class variable if it doesn't exist
     // and match_args behavior is not explicitly disabled.
-    let str_type = evaluator.get_built_in_type(node.0, "str");
-    let tuple_class_type = evaluator.get_built_in_type(node.0, "tuple");
+    let str_type = evaluator.get_built_in_type(node.0, jsrt::atom!("str"));
+    let tuple_class_type = evaluator.get_built_in_type(node.0, jsrt::atom!("tuple"));
     if is_instantiable_class(tuple_class_type)
         && is_instantiable_class(str_type)
         && !symbol_table.has("__match_args__")
@@ -1169,7 +1169,7 @@ pub fn synthesize_data_class_methods(
             .shared
             .get()
             .declared_return_type
-            .set(Some(evaluator.get_built_in_object(node.0, "bool", None)));
+            .set(Some(evaluator.get_built_in_object(node.0, jsrt::atom!("bool"), None)));
         // If a method of this name already exists, don't override it.
         if symbol_table.get(operator).is_none() {
             symbol_table.set(
@@ -1183,7 +1183,7 @@ pub fn synthesize_data_class_methods(
     if !ClassType::is_data_class_skip_generate_eq(class_type) {
         synthesize_comparison_method(
             "__eq__",
-            evaluator.get_built_in_object(node.0, "object", None),
+            evaluator.get_built_in_object(node.0, jsrt::atom!("object"), None),
         );
     }
 
@@ -1217,7 +1217,7 @@ pub fn synthesize_data_class_methods(
             .shared
             .get()
             .declared_return_type
-            .set(Some(evaluator.get_built_in_object(node.0, "int", None)));
+            .set(Some(evaluator.get_built_in_object(node.0, jsrt::atom!("int"), None)));
         symbol_table.set(
             "__hash__",
             Symbol::create_with_type(
@@ -1237,10 +1237,10 @@ pub fn synthesize_data_class_methods(
         );
     }
 
-    let mut dict_type = evaluator.get_built_in_type(node.0, "dict");
+    let mut dict_type = evaluator.get_built_in_type(node.0, jsrt::atom!("dict"));
     if is_instantiable_class(dict_type) {
         let type_args = [
-            evaluator.get_built_in_object(node.0, "str", None),
+            evaluator.get_built_in_object(node.0, jsrt::atom!("str"), None),
             AnyType::create(false).0,
         ];
         dict_type = ClassType::clone_as_instance(
@@ -1314,7 +1314,7 @@ pub fn synthesize_data_class_methods(
             .unwrap_or_else(|| UnknownType::create(false).0);
 
         if is_instantiable_class(iterable_type) {
-            let type_args = [evaluator.get_built_in_object(node.0, "str", None)];
+            let type_args = [evaluator.get_built_in_object(node.0, jsrt::atom!("str"), None)];
             iterable_type = ClassType::clone_as_instance(
                 ClassType::specialize(
                     ClassType(iterable_type),
@@ -1679,7 +1679,7 @@ pub(crate) fn get_descriptor_for_converter_field(
     node_info: &AnalyzerNodeInfoAccessor,
 ) -> P<Symbol> {
     let file_info = node_info.get_file_info(dataclass_node);
-    let type_metaclass = evaluator.get_built_in_type(dataclass_node, "type");
+    let type_metaclass = evaluator.get_built_in_type(dataclass_node, jsrt::atom!("type"));
     let descriptor_name = format!("__converterDescriptor_{field_name}");
 
     let descriptor_class = ClassType::create_instantiable(
@@ -1739,7 +1739,7 @@ pub(crate) fn get_descriptor_for_converter_field(
     let get_type = apply_solved_type_vars(get_type, &solution, &ApplyTypeVarOptions::default());
     let set_type = apply_solved_type_vars(set_type, &solution, &ApplyTypeVarOptions::default());
 
-    let object_type = evaluator.get_built_in_type(dataclass_node, "object");
+    let object_type = evaluator.get_built_in_type(dataclass_node, jsrt::atom!("object"));
     Rc::make_mut(&mut *descriptor_class
         .d()
         .shared

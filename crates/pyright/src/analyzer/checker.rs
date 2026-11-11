@@ -3791,10 +3791,10 @@ impl Checker {
         error_node: ExpressionNode,
         is_except_group: bool,
     ) {
-        let base_exception_type = self._evaluator.get_built_in_type(error_node, "BaseException");
+        let base_exception_type = self._evaluator.get_built_in_type(error_node, jsrt::atom!("BaseException"));
         let base_exception_group_type = self
             ._evaluator
-            .get_built_in_type(error_node, "BaseExceptionGroup");
+            .get_built_in_type(error_node, jsrt::atom!("BaseExceptionGroup"));
         let diag_addendum = DiagnosticAddendum::new();
 
         self._validate_exception_type_recursive(
@@ -6768,7 +6768,7 @@ impl Checker {
             return;
         }
 
-        let object_type = self._evaluator.get_built_in_type(error_node.0, "object");
+        let object_type = self._evaluator.get_built_in_type(error_node.0, jsrt::atom!("object"));
         if !analyzer::types::is_instantiable_class(object_type) {
             return;
         }

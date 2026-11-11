@@ -785,7 +785,7 @@ impl ModuleType {
     }
 
     // analyzer/types.ts:521
-    pub fn get_field(module_type: ModuleType, name: &str) -> Option<P<Symbol>> {
+    pub fn get_field(module_type: ModuleType, name: impl jsrt::AtomKey) -> Option<P<Symbol>> {
         // Always look for the symbol in the module's fields before consulting
         // the loader fields. The loader runs before the module, so its values
         // will be overwritten by the module.

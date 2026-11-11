@@ -142,7 +142,7 @@ pub(crate) fn apply_partial_transform(
         let call_method_result = evaluator.get_type_of_bound_member(
             Some(error_node),
             ClassType(orig_function_type_concrete),
-            "__call__",
+            jsrt::atom!("__call__"),
             /* usage */
             &EvaluatorUsage {
                 method: "get".to_string(),
