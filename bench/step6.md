@@ -69,3 +69,14 @@ At a687113 the arena stats count about 7 GB of evaluator objects at the end of t
 | samples | 13.95 G | 1.24 s | 0.68 GB | 5.5 s | 0.62 GB |
 
 Five agents work from this baseline: `hot` (CPU hotspots), `build` (compiler and link settings), `gc` (collection time and peak memory), `progmem` (program heap) and `explore` (architectural levers, research).
+
+## optimization round progress
+
+`bench/measure.sh`, median of 3 (load average 4 to 5 from other agents, so wall times are high):
+
+| `main` | change | pydantic-ai | samples |
+|---|---|---|---|
+| 308f470 | baseline | 388.7 G instructions, 52.3 s, 11.8 GB | 13.95 G, 1.24 s, 0.68 GB |
+| 6094c4c | fat LTO (`build`) and 28 hotspot fixes (`hot`) | 282.6 G instructions (−27.3%), 42.7 s, 11.4 GB | 10.16 G (−27.2%), 1.00 s, 0.65 GB |
+
+At 6094c4c `CHECK_MEMORY_MAX=30G oracle/corpus/check.sh` passes on pydantic-ai: output and all 40,176 dumps identical.
