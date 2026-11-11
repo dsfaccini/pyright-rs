@@ -110,3 +110,29 @@ From the round's baseline (308f470: 388.7 G, 52.3 s, 11.8 GiB on pydantic-ai), `
 At 50778f0 the pydantic-ai gate passes: output and all 40,176 dumps identical, also with `PYRIGHT_RS_SCOPE_ID_CACHE=check` and `PYRIGHT_RS_LOCALIZE_INDEX=check`.
 
 At d16e837 the pydantic-ai gate passes: output and all 40,176 dumps identical, also with `PYRIGHT_RS_DEFER_MRO_SPECIALIZATION`, `PYRIGHT_RS_ABSTRACT_SYMBOLS_MEMO`, `PYRIGHT_RS_LAZY_ADDENDUM_FORMAT` and `PYRIGHT_RS_PRINT_TYPE_MEMO` at `check`.
+
+## after the second optimization round
+
+`main` 232d44d on a quiet devbox (load average 0.3 to 1.8), nothing else running. `bench/compare.py target/release/pyright-rs,target/dist/pyright-rs <corpora>`: median of 3 wall and CPU times, maximum peak RSS; pyright is the recorded checker with dumps off. Both builds match pyright on all eight corpora, output and all 40,176 pydantic-ai dumps.
+
+| corpus | pyright | release | dist | wall speedup |
+|---|---|---|---|---|
+| pydantic-ai | 136.13 s, 211.63 s CPU, 9.94 GiB | 24.92 s, 26.80 s CPU, 5.68 GiB | 20.53 s, 22.44 s CPU, 5.70 GiB | 5.5x, 6.6x |
+| samples | 5.47 s, 9.63 s CPU, 0.62 GiB | 0.76 s, 0.76 s CPU, 0.45 GiB | 0.59 s, 0.58 s CPU, 0.46 GiB | 7.2x, 9.3x |
+| typeshed | 3.32 s, 5.66 s CPU, 0.62 GiB | 0.53 s, 0.52 s CPU, 0.37 GiB | 0.41 s, 0.41 s CPU, 0.37 GiB | 6.3x, 8.1x |
+| primer-attrs | 1.35 s, 2.59 s CPU, 0.29 GiB | 0.15 s, 0.15 s CPU, 0.13 GiB | 0.13 s, 0.12 s CPU, 0.14 GiB | 9.0x, 10.4x |
+| primer-bidict | 0.61 s, 1.01 s CPU, 0.20 GiB | 0.06 s, 0.06 s CPU, 0.06 GiB | 0.05 s, 0.05 s CPU, 0.07 GiB | 10.2x, 12.2x |
+| primer-more-itertools | 1.35 s, 2.57 s CPU, 0.28 GiB | 0.17 s, 0.17 s CPU, 0.15 GiB | 0.14 s, 0.13 s CPU, 0.15 GiB | 7.9x, 9.6x |
+| primer-packaging | 1.48 s, 2.80 s CPU, 0.29 GiB | 0.18 s, 0.17 s CPU, 0.14 GiB | 0.14 s, 0.13 s CPU, 0.15 GiB | 8.2x, 10.6x |
+| primer-python-chess | 1.89 s, 3.41 s CPU, 0.32 GiB | 0.24 s, 0.23 s CPU, 0.18 GiB | 0.19 s, 0.19 s CPU, 0.18 GiB | 7.9x, 9.9x |
+
+pyright's pydantic-ai peak varied between measurements: 8.65 GiB in the reference run, 9.94 GiB here.
+
+`bench/measure.sh`, one run each, instructions:
+
+| build | pydantic-ai | samples |
+|---|---|---|
+| `release` | 213.35 G | 7.55 G |
+| `dist` | 175.09 G | 6.04 G |
+
+From the first round's baseline (308f470: 388.7 G, 52.3 s, 11.8 GiB on pydantic-ai), `dist` runs 55% fewer instructions and peaks 52% lower. From the second round's start (cc3de3f, `dist`: 217.1 G, 28.5 s, 7.29 GiB), 19% fewer instructions and a 22% lower peak.
