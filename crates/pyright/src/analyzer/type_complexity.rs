@@ -83,7 +83,7 @@ pub(crate) fn get_complexity_score_for_class(class_type: ClassType, recursion_co
             type_arg_count += 1;
         }
     } else if let Some(type_args) = type_args {
-        for type_ in type_args {
+        for type_ in type_args.iter().copied() {
             type_arg_score_sum += get_complexity_score_for_type(type_, recursion_count);
             type_arg_count += 1;
         }

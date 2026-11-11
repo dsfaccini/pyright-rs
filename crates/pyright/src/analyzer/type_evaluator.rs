@@ -13318,7 +13318,7 @@ impl TypeEvaluator {
                                 );
                             }
                         } else {
-                            for type_arg in type_args {
+                            for type_arg in type_args.iter().copied() {
                                 self.collect_literal_enum_classes(
                                     type_arg,
                                     literal_enum_classes,
@@ -36409,7 +36409,7 @@ impl TypeEvaluator {
                         .map(|tuple_type_args| tuple_type_args.get().borrow())
                         .as_deref()
                         .map(|tuple_type_args| tuple_type_args.iter().map(|tuple_type_arg| tuple_type_arg.type_).collect())
-                })
+                }).map(|a| a.to_vec())
             };
             let has_gradual_type_arg = specialized_type_args.as_ref().map(|specialized_type_args| {
                 specialized_type_args.iter().any(|&type_arg| {
@@ -36929,8 +36929,8 @@ impl TypeEvaluator {
                 .as_deref()
                 .map(|tuple_type_args| tuple_type_args.iter().map(|t| t.type_).collect());
         } else {
-            dest_type_args = dest_type.d().priv_.borrow().type_args.clone().unwrap();
-            src_type_args = src_type.d().priv_.borrow().type_args.clone();
+            dest_type_args = dest_type.d().priv_.borrow().type_args.clone().unwrap().to_vec();
+            src_type_args = src_type.d().priv_.borrow().type_args.clone().map(|a| a.to_vec());
         }
 
         let mut is_compatible = true;

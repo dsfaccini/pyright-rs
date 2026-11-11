@@ -1463,7 +1463,7 @@ pub fn contains_literal_type(type_: P<Type>, include_type_args: bool) -> bool {
                         let priv_ = class_type.d().priv_.borrow();
                         match &priv_.tuple_type_args {
                             Some(tuple_type_args) => Some(tuple_type_args.borrow().iter().map(|t| t.type_).collect::<Vec<_>>()),
-                            None => priv_.type_args.clone(),
+                            None => priv_.type_args.clone().map(|a| a.to_vec()),
                         }
                     };
                     if let Some(type_args) = type_args {
@@ -2002,7 +2002,7 @@ pub fn get_container_depth(type_: P<Type>, recursion_count: u32) -> u32 {
             );
         }
     } else if let Some(type_args) = type_args {
-        for type_arg in type_args {
+        for type_arg in type_args.iter().copied() {
             do_for_each_subtype(
                 type_arg,
                 &mut |subtype, _, _| {
@@ -2529,7 +2529,7 @@ pub fn get_type_var_args_recursive(type_: P<Type>, recursion_count: u32) -> Vec<
             let priv_ = ClassType(type_).d().priv_.borrow();
             match &priv_.tuple_type_args {
                 Some(tuple_type_args) => Some(tuple_type_args.borrow().iter().map(|e| e.type_).collect::<Vec<_>>()),
-                None => priv_.type_args.clone(),
+                None => priv_.type_args.clone().map(|a| a.to_vec()),
             }
         };
         if let Some(type_args) = type_args {
@@ -2638,7 +2638,7 @@ pub fn build_solution_from_specialized_class(class_type: ClassType) -> Rc<Constr
             true,
         )]);
     } else {
-        type_args = class_type.d().priv_.borrow().type_args.clone();
+        type_args = class_type.d().priv_.borrow().type_args.clone().map(|a| a.to_vec());
     }
 
     build_solution(&type_params, type_args.as_deref())
@@ -3232,7 +3232,7 @@ pub fn contains_any_or_unknown(type_: P<Type>, recurse: bool) -> Option<P<Type>>
                         let priv_ = type_.d().priv_.borrow();
                         match &priv_.tuple_type_args {
                             Some(tuple_type_args) => Some(tuple_type_args.borrow().iter().map(|t| t.type_).collect::<Vec<_>>()),
-                            None => priv_.type_args.clone(),
+                            None => priv_.type_args.clone().map(|a| a.to_vec()),
                         }
                     };
                     if let Some(type_args) = type_args {
@@ -3347,7 +3347,7 @@ pub fn is_partly_unknown(type_: P<Type>, recursion_count: u32) -> bool {
                 let priv_ = class_type.d().priv_.borrow();
                 match &priv_.tuple_type_args {
                     Some(tuple_type_args) => Some(tuple_type_args.borrow().iter().map(|t| t.type_).collect::<Vec<_>>()),
-                    None => priv_.type_args.clone(),
+                    None => priv_.type_args.clone().map(|a| a.to_vec()),
                 }
             };
             if let Some(type_args) = type_args {
@@ -3626,7 +3626,7 @@ pub fn get_generator_type_args(return_type: P<Type>) -> Option<Vec<P<Type>>> {
     if crate::analyzer::types::is_class_instance(return_type) {
         let class_type = ClassType(return_type);
         if ClassType::is_built_in(class_type, Some(&["Generator", "AsyncGenerator"])) {
-            return class_type.d().priv_.borrow().type_args.clone();
+            return class_type.d().priv_.borrow().type_args.clone().map(|a| a.to_vec());
         } else if ClassType::is_built_in(class_type, Some(&["AwaitableGenerator"])) {
             // AwaitableGenerator has four type arguments, and the first 3
             // correspond to the generator.
@@ -4588,7 +4588,7 @@ pub(crate) fn transform_type_pair_recursive(
             let transformed_type = crate::analyzer::types::TypeBase::clone_type(source_type);
             {
                 let mut priv_ = ClassType(transformed_type).d().priv_.borrow_mut();
-                priv_.type_args = type_args;
+                priv_.type_args = type_args.map(Rc::from);
                 priv_.tuple_type_args = tuple_type_args
                     .map(|tuple_type_args| P::new_eval(RefCell::new(tuple_type_args)));
             }
@@ -5048,9 +5048,10 @@ pub trait TypeVarTransformer {
 
         if new_type_args.is_none() {
             let class_type_args = class_type.d().priv_.borrow().type_args.clone();
-            let type_args: Vec<P<Type>> = class_type_args
-                .clone()
-                .unwrap_or_else(|| type_params.iter().map(|type_param| type_param.0).collect());
+            let type_args: Vec<P<Type>> = match &class_type_args {
+                Some(class_type_args) => class_type_args.to_vec(),
+                None => type_params.iter().map(|type_param| type_param.0).collect(),
+            };
 
             if class_type_args.is_none() {
                 is_type_arg_explicit = false;

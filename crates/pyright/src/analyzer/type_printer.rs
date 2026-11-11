@@ -1844,7 +1844,7 @@ impl UniqueNameMap {
                                 self.build(type_arg.type_, recursion_types, recursion_count);
                             }
                         } else if let Some(type_args) = type_args {
-                            for &type_arg in &type_args {
+                            for &type_arg in type_args.iter() {
                                 self.build(type_arg, recursion_types, recursion_count);
                             }
                         }

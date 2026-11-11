@@ -958,7 +958,7 @@ pub struct PropertyMethodInfo {
 #[derive(Clone, Default)]
 #[derive(jsrt::Trace)]
 pub struct ClassDetailsPriv {
-    pub type_args: Option<Vec<P<Type>>>,
+    pub type_args: Option<Rc<[P<Type>]>>,
     pub is_empty_container: Option<bool>,
     pub tuple_type_args: Option<P<RefCell<Vec<TupleTypeArg>>>>,
     pub is_unpacked: Option<bool>,
@@ -1209,7 +1209,7 @@ impl ClassType {
 
         priv_.type_args = match type_args {
             Some([]) => None,
-            Some(type_args) => Some(type_args.to_vec()),
+            Some(type_args) => Some(Rc::from(type_args)),
             None => None,
         };
 
@@ -5270,8 +5270,8 @@ pub fn is_type_same(
                     // the loop returns true for those cases too.
                     let type_arg_count = type1_type_args
                         .as_ref()
-                        .map_or(0, Vec::len)
-                        .max(type2_type_args.as_ref().map_or(0, Vec::len));
+                        .map_or(0, |a| a.len())
+                        .max(type2_type_args.as_ref().map_or(0, |a| a.len()));
 
                     for i in 0..type_arg_count {
                         // Assume that missing type args are "Unknown".
