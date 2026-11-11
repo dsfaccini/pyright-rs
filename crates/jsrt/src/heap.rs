@@ -427,7 +427,8 @@ struct TypeInfo {
     recip: u32,
     count: u32,
     drop: unsafe fn(usize),
-    prefetch_owned: unsafe fn(usize),
+    /// Drops the objects of one bitmap word: `sweep_erased`.
+    sweep: unsafe fn(usize, usize, u64),
     trace: TraceFn,
 }
 
@@ -453,17 +454,48 @@ unsafe fn drop_erased<T>(addr: usize) {
     unsafe { ptr::drop_in_place(addr as *mut T) }
 }
 
-unsafe fn prefetch_owned_erased<T: Trace>(addr: usize) {
-    unsafe { (*(addr as *const T)).prefetch_owned() }
-}
-
 unsafe fn trace_erased<T: Trace>(addr: usize, t: &mut Tracer) {
     unsafe { (*(addr as *const T)).trace(t) }
 }
 
+/// The slot of a `T` in a typed block.
+const fn slot_of<T>() -> usize {
+    let size = if size_of::<T>() < 8 { 8 } else { size_of::<T>() };
+    size.next_multiple_of(align_of::<T>())
+}
+
+/// Drops the objects `dead` names in bitmap word `w` of the block at `base`, in
+/// slot order, prefetching the buffers of the dead object `SWEEP_AHEAD` after each.
+/// One function per type, so the drop and the prefetch inline into the loop.
+unsafe fn sweep_erased<T: Trace>(base: usize, w: usize, mut dead: u64) {
+    if !std::mem::needs_drop::<T>() {
+        return;
+    }
+    let at = |bits: u64| (base + (w * 64 + bits.trailing_zeros() as usize) * slot_of::<T>()) as *mut T;
+    let mut ahead = dead;
+    for _ in 0..SWEEP_AHEAD {
+        if ahead != 0 {
+            // SAFETY: a live object of this type, dropped below.
+            unsafe { (*at(ahead)).prefetch_owned() };
+            ahead &= ahead - 1;
+        }
+    }
+    while dead != 0 {
+        let object = at(dead);
+        dead &= dead - 1;
+        if ahead != 0 {
+            // SAFETY: as above.
+            unsafe { (*at(ahead)).prefetch_owned() };
+            ahead &= ahead - 1;
+        }
+        // SAFETY: an unreachable object of this type, dropped once.
+        unsafe { ptr::drop_in_place(object) };
+    }
+}
+
 fn register<T: Trace + 'static>() -> u32 {
     let name = std::any::type_name::<T>();
-    let slot = size_of::<T>().max(8).next_multiple_of(align_of::<T>());
+    let slot = slot_of::<T>();
     assert!(slot <= MAX_SLOT, "collector: {name} is {slot} bytes; slots go up to {MAX_SLOT}");
     let info = TypeInfo {
         name,
@@ -472,7 +504,7 @@ fn register<T: Trace + 'static>() -> u32 {
         recip: (1u64 << 32).div_ceil(slot as u64) as u32,
         count: (BLOCK / slot) as u32,
         drop: drop_erased::<T>,
-        prefetch_owned: prefetch_owned_erased::<T>,
+        sweep: sweep_erased::<T>,
         trace: trace_erased::<T>,
     };
     let mut registry = lock(&REGISTRY);
@@ -1629,31 +1661,23 @@ impl ThreadHeap {
                 for w in 0..words {
                     unsafe {
                         let marked = *meta.bits.add(words + w);
-                        let mut dead = *meta.bits.add(w) & !marked;
-                        // Prefetch the buffers of the dead object `SWEEP_AHEAD` after the one dropped.
-                        let mut ahead = dead;
-                        for _ in 0..SWEEP_AHEAD {
-                            if ahead != 0 {
-                                (class.info.prefetch_owned)(base + (w * 64 + ahead.trailing_zeros() as usize) * slot);
-                                ahead &= ahead - 1;
-                            }
-                        }
-                        while dead != 0 {
-                            let j = dead.trailing_zeros() as usize;
-                            dead &= dead - 1;
-                            if ahead != 0 {
-                                (class.info.prefetch_owned)(base + (w * 64 + ahead.trailing_zeros() as usize) * slot);
-                                ahead &= ahead - 1;
-                            }
-                            let i = w * 64 + j;
-                            let addr = base + i * slot;
-                            (class.info.drop)(addr);
-                            if check {
+                        let dead = *meta.bits.add(w) & !marked;
+                        if check {
+                            // Check mode drops and poisons one object at a time, so a drop
+                            // that reaches an object dropped before it panics.
+                            let mut left = dead;
+                            while left != 0 {
+                                let j = left.trailing_zeros() as usize;
+                                left &= left - 1;
+                                let addr = base + (w * 64 + j) * slot;
+                                (class.info.drop)(addr);
                                 ptr::write_bytes(addr as *mut u8, POISON, slot);
                                 *meta.bits.add(2 * words + w) |= 1 << j;
                             }
-                            freed += 1;
+                        } else {
+                            (class.info.sweep)(base, w, dead);
                         }
+                        freed += dead.count_ones() as usize;
                         *meta.bits.add(w) = marked;
                         // Generational: a survivor stays marked, which makes it old.
                         *meta.bits.add(words + w) = if sticky { marked } else { 0 };

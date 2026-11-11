@@ -91,6 +91,7 @@ On by default; `PYRIGHT_RS_GC_GENERATIONAL=0` turns it off, and every collection
 
 - A live, unmarked evaluator slot is dropped in place. `drop_in_place` frees the `Vec`, `String` and map buffers it owns, and releases its `Rc`s. Its live bit clears, so the allocation cursor hands the slot out again.
 - Dropping misses the cache on the buffers a dead object owns. `Trace::prefetch_owned`, which the derive writes like `trace`, prefetches a value's `Vec`, `String`, `Box`, `Rc` and `IndexMap` buffers; the sweep calls it on the dead object four slots ahead of the one it drops.
+- The sweep calls one function per type on each bitmap word, so the drop and the prefetch inline into its loop, and a type without drop glue costs nothing per dead object. Check mode drops one object at a time and poisons its slot before the next drop.
 - No port type implements `Drop`, and the std drops never dereference a `P`, so the order in which dead objects drop does not matter.
 - Allocation, root registration and collection never nest: the heap panics when a root, `Trace` impl or drop allocates.
 - A panic while marking (check mode's assertions, a borrowed `RefCell`) clears the marks before it unwinds, so a later collection traces everything again. A panic while sweeping aborts the process.
