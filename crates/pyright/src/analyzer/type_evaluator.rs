@@ -3840,7 +3840,7 @@ impl TypeEvaluator {
                     let symbol = symbol_with_scope.symbol;
                     return symbol
                         .get_declarations()
-                        .into_iter()
+                        .iter().copied()
                         .find(|decl| self.is_explicit_type_alias_declaration(*decl))
                         .is_some();
                 }
@@ -5454,7 +5454,7 @@ impl TypeEvaluator {
                             if let Some(member_symbol) = member_symbol {
                                 let class_level_decls: Vec<P<Declaration>> = member_symbol
                                     .get_declarations()
-                                    .into_iter()
+                                    .iter().copied()
                                     .filter(|decl| {
                                         analyzer::parse_tree_utils::get_enclosing_function(
                                             decl.node.get(),
@@ -9378,7 +9378,7 @@ impl TypeEvaluator {
                 let final_var_type_decl = member_info
                     .symbol
                     .get_declarations()
-                    .into_iter()
+                    .iter().copied()
                     .find(|decl| self.is_final_variable_declaration(*decl));
 
                 if let Some(final_var_type_decl) = final_var_type_decl {
@@ -31606,7 +31606,7 @@ impl TypeEvaluator {
             alias_decl = symbol_with_scope
                 .symbol
                 .get_declarations()
-                .into_iter()
+                .iter().copied()
                 .find(|decl| decl.type_ == analyzer::declaration::DeclarationType::Alias);
         }
 
@@ -33322,7 +33322,7 @@ impl TypeEvaluator {
         if honor_code_flow && scope_type_honors_code_flow {
             if let Some(found) = symbol_with_scope.clone() {
                 // Filter the declarations based on flow reachability.
-                let reachable_decl = found.symbol.get_declarations().into_iter().find(|&decl| {
+                let reachable_decl = found.symbol.get_declarations().iter().copied().find(|&decl| {
                     if decl.type_ != analyzer::declaration::DeclarationType::Alias && decl.type_ != analyzer::declaration::DeclarationType::Intrinsic {
                         // Determine if the declaration is in the same execution scope as the "usageNode" node.
                         let mut usage_scope_node = analyzer::parse_tree_utils::get_execution_scope_node(node, reader);
@@ -33570,7 +33570,7 @@ impl TypeEvaluator {
                     if let Some(function_scope) = function_scope {
                         let param_symbol = function_scope.look_up_symbol(param_name);
                         if let Some(param_symbol) = param_symbol {
-                            return param_symbol.get_declarations().into_iter().find(|decl| {
+                            return param_symbol.get_declarations().iter().copied().find(|decl| {
                                 decl.type_ == analyzer::declaration::DeclarationType::Param
                             });
                         }
@@ -33586,7 +33586,7 @@ impl TypeEvaluator {
                                 None,
                             );
                             if let Some(lookup_results) = lookup_results {
-                                return lookup_results.symbol.get_declarations().into_iter().find(|decl| {
+                                return lookup_results.symbol.get_declarations().iter().copied().find(|decl| {
                                     decl.type_ == analyzer::declaration::DeclarationType::Variable
                                 });
                             }
@@ -33690,7 +33690,7 @@ impl TypeEvaluator {
         };
         match typed_decls {
             Some(typed_decls) if !typed_decls.is_empty() => decls.extend(typed_decls),
-            _ => decls.extend(symbol.get_declarations()),
+            _ => decls.extend(symbol.get_declarations().iter().copied()),
         }
 
         let synth_type_info = symbol.get_synthesized_type();
@@ -33832,7 +33832,7 @@ impl TypeEvaluator {
                     let decls_for_this_import: Vec<P<Declaration>> = symbol_in_scope
                         .symbol
                         .get_declarations()
-                        .into_iter()
+                        .iter().copied()
                         .filter(|decl| {
                             decl.type_ == analyzer::declaration::DeclarationType::Alias
                                 && Some(decl.node.get()) == node.parent.get()
@@ -34994,7 +34994,7 @@ impl TypeEvaluator {
     ) -> bool {
         let non_slots_decls: Vec<P<Declaration>> = symbol
             .get_declarations()
-            .into_iter()
+            .iter().copied()
             .filter(|decl| {
                 decl.type_ != analyzer::declaration::DeclarationType::Variable
                     || !decl.variable().unwrap().is_inference_allowed_in_py_typed.get().unwrap_or(false)
@@ -41853,7 +41853,7 @@ impl TypeEvaluator {
     pub fn is_final_variable(&self, symbol: P<Symbol>) -> bool {
         symbol
             .get_declarations()
-            .into_iter()
+            .iter().copied()
             .any(|decl| self.is_final_variable_declaration(decl))
     }
 

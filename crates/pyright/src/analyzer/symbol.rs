@@ -1,6 +1,7 @@
 //! Port of `packages/pyright-internal/src/analyzer/symbol.ts`.
 
 use std::cell::{Cell, Ref, RefCell};
+use std::rc::Rc;
 
 use jsrt::{JsMap, P};
 
@@ -9,6 +10,13 @@ use super::declaration::{Declaration, DeclarationType};
 use super::declaration_utils::{are_declarations_same, has_type_for_declaration};
 use super::types::Type;
 use crate::parser::parse_nodes::NameNode;
+
+
+thread_local! {
+    /// `get_declarations` of a symbol without declarations: TypeScript's `[]`. Always empty, so
+    /// it holds no handle and needs no collector root.
+    static NO_DECLARATIONS: Rc<Vec<P<Declaration>>> = Rc::new(Vec::new());
+}
 
 // analyzer/symbol.ts:17
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
@@ -118,7 +126,8 @@ pub struct Symbol {
     // i.e. where the editor will take the user if "show definition"
     // is selected. Multiple declarations can exist for variables,
     // properties, and functions (in the case of @overload).
-    pub _declarations: RefCell<Option<Vec<P<Declaration>>>>,
+    /// Shared with the callers of `get_declarations`, which TypeScript hands the live array.
+    pub _declarations: RefCell<Option<Rc<Vec<P<Declaration>>>>>,
 
     // Flags that provide information about the symbol.
     pub _flags: Cell<SymbolFlags>,
@@ -324,7 +333,7 @@ impl Symbol {
                 .position(|decl| are_declarations_same(decl, &declaration, false, false));
             match decl_index {
                 None => {
-                    let mut declarations = declarations;
+                    let mut declarations = declarations.to_vec();
                     declarations.push(declaration);
 
                     // If there is more than one declaration for a symbol, we will
@@ -336,14 +345,14 @@ impl Symbol {
                             }
                         }
                     }
-                    *self._declarations.borrow_mut() = Some(declarations);
+                    *self._declarations.borrow_mut() = Some(Rc::new(declarations));
                 }
                 Some(decl_index) => {
                     // If the new declaration has a defined type, it should replace
                     // the existing one.
                     let cur_decl = declarations[decl_index];
                     if has_type_for_declaration(&declaration) {
-                        self._declarations.borrow_mut().as_mut().unwrap()[decl_index] = declaration;
+                        Rc::make_mut(self._declarations.borrow_mut().as_mut().unwrap())[decl_index] = declaration;
                         if cur_decl.type_ == DeclarationType::Variable
                             && declaration.type_ == DeclarationType::Variable
                         {
@@ -381,7 +390,7 @@ impl Symbol {
                 }
             }
         } else {
-            *self._declarations.borrow_mut() = Some(vec![declaration]);
+            *self._declarations.borrow_mut() = Some(Rc::new(vec![declaration]));
         }
     }
 
@@ -394,8 +403,11 @@ impl Symbol {
     }
 
     // analyzer/symbol.ts:299
-    pub fn get_declarations(&self) -> Vec<P<Declaration>> {
-        self._declarations.borrow().clone().unwrap_or_default()
+    pub fn get_declarations(&self) -> Rc<Vec<P<Declaration>>> {
+        match &*self._declarations.borrow() {
+            Some(declarations) => declarations.clone(),
+            None => NO_DECLARATIONS.with(Rc::clone),
+        }
     }
 
     // analyzer/symbol.ts:303
@@ -413,7 +425,8 @@ impl Symbol {
     // analyzer/symbol.ts:312
     pub fn get_typed_declarations(&self) -> Vec<P<Declaration>> {
         self.get_declarations()
-            .into_iter()
+            .iter()
+            .copied()
             .filter(|decl| has_type_for_declaration(decl))
             .collect()
     }

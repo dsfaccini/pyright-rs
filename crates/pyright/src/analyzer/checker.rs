@@ -4319,7 +4319,7 @@ impl Checker {
 
         let mut other_decls: Vec<P<Declaration>> = symbol
             .get_declarations()
-            .into_iter()
+            .iter().copied()
             .filter(|decl| *decl != primary_decl)
             .collect();
 
@@ -6917,7 +6917,7 @@ impl Checker {
             });
 
             if is_defined_by_slots {
-                for decl in &decls {
+                for decl in decls.iter() {
                     if decl.type_ == analyzer::declaration::DeclarationType::Variable
                         && !decl.variable().unwrap().is_defined_by_slots.get().unwrap_or(false)
                         && !decl.variable().unwrap().is_defined_by_member_access.get().unwrap_or(false)
@@ -9040,7 +9040,7 @@ impl Checker {
 
         // Was this declared with a "def" statement?
         let mut def_decls: Vec<FunctionNode> = Vec::new();
-        for decl in symbol.get_declarations() {
+        for decl in symbol.get_declarations().iter().copied() {
             if decl.type_ == analyzer::declaration::DeclarationType::Function
                 && decl.node.get().node_type == ParseNodeType::Function
             {

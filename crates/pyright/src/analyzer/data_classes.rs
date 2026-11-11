@@ -186,7 +186,7 @@ pub fn synthesize_data_class_slots(evaluator: &TypeEvaluator, class_type: ClassT
         });
 
         if variable_decl.is_none() {
-            variable_decl = symbol.get_declarations().into_iter().find(|decl| {
+            variable_decl = symbol.get_declarations().iter().copied().find(|decl| {
                 decl.type_ == DeclarationType::Variable
                     && decl
                         .variable()
@@ -423,7 +423,7 @@ pub fn synthesize_data_class_methods(
 
         // See if this is an unannotated (inferred) Final value.
         if class_var_decl.is_none() {
-            class_var_decl = symbol.get_declarations().into_iter().find(|decl| {
+            class_var_decl = symbol.get_declarations().iter().copied().find(|decl| {
                 decl.type_ == DeclarationType::Variable
                     && decl
                         .variable()

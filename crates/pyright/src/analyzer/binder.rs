@@ -3269,7 +3269,7 @@ impl Binder {
         // There should be only one declaration for the variable.
         let alias_decl = var_symbol
             .get_declarations()
-            .into_iter()
+            .iter().copied()
             .find(|decl| decl.type_ == DeclarationType::Alias);
         let fallback = alias_decl.and_then(|decl| decl.alias().unwrap().submodule_fallback.get());
         let resolved_uri = if let Some(alias_decl) = alias_decl.filter(|decl| {
@@ -3349,7 +3349,7 @@ impl Binder {
         // we'll build a single declaration that describes the combined actions
         // of both import statements, thus reflecting the behavior of the
         // python module loader.
-        let existing_decl = symbol.get_declarations().into_iter().find(|decl| {
+        let existing_decl = symbol.get_declarations().iter().copied().find(|decl| {
             decl.type_ == DeclarationType::Alias
                 && decl.alias().unwrap().first_name_part.borrow().as_deref() == Some(first_name_part_value.as_str())
                 && uri_of_first_submodule.is_none_or(|uri| uri.equals(Some(decl.uri.get())))

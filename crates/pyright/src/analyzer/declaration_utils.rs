@@ -492,13 +492,13 @@ pub fn resolve_alias_declaration(
         declarations.retain(|decl| !decl.is_in_except_suite.get());
 
         if declarations.is_empty() {
-            declarations = symbol.get_declarations();
+            declarations = symbol.get_declarations().to_vec();
             declarations.retain(|decl| !decl.is_in_except_suite.get());
         }
 
         if declarations.is_empty() {
             // Use declarations within except clauses if there are no alternatives.
-            declarations = symbol.get_declarations();
+            declarations = symbol.get_declarations().to_vec();
         }
 
         if declarations.is_empty() {
