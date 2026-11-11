@@ -2726,10 +2726,12 @@ pub fn synthesize_type_var_for_self_cls(class_type: ClassType, is_cls_param: boo
     shared.is_synthesized_self.set(true);
     self_type.d().priv_.borrow_mut().scope_id = Some(scope_id.as_str().into());
     self_type.d().priv_.borrow_mut().scope_name = Some("".into());
-    let name = shared.name.borrow().clone();
-    let scope_name = self_type.d().priv_.borrow().scope_name.as_deref().unwrap_or_default().to_string();
-    let name_with_scope = TypeVarType::make_name_with_scope(&name, &scope_id, &scope_name);
-    self_type.d().priv_.borrow_mut().name_with_scope = Some(name_with_scope.into());
+    let name_with_scope = TypeVarType::make_name_with_scope(
+        &shared.name.borrow(),
+        &scope_id,
+        self_type.d().priv_.borrow().scope_name.as_deref().unwrap_or_default(),
+    );
+    self_type.d().priv_.borrow_mut().name_with_scope = Some(name_with_scope);
 
     let include_subclasses = class_type.d().priv_.borrow().include_subclasses.unwrap_or(false);
     let bound_type = ClassType::specialize(class_type, None, Some(false), include_subclasses, None, None);

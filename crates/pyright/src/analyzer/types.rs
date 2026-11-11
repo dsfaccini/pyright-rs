@@ -4605,7 +4605,7 @@ impl TypeVarType {
                 &scope_id,
                 scope_name.as_deref().unwrap_or(""),
             );
-            new_instance.d().priv_.borrow_mut().name_with_scope = Some(name_with_scope.into());
+            new_instance.d().priv_.borrow_mut().name_with_scope = Some(name_with_scope);
         }
 
         new_instance
@@ -4619,12 +4619,13 @@ impl TypeVarType {
         scope_type: Option<TypeVarScopeType>,
     ) -> TypeVarType {
         let new_instance = TypeVarType(TypeBase::clone_type(type_.0));
-        let name = type_.d().shared.get().name.borrow().clone();
-        let mut priv_ = new_instance.d().priv_.borrow_mut();
-        priv_.name_with_scope = Some(
-            TypeVarType::make_name_with_scope(&name, &scope_id, scope_name.as_deref().unwrap_or(""))
-                .into(),
+        let name_with_scope = TypeVarType::make_name_with_scope(
+            &type_.d().shared.get().name.borrow(),
+            &scope_id,
+            scope_name.as_deref().unwrap_or(""),
         );
+        let mut priv_ = new_instance.d().priv_.borrow_mut();
+        priv_.name_with_scope = Some(name_with_scope);
         priv_.scope_id = Some(scope_id.into());
         priv_.scope_name = scope_name.map(Into::into);
         priv_.scope_type = scope_type;
@@ -4758,12 +4759,12 @@ impl TypeVarType {
     }
 
     // analyzer/types.ts:3120
-    pub fn make_name_with_scope(name: &str, scope_id: &str, scope_name: &str) -> String {
+    pub fn make_name_with_scope(name: &str, scope_id: &str, scope_name: &str) -> Rc<str> {
         // We include the scopeName here even though it's normally already part
         // of the scopeId. There are cases where it can diverge, specifically
         // in scenarios involving higher-order functions that return generic
         // callable types. See adjustCallableReturnType for details.
-        format!("{name}.{scope_id}.{scope_name}")
+        Rc::from([name, ".", scope_id, ".", scope_name].concat())
     }
 
     // analyzer/types.ts:3134
