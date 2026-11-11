@@ -901,14 +901,13 @@ impl TypeEvaluator {
     // analyzer/typeEvaluator.ts:994
     pub(crate) fn pop_symbol_resolution(&self, symbol: P<Symbol>) -> bool {
         let popped_entry = self.symbol_resolution_stack.borrow_mut().pop();
-        common::debug::assert(
-            popped_entry.as_ref().is_some_and(|entry| entry.symbol_id == symbol.id),
-            Some(&format!(
-                "Symbol resolution stack mismatch: expected symbol {}, got {}",
+        if !popped_entry.as_ref().is_some_and(|entry| entry.symbol_id == symbol.id) {
+            common::debug::fail(Some(&format!(
+                "False expression: Symbol resolution stack mismatch: expected symbol {}, got {}",
                 symbol.id,
                 popped_entry.as_ref().map_or("empty stack".to_string(), |entry| entry.symbol_id.to_string())
-            )),
-        );
+            )));
+        }
         popped_entry.unwrap().is_result_valid
     }
 
