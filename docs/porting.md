@@ -63,6 +63,7 @@ pyright allocates about 23 times what it keeps alive: 194 GB over a pydantic-ai 
 ## switches
 
 Every Rust-only environment variable is listed here. When you add a cache or shortcut that pyright lacks, add its switch to this list (`AGENTS.md`, "gates").
+A new switch reads its mode with `jsrt::switch_mode!`: `check` runs pyright's path and panics where the shortcut would have differed.
 
 | variable | values | effect |
 |---|---|---|
@@ -78,6 +79,7 @@ Every Rust-only environment variable is listed here. When you add a cache or sho
 | `PYRIGHT_RS_NODE_INFO_STORE_CACHE` | `on` (default), `off`, `check` | `AnalyzerNodeInfoContextImpl::_store_for` reuses the store of its last lookup |
 | `PYRIGHT_RS_LOCALIZE_INDEX` | `on` (default), `off`, `check` | `get_raw_string` finds a message by its whole key in an index of the strings |
 | `PYRIGHT_RS_SCOPE_ID_CACHE` | `on` (default), `off`, `check` | `get_scope_id_for_node` remembers each node's scope id |
+| `PYRIGHT_RS_DEFER_MRO_SPECIALIZATION` | `on` (default), `off`, `check` | `get_class_member_iterator` specializes an MRO class only when it yields a member from it; pyright specializes each MRO class it walks |
 | `PYRIGHT_RS_TOKENS` | `free` (default), `keep`, `check` | `keep` puts every token on the program heap; `check` makes a freed tokenizer scratch region inaccessible, so a later use faults |
 | `PYRIGHT_RS_ALLOC_STATS` | `1`, or a number n | prints objects and bytes per type and heap at exit; with n, also each time the evaluator heap grows by another n GiB |
 
