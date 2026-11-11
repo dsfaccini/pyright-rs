@@ -37,7 +37,7 @@ use crate::analyzer::type_utils::{
     ApplyTypeVarOptions, ClassMember, InferenceContext, MemberAccessFlags, UniqueSignatureTracker,
 };
 use crate::analyzer::types::{
-    ClassType, FunctionParam, FunctionType, FunctionTypeFlags, LiteralValue, OverloadedType,
+    ClassDetailsShared, ClassType, FunctionParam, FunctionType, FunctionTypeFlags, LiteralValue, OverloadedType,
     ParamSpecType, TupleTypeArg, Type, TypeAliasInfo, TypeCondition, TypeVarScopeId, TypeVarTupleType, TypeVarType,
     TypedDictEntries, UnionType, Variance,
 };
@@ -406,6 +406,37 @@ pub struct TypeEvaluator {
     pub(crate) evaluator_interface: OnceCell<P<TypeEvaluator>>,
     // analyzer/typeEvaluator.ts:30591 Set after the struct exists: its initializer uses the struct.
     pub(crate) code_flow_engine: OnceCell<P<CodeFlowEngine>>,
+    /// Rust-only: `get_abstract_symbols` results by class details
+    /// (`PYRIGHT_RS_ABSTRACT_SYMBOLS_MEMO`).
+    pub(crate) abstract_symbols_memo: RefCell<FxHashMap<P<ClassDetailsShared>, AbstractSymbolsMemoEntry>>,
+    /// Rust-only: how many `disable_speculative_mode` calls hold a nonempty stack of speculative
+    /// contexts, whose type cache entries are undone later.
+    pub(crate) stashed_speculative_stacks: Cell<u32>,
+}
+
+/// A `get_abstract_symbols` result, and the MRO it was computed from.
+#[derive(jsrt::Trace)]
+pub struct AbstractSymbolsMemoEntry {
+    pub(crate) mro: Rc<Vec<P<Type>>>,
+    pub(crate) symbols: Rc<[AbstractSymbol]>,
+}
+
+thread_local! {
+    /// Rust-only: counts the evaluations whose results can change later: a
+    /// `get_type_of_expression` that answers from no complete main type cache entry, and a
+    /// deferred method synthesis. A computation that leaves it unchanged read only results
+    /// that stay in the type cache.
+    static UNCACHED_EVALUATIONS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+/// The count of `UNCACHED_EVALUATIONS`.
+pub(crate) fn uncached_evaluation_count() -> u64 {
+    UNCACHED_EVALUATIONS.get()
+}
+
+/// Counts one evaluation in `UNCACHED_EVALUATIONS`.
+pub(crate) fn note_uncached_evaluation() {
+    UNCACHED_EVALUATIONS.set(UNCACHED_EVALUATIONS.get() + 1);
 }
 
 // analyzer/typeEvaluator.ts:663
@@ -471,6 +502,8 @@ pub fn create_type_evaluator(
         type_form_special_form_diagnostic_factories,
         evaluator_interface: OnceCell::new(),
         code_flow_engine: OnceCell::new(),
+        abstract_symbols_memo: RefCell::new(FxHashMap::default()),
+        stashed_speculative_stacks: Cell::new(0),
     });
     evaluator.evaluator_interface.set(evaluator).unwrap();
 
@@ -1276,9 +1309,11 @@ impl TypeEvaluator {
                 .map(|entry| (entry.type_result, entry.incomplete_gen_count))
         };
         if let Some((cached_type_result, cached_incomplete_gen_count)) = cache_entry {
-            if !cached_type_result.is_incomplete.get().unwrap_or(false)
-                || cached_incomplete_gen_count == self.incomplete_gen_count.get()
-            {
+            let is_incomplete = cached_type_result.is_incomplete.get().unwrap_or(false);
+            if !is_incomplete || cached_incomplete_gen_count == self.incomplete_gen_count.get() {
+                if is_incomplete || use_type_form_cache {
+                    note_uncached_evaluation();
+                }
                 if PRINT_EXPRESSION_TYPES {
                     println!(
                         "{}{} ({}): Cached {} {}",
@@ -1313,6 +1348,7 @@ impl TypeEvaluator {
             if !spec_cache_entry.type_result.is_incomplete.get().unwrap_or(false)
                 || spec_cache_entry.incomplete_generation_count == self.incomplete_gen_count.get()
             {
+                note_uncached_evaluation();
                 if PRINT_EXPRESSION_TYPES {
                     println!(
                         "{}{} ({}): Speculative {}",
@@ -1330,6 +1366,7 @@ impl TypeEvaluator {
             }
         }
 
+        note_uncached_evaluation();
         if PRINT_EXPRESSION_TYPES {
             println!(
                 "{}{} ({}): Pre",
@@ -33547,7 +33584,10 @@ impl TypeEvaluator {
     pub(crate) fn disable_speculative_mode(&self, callback: &mut dyn FnMut()) {
         let stack = self.speculative_type_tracker.borrow_mut().disable_speculative_mode();
 
+        let stashed = u32::from(!stack.is_empty());
+        self.stashed_speculative_stacks.set(self.stashed_speculative_stacks.get() + stashed);
         callback();
+        self.stashed_speculative_stacks.set(self.stashed_speculative_stacks.get() - stashed);
         self.speculative_type_tracker.borrow_mut().enable_speculative_mode(stack);
     }
 
@@ -41580,6 +41620,67 @@ impl TypeEvaluator {
 
     // analyzer/typeEvaluator.ts:29928
     pub fn get_abstract_symbols(&self, class_type: ClassType) -> Vec<AbstractSymbol> {
+        // pyright walks the MRO and evaluates the decorators of every method on each call. The
+        // port remembers the result per class details (`PYRIGHT_RS_ABSTRACT_SYMBOLS_MEMO`)
+        // when the walk read only complete main type cache entries
+        // (`uncached_evaluation_count`), no speculative context could undo one, and no MRO
+        // class was still being built. Those entries stay, so the walk would read them again
+        // and evaluate nothing. A deferred class completion replaces the MRO, which ends the
+        // entry. A call-site return type inference reads its own type cache, so it skips the
+        // memo.
+        let mode = jsrt::switch_mode!("PYRIGHT_RS_ABSTRACT_SYMBOLS_MEMO");
+        if mode == jsrt::SwitchMode::Off || self.return_type_inference_type_cache.get().is_some() {
+            return self.get_abstract_symbols_walk(class_type);
+        }
+
+        let shared = class_type.d().shared.get();
+        let mro = shared.mro.borrow().clone();
+        let remembered = self
+            .abstract_symbols_memo
+            .borrow()
+            .get(&shared)
+            .filter(|entry| Rc::ptr_eq(&entry.mro, &mro))
+            .map(|entry| entry.symbols.clone());
+        if let Some(remembered) = remembered {
+            if mode == jsrt::SwitchMode::Check {
+                let before = uncached_evaluation_count();
+                let symbols = self.get_abstract_symbols_walk(class_type);
+                assert!(
+                    uncached_evaluation_count() == before
+                        && symbols.len() == remembered.len()
+                        && symbols.iter().zip(remembered.iter()).all(|(a, b)| {
+                            a.symbol == b.symbol
+                                && a.symbol_name == b.symbol_name
+                                && a.class_type == b.class_type
+                                && a.has_implementation == b.has_implementation
+                        }),
+                    "PYRIGHT_RS_ABSTRACT_SYMBOLS_MEMO=check: the walk evaluated or differs for {}",
+                    shared.full_name.as_str()
+                );
+                return symbols;
+            }
+            return remembered.to_vec();
+        }
+
+        let before = uncached_evaluation_count();
+        let symbols = self.get_abstract_symbols_walk(class_type);
+        let rememberable = uncached_evaluation_count() == before
+            && Rc::ptr_eq(&mro, &shared.mro.borrow())
+            && self.stashed_speculative_stacks.get() == 0
+            && !self.is_speculative_mode_in_use(None)
+            && mro.iter().all(|mro_class| {
+                !analyzer::types::is_class(*mro_class) || !ClassType::is_partially_evaluated(ClassType(*mro_class))
+            });
+        if rememberable {
+            self.abstract_symbols_memo
+                .borrow_mut()
+                .insert(shared, AbstractSymbolsMemoEntry { mro, symbols: symbols.clone().into() });
+        }
+        symbols
+    }
+
+    /// The body of `getAbstractSymbols`.
+    fn get_abstract_symbols_walk(&self, class_type: ClassType) -> Vec<AbstractSymbol> {
         let mut symbol_table: JsMap<Atom, AbstractSymbol> = JsMap::default();
 
         for mro_class in ClassType::get_reverse_mro(class_type) {

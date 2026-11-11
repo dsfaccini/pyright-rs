@@ -263,6 +263,7 @@ pub struct CallSignatureInfo {
 
 // analyzer/typeEvaluatorTypes.ts:339
 #[derive(Clone)]
+#[derive(jsrt::Trace)]
 pub struct AbstractSymbol {
     pub symbol: P<Symbol>,
     pub symbol_name: String,

@@ -6189,6 +6189,7 @@ impl SynthesizeMethodsDeferred {
     /// The closure calls the local closure `synthesizeMethods` (:19554).
     /// It clears its own slot first, so call it on a copy taken out of the slot.
     pub fn call(&self) {
+        analyzer::type_evaluator::note_uncached_evaluation();
         *self.class_type.d().shared.get().synthesize_methods_deferred.borrow_mut() = None;
         analyzer::data_classes::synthesize_data_class_methods(
             &self.type_evaluator,
