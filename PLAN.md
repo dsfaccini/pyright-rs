@@ -24,6 +24,7 @@ The check path is about 135k lines of TypeScript (see `docs/research/pyright-map
 5. **Evaluator, helpers and code flow as one block** (about 69k lines), split by line range: one agent per range, one worktree each, the crate always compiles. Then the checker. David sets the number of parallel agents at the checkpoint.
 6. **Fix rounds** by failure cluster, then the full pydantic-ai check and benchmarks.
    - Memory and speed work, ranked in `docs/research/memory-advice.md`: a collector for the evaluator heap, free tokens after parse, exact-size variants, a dense type cache, 32-bit handles, parallel parse.
+   - After the collector landed: measured bounds and the current ranking of the larger levers in `docs/research/speed-levers.md`.
 7. **Upstream sync.** About 3k changed core lines a month, rising. A daily job ports upstream commits after the pin.
 
 ## hazards to settle in step 2
