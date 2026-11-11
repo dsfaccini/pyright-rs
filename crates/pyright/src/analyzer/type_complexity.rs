@@ -50,7 +50,7 @@ pub fn get_complexity_score_for_type(type_: P<Type>, recursion_count: u32) -> f6
             // accurately computing the score. Assume a fixed value.
             let subtypes = UnionType(type_).d().priv_.borrow().subtypes.clone();
             if subtypes.len() < 16 {
-                for subtype in subtypes {
+                for &subtype in subtypes.iter() {
                     let subtype_score = get_complexity_score_for_type(subtype, recursion_count);
                     max_score = max_score.max(subtype_score);
                 }

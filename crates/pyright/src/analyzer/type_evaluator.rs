@@ -6375,7 +6375,7 @@ impl TypeEvaluator {
                 .and_then(|options| options.sort_subtypes)
                 .unwrap_or(false)
             {
-                analyzer::type_utils::sort_types(&union_subtypes)
+                Rc::new(analyzer::type_utils::sort_types(&union_subtypes))
             } else {
                 union_subtypes
             };
@@ -38695,7 +38695,7 @@ impl TypeEvaluator {
     ) -> bool {
         let concrete_type = self.make_top_level_type_vars_concrete(type_, false, None);
         let other_subtypes: Vec<P<Type>> = if analyzer::types::is_union(other_type) {
-            UnionType::cast(other_type).unwrap().d().priv_.borrow().subtypes.clone()
+            UnionType::cast(other_type).unwrap().d().priv_.borrow().subtypes.to_vec()
         } else {
             vec![other_type]
         };
@@ -39050,7 +39050,7 @@ impl TypeEvaluator {
         // If so, we need to use a slower path.
         if !analyzer::type_utils::requires_specialization(dest_type.0, None, 0) {
             let dest_subtypes = dest_type.d().priv_.borrow().subtypes.clone();
-            for subtype in dest_subtypes {
+            for &subtype in dest_subtypes.iter() {
                 if self.assign_type(
                     subtype,
                     src_type,

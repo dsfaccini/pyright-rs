@@ -206,7 +206,7 @@ pub trait TypeWalker {
     // analyzer/typeWalker.ts:192
     fn visit_union(&mut self, type_: UnionType) {
         let subtypes = type_.d().priv_.borrow().subtypes.clone();
-        for subtype in subtypes {
+        for &subtype in subtypes.iter() {
             self.walk(subtype);
             if self._is_walk_canceled() {
                 break;

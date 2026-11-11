@@ -806,7 +806,7 @@ pub(crate) fn print_union_type(
                 let mut indices_covered_by_type_alias: JsSet<usize> = JsSet::default();
 
                 let source_subtypes = type_alias_source.d().priv_.borrow().subtypes.clone();
-                for &source_subtype in &source_subtypes {
+                for &source_subtype in source_subtypes.iter() {
                     let mut found_match = false;
                     let source_subtype_instance =
                         analyzer::type_utils::convert_to_instance(source_subtype, true);

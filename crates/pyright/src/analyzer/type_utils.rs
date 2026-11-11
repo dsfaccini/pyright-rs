@@ -321,7 +321,7 @@ pub fn map_subtypes(
     if crate::analyzer::types::is_union(type_) {
         let union_subtypes = crate::analyzer::types::UnionType(type_).d().priv_.borrow().subtypes.clone();
         let subtypes = if options.is_some_and(|options| options.sort_subtypes.unwrap_or(false)) {
-            sort_types(&union_subtypes)
+            Rc::new(sort_types(&union_subtypes))
         } else {
             union_subtypes
         };
@@ -781,7 +781,7 @@ pub fn do_for_each_subtype(
 ) {
     if crate::analyzer::types::is_union(type_) {
         let union_subtypes = crate::analyzer::types::UnionType(type_).d().priv_.borrow().subtypes.clone();
-        let subtypes = if sort_subtypes { sort_types(&union_subtypes) } else { union_subtypes };
+        let subtypes = if sort_subtypes { Rc::new(sort_types(&union_subtypes)) } else { union_subtypes };
         for (index, subtype) in subtypes.iter().enumerate() {
             callback(*subtype, i32::try_from(index).unwrap(), &subtypes);
         }
@@ -4507,7 +4507,7 @@ pub(crate) fn transform_type_pair_recursive(
             }
 
             let transformed_type = crate::analyzer::types::TypeBase::clone_type(source_type);
-            crate::analyzer::types::UnionType(transformed_type).d().priv_.borrow_mut().subtypes = subtypes;
+            crate::analyzer::types::UnionType(transformed_type).d().priv_.borrow_mut().subtypes = Rc::new(subtypes);
             return transformed_type;
         }
 

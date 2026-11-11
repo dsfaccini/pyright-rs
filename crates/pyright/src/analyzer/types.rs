@@ -4039,7 +4039,7 @@ pub struct LiteralTypes {
 #[derive(Clone)]
 #[derive(jsrt::Trace)]
 pub struct UnionDetailsPriv {
-    pub subtypes: Vec<UnionableType>,
+    pub subtypes: Rc<Vec<UnionableType>>,
     pub literal_instances: LiteralTypes,
     pub literal_classes: LiteralTypes,
     pub type_alias_sources: Option<Box<JsSet<UnionType>>>,
@@ -4093,7 +4093,7 @@ impl UnionType {
             cached: OptionRefCell::new(),
             d: TypeDetails::Union(UnionTypeDetails {
                 priv_: RefCell::new(UnionDetailsPriv {
-                    subtypes: Vec::new(),
+                    subtypes: Rc::default(),
                     literal_instances: LiteralTypes {
                         literal_str_map: None,
                         literal_int_map: None,
@@ -4178,7 +4178,7 @@ impl UnionType {
         union_type
             .flags
             .set(union_type.flags.get() & new_type.flags.get());
-        union_type.d().priv_.borrow_mut().subtypes.push(new_type);
+        Rc::make_mut(&mut union_type.d().priv_.borrow_mut().subtypes).push(new_type);
 
         if let Some(type_var) = TypeVarType::cast(new_type) {
             let has_recursive_alias_name = type_var
@@ -5686,7 +5686,7 @@ pub fn remove_from_union(
 pub fn find_subtype(type_: P<Type>, filter: &mut dyn FnMut(P<Type>) -> bool) -> Option<P<Type>> {
     if let Some(union) = UnionType::cast(type_) {
         let subtypes = union.d().priv_.borrow().subtypes.clone();
-        return subtypes.into_iter().find(|subtype| filter(*subtype));
+        return subtypes.iter().copied().find(|subtype| filter(*subtype));
     }
 
     if filter(type_) { Some(type_) } else { None }
@@ -6010,7 +6010,7 @@ pub(crate) fn _add_type_if_unique(
                     None,
                     None,
                 );
-                union_type.d().priv_.borrow_mut().subtypes[i] = specialized.0;
+                Rc::make_mut(&mut union_type.d().priv_.borrow_mut().subtypes)[i] = specialized.0;
                 return;
             }
         }
@@ -6049,7 +6049,7 @@ pub(crate) fn _add_type_if_unique(
                     if matches!(literal, Some(LiteralValue::Boolean(value)) if value == negated) {
                         let replacement =
                             ClassType::clone_with_literal(class_type, /* value */ None);
-                        union_type.d().priv_.borrow_mut().subtypes[i] = replacement.0;
+                        Rc::make_mut(&mut union_type.d().priv_.borrow_mut().subtypes)[i] = replacement.0;
                         return;
                     }
                 }
@@ -6067,7 +6067,7 @@ pub(crate) fn _add_type_if_unique(
                     if ClassType::is_typed_dict_narrower(class_to_add, class_type) {
                         return;
                     } else if ClassType::is_typed_dict_narrower(class_type, class_to_add) {
-                        union_type.d().priv_.borrow_mut().subtypes[i] = type_to_add;
+                        Rc::make_mut(&mut union_type.d().priv_.borrow_mut().subtypes)[i] = type_to_add;
                         return;
                     }
                 }

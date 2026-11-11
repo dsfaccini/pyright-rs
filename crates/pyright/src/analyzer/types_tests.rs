@@ -100,7 +100,7 @@ fn combine_types_dedups_and_flattens() {
     assert!(is_union(union));
     let flattened = combine_types(&[union, any], None);
     assert_eq!(
-        UnionType(flattened).d().priv_.borrow().subtypes,
+        *UnionType(flattened).d().priv_.borrow().subtypes,
         vec![any, unknown]
     );
     assert!(is_any_or_unknown(flattened));
@@ -125,7 +125,7 @@ fn union_keeps_literals_that_differ_in_a_lone_surrogate() {
     let high = literal(&[0x61, 0xd800]);
     let low = literal(&[0x61, 0xdc00]);
     let union = combine_types(&[high, low, literal(&[0x61, 0xd800])], None);
-    assert_eq!(UnionType(union).d().priv_.borrow().subtypes, vec![high, low]);
+    assert_eq!(*UnionType(union).d().priv_.borrow().subtypes, vec![high, low]);
     for member in [&[0x61, 0xd800], &[0x61, 0xdc00]] {
         assert!(UnionType::contains_type(
             UnionType(union),
@@ -155,7 +155,7 @@ fn union_of_str_literals_uses_literal_map() {
     let a = literal("a");
     let b = literal("b");
     let union = combine_types(&[a, b, literal("a")], None);
-    assert_eq!(UnionType(union).d().priv_.borrow().subtypes, vec![a, b]);
+    assert_eq!(*UnionType(union).d().priv_.borrow().subtypes, vec![a, b]);
     assert!(UnionType::contains_type(
         UnionType(union),
         literal("b"),

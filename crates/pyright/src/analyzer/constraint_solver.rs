@@ -1638,7 +1638,7 @@ pub(crate) fn type_var_occurs_in(type_var: TypeVarType, type_: P<Type>) -> bool 
     // count occurrences strictly inside other types.
     if is_union(type_) {
         let subtypes = UnionType(type_).d().priv_.borrow().subtypes.clone();
-        for subtype in subtypes {
+        for &subtype in subtypes.iter() {
             if type_var_occurs_in(type_var, subtype) {
                 return true;
             }
