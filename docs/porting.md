@@ -65,7 +65,8 @@ pyright allocates about 23 times what it keeps alive: 194 GB over a pydantic-ai 
 - Keep provenance. Derive every pointer into memory pyright-rs allocates itself from the pointer its allocator returned: a heap range's `base`, `meta` or `cards`, a region chunk, `vm::map`. Move it with `add`, `wrapping_add` or `map_addr`. Never cast an integer to a pointer: Miri runs with `-Zmiri-strict-provenance`, where such a pointer can access nothing. Integer addresses are fine for arithmetic and comparison (`ptr.addr()`).
 - A `P` is a raw pointer with the provenance of the whole object as allocated. A `&` from `P::get` or `Deref` covers only its `T`, and lives only while the object does: a `&'static T` handle to a swept object would dangle, which is undefined behavior as soon as the handle is copied.
 - Reach a header type's details, or the bytes before a scratch token (`Token::keep`), through the handle (`p.d()`, `P::as_ptr`), never through a `&` to the header: under Stacked Borrows a reference covers its type's bytes only, and an access past them is undefined behavior. A function that reads details takes the handle (`P<Declaration>`), not `&Declaration`.
-- Give code that Miri cannot run a `cfg(miri)` stand-in that keeps the logic around it, as `jsrt/src/vm.rs` does for the virtual-memory calls.
+- Give code that Miri cannot run a `cfg(miri)` stand-in that keeps the logic around it: `jsrt/src/vm.rs` for the virtual-memory calls, the system allocator for mimalloc (`main.rs`), a missing interpreter for process spawning (`full_access_host.rs`).
+- After a change to unsafe code, a heap in `jsrt`, or a header type, run `tools/miri.sh <outdir>`: every suite must pass under Stacked Borrows and Tree Borrows. Add a test that reaches new unsafe code to a suite the script runs.
 - Put a `// SAFETY:` comment on every unsafe block, saying why its contract holds.
 
 ## switches

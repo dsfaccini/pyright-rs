@@ -2355,6 +2355,7 @@ fn comments2() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "builds the full Unicode identifier tables: over an hour under Miri")]
 fn identifiers1() {
     let results = tokenize("배열 数値 лік Opciók 可選值");
     assert_eq!(results.tokens.count(), 5 + IMPLICIT_TOKEN_COUNT);
@@ -2500,6 +2501,7 @@ fn constructor() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "builds the full Unicode identifier tables: over an hour under Miri")]
 fn normalization() {
     let results = tokenize("ℝ 𝕽");
     assert_eq!(results.tokens.count(), 2 + IMPLICIT_TOKEN_COUNT);
@@ -2536,6 +2538,10 @@ fn last_empty_line() {
 #[path = "tokenizer_unescape_tests.rs"]
 mod unescape_tests;
 
+/// Lines enough to reuse the freed scratch chunks. Miri retires them instead
+/// (PYRIGHT_RS_TOKENS=check in tools/miri.sh), so a stale token is a use after free.
+const REUSE_LINES: usize = if cfg!(miri) { 200 } else { 20_000 };
+
 /// `Token::keep` copies a token out of its tokenizer's scratch region once, and
 /// the copy, which owns the token's buffers, outlives the output.
 #[test]
@@ -2547,7 +2553,7 @@ fn kept_token_outlives_its_output() {
     let kept = crate::parser::tokenizer_types::Token::keep(number);
     assert_eq!(crate::parser::tokenizer_types::Token::keep(number), kept);
     drop(output);
-    drop(tokenize(&"y = 98765432109876543210987654321\n".repeat(20_000)));
+    drop(tokenize(&"y = 98765432109876543210987654321\n".repeat(REUSE_LINES)));
     assert_eq!(NumberToken::cast(kept).unwrap().d().value, value);
 }
 
@@ -2557,7 +2563,7 @@ fn kept_token_keeps_its_comments() {
     let number = output.tokens.get_item_at(3);
     let kept = crate::parser::tokenizer_types::Token::keep(number);
     drop(output);
-    drop(tokenize(&"y = 2  # other\n".repeat(20_000)));
+    drop(tokenize(&"y = 2  # other\n".repeat(REUSE_LINES)));
     let comments = Token::comments(kept).unwrap();
     assert_eq!(comments.len(), 1);
     assert_eq!(comments[0].value, " first");

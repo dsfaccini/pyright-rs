@@ -2110,4 +2110,42 @@ mod tests {
         assert_eq!(message, Some("collector: the heap was used inside an allocation or a collection"));
         drop(roots);
     }
+
+    #[derive(jsrt::Trace)]
+    struct StdCells {
+        list: std::cell::RefCell<Vec<u32>>,
+        once: std::cell::OnceCell<String>,
+    }
+
+    /// Check mode traces every field, std cells included.
+    #[test]
+    fn check_mode_traces_std_cells() {
+        let _serial = serial();
+        collect(true);
+        let cells = P::new(StdCells { list: std::cell::RefCell::new(vec![1, 2]), once: std::cell::OnceCell::new() });
+        cells.once.set("set".to_string()).unwrap();
+        collect(true);
+        assert_eq!(*cells.list.borrow(), [1, 2]);
+        assert_eq!(cells.once.get().map(String::as_str), Some("set"));
+    }
+
+    /// `CountingAlloc` forwards every call and counts the bytes this thread holds.
+    #[test]
+    fn counting_alloc_counts_held_bytes() {
+        use std::alloc::{GlobalAlloc, Layout, System};
+        let counting = CountingAlloc(System);
+        let before = MALLOC_BYTES.with(std::cell::Cell::get);
+        let layout = Layout::from_size_align(64, 8).unwrap();
+        // SAFETY: each pointer comes from the call before, with the layout it was made with.
+        unsafe {
+            let p = counting.alloc_zeroed(layout);
+            assert_eq!(*p.add(63), 0);
+            let p = counting.realloc(p, layout, 256);
+            assert_eq!(MALLOC_BYTES.with(std::cell::Cell::get) - before, 256);
+            counting.dealloc(p, Layout::from_size_align(256, 8).unwrap());
+            let p = counting.alloc(layout);
+            counting.dealloc(p, layout);
+        }
+        assert_eq!(MALLOC_BYTES.with(std::cell::Cell::get), before);
+    }
 }

@@ -3513,6 +3513,7 @@ mod tests {
     /// Rebuilds the canonical text of `tools/unicode_tables.mjs canonical` from the
     /// compiled tables and compares it with the output for the pinned unicode.ts.
     #[test]
+    #[cfg_attr(miri, ignore = "runs node, and Miri cannot start a process")]
     fn tables_match_typescript() {
         let mut rust = String::new();
         rust.push_str(&format!("unicodeLu={}\n", table_text(UNICODE_LU)));
