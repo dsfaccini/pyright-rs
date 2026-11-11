@@ -167,8 +167,7 @@ fn get_antecedents(f: P<FlowNode>) -> Vec<P<FlowNode>> {
     ) {
         // `FlowAssignment | FlowVariableAnnotation | FlowWildcardImport | FlowCondition
         // | FlowExhaustedMatch | FlowCall | FlowPreFinallyGate | FlowPostFinally`
-        let typed_flow_node = f.get();
-        return vec![typed_flow_node.antecedent().unwrap()];
+        return vec![f.d().antecedent().unwrap()];
     }
 
     vec![]

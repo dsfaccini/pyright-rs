@@ -189,12 +189,12 @@ pub fn synthesize_data_class_slots(evaluator: &TypeEvaluator, class_type: ClassT
             variable_decl = symbol.get_declarations().iter().copied().find(|decl| {
                 decl.type_ == DeclarationType::Variable
                     && decl
-                        .variable()
+                        .d().variable()
                         .unwrap()
                         .type_annotation_node
                         .get()
                         .is_none()
-                    && decl.variable().unwrap().is_final.get().unwrap_or(false)
+                    && decl.d().variable().unwrap().is_final.get().unwrap_or(false)
             });
         }
 
@@ -207,7 +207,7 @@ pub fn synthesize_data_class_slots(evaluator: &TypeEvaluator, class_type: ClassT
         }
 
         let is_keyword_only_separator = match variable_decl
-            .and_then(|decl| decl.variable().unwrap().type_annotation_node.get())
+            .and_then(|decl| decl.d().variable().unwrap().type_annotation_node.get())
         {
             Some(type_annotation_node) => {
                 is_data_class_keyword_only_separator(evaluator, Some(symbol), type_annotation_node)
@@ -426,12 +426,12 @@ pub fn synthesize_data_class_methods(
             class_var_decl = symbol.get_declarations().iter().copied().find(|decl| {
                 decl.type_ == DeclarationType::Variable
                     && decl
-                        .variable()
+                        .d().variable()
                         .unwrap()
                         .type_annotation_node
                         .get()
                         .is_none()
-                    && decl.variable().unwrap().is_final.get().unwrap_or(false)
+                    && decl.d().variable().unwrap().is_final.get().unwrap_or(false)
             });
 
             is_inferred_final = true;

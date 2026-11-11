@@ -9,7 +9,7 @@ use super::{Tokenizer, TokenizerOutput};
 use crate::parser::tokenizer_types::{
     CommentType, DedentToken, FStringEndToken, FStringMiddleToken, FStringStartToken,
     IdentifierToken, IndentToken, NewLineToken, NewLineType, NumberToken, OperatorToken,
-    OperatorType, StringToken, StringTokenFlags, TokenType,
+    OperatorType, StringToken, StringTokenFlags, Token, TokenType,
 };
 use jsrt::{JsStr, NumberValue};
 
@@ -1080,7 +1080,7 @@ fn strings_f_string_with_comment() {
     assert_eq!(results.tokens.get_item_at(3).type_, TokenType::Identifier);
     let close_brace_token = results.tokens.get_item_at(4);
     assert_eq!(close_brace_token.type_, TokenType::CloseCurlyBrace);
-    let comments = close_brace_token.comments().unwrap();
+    let comments = Token::comments(close_brace_token).unwrap();
     assert_eq!(comments.len(), 1);
     assert_eq!(comments[0].type_, CommentType::Regular);
     assert_eq!(comments[0].value, " comment");
@@ -2298,18 +2298,18 @@ fn comments1() {
 
     let token0 = results.tokens.get_item_at(0);
     assert_eq!(token0.type_, TokenType::NewLine);
-    assert_eq!(token0.comments().unwrap().len(), 1);
-    assert_eq!(token0.comments().unwrap()[0].value, " hello");
+    assert_eq!(Token::comments(token0).unwrap().len(), 1);
+    assert_eq!(Token::comments(token0).unwrap()[0].value, " hello");
 
     let token1 = results.tokens.get_item_at(1);
     assert_eq!(token1.type_, TokenType::String);
-    assert_eq!(token1.comments().unwrap().len(), 1);
-    assert_eq!(token1.comments().unwrap()[0].value, " good bye");
+    assert_eq!(Token::comments(token1).unwrap().len(), 1);
+    assert_eq!(Token::comments(token1).unwrap()[0].value, " good bye");
 
     let token2 = results.tokens.get_item_at(2);
     assert_eq!(token2.type_, TokenType::NewLine);
-    assert_eq!(token2.comments().unwrap().len(), 1);
-    assert_eq!(token2.comments().unwrap()[0].value, " another");
+    assert_eq!(Token::comments(token2).unwrap().len(), 1);
+    assert_eq!(Token::comments(token2).unwrap()[0].value, " another");
 
     assert_eq!(results.tokens.get_item_at_position(0), -1);
     assert_eq!(results.tokens.get_item_at_position(7), 0);
@@ -2334,27 +2334,28 @@ fn comments2() {
 
     let token17 = results.tokens.get_item_at(17);
     assert_eq!(token17.type_, TokenType::EndOfStream);
-    assert!(token17.comments().is_none());
+    assert!(Token::comments(token17).is_none());
     let start = token17.start;
 
     let token16 = results.tokens.get_item_at(16);
     assert_eq!(token16.type_, TokenType::Dedent);
     assert_eq!(token16.start, start);
-    assert!(token16.comments().is_none());
+    assert!(Token::comments(token16).is_none());
 
     // When multiple tokens have the same start position (and 0-length)
     // comments, if any, are stored on the first such token.
     let token15 = results.tokens.get_item_at(15);
     assert_eq!(token15.type_, TokenType::Dedent);
     assert_eq!(token15.start, start);
-    assert_eq!(token15.comments().unwrap().len(), 1);
-    assert_eq!(token15.comments().unwrap()[0].value, " comment");
+    assert_eq!(Token::comments(token15).unwrap().len(), 1);
+    assert_eq!(Token::comments(token15).unwrap()[0].value, " comment");
 
     let token14 = results.tokens.get_item_at(14);
     assert_ne!(token14.start, start);
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "builds the full Unicode identifier tables: over an hour under Miri")]
 fn identifiers1() {
     let results = tokenize("배열 数値 лік Opciók 可選值");
     assert_eq!(results.tokens.count(), 5 + IMPLICIT_TOKEN_COUNT);
@@ -2500,6 +2501,7 @@ fn constructor() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "builds the full Unicode identifier tables: over an hour under Miri")]
 fn normalization() {
     let results = tokenize("ℝ 𝕽");
     assert_eq!(results.tokens.count(), 2 + IMPLICIT_TOKEN_COUNT);
@@ -2536,6 +2538,10 @@ fn last_empty_line() {
 #[path = "tokenizer_unescape_tests.rs"]
 mod unescape_tests;
 
+/// Lines enough to reuse the freed scratch chunks. Miri retires them instead
+/// (PYRIGHT_RS_TOKENS=check in tools/miri.sh), so a stale token is a use after free.
+const REUSE_LINES: usize = if cfg!(miri) { 200 } else { 20_000 };
+
 /// `Token::keep` copies a token out of its tokenizer's scratch region once, and
 /// the copy, which owns the token's buffers, outlives the output.
 #[test]
@@ -2547,7 +2553,7 @@ fn kept_token_outlives_its_output() {
     let kept = crate::parser::tokenizer_types::Token::keep(number);
     assert_eq!(crate::parser::tokenizer_types::Token::keep(number), kept);
     drop(output);
-    drop(tokenize(&"y = 98765432109876543210987654321\n".repeat(20_000)));
+    drop(tokenize(&"y = 98765432109876543210987654321\n".repeat(REUSE_LINES)));
     assert_eq!(NumberToken::cast(kept).unwrap().d().value, value);
 }
 
@@ -2557,8 +2563,8 @@ fn kept_token_keeps_its_comments() {
     let number = output.tokens.get_item_at(3);
     let kept = crate::parser::tokenizer_types::Token::keep(number);
     drop(output);
-    drop(tokenize(&"y = 2  # other\n".repeat(20_000)));
-    let comments = kept.comments().unwrap();
+    drop(tokenize(&"y = 2  # other\n".repeat(REUSE_LINES)));
+    let comments = Token::comments(kept).unwrap();
     assert_eq!(comments.len(), 1);
     assert_eq!(comments[0].value, " first");
     assert_eq!(NumberToken::cast(kept).unwrap().d().value, NumberValue::Number(1.0));

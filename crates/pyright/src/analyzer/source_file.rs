@@ -1230,7 +1230,7 @@ fn add_task_list_diagnostics(
         let token = tokenizer_output.tokens.get_item_at(i);
 
         // If there are no comments, skip this token.
-        let Some(comments) = token.comments().filter(|c| !c.is_empty()) else {
+        let Some(comments) = crate::parser::tokenizer_types::Token::comments(token).filter(|c| !c.is_empty()) else {
             continue;
         };
 

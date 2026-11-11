@@ -108,7 +108,12 @@ impl FullAccessHost {
             if let Some(dir) = cwd_to_use {
                 command.current_dir(dir);
             }
-            let output = command.output().map_err(|e| {
+            // Miri cannot spawn a process: the interpreter is missing, as on a machine without Python.
+            #[cfg(miri)]
+            let output: std::io::Result<std::process::Output> = Err(std::io::ErrorKind::NotFound.into());
+            #[cfg(not(miri))]
+            let output = command.output();
+            let output = output.map_err(|e| {
                 if e.kind() == std::io::ErrorKind::NotFound {
                     ExecError::UnusableCwdOrMissing
                 } else {

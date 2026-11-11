@@ -4,6 +4,8 @@
 //! `write_token` print one token (and its comments) wherever a token appears,
 //! so the tree stage uses them too.
 
+use jsrt::P;
+
 use super::format::{self, DumpWriter};
 use crate::parser::tokenizer::{IgnoreComment, TokenizerOutput};
 use crate::parser::tokenizer_types::{Token, TokenDetails, TokenType};
@@ -43,7 +45,7 @@ pub fn token_type_name(token_type: TokenType) -> &'static str {
 
 /// The one-line form of a token, without its comments:
 /// `<TokenTypeName> <start>+<length>[ <field>=<scalar>]...`, fields sorted by name.
-pub fn token_line(token: &Token) -> String {
+pub fn token_line(token: P<Token>) -> String {
     let mut fields: Vec<(&str, String)> = vec![];
     match token.d() {
         TokenDetails::None => {}
@@ -114,7 +116,7 @@ pub fn token_line(token: &Token) -> String {
     let mut line = format!(
         "{} {}",
         token_type_name(token.type_),
-        format::text_range(token)
+        format::text_range(&*token)
     );
     for (name, value) in fields {
         line.push(' ');
@@ -126,9 +128,9 @@ pub fn token_line(token: &Token) -> String {
 }
 
 /// `<key>: <token line>`, then the token's comments nested below it.
-pub fn write_token(w: &mut DumpWriter, depth: usize, key: &str, token: &Token) {
+pub fn write_token(w: &mut DumpWriter, depth: usize, key: &str, token: P<Token>) {
     w.field(depth, key, &token_line(token));
-    if let Some(comments) = token.comments() {
+    if let Some(comments) = Token::comments(token) {
         w.field(depth + 1, "comments", &format::array_header(comments.len()));
         for (i, comment) in comments.iter().enumerate() {
             w.field(
@@ -208,7 +210,7 @@ pub fn dump_tokenizer_output(output: &TokenizerOutput) -> String {
         &format::array_header(output.tokens.count() as usize),
     );
     for (i, token) in output.tokens.items().iter().enumerate() {
-        write_token(&mut w, 1, &format::index_key(i), token);
+        write_token(&mut w, 1, &format::index_key(i), *token);
     }
 
     if let Some(type_ignore_all) = &output.type_ignore_all {

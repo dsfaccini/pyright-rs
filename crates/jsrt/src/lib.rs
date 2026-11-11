@@ -22,9 +22,10 @@ pub mod sort;
 pub mod string;
 pub mod switch;
 pub mod trace;
+mod vm;
 pub mod vscode_uri;
 
-pub use arena::P;
+pub use arena::{Header, P};
 pub use atom::{Atom, AtomKey};
 pub use cell::OptionRefCell;
 pub use heap::{ClassSlot, GcMode, Tracer};

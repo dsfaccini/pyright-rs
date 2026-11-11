@@ -1,6 +1,6 @@
 //! Port of `packages/pyright-internal/src/parser/stringTokenUtils.ts`.
 
-use jsrt::JsString;
+use jsrt::{JsString, P};
 use jsrt::string::from_char_code;
 
 use super::tokenizer_types::{StringTokenFlags, Token, TokenDetails};
@@ -63,7 +63,7 @@ fn complete_unescaped_string(
 
 /// The token's `flags` and `escapedValue`. Only `StringToken` and
 /// `FStringMiddleToken` reach `getUnescapedString`.
-fn flags_and_escaped_value(token: &Token) -> (StringTokenFlags, &JsString) {
+fn flags_and_escaped_value(token: P<Token>) -> (StringTokenFlags, &'static JsString) {
     match token.d() {
         TokenDetails::String(d) => (d.flags, &d.escaped_value),
         TokenDetails::FStringMiddle(d) => (d.flags, &d.escaped_value),
@@ -72,7 +72,7 @@ fn flags_and_escaped_value(token: &Token) -> (StringTokenFlags, &JsString) {
 }
 
 // parser/stringTokenUtils.ts:54
-pub fn get_unescaped_string(string_token: &Token, elide_crlf: bool) -> UnescapedString {
+pub fn get_unescaped_string(string_token: P<Token>, elide_crlf: bool) -> UnescapedString {
     let (flags, escaped_string) = flags_and_escaped_value(string_token);
     let is_raw = flags.any(StringTokenFlags::Raw);
 

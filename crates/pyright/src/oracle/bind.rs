@@ -262,7 +262,7 @@ fn module_loader_actions_value(actions: &ModuleLoaderActions) -> Value {
 }
 
 /// A declaration with the fields its object literal set.
-pub fn declaration_value(decl: &Declaration) -> Value {
+pub fn declaration_value(decl: P<Declaration>) -> Value {
     let mut fields: Vec<(&'static str, Option<Value>)> = vec![
         ("isInExceptSuite", Some(Value::bool(decl.is_in_except_suite.get()))),
         ("isInInlinedTypedDict", opt(decl.is_in_inlined_typed_dict.get(), Value::bool)),
@@ -334,7 +334,7 @@ pub fn declaration_value(decl: &Declaration) -> Value {
                 ("isNativeLib", opt(d.is_native_lib.get(), Value::bool)),
                 ("isUnresolved", opt(d.is_unresolved.get(), Value::bool)),
                 ("loadSymbolsFromPath", Some(Value::bool(d.load_symbols_from_path.get()))),
-                ("submoduleFallback", opt(d.submodule_fallback.get(), |f| declaration_value(&f))),
+                ("submoduleFallback", opt(d.submodule_fallback.get(), declaration_value)),
                 ("symbolName", opt(d.symbol_name.borrow().as_deref(), Value::str)),
                 ("usesLocalName", Some(Value::bool(d.uses_local_name.get()))),
             ]);
@@ -352,7 +352,7 @@ fn symbol_value(symbol: &Symbol) -> Value {
         (
             "_declarations",
             opt(symbol._declarations.borrow().as_ref(), |decls| {
-                Value::Array(decls.iter().map(|d| declaration_value(d)).collect())
+                Value::Array(decls.iter().map(|d| declaration_value(*d)).collect())
             }),
         ),
         ("_flags", Some(Value::number(symbol._flags.get().0 as f64))),
@@ -445,7 +445,7 @@ pub fn dump_bind(
                     Value::Set(set.borrow().iter().map(|s| Value::str(s)).collect())
                 }),
             ),
-            ("declaration", opt(cold.and_then(|c| c.declaration.get()), |d| declaration_value(&d))),
+            ("declaration", opt(cold.and_then(|c| c.declaration.get()), declaration_value)),
             ("dunderAllInfo", opt(cold.and_then(|c| c.dunder_all_info.get()), |d| dunder_all_info_value(&d))),
             ("importInfo", opt(cold.and_then(|c| c.import_info.get()), |r| import_result_value(&r))),
             ("scope", opt(cold.and_then(|c| c.scope.get()), |s| scope_ref(numbering, s))),

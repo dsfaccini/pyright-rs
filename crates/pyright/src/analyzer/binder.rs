@@ -196,7 +196,7 @@ fn get_called_built_in_name(
         let declarations = symbol_with_scope.symbol.get_declarations();
         let declaration = declarations.last().copied();
         if let Some(declaration) = declaration {
-            if let Some(var) = declaration.variable() {
+            if let Some(var) = declaration.d().variable() {
                 if let Some(source) = var.inferred_type_source.get() {
                     if source.node_type == ParseNodeType::Name
                         || source.node_type == ParseNodeType::MemberAccess
@@ -206,7 +206,7 @@ fn get_called_built_in_name(
                 }
             }
 
-            if let Some(alias) = declaration.alias() {
+            if let Some(alias) = declaration.d().alias() {
                 if declaration.module_name().as_str() == "builtins" {
                     if let Some(symbol_name) = alias.symbol_name.borrow().as_ref() {
                         if !symbol_name.is_empty() {
@@ -224,7 +224,7 @@ fn get_called_built_in_name(
                 .unwrap_or_default();
             let declaration = declarations.last().copied();
             if let Some(declaration) = declaration {
-                if let Some(alias) = declaration.alias() {
+                if let Some(alias) = declaration.d().alias() {
                     if declaration.module_name().as_str() == "builtins"
                         && alias.symbol_name.borrow().as_ref().is_none_or(|s| s.is_empty())
                     {
@@ -1721,7 +1721,7 @@ impl ParseTreeVisitor<bool> for Binder {
     // analyzer/binder.ts:1500
     fn visit_return(&mut self, node: ReturnNode) -> bool {
         if let Some(decl) = self._target_function_declaration {
-            let function = decl.function().unwrap();
+            let function = decl.d().function().unwrap();
             let mut return_statements = function.return_statements.borrow_mut();
             return_statements.get_or_insert_with(Vec::new).push(node);
         }
@@ -1962,7 +1962,7 @@ impl ParseTreeVisitor<bool> for Binder {
         }
 
         if let Some(decl) = self._target_function_declaration {
-            let function = decl.function().unwrap();
+            let function = decl.d().function().unwrap();
             let mut raise_statements = function.raise_statements.borrow_mut();
             raise_statements.get_or_insert_with(Vec::new).push(node);
         }
@@ -3271,15 +3271,15 @@ impl Binder {
             .get_declarations()
             .iter().copied()
             .find(|decl| decl.type_ == DeclarationType::Alias);
-        let fallback = alias_decl.and_then(|decl| decl.alias().unwrap().submodule_fallback.get());
+        let fallback = alias_decl.and_then(|decl| decl.d().alias().unwrap().submodule_fallback.get());
         let resolved_uri = if let Some(alias_decl) = alias_decl.filter(|decl| {
-            !decl.uri.get().is_empty() && decl.alias().unwrap().load_symbols_from_path.get()
+            !decl.uri.get().is_empty() && decl.d().alias().unwrap().load_symbols_from_path.get()
         }) {
             Some(alias_decl.uri.get())
         } else {
             fallback
                 .filter(|fallback| {
-                    !fallback.uri.get().is_empty() && fallback.alias().unwrap().load_symbols_from_path.get()
+                    !fallback.uri.get().is_empty() && fallback.d().alias().unwrap().load_symbols_from_path.get()
                 })
                 .map(|fallback| fallback.uri.get())
         };
@@ -3351,7 +3351,7 @@ impl Binder {
         // python module loader.
         let existing_decl = symbol.get_declarations().iter().copied().find(|decl| {
             decl.type_ == DeclarationType::Alias
-                && decl.alias().unwrap().first_name_part.borrow().as_deref() == Some(first_name_part_value.as_str())
+                && decl.d().alias().unwrap().first_name_part.borrow().as_deref() == Some(first_name_part_value.as_str())
                 && uri_of_first_submodule.is_none_or(|uri| uri.equals(Some(decl.uri.get())))
         });
         let new_decl: P<Declaration>;
@@ -3376,7 +3376,7 @@ impl Binder {
             // Reconcile laziness: if any eager import path exists for this symbol,
             // the declaration is not lazy (PEP 810).
             if !is_lazy {
-                new_decl.alias().unwrap().is_lazy.set(None);
+                new_decl.d().alias().unwrap().is_lazy.set(None);
             }
         } else if is_resolved {
             let details = AliasDeclarationDetails::new(import_alias.is_some(), false);
@@ -3418,7 +3418,7 @@ impl Binder {
                 details,
             );
         }
-        let new_alias = new_decl.alias().unwrap();
+        let new_alias = new_decl.d().alias().unwrap();
 
         // See if there is import info for this part of the path. This allows us
         // to implicitly import all of the modules in a multi-part module name.
@@ -3426,7 +3426,7 @@ impl Binder {
         if let Some(implicit_import_info) = implicit_import_info.filter(|info| !info.resolved_uris.is_empty()) {
             new_decl.uri.set(implicit_import_info.resolved_uris[0]);
             new_alias.load_symbols_from_path.set(true);
-            self._add_implicit_imports_to_loader_actions(&implicit_import_info, new_decl.get());
+            self._add_implicit_imports_to_loader_actions(&implicit_import_info, &new_decl);
         }
 
         // Add the implicit imports for this module if it's the last
@@ -3437,11 +3437,11 @@ impl Binder {
             new_alias.is_unresolved.set(Some(false));
 
             if let Some(import_info) = import_info {
-                self._add_implicit_imports_to_loader_actions(&import_info, new_decl.get());
+                self._add_implicit_imports_to_loader_actions(&import_info, &new_decl);
             }
         } else {
             // Fill in the remaining name parts.
-            let mut cur_loader_actions: &'static dyn ModuleLoaderActionsLike = new_decl.get();
+            let mut cur_loader_actions: &dyn ModuleLoaderActionsLike = &new_decl;
 
             for i in 1..name_parts.len() {
                 let name_part_value = name_parts[i].d().value().to_string();
@@ -3528,7 +3528,7 @@ impl Binder {
                 // statements because they affect the behavior of the function (making
                 // it a generator) even if they're never executed.
                 if let Some(target) = self._target_function_declaration {
-                    let function = target.function().unwrap();
+                    let function = target.d().function().unwrap();
                     if !function.is_generator.get() {
                         let mut yield_finder = YieldFinder::new();
                         if yield_finder.check_contains_yield(*statement) {
@@ -4528,7 +4528,7 @@ impl Binder {
                         && !decls.iter().any(|decl| {
                             decl.type_ != DeclarationType::Variable
                                 || decl
-                                    .variable()
+                                    .d().variable()
                                     .is_none_or(|v| v.is_defined_by_member_access.get() != Some(true))
                         })
                     {
@@ -4615,7 +4615,7 @@ impl Binder {
                         if !symbol.is_class_member()
                             || !symbol.get_declarations().iter().any(|decl| {
                                 decl.type_ == DeclarationType::Function
-                                    && decl.function().unwrap().is_method.get()
+                                    && decl.d().function().unwrap().is_method.get()
                             })
                         {
                             symbol.set_is_instance_member();
@@ -5197,7 +5197,7 @@ impl Binder {
 
         let module_name = imported_module_alias_decl.module_name();
         let first_name_part = imported_module_alias_decl
-            .alias()
+            .d().alias()
             .unwrap()
             .first_name_part
             .borrow()
@@ -5209,7 +5209,7 @@ impl Binder {
         );
 
         if let Some(existing_module_alias_decl) = existing_module_alias_decl {
-            self._merge_module_loader_actions(existing_module_alias_decl.get(), imported_module_alias_decl.get());
+            self._merge_module_loader_actions(&existing_module_alias_decl, &imported_module_alias_decl);
         } else {
             local_symbol.add_declaration(self._clone_multipart_module_alias_declaration(node, imported_module_alias_decl));
         }
@@ -5229,7 +5229,7 @@ impl Binder {
         let declarations = symbol.get_declarations();
 
         for declaration in declarations.iter().rev() {
-            let Some(alias) = declaration.alias() else {
+            let Some(alias) = declaration.d().alias() else {
                 continue;
             };
             if alias.symbol_name.borrow().as_ref().is_some_and(|s| !s.is_empty())
@@ -5262,9 +5262,9 @@ impl Binder {
         node: ImportFromNode,
         declaration: P<Declaration>,
     ) -> P<Declaration> {
-        let cloned_loader_actions = self._clone_module_loader_actions(declaration.get());
+        let cloned_loader_actions = self._clone_module_loader_actions(&declaration);
         let details = AliasDeclarationDetails::new(false, cloned_loader_actions.load_symbols_from_path.get());
-        *details.first_name_part.borrow_mut() = declaration.alias().unwrap().first_name_part.borrow().clone();
+        *details.first_name_part.borrow_mut() = declaration.d().alias().unwrap().first_name_part.borrow().clone();
         details
             .implicit_imports
             .set(cloned_loader_actions.implicit_imports.get());
@@ -5277,13 +5277,13 @@ impl Binder {
             self._is_in_except_suite,
             details,
         );
-        let cloned_alias = cloned_declaration.alias().unwrap();
+        let cloned_alias = cloned_declaration.d().alias().unwrap();
 
         if cloned_loader_actions.is_unresolved.get() == Some(true) {
             cloned_alias.is_unresolved.set(Some(true));
         }
 
-        if declaration.alias().unwrap().is_native_lib.get() == Some(true) {
+        if declaration.d().alias().unwrap().is_native_lib.get() == Some(true) {
             cloned_alias.is_native_lib.set(Some(true));
         }
 
@@ -5491,7 +5491,7 @@ impl Binder {
         }
 
         if let Some(decl) = self._target_function_declaration {
-            let function = decl.function().unwrap();
+            let function = decl.d().function().unwrap();
             function
                 .yield_statements
                 .borrow_mut()

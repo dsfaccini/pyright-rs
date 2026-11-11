@@ -8,7 +8,6 @@
 //! prints a field only when the object literal set it.
 
 use jsrt::cell::{Cell, RefCell};
-use std::ptr;
 use std::rc::Rc;
 
 use jsrt::{JsMap, OptionRefCell, P};
@@ -231,70 +230,76 @@ impl Declaration {
     }
 
     /// # Safety
-    /// `D::has_type(self.type_)`.
-    unsafe fn details_unchecked<D: DeclarationInterface>(&self) -> &'static D {
+    /// `D::has_type(decl.type_)`.
+    unsafe fn details_unchecked<D: DeclarationInterface>(decl: P<Declaration>) -> &'static D {
         // SAFETY: `create` makes every header the first field of a `#[repr(C)]`
         // `DeclarationAlloc` whose fields are the interface of `type_`. The program
         // heap is never freed, and the collector frees an evaluator declaration only
-        // when no handle reaches it.
-        unsafe { &(*ptr::from_ref(self).cast::<DeclarationAlloc<D>>()).d }
+        // when no handle reaches it. The handle's pointer covers the whole `DeclarationAlloc`.
+        unsafe { &(*decl.as_ptr().cast::<DeclarationAlloc<D>>()).d }
     }
+}
 
-    /// The fields of the specific declaration interface.
-    pub fn d(&self) -> DeclarationDetails {
+/// `decl.d()`: the fields of the specific declaration interface.
+impl jsrt::Header for Declaration {
+    type Details = DeclarationDetails;
+
+    fn details(decl: P<Declaration>) -> DeclarationDetails {
         // SAFETY: each arm reads the interface of its type.
         unsafe {
-            match self.type_ {
-                DeclarationType::Intrinsic => DeclarationDetails::Intrinsic(self.details_unchecked()),
-                DeclarationType::Variable => DeclarationDetails::Variable(self.details_unchecked()),
-                DeclarationType::Param => DeclarationDetails::Param(self.details_unchecked()),
+            match decl.type_ {
+                DeclarationType::Intrinsic => DeclarationDetails::Intrinsic(Declaration::details_unchecked(decl)),
+                DeclarationType::Variable => DeclarationDetails::Variable(Declaration::details_unchecked(decl)),
+                DeclarationType::Param => DeclarationDetails::Param(Declaration::details_unchecked(decl)),
                 DeclarationType::TypeParam => DeclarationDetails::TypeParam,
-                DeclarationType::TypeAlias => DeclarationDetails::TypeAlias(self.details_unchecked()),
-                DeclarationType::Function => DeclarationDetails::Function(self.details_unchecked()),
+                DeclarationType::TypeAlias => DeclarationDetails::TypeAlias(Declaration::details_unchecked(decl)),
+                DeclarationType::Function => DeclarationDetails::Function(Declaration::details_unchecked(decl)),
                 DeclarationType::Class => DeclarationDetails::Class,
                 DeclarationType::SpecialBuiltInClass => DeclarationDetails::SpecialBuiltInClass,
-                DeclarationType::Alias => DeclarationDetails::Alias(self.details_unchecked()),
+                DeclarationType::Alias => DeclarationDetails::Alias(Declaration::details_unchecked(decl)),
             }
         }
     }
+}
 
-    pub fn intrinsic(&self) -> Option<&'static IntrinsicDeclarationDetails> {
-        match self.d() {
+impl DeclarationDetails {
+    pub fn intrinsic(self) -> Option<&'static IntrinsicDeclarationDetails> {
+        match self {
             DeclarationDetails::Intrinsic(d) => Some(d),
             _ => None,
         }
     }
 
-    pub fn variable(&self) -> Option<&'static VariableDeclarationDetails> {
-        match self.d() {
+    pub fn variable(self) -> Option<&'static VariableDeclarationDetails> {
+        match self {
             DeclarationDetails::Variable(d) => Some(d),
             _ => None,
         }
     }
 
-    pub fn param(&self) -> Option<&'static ParamDeclarationDetails> {
-        match self.d() {
+    pub fn param(self) -> Option<&'static ParamDeclarationDetails> {
+        match self {
             DeclarationDetails::Param(d) => Some(d),
             _ => None,
         }
     }
 
-    pub fn type_alias(&self) -> Option<&'static TypeAliasDeclarationDetails> {
-        match self.d() {
+    pub fn type_alias(self) -> Option<&'static TypeAliasDeclarationDetails> {
+        match self {
             DeclarationDetails::TypeAlias(d) => Some(d),
             _ => None,
         }
     }
 
-    pub fn function(&self) -> Option<&'static FunctionDeclarationDetails> {
-        match self.d() {
+    pub fn function(self) -> Option<&'static FunctionDeclarationDetails> {
+        match self {
             DeclarationDetails::Function(d) => Some(d),
             _ => None,
         }
     }
 
-    pub fn alias(&self) -> Option<&'static AliasDeclarationDetails> {
-        match self.d() {
+    pub fn alias(self) -> Option<&'static AliasDeclarationDetails> {
+        match self {
             DeclarationDetails::Alias(d) => Some(d),
             _ => None,
         }
@@ -518,18 +523,18 @@ impl ModuleLoaderActionsLike for ModuleLoaderActions {
 }
 
 /// Only for an alias declaration; panics on any other kind.
-impl ModuleLoaderActionsLike for Declaration {
+impl ModuleLoaderActionsLike for P<Declaration> {
     fn uri(&self) -> &Cell<Uri> {
-        &self.uri
+        &self.get().uri
     }
     fn is_unresolved(&self) -> &Cell<Option<bool>> {
-        &self.alias().expect("alias declaration").is_unresolved
+        &self.d().alias().expect("alias declaration").is_unresolved
     }
     fn load_symbols_from_path(&self) -> &Cell<bool> {
-        &self.alias().expect("alias declaration").load_symbols_from_path
+        &self.d().alias().expect("alias declaration").load_symbols_from_path
     }
     fn implicit_imports(&self) -> &Cell<Option<ImplicitImportMap>> {
-        &self.alias().expect("alias declaration").implicit_imports
+        &self.d().alias().expect("alias declaration").implicit_imports
     }
 }
 
