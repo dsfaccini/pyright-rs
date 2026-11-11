@@ -85,7 +85,14 @@ fn config() -> &'static Config {
             Ok(other) => panic!("PYRIGHT_RS_GC must be off, on or check, not {other:?}"),
         };
         let check = mode == GcMode::Check;
-        let min_mib: usize = env_number("PYRIGHT_RS_GC_MIN_MIB").unwrap_or(if check { 64 } else { 1024 });
+        let generational = match std::env::var("PYRIGHT_RS_GC_GENERATIONAL").as_deref() {
+            Ok("0") => false,
+            Err(_) | Ok("") | Ok("1") => true,
+            Ok(other) => panic!("PYRIGHT_RS_GC_GENERATIONAL must be 0 or 1, not {other:?}"),
+        };
+        // On pydantic-ai, 512 MiB between generational collections peaks 0.6 GB below 1 GiB at the same wall time.
+        let default_min_mib = if check { 64 } else if generational { 512 } else { 1024 };
+        let min_mib: usize = env_number("PYRIGHT_RS_GC_MIN_MIB").unwrap_or(default_min_mib);
         let ratio: f64 = env_number("PYRIGHT_RS_GC_RATIO").unwrap_or(if check { 0.0 } else { 1.0 });
         if check {
             if !CHECKS {
@@ -100,11 +107,6 @@ fn config() -> &'static Config {
         };
         let default_threads = std::thread::available_parallelism().map_or(1, |n| n.get().min(8));
         let threads = env_number("PYRIGHT_RS_GC_THREADS").unwrap_or(default_threads).max(1);
-        let generational = match std::env::var("PYRIGHT_RS_GC_GENERATIONAL").as_deref() {
-            Ok("0") => false,
-            Err(_) | Ok("") | Ok("1") => true,
-            Ok(other) => panic!("PYRIGHT_RS_GC_GENERATIONAL must be 0 or 1, not {other:?}"),
-        };
         let major_ratio: f64 = env_number("PYRIGHT_RS_GC_MAJOR_RATIO").unwrap_or(1.0);
         let warm_mib: usize = env_number("PYRIGHT_RS_GC_WARM_MIB").unwrap_or(256);
         let warm_blocks = (warm_mib << 20) >> BLOCK_SHIFT;

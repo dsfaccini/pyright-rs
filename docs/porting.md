@@ -67,7 +67,7 @@ Every Rust-only environment variable is listed here. When you add a cache or sho
 | `PYRIGHT_RS_MODULE_PATH` | a directory | holds `typeshed-fallback`; default: the executable's directory |
 | `PYRIGHT_RS_GC` | `off`, `on` (default), `check` | collection of the evaluator heap (`docs/collector-design.md`); `check` needs the `jsrt/gc-check` feature |
 | `PYRIGHT_RS_GC_LOG` | `1`, `2` | prints each collection; `2` also prints the live and freed objects per type |
-| `PYRIGHT_RS_GC_RATIO`, `PYRIGHT_RS_GC_MIN_MIB` | numbers | the collection trigger: generational, a collection every `MIN_MIB` (default 1024) of evaluator slots; otherwise also `RATIO`, and both 0 collect before every file |
+| `PYRIGHT_RS_GC_RATIO`, `PYRIGHT_RS_GC_MIN_MIB` | numbers | the collection trigger: generational, a collection every `MIN_MIB` (default 512) of evaluator slots; otherwise also `RATIO` (`MIN_MIB` default 1024), and both 0 collect before every file |
 | `PYRIGHT_RS_GC_THREADS` | a number; default the available parallelism, at most 8 | threads that mark, the collecting thread included; 1 marks on the collecting thread alone |
 | `PYRIGHT_RS_GC_GENERATIONAL` | `0`, `1` (default) | generational collection: a minor collection traces young objects and the old ones written since the last collection |
 | `PYRIGHT_RS_GC_MAJOR_RATIO` | a number; default 1 | generational: a collection is major once the old objects grew by this share since the last major one |
