@@ -56,8 +56,8 @@ use crate::parser::parse_nodes::{
     TypeParameterNode, UnpackNode, WithItemNode, YieldFromNode, YieldNode,
 };
 use crate::{analyzer, common, parser};
-use jsrt::{JsMap, JsSet, P};
-use std::cell::{Cell, OnceCell, RefCell};
+use jsrt::cell::{Cell, OnceCell, RefCell};
+use jsrt::{FxHashMap, JsMap, JsSet, P};
 use std::rc::Rc;
 
 // analyzer/typeEvaluator.ts:391
@@ -91,7 +91,7 @@ pub struct MemberAccessTypeResult {
     pub type_: P<Type>,
     pub is_descriptor_applied: Option<bool>,
     pub is_asymmetric_accessor: Option<bool>,
-    pub member_access_deprecation_info: Option<MemberAccessDeprecationInfo>,
+    pub member_access_deprecation_info: Option<Rc<MemberAccessDeprecationInfo>>,
     pub type_errors: Option<bool>,
 }
 
@@ -322,7 +322,7 @@ pub struct TypeEvaluator {
     // analyzer/typeEvaluator.ts:675
     pub(crate) code_flow_analyzer_cache: RefCell<JsMap<u32, Vec<CodeFlowAnalyzerCacheEntry>>>,
     // analyzer/typeEvaluator.ts:676
-    pub(crate) type_cache: Cell<P<RefCell<JsMap<u32, TypeCacheEntry>>>>,
+    pub(crate) type_cache: Cell<P<RefCell<FxHashMap<u32, TypeCacheEntry>>>>,
     // analyzer/typeEvaluator.ts:677
     pub(crate) type_form_type_cache: Cell<P<RefCell<JsMap<u32, Vec<TypeFormTypeCacheEntry>>>>>,
     // analyzer/typeEvaluator.ts:678
@@ -343,7 +343,7 @@ pub struct TypeEvaluator {
     pub(crate) return_type_inference_context_stack: RefCell<Vec<ReturnTypeInferenceContext>>,
     // analyzer/typeEvaluator.ts:686
     pub(crate) return_type_inference_type_cache:
-        Cell<Option<P<RefCell<JsMap<u32, TypeCacheEntry>>>>>,
+        Cell<Option<P<RefCell<FxHashMap<u32, TypeCacheEntry>>>>>,
     // analyzer/typeEvaluator.ts:687
     pub(crate) return_type_inference_type_form_type_cache:
         Cell<Option<P<RefCell<JsMap<u32, Vec<TypeFormTypeCacheEntry>>>>>>,

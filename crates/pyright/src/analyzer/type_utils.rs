@@ -4239,7 +4239,7 @@ pub fn convert_type_to_param_spec_value(type_: P<Type>) -> FunctionType {
             "",
             "",
             shared.flags.get() | crate::analyzer::types::FunctionTypeFlags::ParamSpecValue,
-            doc_string.as_deref(),
+            doc_string,
         );
 
         let deprecated_message = shared.cold().deprecated_message.clone();

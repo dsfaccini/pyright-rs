@@ -14,8 +14,8 @@ use crate::analyzer::parent_directory_cache::ParentDirectoryCache;
 use crate::common::config_options::ConfigOptions;
 use crate::common::host::Host;
 use crate::common::service_provider::ServiceProvider;
+use jsrt::cell::{Cell, RefCell};
 use jsrt::{JsMap, JsSet, P};
-use std::cell::{Cell, RefCell};
 
 // analyzer/importResolver.ts:94
 pub struct ImportResolver {

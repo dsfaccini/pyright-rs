@@ -10,7 +10,7 @@
 
 use crate::common::text_range::{Range, TextRange};
 use jsrt::P;
-use std::cell::{Cell, RefCell};
+use jsrt::cell::{Cell, RefCell};
 
 // common/diagnostic.ts:100
 pub struct Diagnostic {

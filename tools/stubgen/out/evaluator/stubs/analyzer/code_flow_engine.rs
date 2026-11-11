@@ -19,8 +19,8 @@ use crate::analyzer::type_evaluator_types::{Reachability, TypeResult};
 use crate::analyzer::types::{ClassType, FunctionType, Type, TypeVarType};
 use crate::common::console::ConsoleInterface;
 use crate::parser::parse_nodes::ExpressionNode;
+use jsrt::cell::{Cell, OnceCell, RefCell};
 use jsrt::{JsMap, JsSet, P};
-use std::cell::{Cell, OnceCell, RefCell};
 use std::rc::Rc;
 
 // analyzer/codeFlowEngine.ts:81

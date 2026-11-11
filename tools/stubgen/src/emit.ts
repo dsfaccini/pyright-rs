@@ -302,8 +302,7 @@ export class FileEmitter {
         if (coldFields.length) {
             fields.push(`    // Fields few objects set ([cold] in tools/stubgen/typemap.toml): read with \`cold()\`, write with \`cold_mut()\`.`);
             if (mode === 'handle') {
-                this.uses.add(['jsrt::cell::RefCell']);
-                fields.push(`    pub cold: RefCell<Option<Box<${name}Cold>>>,`);
+                fields.push(`    pub cold: jsrt::OptionRefCell<${name}Cold>,`);
             } else {
                 fields.push(`    pub cold: Option<Box<${name}Cold>>,`);
             }
@@ -318,8 +317,8 @@ export class FileEmitter {
 
     // The cold half of a [cold] struct: allocated on the first write through `cold_mut()`, so an
     // object that never sets one of its fields pays one pointer. `cold()` reads an empty one. A
-    // handle's cold half sits in a RefCell, so its accessors borrow it: never hold one across a
-    // call that can reach the same object.
+    // handle's cold half sits in a `jsrt::OptionRefCell`, so its accessors borrow it: never hold
+    // one across a call that can reach the same object.
     private coldStruct(decl: ts.InterfaceDeclaration | ts.ClassDeclaration, name: string, coldFields: string[], handle: boolean) {
         const cold = `${name}Cold`;
         if (!coldFields.every((f) => /^\s*pub(\(crate\))? \w+: Option</.test(f))) {
@@ -339,21 +338,21 @@ export class FileEmitter {
             '    };',
             '',
             '    /// The `cold` field that holds these fields: unallocated while every one is unset.',
-            handle ? `    pub fn into_cold(self) -> RefCell<Option<Box<${cold}>>> {` : `    pub fn into_cold(self) -> Option<Box<${cold}>> {`,
+            handle ? `    pub fn into_cold(self) -> jsrt::OptionRefCell<${cold}> {` : `    pub fn into_cold(self) -> Option<Box<${cold}>> {`,
             `        let unset = ${coldFields.map((f) => f.replace(/^\s*pub(\(crate\))? (\w+): .*$/, 'self.$2.is_none()')).join(' && ')};`,
-            handle ? '        RefCell::new((!unset).then(|| Box::new(self)))' : '        (!unset).then(|| Box::new(self))',
+            handle ? '        (!unset).then_some(self).into()' : '        (!unset).then(|| Box::new(self))',
             '    }',
             '}',
             '',
             `impl ${name} {`,
             ...(handle
                 ? [
-                      `    pub fn cold(&self) -> jsrt::cell::Ref<'_, ${cold}> {`,
-                      `        jsrt::cell::Ref::map(self.cold.borrow(), |cold| cold.as_deref().unwrap_or(&${cold}::EMPTY))`,
+                      `    pub fn cold(&self) -> jsrt::cell::OptionRefOr<'_, ${cold}> {`,
+                      `        self.cold.borrow_or(&${cold}::EMPTY)`,
                       '    }',
                       '',
                       `    pub fn cold_mut(&self) -> jsrt::cell::RefMut<'_, ${cold}> {`,
-                      '        jsrt::cell::RefMut::map(self.cold.borrow_mut(), |cold| &mut **cold.get_or_insert_with(Default::default))',
+                      '        self.cold.borrow_mut_or_default()',
                       '    }',
                       '',
                       '    /// `field = value`, without allocating the cold half to hold a `None`.',

@@ -11,8 +11,8 @@
 use crate::analyzer::declaration::Declaration;
 use crate::analyzer::types::Type;
 use crate::parser::parse_nodes::NameNode;
+use jsrt::cell::{Cell, RefCell};
 use jsrt::{JsMap, P};
-use std::cell::{Cell, RefCell};
 
 // analyzer/symbol.ts:88
 #[derive(Clone)]

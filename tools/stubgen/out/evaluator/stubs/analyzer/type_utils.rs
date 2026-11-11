@@ -15,8 +15,8 @@ use crate::analyzer::types::{
     ClassType, ClassTypeFlags, FunctionType, ModuleType, SignatureWithOffsets, TupleTypeArg, Type,
     TypeCondition, TypeSameOptions, TypeVarType, Variance,
 };
+use jsrt::cell::{Cell, RefCell};
 use jsrt::{JsMap, JsSet, P, flag_ops};
-use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 // analyzer/typeUtils.ts:78

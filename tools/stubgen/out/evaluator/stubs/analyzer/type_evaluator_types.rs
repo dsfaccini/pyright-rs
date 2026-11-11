@@ -18,8 +18,9 @@ use crate::parser::parse_nodes::{
     ArgCategory, ArgumentNode, CallNode, ExpressionNode, NameNode, ParamCategory, ParseNode,
     PatternClassNode,
 };
+use jsrt::cell::Cell;
 use jsrt::{P, flag_ops};
-use std::cell::{Cell, RefCell};
+use std::rc::Rc;
 
 // analyzer/typeEvaluatorTypes.ts:59
 pub const MAX_SUBTYPES_FOR_INFERRED_TYPE: u32 = 64;
@@ -107,7 +108,7 @@ pub struct TypeResult {
     pub is_not_required: Option<bool>,
     pub is_read_only: Option<bool>,
     // Fields few objects set ([cold] in tools/stubgen/typemap.toml): read with `cold()`, write with `cold_mut()`.
-    pub cold: RefCell<Option<Box<TypeResultCold>>>,
+    pub cold: jsrt::OptionRefCell<TypeResultCold>,
 }
 
 // analyzer/typeEvaluatorTypes.ts:228
@@ -121,8 +122,8 @@ pub struct TypeResultCold {
     pub expected_type_diag_addendum: Option<P<DiagnosticAddendum>>,
     pub narrowed_type_for_set: Option<P<Type>>,
     pub overloads_used_for_call: Option<Vec<FunctionType>>,
-    pub member_access_deprecation_info: Option<MemberAccessDeprecationInfo>,
-    pub magic_method_deprecation_info: Option<MagicMethodDeprecationInfo>,
+    pub member_access_deprecation_info: Option<Rc<MemberAccessDeprecationInfo>>,
+    pub magic_method_deprecation_info: Option<Rc<MagicMethodDeprecationInfo>>,
 }
 
 impl TypeResultCold {
@@ -140,7 +141,7 @@ impl TypeResultCold {
     };
 
     /// The `cold` field that holds these fields: unallocated while every one is unset.
-    pub fn into_cold(self) -> RefCell<Option<Box<TypeResultCold>>> {
+    pub fn into_cold(self) -> jsrt::OptionRefCell<TypeResultCold> {
         let unset = self.bind_to_self_type.is_none()
             && self.unpacked_type.is_none()
             && self.type_list.is_none()
@@ -151,21 +152,17 @@ impl TypeResultCold {
             && self.overloads_used_for_call.is_none()
             && self.member_access_deprecation_info.is_none()
             && self.magic_method_deprecation_info.is_none();
-        RefCell::new((!unset).then(|| Box::new(self)))
+        (!unset).then_some(self).into()
     }
 }
 
 impl TypeResult {
-    pub fn cold(&self) -> std::cell::Ref<'_, TypeResultCold> {
-        std::cell::Ref::map(self.cold.borrow(), |cold| {
-            cold.as_deref().unwrap_or(&TypeResultCold::EMPTY)
-        })
+    pub fn cold(&self) -> jsrt::cell::OptionRefOr<'_, TypeResultCold> {
+        self.cold.borrow_or(&TypeResultCold::EMPTY)
     }
 
-    pub fn cold_mut(&self) -> std::cell::RefMut<'_, TypeResultCold> {
-        std::cell::RefMut::map(self.cold.borrow_mut(), |cold| {
-            &mut **cold.get_or_insert_with(Default::default)
-        })
+    pub fn cold_mut(&self) -> jsrt::cell::RefMut<'_, TypeResultCold> {
+        self.cold.borrow_mut_or_default()
     }
 
     /// `field = value`, without allocating the cold half to hold a `None`.
@@ -195,13 +192,12 @@ pub struct TypeResultWithNode {
     pub is_not_required: Option<bool>,
     pub is_read_only: Option<bool>,
     pub overloads_used_for_call: Option<Vec<FunctionType>>,
-    pub member_access_deprecation_info: Option<MemberAccessDeprecationInfo>,
-    pub magic_method_deprecation_info: Option<MagicMethodDeprecationInfo>,
+    pub member_access_deprecation_info: Option<Rc<MemberAccessDeprecationInfo>>,
+    pub magic_method_deprecation_info: Option<Rc<MagicMethodDeprecationInfo>>,
     pub node: P<ParseNode>,
 }
 
 // analyzer/typeEvaluatorTypes.ts:296
-#[derive(Clone)]
 pub struct MemberAccessDeprecationInfo {
     pub access_type: String,
     pub access_method: String,
@@ -209,7 +205,6 @@ pub struct MemberAccessDeprecationInfo {
 }
 
 // analyzer/typeEvaluatorTypes.ts:302
-#[derive(Clone)]
 pub struct MagicMethodDeprecationInfo {
     pub class_name: String,
     pub method_name: String,
@@ -412,7 +407,7 @@ pub struct ClassMemberLookup {
     pub is_class_var: bool,
     pub is_asymmetric_accessor: bool,
     pub narrowed_type_for_set: Option<P<Type>>,
-    pub member_access_deprecation_info: Option<MemberAccessDeprecationInfo>,
+    pub member_access_deprecation_info: Option<Rc<MemberAccessDeprecationInfo>>,
 }
 
 // analyzer/typeEvaluatorTypes.ts:505

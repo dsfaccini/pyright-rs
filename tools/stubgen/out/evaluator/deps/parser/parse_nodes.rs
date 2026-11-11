@@ -12,8 +12,8 @@ use crate::parser::tokenizer_types::{
     FStringMiddleToken, FStringStartToken, IdentifierToken, KeywordToken, KeywordType,
     OperatorType, StringToken, Token,
 };
+use jsrt::cell::{Cell, RefCell};
 use jsrt::{NumberValue, P};
-use std::cell::{Cell, RefCell};
 use std::ops::Deref;
 
 // parser/parseNodes.ts:167
