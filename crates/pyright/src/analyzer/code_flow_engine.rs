@@ -85,7 +85,7 @@ use crate::parser::parse_nodes::RaiseNode;
 use crate::parser::parse_nodes::StatementListNode;
 use crate::parser::parse_nodes::StringListNode;
 use crate::parser::parse_nodes::StringNode;
-use jsrt::{FxHashMap, JsMap, JsSet, P};
+use jsrt::{FxHashMap, FxHashSet, JsMap, JsSet, P};
 use std::cell::{Cell, OnceCell, RefCell};
 use std::rc::Rc;
 
@@ -153,7 +153,8 @@ pub struct IncompleteType {
 #[trace(eval)]
 pub struct ReachabilityCacheEntry {
     pub reachability: Cell<Option<Reachability>>,
-    pub reachability_from: RefCell<JsMap<u32, Reachability>>,
+    // Nothing iterates the reachability caches or the flow-node id sets below: lookup-only maps.
+    pub reachability_from: RefCell<FxHashMap<u32, Reachability>>,
 }
 
 // analyzer/codeFlowEngine.ts:164
@@ -179,8 +180,8 @@ pub enum CachedType {
 #[trace(eval)]
 pub struct CodeFlowTypeCache {
     pub cache: P<RefCell<FxHashMap<u32, Option<CachedType>>>>,
-    pub pending_nodes: RefCell<JsSet<u32>>,
-    pub closed_finally_gate_nodes: RefCell<JsSet<u32>>,
+    pub pending_nodes: RefCell<FxHashSet<u32>>,
+    pub closed_finally_gate_nodes: RefCell<FxHashSet<u32>>,
 }
 
 // analyzer/codeFlowEngine.ts:177
@@ -211,7 +212,7 @@ pub struct CodeFlowEngine {
     // analyzer/codeFlowEngine.ts:208
     pub(crate) is_reachable_recursion_set: RefCell<JsSet<u32>>,
     // analyzer/codeFlowEngine.ts:209
-    pub(crate) reachability_cache: RefCell<JsMap<u32, P<ReachabilityCacheEntry>>>,
+    pub(crate) reachability_cache: RefCell<FxHashMap<u32, P<ReachabilityCacheEntry>>>,
     // analyzer/codeFlowEngine.ts:210
     pub(crate) call_is_no_return_cache: RefCell<JsMap<u32, bool>>,
     // analyzer/codeFlowEngine.ts:211
@@ -240,7 +241,7 @@ pub fn get_code_flow_engine(
         speculative_type_tracker,
         node_info,
         is_reachable_recursion_set: RefCell::new(JsSet::default()),
-        reachability_cache: RefCell::new(JsMap::default()),
+        reachability_cache: RefCell::new(FxHashMap::default()),
         call_is_no_return_cache: RefCell::new(JsMap::default()),
         is_exception_context_manager_cache: RefCell::new(JsMap::default()),
         flow_incomplete_generation: Cell::new(1),
@@ -279,8 +280,8 @@ impl CodeFlowEngine {
             flow_node: P<FlowNode>,
             source_flow_node: Option<P<FlowNode>>,
             ignore_no_return: bool,
-            visited_flow_node_set: RefCell<JsSet<u32>>,
-            closed_finally_gate_set: RefCell<JsSet<u32>>,
+            visited_flow_node_set: RefCell<FxHashSet<u32>>,
+            closed_finally_gate_set: RefCell<FxHashSet<u32>>,
         }
 
         impl ReachabilityQuery<'_> {
@@ -303,7 +304,7 @@ impl CodeFlowEngine {
                     None => {
                         let cache_entry = P::new_eval(ReachabilityCacheEntry {
                             reachability: Cell::new(None),
-                            reachability_from: RefCell::new(JsMap::default()),
+                            reachability_from: RefCell::new(FxHashMap::default()),
                         });
                         self.engine
                             .reachability_cache
@@ -614,7 +615,7 @@ impl CodeFlowEngine {
                         if !was_gate_closed {
                             self.closed_finally_gate_set
                                 .borrow_mut()
-                                .shift_remove(&pre_finally_gate_id);
+                                .remove(&pre_finally_gate_id);
                         }
                         return result;
                     }
@@ -651,8 +652,8 @@ impl CodeFlowEngine {
             flow_node,
             source_flow_node,
             ignore_no_return,
-            visited_flow_node_set: RefCell::new(JsSet::default()),
-            closed_finally_gate_set: RefCell::new(JsSet::default()),
+            visited_flow_node_set: RefCell::new(FxHashSet::default()),
+            closed_finally_gate_set: RefCell::new(FxHashSet::default()),
         };
         let result = query.get_flow_node_reachability_recursive(flow_node, 0);
         self.is_reachable_recursion_set
@@ -1511,8 +1512,8 @@ impl CodeFlowAnalyzer {
             None => {
                 let flow_node_type_cache = P::new_eval(CodeFlowTypeCache {
                     cache: P::new_eval(RefCell::new(FxHashMap::default())),
-                    pending_nodes: RefCell::new(JsSet::default()),
-                    closed_finally_gate_nodes: RefCell::new(JsSet::default()),
+                    pending_nodes: RefCell::new(FxHashSet::default()),
+                    closed_finally_gate_nodes: RefCell::new(FxHashSet::default()),
                 });
                 self.flow_node_type_cache_set
                     .borrow_mut()
@@ -1860,7 +1861,7 @@ impl CodeFlowAnalyzer {
                 self.flow_node_type_cache
                     .pending_nodes
                     .borrow_mut()
-                    .shift_remove(&flow_node.id);
+                    .remove(&flow_node.id);
                 result
             }
 
@@ -2948,7 +2949,7 @@ impl CodeFlowAnalyzer {
                     self.flow_node_type_cache
                         .closed_finally_gate_nodes
                         .borrow_mut()
-                        .shift_remove(&pre_finally_gate_id);
+                        .remove(&pre_finally_gate_id);
                 }
                 result
             }
