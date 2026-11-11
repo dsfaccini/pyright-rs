@@ -344,6 +344,7 @@ struct Barrier {
     eval_base: AtomicUsize,
     eval_len: AtomicUsize,
     eval_cards: AtomicUsize,
+    eval_meta: AtomicUsize,
     program_base: AtomicUsize,
     program_len: AtomicUsize,
     program_cards: AtomicUsize,
@@ -353,6 +354,7 @@ static BARRIER: Barrier = Barrier {
     eval_base: AtomicUsize::new(0),
     eval_len: AtomicUsize::new(0),
     eval_cards: AtomicUsize::new(0),
+    eval_meta: AtomicUsize::new(0),
     program_base: AtomicUsize::new(0),
     program_len: AtomicUsize::new(0),
     program_cards: AtomicUsize::new(0),
@@ -360,15 +362,24 @@ static BARRIER: Barrier = Barrier {
 
 /// The write barrier: the cell at `addr` was written, or is about to be, with a
 /// value that can hold an evaluator handle. When the cell lies in a typed block,
-/// marks its card, so a minor collection traces the objects on it. `jsrt::cell`
-/// calls it; a cell elsewhere (the stack, a buffer) needs none, because no heap
-/// object's cell sits in a buffer (`Trace::CELL_OUT_OF_LINE`).
+/// marks its card, so a minor collection traces the objects on it. An evaluator
+/// object allocated since the last collection is young, unmarked, and traced
+/// whenever a minor collection reaches it, so a write into it marks nothing.
+/// `jsrt::cell` calls it; a cell elsewhere (the stack, a buffer) needs none,
+/// because no heap object's cell sits in a buffer (`Trace::CELL_OUT_OF_LINE`).
 #[inline(always)]
 pub fn remember(addr: usize) {
     let offset = addr.wrapping_sub(BARRIER.eval_base.load(Relaxed));
     if offset < BARRIER.eval_len.load(Relaxed) {
-        // SAFETY: the card table covers the committed part of the range, and the cell is in a committed block.
-        unsafe { *((BARRIER.eval_cards.load(Relaxed) + (offset >> CARD_SHIFT)) as *mut u8) = 1 };
+        // SAFETY: the cell is in a live object, so its block is committed, owned by
+        // this thread and has bitmaps; the card table covers the committed blocks.
+        unsafe {
+            let meta = &*(BARRIER.eval_meta.load(Relaxed) as *const BlockMeta).add(offset >> BLOCK_SHIFT);
+            let i = meta.index(offset & (BLOCK - 1));
+            if *meta.bits.add(meta.words as usize + i / 64) & (1 << (i % 64)) != 0 {
+                *((BARRIER.eval_cards.load(Relaxed) + (offset >> CARD_SHIFT)) as *mut u8) = 1;
+            }
+        }
         return;
     }
     let offset = addr.wrapping_sub(BARRIER.program_base.load(Relaxed));
@@ -390,6 +401,7 @@ fn ranges() -> &'static Ranges {
         if config().generational && config().mode != GcMode::Off {
             BARRIER.eval_base.store(ranges.eval.base, Relaxed);
             BARRIER.eval_cards.store(ranges.eval.cards, Relaxed);
+            BARRIER.eval_meta.store(ranges.eval.meta as usize, Relaxed);
             BARRIER.eval_len.store(ranges.eval.len, Relaxed);
             BARRIER.program_base.store(ranges.program.base, Relaxed);
             BARRIER.program_cards.store(ranges.program.cards, Relaxed);
@@ -1983,6 +1995,7 @@ mod tests {
         let ranges = ranges();
         BARRIER.eval_base.store(ranges.eval.base, Relaxed);
         BARRIER.eval_cards.store(ranges.eval.cards, Relaxed);
+        BARRIER.eval_meta.store(ranges.eval.meta as usize, Relaxed);
         BARRIER.eval_len.store(ranges.eval.len, Relaxed);
         BARRIER.program_base.store(ranges.program.base, Relaxed);
         BARRIER.program_cards.store(ranges.program.cards, Relaxed);
@@ -2024,6 +2037,35 @@ mod tests {
         assert_eq!(Rc::strong_count(&drops), 4, "the major collection frees old garbage");
         root.node.set(None);
         fresh.node.set(None);
+        with_heap(|heap| heap.collect(generational(false, false)));
+        assert_eq!(Rc::strong_count(&drops), 1);
+    }
+
+    /// A write into a young evaluator object marks no card; a minor collection
+    /// still keeps what it holds. A write into an old one marks its card.
+    #[test]
+    fn the_barrier_marks_the_cards_of_old_objects_only() {
+        let _serial = serial();
+        enable_barrier();
+        let card = |n: P<Node>| {
+            let eval = &ranges().eval;
+            // SAFETY: the card of a live evaluator object.
+            unsafe { *((eval.cards + ((n.addr_for_test() - eval.base) >> CARD_SHIFT)) as *const u8) }
+        };
+        let drops = Rc::new(());
+        let root = P::new(Holder { node: Cell::new(None) });
+        let old = node(None, &drops, 1);
+        root.node.set(Some(old));
+        with_heap(|heap| heap.collect(generational(false, false)));
+        let young = node(None, &drops, 2);
+        young.next.set(Some(node(None, &drops, 3)));
+        assert_eq!(card(young), 0, "a write into a young object marked a card");
+        old.next.set(Some(young));
+        assert_eq!(card(old), 1, "a write into an old object marked no card");
+        with_heap(|heap| heap.collect(generational(true, true)));
+        assert_eq!(old.next.get().unwrap().next.get().unwrap().id, 3);
+        assert_eq!(Rc::strong_count(&drops), 4);
+        root.node.set(None);
         with_heap(|heap| heap.collect(generational(false, false)));
         assert_eq!(Rc::strong_count(&drops), 1);
     }
