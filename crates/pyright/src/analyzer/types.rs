@@ -2111,13 +2111,14 @@ impl ClassType {
 
         // Compare most of the details fields. We intentionally skip the isAbstractClass
         // flag because it gets set dynamically.
-        if class1_details.full_name != class2_details.full_name
-            || class1_details.flags.get() != class2_details.flags.get()
+        // The tests have no side effects, so the string comparison, the costly one, runs last.
+        if class1_details.flags.get() != class2_details.flags.get()
             || class1_details.type_source_id != class2_details.type_source_id
             || class1_details.base_classes.borrow().len()
                 != class2_details.base_classes.borrow().len()
             || class1_details.type_params.borrow().len()
                 != class2_details.type_params.borrow().len()
+            || class1_details.full_name != class2_details.full_name
         {
             return false;
         }
