@@ -5,7 +5,6 @@
 use crate::analyzer::analyzer_node_info::AnalyzerNodeInfoAccessor;
 use std::rc::Rc;
 use crate::analyzer::declaration::Declaration;
-use crate::analyzer::declaration::DeclarationDetails;
 use crate::analyzer::declaration::DeclarationType;
 use crate::analyzer::declaration::VariableDeclarationDetails;
 use crate::analyzer::parse_tree_utils::get_class_full_name;
@@ -352,10 +351,10 @@ pub fn create_named_tuple_type(
                             ),
                             file_info.module_name.clone(),
                             false,
-                            DeclarationDetails::Variable(VariableDeclarationDetails {
+                            VariableDeclarationDetails {
                                 is_runtime_type_expression: Cell::new(Some(true)),
                                 ..Default::default()
-                            }),
+                            },
                         );
                         new_symbol.add_declaration(declaration);
                         class_fields.set(&entry_name, new_symbol);
@@ -528,10 +527,10 @@ pub fn create_named_tuple_type(
                             ),
                             file_info.module_name.clone(),
                             false,
-                            DeclarationDetails::Variable(VariableDeclarationDetails {
+                            VariableDeclarationDetails {
                                 type_annotation_node: Cell::new(entry_type_node),
                                 ..Default::default()
-                            }),
+                            },
                         );
                         new_symbol.add_declaration(declaration);
                     }

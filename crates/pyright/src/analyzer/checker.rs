@@ -4635,7 +4635,7 @@ impl Checker {
                         // For statements of the form "import x as x", don't mark "x" as unaccessed
                         // because it's assumed to be re-exported.
                         // See https://typing.readthedocs.io/en/latest/source/stubs.html#imports.
-                        if alias.d().value() != *decl.module_name.borrow() {
+                        if alias.d().value() != &**decl.module_name.borrow() {
                             name_node = Some(alias);
                         }
                     } else {

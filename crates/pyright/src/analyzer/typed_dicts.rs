@@ -6,7 +6,6 @@ use crate::analyzer::analyzer_node_info::AnalyzerNodeInfoAccessor;
 use std::rc::Rc;
 use crate::analyzer::constraint_tracker::ConstraintTracker;
 use crate::analyzer::declaration::Declaration;
-use crate::analyzer::declaration::DeclarationDetails;
 use crate::analyzer::declaration::DeclarationType;
 use crate::analyzer::declaration::VariableDeclarationDetails;
 use crate::analyzer::parse_tree_utils::get_class_full_name;
@@ -228,7 +227,7 @@ pub fn create_typed_dict_type(
                     ),
                     file_info.module_name.clone(),
                     false,
-                    DeclarationDetails::Variable(details),
+                    details,
                 );
                 new_symbol.add_declaration(declaration);
 
@@ -1566,7 +1565,7 @@ pub(crate) fn get_typed_dict_fields_from_dict_syntax(
             ),
             file_info.module_name.clone(),
             false,
-            DeclarationDetails::Variable(details),
+            details,
         );
         declaration.is_in_inlined_typed_dict.set(Some(true));
         new_symbol.add_declaration(declaration);

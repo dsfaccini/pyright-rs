@@ -6,7 +6,7 @@
 
 use jsrt::cell::{Cell, RefCell};
 
-use jsrt::{JsMap, JsSet, P};
+use jsrt::{JsMap, JsSet, OptionRefCell, P};
 
 use super::analyzer_file_info::{AnalyzerFileInfo, ImportLookupKey};
 use super::analyzer_node_info::{AnalyzerNodeInfoAccessor, DunderAllInfo};
@@ -22,7 +22,8 @@ use super::code_flow_types::{
     is_code_flow_supported_for_reference,
 };
 use super::declaration::{
-    AliasDeclarationDetails, Declaration, DeclarationDetails, DeclarationType,
+    NoDeclarationDetails,
+    AliasDeclarationDetails, Declaration, DeclarationType,
     FunctionDeclarationDetails, IntrinsicDeclarationDetails, IntrinsicType,
     ModuleLoaderActions, ModuleLoaderActionsLike, ParamDeclarationDetails,
     TypeAliasDeclarationDetails, VariableDeclarationDetails, create_implicit_import_map,
@@ -206,7 +207,7 @@ fn get_called_built_in_name(
             }
 
             if let Some(alias) = declaration.alias() {
-                if *declaration.module_name.borrow() == "builtins" {
+                if &**declaration.module_name.borrow() == "builtins" {
                     if let Some(symbol_name) = alias.symbol_name.borrow().as_ref() {
                         if !symbol_name.is_empty() {
                             return Some(symbol_name.clone());
@@ -224,7 +225,7 @@ fn get_called_built_in_name(
             let declaration = declarations.last().copied();
             if let Some(declaration) = declaration {
                 if let Some(alias) = declaration.alias() {
-                    if *declaration.module_name.borrow() == "builtins"
+                    if &**declaration.module_name.borrow() == "builtins"
                         && alias.symbol_name.borrow().as_ref().is_none_or(|s| s.is_empty())
                     {
                         return Some(member_access.member.get().d().value().to_string());
@@ -690,7 +691,7 @@ impl ParseTreeVisitor<bool> for Binder {
             self._convert_range(&node.d().name.get()),
             self._file_info.module_name.clone(),
             self._is_in_except_suite,
-            DeclarationDetails::Class,
+            NoDeclarationDetails,
         );
 
         let symbol = self._bind_name_to_scope(self.cur_scope(), node.d().name.get(), None);
@@ -787,13 +788,13 @@ impl ParseTreeVisitor<bool> for Binder {
             self._convert_range(&node.d().name.get()),
             self._file_info.module_name.clone(),
             self._is_in_except_suite,
-            DeclarationDetails::Function(FunctionDeclarationDetails {
+            FunctionDeclarationDetails {
                 is_method: Cell::new(containing_class_node.is_some()),
                 is_generator: Cell::new(false),
-                return_statements: RefCell::new(None),
-                yield_statements: RefCell::new(None),
-                raise_statements: RefCell::new(None),
-            }),
+                return_statements: OptionRefCell::new(),
+                yield_statements: OptionRefCell::new(),
+                raise_statements: OptionRefCell::new(),
+            },
         );
 
         if let Some(symbol) = symbol {
@@ -873,10 +874,10 @@ impl ParseTreeVisitor<bool> for Binder {
                                     this._convert_range(&param_node),
                                     this._file_info.module_name.clone(),
                                     this._is_in_except_suite,
-                                    DeclarationDetails::Param(ParamDeclarationDetails {
-                                        inferred_name: RefCell::new(None),
-                                        inferred_type_nodes: RefCell::new(None),
-                                    }),
+                                    ParamDeclarationDetails {
+                                        inferred_name: OptionRefCell::new(),
+                                        inferred_type_nodes: OptionRefCell::new(),
+                                    },
                                 );
 
                                 symbol.add_declaration(param_declaration);
@@ -971,10 +972,10 @@ impl ParseTreeVisitor<bool> for Binder {
                                     this._convert_range(&param_node),
                                     this._file_info.module_name.clone(),
                                     this._is_in_except_suite,
-                                    DeclarationDetails::Param(ParamDeclarationDetails {
-                                        inferred_name: RefCell::new(None),
-                                        inferred_type_nodes: RefCell::new(None),
-                                    }),
+                                    ParamDeclarationDetails {
+                                        inferred_name: OptionRefCell::new(),
+                                        inferred_type_nodes: OptionRefCell::new(),
+                                    },
                                 );
 
                                 symbol.add_declaration(param_declaration);
@@ -1152,7 +1153,7 @@ impl ParseTreeVisitor<bool> for Binder {
                 self._convert_range(&node),
                 self._file_info.module_name.clone(),
                 self._is_in_except_suite,
-                DeclarationDetails::TypeParam,
+                NoDeclarationDetails,
             );
 
             symbol.add_declaration(param_declaration);
@@ -1199,9 +1200,9 @@ impl ParseTreeVisitor<bool> for Binder {
             self._convert_range(&node.d().name.get()),
             self._file_info.module_name.clone(),
             self._is_in_except_suite,
-            DeclarationDetails::TypeAlias(TypeAliasDeclarationDetails {
-                doc_string: RefCell::new(self._get_variable_doc_string(node.d().expr.get())),
-            }),
+            TypeAliasDeclarationDetails {
+                doc_string: self._get_variable_doc_string(node.d().expr.get()).into(),
+            },
         );
 
         let symbol = self._bind_name_to_scope(self.cur_scope(), node.d().name.get(), None);
@@ -1935,7 +1936,7 @@ impl ParseTreeVisitor<bool> for Binder {
                     self._convert_range(&name),
                     self._file_info.module_name.clone(),
                     self._is_in_except_suite,
-                    DeclarationDetails::Variable(details),
+                    details,
                 );
                 symbol.add_declaration(declaration);
             }
@@ -2428,7 +2429,7 @@ impl ParseTreeVisitor<bool> for Binder {
                                         get_empty_range(), // Range is unknown for wildcard name import.
                                         self._file_info.module_name.clone(),
                                         self._is_in_except_suite,
-                                        DeclarationDetails::Alias(details),
+                                        details,
                                     );
                                     local_symbol.add_declaration(alias_decl);
                                     names.push(name.clone());
@@ -2447,7 +2448,7 @@ impl ParseTreeVisitor<bool> for Binder {
                                             get_empty_range(),
                                             self._file_info.module_name.clone(),
                                             self._is_in_except_suite,
-                                            DeclarationDetails::Alias(AliasDeclarationDetails::new(false, true)),
+                                            AliasDeclarationDetails::new(false, true),
                                         );
 
                                         let details = AliasDeclarationDetails::new(false, true);
@@ -2460,7 +2461,7 @@ impl ParseTreeVisitor<bool> for Binder {
                                             get_empty_range(),
                                             self._file_info.module_name.clone(),
                                             self._is_in_except_suite,
-                                            DeclarationDetails::Alias(details),
+                                            details,
                                         );
 
                                         local_symbol.add_declaration(alias_decl);
@@ -2556,9 +2557,9 @@ impl ParseTreeVisitor<bool> for Binder {
                             import_symbol_node.node(),
                             implicit_import.uri,
                             get_empty_range(),
-                            self._format_module_name(module),
+                            self._format_module_name(module).into(),
                             self._is_in_except_suite,
-                            DeclarationDetails::Alias(fallback_details),
+                            fallback_details,
                         ));
 
                         // Handle the case where this is an __init__.py file and the imported
@@ -2588,9 +2589,9 @@ impl ParseTreeVisitor<bool> for Binder {
                         import_symbol_node.node(),
                         resolved_path,
                         self._convert_range(&name_node),
-                        self._format_module_name(module),
+                        self._format_module_name(module).into(),
                         self._is_in_except_suite,
-                        DeclarationDetails::Alias(details),
+                        details,
                     );
 
                     symbol.add_declaration(alias_decl);
@@ -3036,7 +3037,7 @@ impl ParseTreeVisitor<bool> for Binder {
                     self._convert_range(&target),
                     self._file_info.module_name.clone(),
                     self._is_in_except_suite,
-                    DeclarationDetails::Variable(details),
+                    details,
                 );
                 symbol.add_declaration(declaration);
             }
@@ -3174,7 +3175,7 @@ impl Binder {
                 self._convert_range(slot_name_node),
                 self._file_info.module_name.clone(),
                 self._is_in_except_suite,
-                DeclarationDetails::Variable(details),
+                details,
             );
             symbol.unwrap().add_declaration(declaration);
         }
@@ -3247,7 +3248,7 @@ impl Binder {
                 self._convert_range(&target),
                 self._file_info.module_name.clone(),
                 self._is_in_except_suite,
-                DeclarationDetails::Variable(details),
+                details,
             );
             symbol.add_declaration(declaration);
         }
@@ -3391,9 +3392,10 @@ impl Binder {
                     self._format_module_name(module)
                 } else {
                     ".".repeat(module.d().leading_dots.get() as usize) + &first_name_part_value
-                },
+                }
+                .into(),
                 self._is_in_except_suite,
-                DeclarationDetails::Alias(details),
+                details,
             );
         } else {
             // If we couldn't resolve the import, create a dummy declaration with a
@@ -3412,9 +3414,9 @@ impl Binder {
                 node,
                 uri_of_last_submodule,
                 get_empty_range(),
-                import_info.map(|info| info.import_name.clone()).unwrap_or_default(),
+                import_info.map(|info| info.import_name.clone()).unwrap_or_default().into(),
                 self._is_in_except_suite,
-                DeclarationDetails::Alias(details),
+                details,
             );
         }
         let new_alias = new_decl.alias().unwrap();
@@ -4423,10 +4425,10 @@ impl Binder {
             get_empty_range(),
             self._file_info.module_name.clone(),
             self._is_in_except_suite,
-            DeclarationDetails::Intrinsic(IntrinsicDeclarationDetails {
+            IntrinsicDeclarationDetails {
                 name: name_value.to_string(),
                 intrinsic_type: type_,
-            }),
+            },
         ));
         symbol.set_is_ignored_for_protocol_match();
     }
@@ -4584,7 +4586,7 @@ impl Binder {
                         self._convert_range(&name),
                         self._file_info.module_name.clone(),
                         self._is_in_except_suite,
-                        DeclarationDetails::Variable(details),
+                        details,
                     );
                     symbol_with_scope.symbol.add_declaration(declaration);
                 }
@@ -4638,7 +4640,7 @@ impl Binder {
                         self._convert_range(&name),
                         self._file_info.module_name.clone(),
                         self._is_in_except_suite,
-                        DeclarationDetails::Variable(details),
+                        details,
                     );
                     symbol.add_declaration(declaration);
                 }
@@ -4739,7 +4741,7 @@ impl Binder {
                         self._convert_range(&name),
                         self._file_info.module_name.clone(),
                         self._is_in_except_suite,
-                        DeclarationDetails::Variable(details),
+                        details,
                     );
                     symbol_with_scope.symbol.add_declaration(declaration);
 
@@ -4837,7 +4839,7 @@ impl Binder {
                         self._convert_range(&name),
                         self._file_info.module_name.clone(),
                         self._is_in_except_suite,
-                        DeclarationDetails::Variable(details),
+                        details,
                     );
                     symbol.add_declaration(declaration);
 
@@ -5241,7 +5243,7 @@ impl Binder {
             }
 
             if let Some(module_name) = module_name {
-                if *declaration.module_name.borrow() != module_name {
+                if &**declaration.module_name.borrow() != module_name {
                     continue;
                 }
             }
@@ -5277,7 +5279,7 @@ impl Binder {
             get_empty_range(),
             declaration.module_name.borrow().clone(),
             self._is_in_except_suite,
-            DeclarationDetails::Alias(details),
+            details,
         );
         let cloned_alias = cloned_declaration.alias().unwrap();
 
@@ -5434,7 +5436,7 @@ impl Binder {
             self._convert_range(&annotation_node),
             self._file_info.module_name.clone(),
             self._is_in_except_suite,
-            DeclarationDetails::SpecialBuiltInClass,
+            NoDeclarationDetails,
         );
 
         let symbol = self._bind_name_to_scope(self.cur_scope(), assigned_name_node, None);

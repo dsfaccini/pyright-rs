@@ -417,6 +417,17 @@ impl<T> OptionRefCell<T> {
     }
 }
 
+/// A cell holding `value`, allocated only when it is `Some`.
+impl<T: Trace> From<Option<T>> for OptionRefCell<T> {
+    fn from(value: Option<T>) -> Self {
+        let cell = OptionRefCell::new();
+        if value.is_some() {
+            *cell.borrow_mut() = value;
+        }
+        cell
+    }
+}
+
 impl<T> Default for OptionRefCell<T> {
     fn default() -> Self {
         OptionRefCell::new()

@@ -273,7 +273,7 @@ pub fn declaration_value(decl: &Declaration) -> Value {
         ("uri", Some(Value::uri(decl.uri.get()))),
     ];
 
-    match &decl.d {
+    match decl.d() {
         DeclarationDetails::Intrinsic(d) => {
             fields.push(("intrinsicType", Some(Value::str(d.intrinsic_type))));
             fields.push(("name", Some(Value::str(&d.name))));

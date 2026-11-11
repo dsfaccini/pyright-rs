@@ -10,7 +10,7 @@ use crate::analyzer::analyzer_node_info::AnalyzerNodeInfoReader;
 use crate::analyzer::declaration::Declaration;
 use crate::analyzer::declaration::DeclarationType;
 use crate::analyzer::declaration::{
-    AliasDeclarationDetails, DeclarationDetails, create_implicit_import_map, is_alias_declaration,
+    AliasDeclarationDetails, create_implicit_import_map, is_alias_declaration,
     undefined_declaration_node,
 };
 use crate::common::text_range::get_empty_range;
@@ -277,17 +277,16 @@ pub fn get_declarations_with_uses_local_name_removed(
     decls: &[P<Declaration>],
 ) -> Vec<P<Declaration>> {
     // `{ ...decl }` of an alias declaration: a new object with the same field values.
-    fn copy_alias_declaration(decl: &Declaration) -> Declaration {
+    fn copy_alias_declaration(decl: &Declaration) -> P<Declaration> {
         let alias = decl.alias().unwrap();
-        Declaration {
-            type_: decl.type_,
-            node: Cell::new(decl.node.get()),
-            uri: Cell::new(decl.uri.get()),
-            range: Cell::new(decl.range.get()),
-            module_name: RefCell::new(decl.module_name.borrow().clone()),
-            is_in_except_suite: Cell::new(decl.is_in_except_suite.get()),
-            is_in_inlined_typed_dict: Cell::new(decl.is_in_inlined_typed_dict.get()),
-            d: DeclarationDetails::Alias(AliasDeclarationDetails {
+        let copy = Declaration::create_eval(
+            decl.type_,
+            decl.node.get(),
+            decl.uri.get(),
+            decl.range.get(),
+            decl.module_name.borrow().clone(),
+            decl.is_in_except_suite.get(),
+            AliasDeclarationDetails {
                 uses_local_name: Cell::new(alias.uses_local_name.get()),
                 load_symbols_from_path: Cell::new(alias.load_symbols_from_path.get()),
                 symbol_name: RefCell::new(alias.symbol_name.borrow().clone()),
@@ -297,8 +296,10 @@ pub fn get_declarations_with_uses_local_name_removed(
                 is_unresolved: Cell::new(alias.is_unresolved.get()),
                 is_native_lib: Cell::new(alias.is_native_lib.get()),
                 is_lazy: Cell::new(alias.is_lazy.get()),
-            }),
-        }
+            },
+        );
+        copy.is_in_inlined_typed_dict.set(decl.is_in_inlined_typed_dict.get());
+        copy
     }
 
     // Make a shallow copy and clear the "usesLocalName" field.
@@ -309,7 +310,7 @@ pub fn get_declarations_with_uses_local_name_removed(
                 return local_decl;
             }
 
-            let non_local_decl = P::new_eval(copy_alias_declaration(&local_decl));
+            let non_local_decl = copy_alias_declaration(&local_decl);
             non_local_decl.alias().unwrap().uses_local_name.set(false);
             non_local_decl
         })
@@ -322,16 +323,15 @@ pub fn synthesize_alias_declaration(uri: &Uri) -> P<Declaration> {
     // the find all references, hover provider and etc.
     let alias = AliasDeclarationDetails::new(/* usesLocalName */ false, /* loadSymbolsFromPath */ false);
     alias.implicit_imports.set(Some(create_implicit_import_map()));
-    P::new_eval(Declaration {
-        type_: DeclarationType::Alias,
-        node: Cell::new(undefined_declaration_node()),
-        uri: Cell::new(*uri),
-        range: Cell::new(get_empty_range()),
-        module_name: RefCell::new(String::new()),
-        is_in_except_suite: Cell::new(false),
-        is_in_inlined_typed_dict: Cell::new(None),
-        d: DeclarationDetails::Alias(alias),
-    })
+    Declaration::create_eval(
+        DeclarationType::Alias,
+        undefined_declaration_node(),
+        *uri,
+        get_empty_range(),
+        "".into(),
+        false,
+        alias,
+    )
 }
 
 // analyzer/declarationUtils.ts:230
@@ -349,17 +349,16 @@ pub fn resolve_alias_declaration(
     options: &ResolveAliasOptions,
 ) -> Option<ResolvedAliasInfo> {
     // `{ ...decl }` of an alias declaration: a new object with the same field values.
-    fn copy_alias_declaration(decl: &Declaration) -> Declaration {
+    fn copy_alias_declaration(decl: &Declaration) -> P<Declaration> {
         let alias = decl.alias().unwrap();
-        Declaration {
-            type_: decl.type_,
-            node: Cell::new(decl.node.get()),
-            uri: Cell::new(decl.uri.get()),
-            range: Cell::new(decl.range.get()),
-            module_name: RefCell::new(decl.module_name.borrow().clone()),
-            is_in_except_suite: Cell::new(decl.is_in_except_suite.get()),
-            is_in_inlined_typed_dict: Cell::new(decl.is_in_inlined_typed_dict.get()),
-            d: DeclarationDetails::Alias(AliasDeclarationDetails {
+        let copy = Declaration::create_eval(
+            decl.type_,
+            decl.node.get(),
+            decl.uri.get(),
+            decl.range.get(),
+            decl.module_name.borrow().clone(),
+            decl.is_in_except_suite.get(),
+            AliasDeclarationDetails {
                 uses_local_name: Cell::new(alias.uses_local_name.get()),
                 load_symbols_from_path: Cell::new(alias.load_symbols_from_path.get()),
                 symbol_name: RefCell::new(alias.symbol_name.borrow().clone()),
@@ -369,8 +368,10 @@ pub fn resolve_alias_declaration(
                 is_unresolved: Cell::new(alias.is_unresolved.get()),
                 is_native_lib: Cell::new(alias.is_native_lib.get()),
                 is_lazy: Cell::new(alias.is_lazy.get()),
-            }),
-        }
+            },
+        );
+        copy.is_in_inlined_typed_dict.set(decl.is_in_inlined_typed_dict.get());
+        copy
     }
 
     let mut cur_declaration: P<Declaration> = declaration;
@@ -448,15 +449,15 @@ pub fn resolve_alias_declaration(
                     )?;
                 }
 
-                let submodule_fallback = P::new_eval(copy_alias_declaration(&submodule_fallback));
-                let mut base_module_name = submodule_fallback.module_name.borrow().clone();
+                let submodule_fallback = copy_alias_declaration(&submodule_fallback);
+                let mut base_module_name = submodule_fallback.module_name.borrow().to_string();
 
                 if !base_module_name.is_empty() {
                     base_module_name = format!("{base_module_name}.");
                 }
 
                 *submodule_fallback.module_name.borrow_mut() =
-                    format!("{base_module_name}{symbol_name}");
+                    format!("{base_module_name}{symbol_name}").into();
 
                 return resolve_alias_declaration(import_lookup, submodule_fallback, options);
             }
@@ -526,7 +527,7 @@ pub fn resolve_alias_declaration(
         {
             if !saw_py_typed_transition {
                 if symbol.is_private_py_typed_import() {
-                    private_py_typed_importer = Some(prev_declaration.module_name.borrow().clone());
+                    private_py_typed_importer = Some(prev_declaration.module_name.borrow().to_string());
                 }
 
                 // Note that we've seen a transition from a non-py.typed to a py.typed
@@ -537,7 +538,7 @@ pub fn resolve_alias_declaration(
                 // symbol that is resolved so we can tell the user to import from this
                 // location instead.
                 if !symbol.is_private_py_typed_import() && private_py_typed_imported.is_none() {
-                    private_py_typed_imported = Some(cur_declaration.module_name.borrow().clone());
+                    private_py_typed_imported = Some(cur_declaration.module_name.borrow().to_string());
                 }
             }
         }

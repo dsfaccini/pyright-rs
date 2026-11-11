@@ -27684,7 +27684,7 @@ impl TypeEvaluator {
         placeholder.d().shared.get().recursive_alias.set(Some(P::new_eval(analyzer::types::TypeAliasSharedInfo {
             name: name.to_string(),
             full_name: analyzer::parse_tree_utils::get_class_full_name(name_node.0, &file_info.module_name, name),
-            module_name: file_info.module_name.clone(),
+            module_name: file_info.module_name.to_string(),
             file_uri: file_info.file_uri,
             type_var_scope_id: type_var_scope_id.clone(),
             is_type_alias_type,

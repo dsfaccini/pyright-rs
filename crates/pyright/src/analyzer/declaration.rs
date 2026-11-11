@@ -1,14 +1,17 @@
 //! Port of `packages/pyright-internal/src/analyzer/declaration.ts`.
 //!
-//! `Declaration` is one struct: the `DeclarationBase` fields plus `d`, an enum
-//! with the fields of the specific declaration interface. A declaration is
+//! `Declaration` is the `DeclarationBase` header. A declaration is allocated as
+//! its header followed by the fields of its specific interface; `d()` returns
+//! them as a `DeclarationDetails` variant. A declaration is
 //! shared (symbols and node info hold it, the binder mutates it), so it lives
 //! in the arena as `P<Declaration>`. Optional fields are `Option`: the oracle
 //! prints a field only when the object literal set it.
 
 use jsrt::cell::{Cell, RefCell};
+use std::ptr;
+use std::rc::Rc;
 
-use jsrt::{JsMap, P};
+use jsrt::{JsMap, OptionRefCell, P};
 
 use crate::common::text_range::Range;
 use crate::common::uri::Uri;
@@ -61,12 +64,26 @@ pub enum DeclarationType {
 pub type IntrinsicType = &'static str;
 
 // analyzer/declaration.ts:59
+/// The `DeclarationBase` fields. A declaration is allocated as this header
+/// followed by the fields of the interface its `type_` names
+/// (`DeclarationAlloc`), so it takes the size of its own interface; `d()`
+/// returns them.
+#[repr(C)]
 #[derive(jsrt::Trace)]
 #[trace(eval)]
+// `_details` keeps construction inside this module; `#[non_exhaustive]` allows the crate.
+#[allow(clippy::manual_non_exhaustive)]
 pub struct Declaration {
     // Category of this symbol (function, variable, etc.).
     // Used by hover provider to display helpful text.
     pub type_: DeclarationType,
+
+    // The declaration is within an except clause of a try
+    // statement. We may want to ignore such declarations.
+    pub is_in_except_suite: Cell<bool>,
+
+    // This declaration is within an inlined TypedDict definition.
+    pub is_in_inlined_typed_dict: Cell<Option<bool>>,
 
     // Parse node associated with the declaration. Does not necessarily match
     // the path and range.
@@ -82,93 +99,190 @@ pub struct Declaration {
     // contains the declaration (may not be definitive
     // because a source file can be accessed via different
     // import names in some cases).
-    pub module_name: RefCell<String>,
+    /// Shared with the file info, as the TypeScript string is.
+    pub module_name: RefCell<Rc<str>>,
 
-    // The declaration is within an except clause of a try
-    // statement. We may want to ignore such declarations.
-    pub is_in_except_suite: Cell<bool>,
+    /// Private, so only `Declaration::create` makes a header, always followed by its fields.
+    _details: (),
+}
+const _: () = assert!(size_of::<Declaration>() <= 64);
 
-    // This declaration is within an inlined TypedDict definition.
-    pub is_in_inlined_typed_dict: Cell<Option<bool>>,
+/// A declaration as allocated: the header, then the fields of its interface.
+#[repr(C)]
+#[derive(jsrt::Trace)]
+#[trace(eval)]
+struct DeclarationAlloc<D> {
+    decl: Declaration,
+    d: D,
+}
 
-    pub d: DeclarationDetails,
+/// The fields one declaration interface adds to `DeclarationBase`.
+pub trait DeclarationInterface: jsrt::Trace + 'static {
+    /// The declaration types whose interface this is.
+    fn has_type(type_: DeclarationType) -> bool;
+}
+
+/// The fields of the interfaces that add none: `TypeParam`, `Class` and `SpecialBuiltInClass`.
+#[derive(jsrt::Trace)]
+pub struct NoDeclarationDetails;
+
+impl DeclarationInterface for NoDeclarationDetails {
+    fn has_type(type_: DeclarationType) -> bool {
+        matches!(type_, DeclarationType::TypeParam | DeclarationType::Class | DeclarationType::SpecialBuiltInClass)
+    }
+}
+
+macro_rules! declaration_interface {
+    ($($details:ident: $type_:ident),* $(,)?) => {
+        $(impl DeclarationInterface for $details {
+            fn has_type(type_: DeclarationType) -> bool {
+                type_ == DeclarationType::$type_
+            }
+        })*
+    };
+}
+
+declaration_interface! {
+    IntrinsicDeclarationDetails: Intrinsic,
+    VariableDeclarationDetails: Variable,
+    ParamDeclarationDetails: Param,
+    TypeAliasDeclarationDetails: TypeAlias,
+    FunctionDeclarationDetails: Function,
+    AliasDeclarationDetails: Alias,
 }
 
 /// The fields of the specific declaration interface, one variant per
-/// `DeclarationType`.
-#[derive(jsrt::Trace)]
+/// `DeclarationType`: `decl.d()`.
+#[derive(Clone, Copy)]
 pub enum DeclarationDetails {
-    Intrinsic(IntrinsicDeclarationDetails),
-    Variable(VariableDeclarationDetails),
-    Param(ParamDeclarationDetails),
+    Intrinsic(&'static IntrinsicDeclarationDetails),
+    Variable(&'static VariableDeclarationDetails),
+    Param(&'static ParamDeclarationDetails),
     TypeParam,
-    TypeAlias(TypeAliasDeclarationDetails),
-    Function(FunctionDeclarationDetails),
+    TypeAlias(&'static TypeAliasDeclarationDetails),
+    Function(&'static FunctionDeclarationDetails),
     Class,
     SpecialBuiltInClass,
-    Alias(AliasDeclarationDetails),
+    Alias(&'static AliasDeclarationDetails),
 }
 
 impl Declaration {
-    /// The `DeclarationBase` part of an object literal. `d` must match `type_`.
-    pub fn create(
+    fn header(
         type_: DeclarationType,
         node: P<ParseNode>,
         uri: Uri,
         range: Range,
-        module_name: String,
+        module_name: Rc<str>,
         is_in_except_suite: bool,
-        d: DeclarationDetails,
-    ) -> P<Declaration> {
-        P::new(Declaration {
+    ) -> Declaration {
+        Declaration {
             type_,
+            is_in_except_suite: Cell::new(is_in_except_suite),
+            is_in_inlined_typed_dict: Cell::new(None),
             node: Cell::new(node),
             uri: Cell::new(uri),
             range: Cell::new(range),
             module_name: RefCell::new(module_name),
-            is_in_except_suite: Cell::new(is_in_except_suite),
-            is_in_inlined_typed_dict: Cell::new(None),
-            d,
-        })
+            _details: (),
+        }
     }
 
-    pub fn intrinsic(&self) -> Option<&IntrinsicDeclarationDetails> {
-        match &self.d {
+    /// The `DeclarationBase` part of an object literal, on the program heap.
+    /// `d` must be the interface of `type_`.
+    pub fn create<D: DeclarationInterface>(
+        type_: DeclarationType,
+        node: P<ParseNode>,
+        uri: Uri,
+        range: Range,
+        module_name: Rc<str>,
+        is_in_except_suite: bool,
+        d: D,
+    ) -> P<Declaration> {
+        assert!(D::has_type(type_));
+        let decl = Declaration::header(type_, node, uri, range, module_name, is_in_except_suite);
+        P::new(DeclarationAlloc { decl, d }).header(|alloc| &alloc.decl)
+    }
+
+    /// `create` on the evaluator heap.
+    pub fn create_eval<D: DeclarationInterface>(
+        type_: DeclarationType,
+        node: P<ParseNode>,
+        uri: Uri,
+        range: Range,
+        module_name: Rc<str>,
+        is_in_except_suite: bool,
+        d: D,
+    ) -> P<Declaration> {
+        assert!(D::has_type(type_));
+        let decl = Declaration::header(type_, node, uri, range, module_name, is_in_except_suite);
+        P::new_eval(DeclarationAlloc { decl, d }).header(|alloc| &alloc.decl)
+    }
+
+    /// # Safety
+    /// `D::has_type(self.type_)`.
+    unsafe fn details_unchecked<D: DeclarationInterface>(&self) -> &'static D {
+        // SAFETY: `create` makes every header the first field of a `#[repr(C)]`
+        // `DeclarationAlloc` whose fields are the interface of `type_`. The program
+        // heap is never freed, and the collector frees an evaluator declaration only
+        // when no handle reaches it.
+        unsafe { &(*ptr::from_ref(self).cast::<DeclarationAlloc<D>>()).d }
+    }
+
+    /// The fields of the specific declaration interface.
+    pub fn d(&self) -> DeclarationDetails {
+        // SAFETY: each arm reads the interface of its type.
+        unsafe {
+            match self.type_ {
+                DeclarationType::Intrinsic => DeclarationDetails::Intrinsic(self.details_unchecked()),
+                DeclarationType::Variable => DeclarationDetails::Variable(self.details_unchecked()),
+                DeclarationType::Param => DeclarationDetails::Param(self.details_unchecked()),
+                DeclarationType::TypeParam => DeclarationDetails::TypeParam,
+                DeclarationType::TypeAlias => DeclarationDetails::TypeAlias(self.details_unchecked()),
+                DeclarationType::Function => DeclarationDetails::Function(self.details_unchecked()),
+                DeclarationType::Class => DeclarationDetails::Class,
+                DeclarationType::SpecialBuiltInClass => DeclarationDetails::SpecialBuiltInClass,
+                DeclarationType::Alias => DeclarationDetails::Alias(self.details_unchecked()),
+            }
+        }
+    }
+
+    pub fn intrinsic(&self) -> Option<&'static IntrinsicDeclarationDetails> {
+        match self.d() {
             DeclarationDetails::Intrinsic(d) => Some(d),
             _ => None,
         }
     }
 
-    pub fn variable(&self) -> Option<&VariableDeclarationDetails> {
-        match &self.d {
+    pub fn variable(&self) -> Option<&'static VariableDeclarationDetails> {
+        match self.d() {
             DeclarationDetails::Variable(d) => Some(d),
             _ => None,
         }
     }
 
-    pub fn param(&self) -> Option<&ParamDeclarationDetails> {
-        match &self.d {
+    pub fn param(&self) -> Option<&'static ParamDeclarationDetails> {
+        match self.d() {
             DeclarationDetails::Param(d) => Some(d),
             _ => None,
         }
     }
 
-    pub fn type_alias(&self) -> Option<&TypeAliasDeclarationDetails> {
-        match &self.d {
+    pub fn type_alias(&self) -> Option<&'static TypeAliasDeclarationDetails> {
+        match self.d() {
             DeclarationDetails::TypeAlias(d) => Some(d),
             _ => None,
         }
     }
 
-    pub fn function(&self) -> Option<&FunctionDeclarationDetails> {
-        match &self.d {
+    pub fn function(&self) -> Option<&'static FunctionDeclarationDetails> {
+        match self.d() {
             DeclarationDetails::Function(d) => Some(d),
             _ => None,
         }
     }
 
-    pub fn alias(&self) -> Option<&AliasDeclarationDetails> {
-        match &self.d {
+    pub fn alias(&self) -> Option<&'static AliasDeclarationDetails> {
+        match self.d() {
             DeclarationDetails::Alias(d) => Some(d),
             _ => None,
         }
@@ -188,10 +302,10 @@ pub struct IntrinsicDeclarationDetails {
 pub struct FunctionDeclarationDetails {
     pub is_method: Cell<bool>,
     pub is_generator: Cell<bool>,
-    pub return_statements: RefCell<Option<Vec<ReturnNode>>>,
+    pub return_statements: OptionRefCell<Vec<ReturnNode>>,
     /// `(YieldNode | YieldFromNode)[]`.
-    pub yield_statements: RefCell<Option<Vec<P<ParseNode>>>>,
-    pub raise_statements: RefCell<Option<Vec<RaiseNode>>>,
+    pub yield_statements: OptionRefCell<Vec<P<ParseNode>>>,
+    pub raise_statements: OptionRefCell<Vec<RaiseNode>>,
 }
 
 // analyzer/declaration.ts:117
@@ -199,17 +313,17 @@ pub struct FunctionDeclarationDetails {
 pub struct ParamDeclarationDetails {
     // Inferred parameters can be inferred from pieces of an actual NameNode, so this
     // value represents the actual 'name' as the user thinks of it.
-    pub inferred_name: RefCell<Option<String>>,
+    pub inferred_name: OptionRefCell<String>,
 
     // Nodes that potentially makeup the type of an inferred parameter.
-    pub inferred_type_nodes: RefCell<Option<Vec<ExpressionNode>>>,
+    pub inferred_type_nodes: OptionRefCell<Vec<ExpressionNode>>,
 }
 
 // analyzer/declaration.ts:134
 #[derive(jsrt::Trace)]
 pub struct TypeAliasDeclarationDetails {
     // If a docstring (based on PEP 258) is present...
-    pub doc_string: RefCell<Option<String>>,
+    pub doc_string: OptionRefCell<String>,
 }
 
 // analyzer/declaration.ts:142
@@ -253,7 +367,7 @@ pub struct VariableDeclarationDetails {
     pub is_defined_by_member_access: Cell<Option<bool>>,
 
     // If an "attribute docstring" (as defined in PEP 258) is present...
-    pub doc_string: RefCell<Option<String>>,
+    pub doc_string: OptionRefCell<String>,
 
     // If set, indicates an alternative node to use to determine the type of the variable.
     pub alternative_type_node: Cell<Option<ExpressionNode>>,
