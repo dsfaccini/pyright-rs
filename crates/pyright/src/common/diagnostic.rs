@@ -10,6 +10,7 @@ use jsrt::P;
 use crate::common::config_options::DiagnosticLevel;
 use crate::common::text_range::{Range, TextRange};
 use crate::common::uri::Uri;
+use crate::localization::localize::ParameterizedString;
 
 // common/diagnostic.ts:16
 pub const DEFAULT_MAX_DIAGNOSTIC_DEPTH: i32 = 5;
@@ -212,9 +213,39 @@ const _: () = assert!(size_of::<DiagnosticAddendum>() <= 24);
 #[derive(Default)]
 #[derive(jsrt::Trace)]
 struct AddendumContent {
-    messages: Vec<String>,
+    messages: Vec<AddendumMessage>,
     child_addenda: Vec<P<DiagnosticAddendum>>,
     range: Option<TextRange>,
+}
+
+/// A message, or a localized format and its parameters, formatted when the text is read
+/// (`PYRIGHT_RS_LAZY_ADDENDUM_FORMAT`). `ParameterizedString::format` reads only its format
+/// string and the parameters, so formatting later gives the same text; most addenda are
+/// dropped unread. With the switch at `check` the message also holds the text formatted at
+/// once, and reading it panics when the two differ.
+#[derive(jsrt::Trace)]
+enum AddendumMessage {
+    Text(String),
+    Format(ParameterizedString, Vec<(&'static str, String)>, Option<String>),
+}
+
+impl AddendumMessage {
+    fn text(&self) -> String {
+        match self {
+            AddendumMessage::Text(text) => text.clone(),
+            AddendumMessage::Format(message, params, eager) => {
+                let params: Vec<(&str, &str)> = params.iter().map(|(key, value)| (*key, value.as_str())).collect();
+                let text = message.format(&params);
+                if let Some(eager) = eager {
+                    assert!(
+                        *eager == text,
+                        "PYRIGHT_RS_LAZY_ADDENDUM_FORMAT=check: {eager:?} formats later as {text:?}"
+                    );
+                }
+                text
+            }
+        }
+    }
 }
 
 impl DiagnosticAddendum {
@@ -231,13 +262,34 @@ impl DiagnosticAddendum {
 
     // common/diagnostic.ts:205
     pub fn add_message(&self, message: String) {
-        self.content_mut().messages.push(message);
+        self.content_mut().messages.push(AddendumMessage::Text(message));
+    }
+
+    /// `addMessage(message.format(params))`, formatted when the text is read
+    /// (`AddendumMessage`). The parameters keep their order, which decides which `{key}` is
+    /// replaced first.
+    pub fn add_message_format(&self, message: ParameterizedString, params: Vec<(&'static str, String)>) {
+        let entry = match jsrt::switch_mode!("PYRIGHT_RS_LAZY_ADDENDUM_FORMAT") {
+            jsrt::SwitchMode::Off => {
+                let params: Vec<(&str, &str)> = params.iter().map(|(key, value)| (*key, value.as_str())).collect();
+                AddendumMessage::Text(message.format(&params))
+            }
+            jsrt::SwitchMode::On => AddendumMessage::Format(message, params, None),
+            jsrt::SwitchMode::Check => {
+                let eager = {
+                    let params: Vec<(&str, &str)> = params.iter().map(|(key, value)| (*key, value.as_str())).collect();
+                    message.format(&params)
+                };
+                AddendumMessage::Format(message, params, Some(eager))
+            }
+        };
+        self.content_mut().messages.push(entry);
     }
 
     // common/diagnostic.ts:209
     pub fn add_message_multiline(&self, message: &str) {
         for line in message.split('\n') {
-            self.content_mut().messages.push(line.to_string());
+            self.content_mut().messages.push(AddendumMessage::Text(line.to_string()));
         }
     }
 
@@ -296,7 +348,7 @@ impl DiagnosticAddendum {
         self.content
             .borrow()
             .as_ref()
-            .map_or_else(Vec::new, |content| content.messages.clone())
+            .map_or_else(Vec::new, |content| content.messages.iter().map(AddendumMessage::text).collect())
     }
 
     // common/diagnostic.ts:259

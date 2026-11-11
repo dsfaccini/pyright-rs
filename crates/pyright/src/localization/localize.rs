@@ -13,6 +13,7 @@ use serde_json::Value;
 /// `format` takes the parameters in the order the TypeScript object literal
 /// lists them: `Object.keys` order decides which `{key}` is replaced first.
 #[derive(Clone, Debug)]
+#[derive(jsrt::Trace)]
 pub struct ParameterizedString {
     format_string: String,
 }

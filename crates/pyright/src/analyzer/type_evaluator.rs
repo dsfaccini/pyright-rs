@@ -448,7 +448,23 @@ pub struct TypeEvaluator {
     /// Rust-only: how many `disable_speculative_mode` calls hold a nonempty stack of speculative
     /// contexts, whose type cache entries are undone later.
     pub(crate) stashed_speculative_stacks: Cell<u32>,
+    /// Rust-only: `print_type` results by type and flags, `PRINT_MEMO_SLOTS` slots
+    /// (`PYRIGHT_RS_PRINT_TYPE_MEMO`).
+    pub(crate) print_memo: RefCell<Vec<Option<PrintMemoEntry>>>,
 }
+
+/// A `print_type` result, and the type mutation epoch it was printed in.
+#[derive(jsrt::Trace)]
+pub struct PrintMemoEntry {
+    pub(crate) type_: P<Type>,
+    pub(crate) flags: u32,
+    pub(crate) epoch: u64,
+    pub(crate) text: String,
+}
+
+/// Slots of `TypeEvaluator.print_memo`, a power of two. Repeated prints are close together:
+/// on the small corpora 1,024 slots keep all but about 1% of the repeats of an unbounded memo.
+const PRINT_MEMO_SLOTS: usize = 1024;
 
 /// A `get_abstract_symbols` result, and the MRO it was computed from.
 #[derive(jsrt::Trace)]
@@ -458,6 +474,14 @@ pub struct AbstractSymbolsMemoEntry {
 }
 
 thread_local! {
+    /// Rust-only: counts the writes that change a type object some print may already have
+    /// read (`note_type_mutation`). A `print_type` memo entry holds only while it is unchanged.
+    static TYPE_MUTATION_EPOCH: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+
+    /// Rust-only: how many class, function, lambda and type parameter constructions are under
+    /// way (`TypeConstruction`).
+    static TYPE_CONSTRUCTION_DEPTH: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+
     /// Rust-only: counts the evaluations whose results can change later: a
     /// `get_type_of_expression` that answers from no complete main type cache entry, and a
     /// deferred method synthesis. A computation that leaves it unchanged read only results
@@ -473,6 +497,37 @@ pub(crate) fn uncached_evaluation_count() -> u64 {
 /// Counts one evaluation in `UNCACHED_EVALUATIONS`.
 pub(crate) fn note_uncached_evaluation() {
     UNCACHED_EVALUATIONS.set(UNCACHED_EVALUATIONS.get() + 1);
+}
+
+/// The count of `TYPE_MUTATION_EPOCH`.
+pub(crate) fn type_mutation_epoch() -> u64 {
+    TYPE_MUTATION_EPOCH.get()
+}
+
+/// Records a write to a field that `print_type` reads, on a type object that may already have
+/// been printed: it ends every `print_type` memo entry. pyright treats type objects as
+/// immutable once built, except for the writes that call this; writes during a construction
+/// reach only the object being built, which `TypeConstruction` covers.
+pub(crate) fn note_type_mutation() {
+    TYPE_MUTATION_EPOCH.set(TYPE_MUTATION_EPOCH.get() + 1);
+}
+
+/// Marks a class, function, lambda or type parameter construction: it publishes the new object
+/// in the type cache, then fills it in. No `print_type` memo entry is stored while one runs,
+/// so no entry holds an object that is still being built.
+pub(crate) struct TypeConstruction;
+
+impl TypeConstruction {
+    pub(crate) fn enter() -> TypeConstruction {
+        TYPE_CONSTRUCTION_DEPTH.set(TYPE_CONSTRUCTION_DEPTH.get() + 1);
+        TypeConstruction
+    }
+}
+
+impl Drop for TypeConstruction {
+    fn drop(&mut self) {
+        TYPE_CONSTRUCTION_DEPTH.set(TYPE_CONSTRUCTION_DEPTH.get() - 1);
+    }
 }
 
 // analyzer/typeEvaluator.ts:663
@@ -539,6 +594,7 @@ pub fn create_type_evaluator(
         evaluator_interface: OnceCell::new(),
         code_flow_engine: OnceCell::new(),
         abstract_symbols_memo: RefCell::new(FxHashMap::default()),
+        print_memo: RefCell::new((0..PRINT_MEMO_SLOTS).map(|_| None).collect()),
         stashed_speculative_stacks: Cell::new(0),
     });
     evaluator.evaluator_interface.set(evaluator).unwrap();
@@ -1195,6 +1251,8 @@ impl TypeEvaluator {
         // Some of these types have cyclical dependencies on each other,
         // so don't re-enter this block once we start executing it.
         *self.prefetched.borrow_mut() = Some(PartialPrefetchedTypes::default());
+        // The block below sets flags and special forms on existing classes and singletons.
+        note_type_mutation();
         // Each value is computed before the borrow: the calls re-enter the evaluator.
         let set = |apply: &dyn Fn(&mut PartialPrefetchedTypes)| apply(self.prefetched.borrow_mut().as_mut().unwrap());
         let get = |read: &dyn Fn(&PartialPrefetchedTypes) -> Option<P<Type>>| read(self.prefetched.borrow().as_ref().unwrap());
@@ -6470,6 +6528,10 @@ impl TypeEvaluator {
 
         // Do our best to retain type aliases.
         if new_type.category == analyzer::types::TypeCategory::Union {
+            // combineTypes returns its only remaining input itself, a union that exists already.
+            if new_subtypes.contains(&new_type) {
+                note_type_mutation();
+            }
             UnionType::add_type_alias_source(UnionType(new_type), type_);
         }
         new_type
@@ -8075,6 +8137,11 @@ impl TypeEvaluator {
                     if let (Some(scope_id), Some(scope_name), Some(scope_type)) = (scope_id, scope_name, scope_type) {
                         // Use the scoped version of the TypeVar rather than the (unscoped) original type.
                         type_ = TypeVarType::clone_for_scope_id(type_, scope_id, Some(scope_name.to_string()), Some(scope_type));
+                        if type_.d().shared.get() != match_.d().shared.get()
+                            && type_.d().shared.get().declared_variance.get() != match_.d().shared.get().declared_variance.get()
+                        {
+                            note_type_mutation();
+                        }
                         type_.d().shared.get().declared_variance.set(match_.d().shared.get().declared_variance.get());
                         return ScopedTypeVarResult {
                             type_,
@@ -9162,10 +9229,7 @@ impl TypeEvaluator {
 
             // Report that the member could not be accessed.
             if let Some(diag) = diag {
-                diag.add_message(
-                    crate::localization::localize::LocAddendum::member_unknown()
-                        .format(&[("name", &member_name)]),
-                );
+                diag.add_message_format(crate::localization::localize::LocAddendum::member_unknown(), vec![("name", member_name.to_string())]);
             }
             return None;
         };
@@ -9176,10 +9240,7 @@ impl TypeEvaluator {
 
         if member_info.symbol.is_init_var() {
             if let Some(diag) = diag {
-                diag.add_message(
-                    crate::localization::localize::LocAddendum::member_is_init_var()
-                        .format(&[("name", &member_name)]),
-                );
+                diag.add_message_format(crate::localization::localize::LocAddendum::member_is_init_var(), vec![("name", member_name.to_string())]);
             }
             return None;
         }
@@ -9304,10 +9365,7 @@ impl TypeEvaluator {
                 && typed_decls[0].type_ == analyzer::declaration::DeclarationType::Variable
             {
                 if let Some(diag) = diag {
-                    diag.add_message(
-                        crate::localization::localize::LocAddendum::member_unknown()
-                            .format(&[("name", &member_name)]),
-                    );
+                    diag.add_message_format(crate::localization::localize::LocAddendum::member_unknown(), vec![("name", member_name.to_string())]);
                 }
                 return None;
             }
@@ -9438,10 +9496,7 @@ impl TypeEvaluator {
                     && flags.any(MemberAccessFlags::DisallowClassVarWrites)
                 {
                     if let Some(diag) = diag {
-                        diag.add_message(
-                            crate::localization::localize::LocAddendum::member_set_class_var()
-                                .format(&[("name", &member_name)]),
-                        );
+                        diag.add_message_format(crate::localization::localize::LocAddendum::member_set_class_var(), vec![("name", member_name.to_string())]);
                     }
                     is_descriptor_error = true;
                 }
@@ -9472,10 +9527,7 @@ impl TypeEvaluator {
                                 || analyzer::types::is_instantiable_class(class_type.0)
                             {
                                 if let Some(diag) = diag {
-                                    diag.add_message(
-                                        crate::localization::localize::LocMessage::final_reassigned()
-                                            .format(&[("name", &member_name)]),
-                                    );
+                                    diag.add_message_format(crate::localization::localize::LocMessage::final_reassigned(), vec![("name", member_name.to_string())]);
                                 }
                                 is_descriptor_error = true;
                             }
@@ -9490,10 +9542,7 @@ impl TypeEvaluator {
                     && member_info.is_read_only
                 {
                     if let Some(diag) = diag {
-                        diag.add_message(
-                            crate::localization::localize::LocAddendum::read_only_attribute()
-                                .format(&[("name", &member_name)]),
-                        );
+                        diag.add_message_format(crate::localization::localize::LocAddendum::read_only_attribute(), vec![("name", member_name.to_string())]);
                     }
                     is_descriptor_error = true;
                 }
@@ -9530,14 +9579,7 @@ impl TypeEvaluator {
                 ) {
                     if !set_type.is_incomplete.get().unwrap_or(false) {
                         if let Some(diag) = diag {
-                            diag.add_message(
-                                crate::localization::localize::LocAddendum::member_assignment()
-                                    .format(&[
-                                        ("type", &self.print_type(set_type.type_.get(), None)),
-                                        ("name", &member_name),
-                                        ("classType", &self.print_object_type_for_class(class_type)),
-                                    ]),
-                            );
+                            diag.add_message_format(crate::localization::localize::LocAddendum::member_assignment(), vec![("type", self.print_type(set_type.type_.get(), None)), ("name", member_name.to_string()), ("classType", self.print_object_type_for_class(class_type))]);
                         }
                     }
 
@@ -24382,6 +24424,7 @@ impl TypeEvaluator {
         inference_context: Option<P<InferenceContext>>,
         force_speculative: bool,
     ) -> P<TypeResult> {
+        let _construction = TypeConstruction::enter();
         let mut is_incomplete = inference_context
             .as_deref()
             .is_some_and(|c| c.is_type_incomplete.unwrap_or(false));
@@ -27679,6 +27722,7 @@ impl TypeEvaluator {
                     // Set the resulting type to the boundType of the original type alias
                     // to support recursive type aliases.
                     let placeholder_shared = type_alias_placeholder.d().shared.get();
+                    note_type_mutation();
                     placeholder_shared.bound_type.set(Some(right_hand_type));
 
                     // Record the type parameters within the recursive type alias so it
@@ -27864,6 +27908,7 @@ impl TypeEvaluator {
 
         // Set the resulting type to the boundType of the original type alias
         // to support recursive type aliases.
+        note_type_mutation();
         type_alias_type_var.d().shared.get().bound_type.set(Some(alias_type));
 
         self.write_type_cache(
@@ -27968,6 +28013,7 @@ impl TypeEvaluator {
 
     // analyzer/typeEvaluator.ts:18701
     pub fn get_type_of_class(&self, node: ClassNode) -> Option<ClassTypeResult> {
+        let _construction = TypeConstruction::enter();
         self.initialize_prefetched_types(node.0);
 
         let name_node = node.d().name.get();
@@ -29647,6 +29693,7 @@ impl TypeEvaluator {
 
     // analyzer/typeEvaluator.ts:20132
     pub fn get_type_of_function(&self, node: FunctionNode) -> Option<FunctionTypeResult> {
+        let _construction = TypeConstruction::enter();
         self.initialize_prefetched_types(node.0);
 
         let name_node = node.d().name.get();
@@ -29759,6 +29806,7 @@ impl TypeEvaluator {
 
     // analyzer/typeEvaluator.ts:20228
     pub(crate) fn get_type_of_function_predecorated(&self, node: FunctionNode) -> FunctionType {
+        let _construction = TypeConstruction::enter();
         let file_info = self.node_info.get_file_info(node.0);
         let name_node = node.d().name.get();
         let function_name = name_node.d().value();
@@ -34467,6 +34515,7 @@ impl TypeEvaluator {
 
     // analyzer/typeEvaluator.ts:24095
     pub(crate) fn get_type_of_type_param(&self, node: TypeParameterNode) -> TypeVarType {
+        let _construction = TypeConstruction::enter();
         // Is this type already cached?
         let cached_type_var_type = self.read_type_cache(node.d().name.get().0, Some(EvalFlags::None));
         if let Some(cached_type_var_type) = cached_type_var_type {
@@ -34781,6 +34830,9 @@ impl TypeEvaluator {
                     None,
                 );
                 if let Some(lookup_results) = lookup_results {
+                    if module_type.d().priv_.borrow().fields != lookup_results.symbol_table {
+                        note_type_mutation();
+                    }
                     module_type.d().priv_.borrow_mut().fields = lookup_results.symbol_table;
                     let doc_string = (lookup_results.doc_string)();
                     module_type.d().priv_.borrow_mut().doc_string = doc_string;
@@ -35910,6 +35962,8 @@ impl TypeEvaluator {
             return_type = analyzer::type_utils::make_type_vars_free(return_type, &type_var_scopes);
 
             // Cache the type for next time.
+            note_uncached_evaluation();
+            note_type_mutation();
             shared.cold_mut().inferred_return_type = Some(analyzer::types::FunctionDetailsSharedInferredReturnType {
                 type_: return_type,
                 is_incomplete: Some(is_incomplete),
@@ -36516,16 +36570,7 @@ impl TypeEvaluator {
                 recursion_count,
             ) {
                 if let Some(diag) = diag {
-                    diag.add_message(crate::localization::localize::LocAddendum::protocol_incompatible().format(&[
-                        (
-                            "sourceType",
-                            &self.print_type(analyzer::type_utils::convert_to_instance(src_type.0, true), None),
-                        ),
-                        (
-                            "destType",
-                            &self.print_type(analyzer::type_utils::convert_to_instance(dest_type.0, true), None),
-                        ),
-                    ]));
+                    diag.add_message_format(crate::localization::localize::LocAddendum::protocol_incompatible(), vec![("sourceType", self.print_type(analyzer::type_utils::convert_to_instance(src_type.0, true), None)), ("destType", self.print_type(analyzer::type_utils::convert_to_instance(dest_type.0, true), None))]);
                 }
                 return false;
             }
@@ -36575,10 +36620,7 @@ impl TypeEvaluator {
                 src_error_type_text = src_full_name.to_string();
             }
 
-            diag.add_message(crate::localization::localize::LocAddendum::type_incompatible().format(&[
-                ("sourceType", &src_error_type_text),
-                ("destType", &dest_error_type_text),
-            ]));
+            diag.add_message_format(crate::localization::localize::LocAddendum::type_incompatible(), vec![("sourceType", src_error_type_text), ("destType", dest_error_type_text)]);
 
             // Tell the user about the disableBytesTypePromotions if that is involved.
             if ClassType::is_built_in(dest_type, Some(&[jsrt::atom!("bytes")])) {
@@ -37079,11 +37121,7 @@ impl TypeEvaluator {
                                 let error_message = error_source();
                                 let name = TypeVarType::get_readable_name(dest_type_param, true);
                                 let src_dest_types = self.print_src_dest_types(src_type_arg, dest_type_arg, None);
-                                child_diag.add_message(error_message.format(&[
-                                    ("name", &name),
-                                    ("sourceType", &src_dest_types.source_type),
-                                    ("destType", &src_dest_types.dest_type),
-                                ]));
+                                child_diag.add_message_format(error_message, vec![("name", name), ("sourceType", src_dest_types.source_type), ("destType", src_dest_types.dest_type)]);
 
                                 if include_diag_addendum {
                                     child_diag.add_addendum(assignment_diag);
@@ -37524,12 +37562,7 @@ impl TypeEvaluator {
                 if !analyzer::types::is_union(dest_type) {
                     if let Some(diag) = diag {
                         let src_dest_types = self.print_src_dest_types(src_type, dest_type, None);
-                        diag.add_message(
-                            crate::localization::localize::LocAddendum::type_assignment_mismatch().format(&[
-                                ("sourceType", &src_dest_types.source_type),
-                                ("destType", &src_dest_types.dest_type),
-                            ]),
-                        );
+                        diag.add_message_format(crate::localization::localize::LocAddendum::type_assignment_mismatch(), vec![("sourceType", src_dest_types.source_type), ("destType", src_dest_types.dest_type)]);
                     }
                     return false;
                 }
@@ -37567,10 +37600,7 @@ impl TypeEvaluator {
 
                 if let Some(diag) = diag {
                     let src_dest_types = self.print_src_dest_types(src_type, dest_type, None);
-                    diag.add_message(crate::localization::localize::LocAddendum::type_assignment_mismatch().format(&[
-                        ("sourceType", &src_dest_types.source_type),
-                        ("destType", &src_dest_types.dest_type),
-                    ]));
+                    diag.add_message_format(crate::localization::localize::LocAddendum::type_assignment_mismatch(), vec![("sourceType", src_dest_types.source_type), ("destType", src_dest_types.dest_type)]);
                 }
                 return false;
             }
@@ -37679,10 +37709,7 @@ impl TypeEvaluator {
 
                 if let Some(diag) = diag {
                     let src_dest_types = self.print_src_dest_types(src_type, dest_type, None);
-                    diag.add_message(crate::localization::localize::LocAddendum::type_assignment_mismatch().format(&[
-                        ("sourceType", &src_dest_types.source_type),
-                        ("destType", &src_dest_types.dest_type),
-                    ]));
+                    diag.add_message_format(crate::localization::localize::LocAddendum::type_assignment_mismatch(), vec![("sourceType", src_dest_types.source_type), ("destType", src_dest_types.dest_type)]);
                 }
                 return false;
             }
@@ -37702,15 +37729,7 @@ impl TypeEvaluator {
                         && !ClassType::cast(src_type).unwrap().d().priv_.borrow().include_subclasses.unwrap_or(false)
                     {
                         if let Some(diag) = diag {
-                            diag.add_message(
-                                crate::localization::localize::LocAddendum::protocol_source_is_not_concrete().format(&[
-                                    (
-                                        "sourceType",
-                                        &self.print_type(analyzer::type_utils::convert_to_instance(src_type, true), None),
-                                    ),
-                                    ("destType", &self.print_type(dest_type, None)),
-                                ]),
-                            );
+                            diag.add_message_format(crate::localization::localize::LocAddendum::protocol_source_is_not_concrete(), vec![("sourceType", self.print_type(analyzer::type_utils::convert_to_instance(src_type, true), None)), ("destType", self.print_type(dest_type, None))]);
                         }
                         return false;
                     }
@@ -37751,10 +37770,7 @@ impl TypeEvaluator {
 
                 if let Some(diag) = diag {
                     let src_dest_types = self.print_src_dest_types(src_type, dest_type, None);
-                    diag.add_message(crate::localization::localize::LocAddendum::type_assignment_mismatch().format(&[
-                        ("sourceType", &src_dest_types.source_type),
-                        ("destType", &src_dest_types.dest_type),
-                    ]));
+                    diag.add_message_format(crate::localization::localize::LocAddendum::type_assignment_mismatch(), vec![("sourceType", src_dest_types.source_type), ("destType", src_dest_types.dest_type)]);
                 }
                 return false;
             }
@@ -37855,12 +37871,7 @@ impl TypeEvaluator {
                     let src_literal_is_undefined = concrete_src_class.d().priv_.borrow().literal_value.is_none();
                     if src_literal_is_undefined || !ClassType::is_literal_value_same(concrete_src_class, dest_class) {
                         if let Some(diag) = diag {
-                            diag.add_message(
-                                crate::localization::localize::LocAddendum::literal_assignment_mismatch().format(&[
-                                    ("sourceType", &self.print_type(src_type, None)),
-                                    ("destType", &self.print_type(dest_type, None)),
-                                ]),
-                            );
+                            diag.add_message_format(crate::localization::localize::LocAddendum::literal_assignment_mismatch(), vec![("sourceType", self.print_type(src_type, None)), ("destType", self.print_type(dest_type, None))]);
                         }
 
                         return false;
@@ -38081,10 +38092,7 @@ impl TypeEvaluator {
 
                 if filtered_overloads.is_empty() {
                     if let Some(diag) = diag {
-                        diag.add_message(
-                            crate::localization::localize::LocAddendum::no_overload_assignable()
-                                .format(&[("type", &self.print_type(dest_type, None))]),
-                        );
+                        diag.add_message_format(crate::localization::localize::LocAddendum::no_overload_assignable(), vec![("type", self.print_type(dest_type, None))]);
                     }
                     return false;
                 }
@@ -38158,10 +38166,7 @@ impl TypeEvaluator {
                 if let Some(overload_diag) = overload_diag
                     && !overloads.is_empty()
                 {
-                    overload_diag.add_message(
-                        crate::localization::localize::LocAddendum::overload_not_assignable()
-                            .format(&[("name", &overloads[0].d().shared.get().name)]),
-                    );
+                    overload_diag.add_message_format(crate::localization::localize::LocAddendum::overload_not_assignable(), vec![("name", overloads[0].d().shared.get().name.to_string())]);
                 }
                 return false;
             }
@@ -38212,10 +38217,7 @@ impl TypeEvaluator {
 
         if let Some(diag) = diag {
             let src_dest_types = self.print_src_dest_types(src_type, dest_type, None);
-            diag.add_message(crate::localization::localize::LocAddendum::type_assignment_mismatch().format(&[
-                ("sourceType", &src_dest_types.source_type),
-                ("destType", &src_dest_types.dest_type),
-            ]));
+            diag.add_message_format(crate::localization::localize::LocAddendum::type_assignment_mismatch(), vec![("sourceType", src_dest_types.source_type), ("destType", src_dest_types.dest_type)]);
         }
 
         false
@@ -38733,10 +38735,7 @@ impl TypeEvaluator {
 
             if let Some(diag) = diag {
                 let types = self.print_src_dest_types(src_type.0, dest_type, None);
-                diag.add_message(
-                    crate::localization::localize::LocAddendum::type_assignment_mismatch()
-                        .format(&[("sourceType", &types.source_type), ("destType", &types.dest_type)]),
-                );
+                diag.add_message_format(crate::localization::localize::LocAddendum::type_assignment_mismatch(), vec![("sourceType", types.source_type), ("destType", types.dest_type)]);
             }
             return false;
         }
@@ -39119,10 +39118,7 @@ impl TypeEvaluator {
             if is_incompatible {
                 if let Some(diag) = diag {
                     let types = self.print_src_dest_types(src_type, dest_type.0, None);
-                    diag.add_message(
-                        crate::localization::localize::LocAddendum::type_assignment_mismatch()
-                            .format(&[("sourceType", &types.source_type), ("destType", &types.dest_type)]),
-                    );
+                    diag.add_message_format(crate::localization::localize::LocAddendum::type_assignment_mismatch(), vec![("sourceType", types.source_type), ("destType", types.dest_type)]);
                 }
                 return false;
             }
@@ -39287,10 +39283,7 @@ impl TypeEvaluator {
         if !found_match {
             if let (Some(diag), Some(diag_addendum)) = (diag, diag_addendum) {
                 let types = self.print_src_dest_types(src_type, dest_type.0, None);
-                diag.add_message(
-                    crate::localization::localize::LocAddendum::type_assignment_mismatch()
-                        .format(&[("sourceType", &types.source_type), ("destType", &types.dest_type)]),
-                );
+                diag.add_message_format(crate::localization::localize::LocAddendum::type_assignment_mismatch(), vec![("sourceType", types.source_type), ("destType", types.dest_type)]);
                 diag.add_addendum(diag_addendum);
             }
             return false;
@@ -42287,14 +42280,60 @@ impl TypeEvaluator {
             flags &= !PrintTypeFlags::PEP604;
         }
 
-        analyzer::type_printer::print_type(
-            type_,
-            flags,
-            self.evaluator_interface
-                .get()
-                .unwrap()
-                .to_dyn::<dyn analyzer::type_printer::FunctionReturnTypeCallback>(|e| e),
-        )
+        let print = || {
+            analyzer::type_printer::print_type(
+                type_,
+                flags,
+                self.evaluator_interface
+                    .get()
+                    .unwrap()
+                    .to_dyn::<dyn analyzer::type_printer::FunctionReturnTypeCallback>(|e| e),
+            )
+        };
+
+        // Most prints repeat a print of the same type object with the same flags. The port
+        // remembers the text (`PYRIGHT_RS_PRINT_TYPE_MEMO`) when the print evaluated nothing
+        // (`uncached_evaluation_count`: the printer reaches the evaluator only through its
+        // return type callback, which infers at most once per function), no type was changed
+        // in place meanwhile (`note_type_mutation`), and no type construction was under way.
+        // A later print of the same object then reads the same fields and returns the same
+        // text, until a `note_type_mutation` write.
+        let mode = jsrt::switch_mode!("PYRIGHT_RS_PRINT_TYPE_MEMO");
+        if mode == jsrt::SwitchMode::Off {
+            return print();
+        }
+        let slot = {
+            let address = type_.get() as *const Type as usize;
+            ((address >> 4) ^ (address >> 14) ^ (flags.0 as usize).wrapping_mul(0x9e37)) & (PRINT_MEMO_SLOTS - 1)
+        };
+        let epoch = type_mutation_epoch();
+        let remembered = self.print_memo.borrow()[slot]
+            .as_ref()
+            .filter(|entry| entry.type_ == type_ && entry.flags == flags.0 && entry.epoch == epoch)
+            .map(|entry| entry.text.clone());
+        if let Some(remembered) = remembered {
+            if mode == jsrt::SwitchMode::Check {
+                let before = uncached_evaluation_count();
+                let text = print();
+                assert!(
+                    text == remembered && uncached_evaluation_count() == before && type_mutation_epoch() == epoch,
+                    "PYRIGHT_RS_PRINT_TYPE_MEMO=check: remembered {remembered:?}, printed {text:?}"
+                );
+                return text;
+            }
+            return remembered;
+        }
+
+        let before = uncached_evaluation_count();
+        let text = print();
+        if uncached_evaluation_count() == before
+            && type_mutation_epoch() == epoch
+            && TYPE_CONSTRUCTION_DEPTH.get() == 0
+        {
+            self.print_memo.borrow_mut()[slot] =
+                Some(PrintMemoEntry { type_, flags: flags.0, epoch, text: text.clone() });
+        }
+        text
     }
 
     // analyzer/typeEvaluator.ts:30383

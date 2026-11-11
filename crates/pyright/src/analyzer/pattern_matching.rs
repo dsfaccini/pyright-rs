@@ -2232,6 +2232,8 @@ pub(crate) fn get_sequence_pattern_info(
                             while type_args.borrow().len() < pattern_entry_count {
                                 let index = tuple_indeterminate_index as usize;
                                 let entry = type_args.borrow()[index].clone();
+                                // The array can be the tuple args of an existing class.
+                                crate::analyzer::type_evaluator::note_type_mutation();
                                 type_args.borrow_mut().insert(index, entry);
                                 tuple_determinate_entry_count += 1;
                                 tuple_indeterminate_index += 1;
@@ -2241,6 +2243,8 @@ pub(crate) fn get_sequence_pattern_info(
                             if type_args.borrow().len() > pattern_entry_count
                                 && pattern_star_entry_index.is_none()
                             {
+                                // The array can be the tuple args of an existing class.
+                                crate::analyzer::type_evaluator::note_type_mutation();
                                 type_args.borrow_mut().remove(tuple_indeterminate_index as usize);
                                 tuple_indeterminate_index = -1;
                                 removed_indeterminate = true;
@@ -2253,6 +2257,8 @@ pub(crate) fn get_sequence_pattern_info(
                             if type_args.borrow().len() >= 2 && type_args.borrow().len() > pattern_entry_count {
                                 let star = star_entry_index as usize;
                                 let entries_to_combine = type_args.borrow().len() - pattern_entry_count + 1;
+                                // The array can be the tuple args of an existing class.
+                                crate::analyzer::type_evaluator::note_type_mutation();
                                 let removed_entries: Vec<TupleTypeArg> =
                                     type_args.borrow_mut().drain(star..star + entries_to_combine).collect();
                                 type_args.borrow_mut().insert(
@@ -2354,6 +2360,8 @@ pub(crate) fn get_sequence_pattern_info(
 
                             if type_args.borrow().len() + 1 == pattern_entry_count {
                                 try_match_star_sequence = true;
+                                // The array can be the tuple args of an existing class.
+                                crate::analyzer::type_evaluator::note_type_mutation();
                                 type_args.borrow_mut().insert(
                                     star,
                                     TupleTypeArg {

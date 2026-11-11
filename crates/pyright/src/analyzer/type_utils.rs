@@ -367,6 +367,11 @@ pub fn map_subtypes(
                 } else {
                     // Do our best to retain type aliases.
                     if crate::analyzer::types::is_union(new_type) {
+                        // combineTypes returns its only remaining input itself, a union that
+                        // exists already.
+                        if types_to_combine.contains(&new_type) {
+                            crate::analyzer::type_evaluator::note_type_mutation();
+                        }
                         crate::analyzer::types::UnionType::add_type_alias_source(
                             crate::analyzer::types::UnionType(new_type),
                             type_,
