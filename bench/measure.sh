@@ -28,7 +28,7 @@ tmp=$(mktemp -d)
 for i in $(seq "$runs"); do
   (cd "$cwd" && "${lock[@]}" systemd-run --user --scope -q -p MemoryMax=30G -p MemorySwapMax=0 \
     perf stat -x, -e instructions:u -o "$tmp/perf$i" \
-    /usr/bin/time -f "%e %M" -o "$tmp/time$i" "$PYRIGHT_RS_BIN" "${args[@]}" > /dev/null 2>&1)
+    /usr/bin/time -f "%e %M %x" -o "$tmp/time$i" "$PYRIGHT_RS_BIN" "${args[@]}" > /dev/null 2>&1)
 done
 python3 - "$tmp" "$runs" "$corpus" <<'EOF'
 import pathlib, statistics, sys
@@ -36,10 +36,11 @@ tmp, runs, corpus = pathlib.Path(sys.argv[1]), int(sys.argv[2]), sys.argv[3]
 ins, wall, rss = [], [], []
 for i in range(1, runs + 1):
     try:
-        w, m = (tmp / f"time{i}").read_text().split()[-2:]
+        w, m, x = (tmp / f"time{i}").read_text().split()[-3:]
         n = next(l for l in (tmp / f"perf{i}").read_text().splitlines() if "instructions" in l).split(",")[0]
-        if not n.isdigit() or int(n) == 0:
-            raise ValueError(n)
+        # pyright exits 0, or 1 when it reports errors; anything else is a failed run.
+        if x not in ("0", "1") or not n.isdigit():
+            raise ValueError(x)
     except (OSError, StopIteration, ValueError):
         print(f"run {i}: no result (killed at the memory cap, or the command failed)"); continue
     ins.append(int(n)); wall.append(float(w)); rss.append(int(m) / 1048576)
