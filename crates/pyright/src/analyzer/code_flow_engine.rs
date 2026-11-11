@@ -1493,14 +1493,21 @@ pub struct CodeFlowAnalyzer {
     // The CodeFlowEngine whose `createCodeFlowAnalyzer` built this CodeFlowAnalyzer.
     pub(crate) code_flow_engine: P<CodeFlowEngine>,
     // analyzer/codeFlowEngine.ts:221
-    pub(crate) flow_node_type_cache_set: RefCell<JsMap<Atom, P<CodeFlowTypeCache>>>,
+    pub(crate) flow_node_type_cache_set: RefCell<JsMap<ReferenceKeyWithSymbolId, P<CodeFlowTypeCache>>>,
 }
+
+/// `referenceKeyWithSymbolId` of `getTypeFromCodeFlow`: the text
+/// `${referenceKey}.${targetSymbolId}`, or `'.'` without a reference or symbol id. The pair
+/// is the same key, unformatted: a reference key is never empty and never ends in a dot and
+/// digits, so the text and the pair determine each other.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, jsrt::Trace)]
+pub(crate) struct ReferenceKeyWithSymbolId(Option<(Atom, u32)>);
 
 impl CodeFlowAnalyzer {
     // analyzer/codeFlowEngine.ts:223
     pub(crate) fn get_flow_node_type_cache_for_reference(
         &self,
-        reference_key: Atom,
+        reference_key: ReferenceKeyWithSymbolId,
     ) -> P<CodeFlowTypeCache> {
         let flow_node_type_cache = self
             .flow_node_type_cache_set
@@ -1526,14 +1533,12 @@ impl CodeFlowAnalyzer {
     // analyzer/codeFlowEngine.ts:243
     pub(crate) fn is_get_type_from_code_flow_pending(
         &self,
-        reference_key_filter: Option<Atom>,
+        reference_key_filter: Option<ReferenceKeyWithSymbolId>,
     ) -> bool {
+        // The key is never empty.
         let Some(reference_key_filter) = reference_key_filter else {
             return false;
         };
-        if reference_key_filter.is_empty() {
-            return false;
-        }
 
         for (key, value) in self.flow_node_type_cache_set.borrow().iter() {
             if *key != reference_key_filter && !value.pending_nodes.borrow().is_empty() {
@@ -1562,7 +1567,7 @@ impl CodeFlowAnalyzer {
             options: Option<&'a FlowNodeTypeOptions>,
             reference_key: Option<Atom>,
             subexpression_reference_keys: RefCell<Option<Vec<Atom>>>,
-            reference_key_with_symbol_id: Atom,
+            reference_key_with_symbol_id: ReferenceKeyWithSymbolId,
             flow_node_type_cache: P<CodeFlowTypeCache>,
         }
 
@@ -2966,15 +2971,13 @@ impl CodeFlowAnalyzer {
         }
 
         let reference_key = reference.map(create_key_for_reference);
-        let reference_key_with_symbol_id = match (
-            &reference_key,
+        let reference_key_with_symbol_id = ReferenceKeyWithSymbolId(match (
+            reference_key,
             options.and_then(|options| options.target_symbol_id),
         ) {
-            (Some(reference_key), Some(target_symbol_id)) => {
-                Atom::new(&format!("{reference_key}.{target_symbol_id}"))
-            }
-            _ => jsrt::atom!("."),
-        };
+            (Some(reference_key), Some(target_symbol_id)) => Some((reference_key, target_symbol_id)),
+            _ => None,
+        });
         let flow_node_type_cache =
             self.get_flow_node_type_cache_for_reference(reference_key_with_symbol_id);
 
