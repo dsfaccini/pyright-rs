@@ -87,3 +87,15 @@ The trigger trades instructions for peak RSS. At 731d71b on pydantic-ai, one run
 | dropped: union literal maps behind one box (union types 104 → 64 bytes); a separate checkout, so its base is 226.65 G, 5.59 / 5.05 GiB | 226.84 G (+0.08%) | 5.63 / 5.01 GiB | 8.89 G | 0.44 GiB |
 | dropped: `expectedTypeCache` an `FxHashMap` of 24-byte entries (`NonEmptyList` candidates) instead of a `JsMap` | 226.57 G (−0.02%) | 5.59 / 5.04 GiB | 8.89 G | 0.44 GiB |
 | dropped: `FunctionDetailsShared` 120 → 96 bytes (`type_params` an `Rc<Vec>`, `type_var_scope_id` a `Cell`) | 231.83 G (+0.16%) | 5.74 GiB | 9.15 G | 0.47 GiB |
+
+## Remaining
+
+Every census item above 50 MiB at cec53b4 has a measured attempt in the table above. What is left, with estimates (not measured):
+
+- The collection trigger: peak RSS falls 0.24 to 0.55 GiB for 1.5% to 5.6% more instructions (table above). A trigger that also counted the buffer bytes evaluator objects own would collect where garbage piles up; that is the collector's design (`docs/collector-design.md`).
+- Class types (449 + 229 MiB): `ClassDetailsPriv.type_args` as a thin pointer would make a class type 88 bytes, at most 37 MiB, less the allocations a thin list adds.
+- Union types (89 + 181 MiB): `subtypes` is an `Rc<Vec>`, two allocations per union (about 35 MiB of `Rc` boxes); the literal maps' keys copy the class literals' strings.
+- `FunctionParam` vectors (25 + 157 MiB): the default type and expression behind one shared pointer would make a parameter 32 bytes, about 17 MiB net.
+- `Type.cached` boxes (40 bytes, 2.4M of them): a one-field form would save up to 16 bytes each where one field is set.
+- `effectiveTypeCache` as one flat map with packed keys: about 15 MiB.
+
