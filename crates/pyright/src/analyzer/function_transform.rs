@@ -228,7 +228,7 @@ pub(crate) fn apply_struct_unpack_transform(
     // as a string in `literalValue`.
     if !ClassType::is_built_in(
         format_class,
-        Some(&["str", "bytes"]),
+        Some(&[jsrt::atom!("str"), jsrt::atom!("bytes")]),
     ) {
         return result.clone();
     }

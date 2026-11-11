@@ -1174,27 +1174,26 @@ pub(crate) fn print_object_type_for_class_internal(
         .priv_
         .borrow()
         .cold().alias_name
-        .clone()
         .filter(|name| !name.is_empty())
     {
-        Some(alias_name) => alias_name,
+        Some(alias_name) => alias_name.to_string(),
         None => {
             if print_type_flags.any(PrintTypeFlags::UseFullyQualifiedNames) {
-                shared.full_name.clone()
+                shared.full_name.to_string()
             } else {
-                shared.name.clone()
+                shared.name.to_string()
             }
         }
     };
 
     // Special-case NoneType to convert it to None.
-    if ClassType::is_built_in(type_, Some(&["NoneType"])) {
+    if ClassType::is_built_in(type_, Some(&[jsrt::atom!("NoneType")])) {
         obj_name = "None".to_string();
     }
 
     // Use the fully-qualified name if the name isn't unique.
     if !unique_name_map.is_unique(&obj_name) {
-        obj_name = shared.full_name.clone();
+        obj_name = shared.full_name.to_string();
     }
 
     let is_unpacked = type_.d().priv_.borrow().is_unpacked.unwrap_or(false);
@@ -1236,7 +1235,7 @@ pub(crate) fn print_object_type_for_class_internal(
                         && is_class_instance(type_arg.type_)
                         && ClassType::is_built_in(
                             ClassType(type_arg.type_),
-                            Some(&["tuple"]),
+                            Some(&[jsrt::atom!("tuple")]),
                         ) {
                         ClassType(type_arg.type_)
                             .d()
@@ -1419,7 +1418,7 @@ pub(crate) fn print_function_parts_internal(
             let tuple_type_args = if is_class_instance(specialized_param_type)
                 && ClassType::is_built_in(
                     ClassType(specialized_param_type),
-                    Some(&["tuple"]),
+                    Some(&[jsrt::atom!("tuple")]),
                 ) {
                 ClassType(specialized_param_type)
                     .d()

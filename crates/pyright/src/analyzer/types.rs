@@ -913,8 +913,8 @@ pub struct DataClassBehaviors {
 #[derive(jsrt::Trace)]
 #[trace(eval)]
 pub struct ClassDetailsShared {
-    pub name: String,
-    pub full_name: String,
+    pub name: Atom,
+    pub full_name: Atom,
     pub module_name: String,
     pub file_uri: Uri,
     pub flags: Cell<ClassTypeFlags>,
@@ -984,7 +984,7 @@ pub struct ClassDetailsPriv {
 #[derive(Clone, Default)]
 #[derive(jsrt::Trace)]
 pub struct ClassDetailsPrivCold {
-    pub alias_name: Option<String>,
+    pub alias_name: Option<Atom>,
     pub typed_dict_narrowed_entries: Option<JsMap<String, TypedDictEntry>>,
     pub is_typed_dict_partial: Option<bool>,
     pub is_asymmetric_descriptor: Option<bool>,
@@ -1105,8 +1105,8 @@ impl ClassType {
             cached_requires_specialization: Cell::new(None),
             d: TypeDetails::Class(ClassTypeDetails {
                 shared: Cell::new(P::new_eval(ClassDetailsShared {
-                    name: name.to_string(),
-                    full_name: full_name.to_string(),
+                    name: Atom::new(name),
+                    full_name: Atom::new(full_name),
                     module_name: module_name.to_string(),
                     file_uri: *file_uri,
                     flags: Cell::new(flags),
@@ -1300,7 +1300,7 @@ impl ClassType {
     // analyzer/types.ts:1001
     pub fn clone_for_typing_alias(class_type: ClassType, alias_name: String) -> ClassType {
         let new_class_type = ClassType(TypeBase::clone_type(class_type.0));
-        new_class_type.d().priv_.borrow_mut().cold_mut().alias_name = Some(alias_name);
+        new_class_type.d().priv_.borrow_mut().cold_mut().alias_name = Some(Atom::new(&alias_name));
         new_class_type
     }
 
@@ -1498,7 +1498,7 @@ impl ClassType {
 
     // analyzer/types.ts:1167
     #[inline]
-    pub fn is_built_in(class_type: ClassType, class_name: Option<&[&str]>) -> bool {
+    pub fn is_built_in(class_type: ClassType, class_name: Option<&[Atom]>) -> bool {
         let shared = class_type.d().shared.get();
         if !shared.flags.get().any(ClassTypeFlags::BuiltIn) {
             return false;
@@ -1513,12 +1513,12 @@ impl ClassType {
 
     /// The name test of `is_built_in`. The alias name sits in the cold half, so
     /// it is read only when no name matches `name` or `fullName`.
-    fn is_built_in_named(class_type: ClassType, shared: &ClassDetailsShared, class_name: &[&str]) -> bool {
+    fn is_built_in_named(class_type: ClassType, shared: &ClassDetailsShared, class_name: &[Atom]) -> bool {
         if class_name.iter().any(|&name| name == shared.name || name == shared.full_name) {
             return true;
         }
         let priv_ = class_type.d().priv_.borrow();
-        let alias_name = priv_.cold().alias_name.as_deref();
+        let alias_name = priv_.cold().alias_name;
         alias_name.is_some_and(|alias_name| class_name.contains(&alias_name))
     }
 
@@ -1827,7 +1827,7 @@ impl ClassType {
 
         let shared = class_type.d().shared.get();
         shared.flags.get().any(ClassTypeFlags::DisjointBase)
-            || ClassType::is_built_in(class_type, Some(&["object"]))
+            || ClassType::is_built_in(class_type, Some(&[jsrt::atom!("object")]))
             || shared.has_non_empty_slots.get().unwrap_or(false)
     }
 
@@ -2141,13 +2141,13 @@ impl ClassType {
 
         // Special-case NamedTuple and Tuple classes because we rewrite the base classes
         // in these cases.
-        if ClassType::is_built_in(class_type, Some(&["NamedTuple"]))
-            && ClassType::is_built_in(type2, Some(&["NamedTuple"]))
+        if ClassType::is_built_in(class_type, Some(&[jsrt::atom!("NamedTuple")]))
+            && ClassType::is_built_in(type2, Some(&[jsrt::atom!("NamedTuple")]))
         {
             return true;
         }
-        if ClassType::is_built_in(class_type, Some(&["tuple"]))
-            && ClassType::is_built_in(type2, Some(&["tuple"]))
+        if ClassType::is_built_in(class_type, Some(&[jsrt::atom!("tuple")]))
+            && ClassType::is_built_in(type2, Some(&[jsrt::atom!("tuple")]))
         {
             return true;
         }
@@ -2235,7 +2235,7 @@ impl ClassType {
         // subclasses of object even though they are not explicitly declared
         // that way.
         if ClassType::is_built_in(subclass_type, None)
-            && ClassType::is_built_in(parent_class_type, Some(&["object"]))
+            && ClassType::is_built_in(parent_class_type, Some(&[jsrt::atom!("object")]))
         {
             if let Some(inheritance_chain) = inheritance_chain.as_deref_mut() {
                 inheritance_chain.push(parent_class_type.0);
@@ -2247,7 +2247,7 @@ impl ClassType {
         // class is type.
         let subclass_depth = TypeBase::get_instantiable_depth(subclass_type.0);
         if subclass_depth > 0 {
-            if ClassType::is_built_in(parent_class_type, Some(&["type"]))
+            if ClassType::is_built_in(parent_class_type, Some(&[jsrt::atom!("type")]))
                 && TypeBase::get_instantiable_depth(parent_class_type.0) < subclass_depth
             {
                 if let Some(inheritance_chain) = inheritance_chain.as_deref_mut() {
@@ -2260,8 +2260,8 @@ impl ClassType {
         // Handle the case where both source and dest are property objects. This
         // special case is needed because we synthesize a new class for each
         // property declaration.
-        if ClassType::is_built_in(subclass_type, Some(&["property"]))
-            && ClassType::is_built_in(parent_class_type, Some(&["property"]))
+        if ClassType::is_built_in(subclass_type, Some(&[jsrt::atom!("property")]))
+            && ClassType::is_built_in(parent_class_type, Some(&[jsrt::atom!("property")]))
         {
             if let Some(inheritance_chain) = inheritance_chain.as_deref_mut() {
                 inheritance_chain.push(subclass_type.0);
@@ -4160,9 +4160,9 @@ impl UnionType {
                 .is_some_and(|props| props.condition.is_some());
             if let Some(literal_value) = literal_value.filter(|_| !has_condition) {
                 let is_instance = is_class_instance(new_type);
-                let is_str = ClassType::is_built_in(new_class, Some(&["str"]));
+                let is_str = ClassType::is_built_in(new_class, Some(&[jsrt::atom!("str")]));
                 let is_int =
-                    !is_str && ClassType::is_built_in(new_class, Some(&["int"]));
+                    !is_str && ClassType::is_built_in(new_class, Some(&[jsrt::atom!("int")]));
                 let is_enum = !is_str && !is_int && ClassType::is_enum_class(new_class);
 
                 let mut union_priv = union_type.d().priv_.borrow_mut();
@@ -4254,14 +4254,14 @@ impl UnionType {
                     &union_priv.literal_classes
                 };
 
-                if ClassType::is_built_in(class_subtype, Some(&["str"]))
+                if ClassType::is_built_in(class_subtype, Some(&[jsrt::atom!("str")]))
                     && let Some(map) = &literal_maps.literal_str_map
                 {
                     return match &literal_value {
                         LiteralValue::String(value) => map.contains_key(value),
                         _ => false,
                     };
-                } else if ClassType::is_built_in(class_subtype, Some(&["int"]))
+                } else if ClassType::is_built_in(class_subtype, Some(&[jsrt::atom!("int")]))
                     && let Some(map) = &literal_maps.literal_int_map
                 {
                     return match &literal_value {
@@ -5953,7 +5953,7 @@ pub(crate) fn _add_type_if_unique(
             &union_priv.literal_classes
         };
 
-        if ClassType::is_built_in(class_to_add, Some(&["str"]))
+        if ClassType::is_built_in(class_to_add, Some(&[jsrt::atom!("str")]))
             && let Some(literal_value) = &literal_value
             && let Some(map) = &literal_maps.literal_str_map
         {
@@ -5966,7 +5966,7 @@ pub(crate) fn _add_type_if_unique(
                 UnionType::add_type(union_type, type_to_add);
             }
             return;
-        } else if ClassType::is_built_in(class_to_add, Some(&["int"]))
+        } else if ClassType::is_built_in(class_to_add, Some(&[jsrt::atom!("int")]))
             && let Some(literal_value) = &literal_value
             && let Some(map) = &literal_maps.literal_int_map
         {
@@ -6072,9 +6072,9 @@ pub(crate) fn _add_type_if_unique(
 
             // If we're adding Literal[False] or Literal[True] to its
             // opposite, combine them into a non-literal 'bool' type.
-            if ClassType::is_built_in(class_type, Some(&["bool"]))
+            if ClassType::is_built_in(class_type, Some(&[jsrt::atom!("bool")]))
                 && !has_condition(type_)
-                && ClassType::is_built_in(class_to_add, Some(&["bool"]))
+                && ClassType::is_built_in(class_to_add, Some(&[jsrt::atom!("bool")]))
                 && !has_condition(type_to_add)
             {
                 let literal_to_add = class_to_add.d().priv_.borrow().literal_value.clone();
@@ -6219,9 +6219,9 @@ impl CalculateInheritedSlotsNamesDeferred {
             for base_class in base_classes.iter().copied() {
                 if is_instantiable_class(base_class) {
                     let base_class = ClassType(base_class);
-                    if !ClassType::is_built_in(base_class, Some(&["object"]))
-                        && !ClassType::is_built_in(base_class, Some(&["type"]))
-                        && !ClassType::is_built_in(base_class, Some(&["Generic"]))
+                    if !ClassType::is_built_in(base_class, Some(&[jsrt::atom!("object")]))
+                        && !ClassType::is_built_in(base_class, Some(&[jsrt::atom!("type")]))
+                        && !ClassType::is_built_in(base_class, Some(&[jsrt::atom!("Generic")]))
                     {
                         let inherited_slots_names = ClassType::get_inherited_slots_names(base_class);
                         if let Some(inherited_slots_names) = inherited_slots_names {

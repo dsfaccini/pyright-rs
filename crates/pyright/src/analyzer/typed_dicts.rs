@@ -620,7 +620,7 @@ pub fn synthesize_typed_dict_class_methods(
             default_type_var = TypeVarType::clone_for_scope_id(
                 default_type_var,
                 func_scope_id,
-                Some(class_type.d().shared.get().name.clone()),
+                Some(class_type.d().shared.get().name.to_string()),
                 Some(TypeVarScopeType::Function),
             );
             default_type_var
@@ -1415,7 +1415,7 @@ pub fn get_typed_dict_mapping_equivalent(
     // Is the final value type 'object'?
     let value_type = combine_types(&types_to_combine, None);
     if is_class_instance(value_type)
-        && ClassType::is_built_in(ClassType(value_type), Some(&["object"]))
+        && ClassType::is_built_in(ClassType(value_type), Some(&[jsrt::atom!("object")]))
     {
         return None;
     }
@@ -2070,7 +2070,7 @@ pub fn assign_to_typed_dict(
     for (index, key_type_result) in key_types.iter().enumerate() {
         let key_type = key_type_result.type_;
         if !is_class_instance(key_type)
-            || !ClassType::is_built_in(ClassType(key_type), Some(&["str"]))
+            || !ClassType::is_built_in(ClassType(key_type), Some(&[jsrt::atom!("str")]))
             || !is_literal_type(ClassType(key_type))
         {
             is_match = false;
@@ -2273,7 +2273,7 @@ pub fn get_type_of_indexed_typed_dict(
             }
 
             if is_class_instance(subtype)
-                && ClassType::is_built_in(ClassType(subtype), Some(&["str"]))
+                && ClassType::is_built_in(ClassType(subtype), Some(&[jsrt::atom!("str")]))
             {
                 let literal_value = ClassType(subtype).d().priv_.borrow().literal_value.clone();
                 let Some(literal_value) = literal_value else {

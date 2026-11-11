@@ -423,7 +423,7 @@ pub fn create_named_tuple_type(
                         if is_class_instance(name_type)
                             && ClassType::is_built_in(
                                 ClassType(name_type),
-                                Some(&["str"]),
+                                Some(&[jsrt::atom!("str")]),
                             )
                             && is_literal_type(ClassType(name_type))
                         {
@@ -698,7 +698,7 @@ pub fn update_named_tuple_base_class(
         .iter().copied()
         .map(|base_class| {
             if !is_instantiable_class(base_class)
-                || !ClassType::is_built_in(ClassType(base_class), Some(&["NamedTuple"]))
+                || !ClassType::is_built_in(ClassType(base_class), Some(&[jsrt::atom!("NamedTuple")]))
             {
                 return base_class;
             }
@@ -741,8 +741,8 @@ pub fn update_named_tuple_base_class(
                 .d()
                 .shared
                 .set(P::new_eval(ClassDetailsShared {
-                    name: shared.name.clone(),
-                    full_name: shared.full_name.clone(),
+                    name: shared.name,
+                    full_name: shared.full_name,
                     module_name: shared.module_name.clone(),
                     file_uri: shared.file_uri,
                     flags: Cell::new(shared.flags.get()),
@@ -799,7 +799,7 @@ pub fn update_named_tuple_base_class(
                     if !is_instantiable_class(named_tuple_base_class)
                         || !ClassType::is_built_in(
                             ClassType(named_tuple_base_class),
-                            Some(&["tuple"]),
+                            Some(&[jsrt::atom!("tuple")]),
                         )
                     {
                         return named_tuple_base_class;

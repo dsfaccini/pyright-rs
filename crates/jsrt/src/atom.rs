@@ -84,6 +84,20 @@ impl PartialEq<&str> for Atom {
     }
 }
 
+impl PartialEq<String> for Atom {
+    #[inline]
+    fn eq(&self, other: &String) -> bool {
+        self.as_str() == other
+    }
+}
+
+impl PartialEq<Atom> for String {
+    #[inline]
+    fn eq(&self, other: &Atom) -> bool {
+        self == other.as_str()
+    }
+}
+
 impl PartialEq<Atom> for str {
     #[inline]
     fn eq(&self, other: &Atom) -> bool {

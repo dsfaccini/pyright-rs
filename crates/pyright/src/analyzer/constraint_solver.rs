@@ -720,7 +720,7 @@ pub(crate) fn assign_bound_type_var(
 
     // Handle a type[Any] as a source.
     if is_class_instance(src_type)
-        && ClassType::is_built_in(ClassType(src_type), Some(&["type"]))
+        && ClassType::is_built_in(ClassType(src_type), Some(&[jsrt::atom!("type")]))
     {
         let type_args = ClassType(src_type).d().priv_.borrow().type_args.clone();
         let is_type_any = match &type_args {
