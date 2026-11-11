@@ -58,3 +58,14 @@ At a687113 the arena stats count about 7 GB of evaluator objects at the end of t
 ## pydantic-ai gate at 2990cef
 
 `CHECK_MEMORY_MAX=30G oracle/corpus/check.sh <dir> pydantic-ai`, run by the main session: `--outputjson` identical, and all 40,176 dump files identical (6,696 files × tokens, tree, bind, flow, types, diag). With the dumps on, 2:57 wall and 18.4 GB peak. pyright-rs output now matches pyright 1.1.414 on all eight corpora.
+
+## baseline for the optimization round
+
+`bench/measure.sh`, median of 3, at 308f470 (mimalloc and the collector on by default):
+
+| corpus | instructions | wall | peak RSS | pyright wall | pyright peak RSS |
+|---|---|---|---|---|---|
+| pydantic-ai | 388.7 G | 52.3 s | 11.8 GB | 2:32 | 9.1 GB |
+| samples | 13.95 G | 1.24 s | 0.68 GB | 5.5 s | 0.62 GB |
+
+Five agents work from this baseline: `hot` (CPU hotspots), `build` (compiler and link settings), `gc` (collection time and peak memory), `progmem` (program heap) and `explore` (architectural levers, research).
