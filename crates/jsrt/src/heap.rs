@@ -66,7 +66,13 @@ struct Config {
     /// `PYRIGHT_RS_GC_WRITE_LOGS`: a minor collection traces only the entries of a
     /// logged container written since the last collection.
     write_logs: bool,
+    /// `PYRIGHT_RS_GC_TAPER`: after the first collection, the floor shrinks to this
+    /// times the share of the check left, down to `TAPER_END`; 0 (the default) keeps it.
+    taper: f64,
 }
+
+/// The floor a taper ends at, at the last file of a check.
+const TAPER_END: usize = 64 << 20;
 
 static CONFIG: OnceLock<Config> = OnceLock::new();
 /// When the heap was first used: the collection log's time origin.
@@ -123,7 +129,9 @@ fn config() -> &'static Config {
             Err(_) | Ok("") | Ok("1") => true,
             Ok(other) => panic!("PYRIGHT_RS_GC_WRITE_LOGS must be 0 or 1, not {other:?}"),
         };
-        Config { mode, min_bytes: min_mib << 20, ratio, log, threads, generational, major_ratio, warm_blocks, write_logs }
+        // Off by default: on pydantic-ai, 1 lowers peak RSS 0.49 GiB for 2-3% wall time.
+        let taper: f64 = env_number("PYRIGHT_RS_GC_TAPER").unwrap_or(0.0);
+        Config { mode, min_bytes: min_mib << 20, ratio, log, threads, generational, major_ratio, warm_blocks, write_logs, taper }
     })
 }
 
@@ -1174,22 +1182,32 @@ pub(crate) fn prefetch<T: ?Sized>(p: *const T) {
 }
 
 /// Collects when the evaluator heap grew by `max(ratio × live bytes, floor)`
-/// since the last collection, unless `PYRIGHT_RS_GC` is off. Call only where
-/// no evaluator frame is live: before a file in the check loop. Panics when a
-/// root, `Trace` impl or drop allocates.
-pub fn collect_if_due() -> bool {
+/// since the last collection, unless `PYRIGHT_RS_GC` is off. `left` is the share
+/// of the check still to run, from 1 at the first file to 0 at the last: after
+/// the first collection the floor tapers with it (`docs/collector-design.md`,
+/// "trigger"). Call only where no evaluator frame is live: before a file in the
+/// check loop. Panics when a root, `Trace` impl or drop allocates.
+pub fn collect_if_due(left: f64) -> bool {
     let config = config();
     if config.mode == GcMode::Off {
         return false;
     }
     let check = config.mode == GcMode::Check;
     with_heap(|heap| {
-        // Generational: a minor collection every `min_bytes`, a major one once the
-        // old objects grew by `major_ratio`. Otherwise a full one at `max(ratio × live, min_bytes)`.
-        let threshold = if config.generational {
-            config.min_bytes
+        // The live set only grows, so the resident set peaks at the end of the check, over
+        // the garbage left since the last collections: they come closer together as it nears.
+        let floor = if config.taper > 0.0 && heap.collections > 0 {
+            let tapered = (config.min_bytes as f64 * config.taper * left.clamp(0.0, 1.0)) as usize;
+            tapered.max(TAPER_END).min(config.min_bytes)
         } else {
-            ((heap.live_bytes as f64 * config.ratio) as usize).max(config.min_bytes)
+            config.min_bytes
+        };
+        // Generational: a minor collection every `floor`, a major one once the
+        // old objects grew by `major_ratio`. Otherwise a full one at `max(ratio × live, floor)`.
+        let threshold = if config.generational {
+            floor
+        } else {
+            ((heap.live_bytes as f64 * config.ratio) as usize).max(floor)
         };
         if heap.since_gc == 0 || heap.since_gc < threshold {
             return false;

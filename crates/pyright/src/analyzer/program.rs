@@ -412,6 +412,9 @@ impl Program {
             // Now do type parsing and analysis of the remaining. `for...of`
             // over an array sees elements appended during the loop.
             let mut index = 0;
+            // The collector's trigger tapers with the share of the check left.
+            let user_files = self.source_file_list.borrow().iter().filter(|f| is_user_code(Some(**f))).count();
+            let mut checked = 0usize;
             loop {
                 let Some(source_file_info) = self.source_file_list.borrow().get(index).copied() else {
                     break;
@@ -423,7 +426,8 @@ impl Program {
                 }
 
                 // No evaluator frame is live between files (`docs/collector-design.md`).
-                jsrt::heap::collect_if_due();
+                jsrt::heap::collect_if_due(1.0 - checked as f64 / user_files.max(1) as f64);
+                checked += 1;
 
                 if self.check_types(source_file_info, false) && elapsed_time.get_duration_in_milliseconds() > effective_max_time {
                     return true;
