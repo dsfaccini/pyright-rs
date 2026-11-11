@@ -119,7 +119,7 @@ fn union_keeps_literals_that_differ_in_a_lone_surrogate() {
     let str_class = create_class("str", ClassTypeFlags::BuiltIn);
     let str_instance = ClassType::clone_as_instance(str_class, true);
     let literal = |units: &[u16]| {
-        ClassType::clone_with_literal(str_instance, Some(LiteralValue::String(units.into()))).0
+        ClassType::clone_with_literal(str_instance, Some(LiteralValue::string(units))).0
     };
 
     let high = literal(&[0x61, 0xd800]);
@@ -149,7 +149,7 @@ fn union_of_str_literals_uses_literal_map() {
     let str_class = create_class("str", ClassTypeFlags::BuiltIn);
     let str_instance = ClassType::clone_as_instance(str_class, true);
     let literal = |value: &str| {
-        ClassType::clone_with_literal(str_instance, Some(LiteralValue::String(value.into()))).0
+        ClassType::clone_with_literal(str_instance, Some(LiteralValue::string(value))).0
     };
 
     let a = literal("a");

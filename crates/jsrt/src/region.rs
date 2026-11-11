@@ -117,6 +117,8 @@ mod tests {
     }
 
     #[test]
+    // Under Miri, `vm::retire` deallocates the chunk, and Miri may hand its address out again.
+    #[cfg_attr(miri, ignore = "vm::retire deallocates under Miri")]
     fn protected_chunks_are_not_reused() {
         let first = Region::new(true);
         let a = first.alloc(1u64) as usize;

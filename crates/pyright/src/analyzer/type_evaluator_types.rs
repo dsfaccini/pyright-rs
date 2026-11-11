@@ -105,7 +105,6 @@ pub struct TypeResult {
     pub type_: Cell<P<Type>>,
     pub is_incomplete: Cell<Option<bool>>,
     pub type_errors: Cell<Option<bool>>,
-    pub class_type: Option<P<Type>>,
     pub is_asymmetric_accessor: Option<bool>,
     pub is_required: Option<bool>,
     pub is_not_required: Option<bool>,
@@ -114,12 +113,13 @@ pub struct TypeResult {
     pub cold: jsrt::OptionRefCell<TypeResultCold>,
 }
 // The evaluator creates millions; fields few results set live in the cold half (PLAN.md step 6).
-const _: () = assert!(size_of::<TypeResult>() <= 32);
+const _: () = assert!(size_of::<TypeResult>() <= 24);
 
 // analyzer/typeEvaluatorTypes.ts:228
 #[derive(Clone, Default)]
 #[derive(jsrt::Trace)]
 pub struct TypeResultCold {
+    pub class_type: Option<P<Type>>,
     pub bind_to_self_type: Option<P<Type>>,
     pub unpacked_type: Option<P<Type>>,
     pub type_list: Option<Vec<TypeResultWithNode>>,
@@ -133,10 +133,11 @@ pub struct TypeResultCold {
 }
 
 // One allocation per result that sets a cold field: about one result in eight on pydantic-ai.
-const _: () = assert!(size_of::<TypeResultCold>() <= 112);
+const _: () = assert!(size_of::<TypeResultCold>() <= 120);
 
 impl TypeResultCold {
     const EMPTY: TypeResultCold = TypeResultCold {
+        class_type: None,
         bind_to_self_type: None,
         unpacked_type: None,
         type_list: None,
@@ -151,7 +152,8 @@ impl TypeResultCold {
 
     /// The `cold` field that holds these fields: unallocated while every one is unset.
     pub fn into_cold(self) -> jsrt::OptionRefCell<TypeResultCold> {
-        let unset = self.bind_to_self_type.is_none()
+        let unset = self.class_type.is_none()
+            && self.bind_to_self_type.is_none()
             && self.unpacked_type.is_none()
             && self.type_list.is_none()
             && self.inlined_type_dict.is_none()
@@ -622,7 +624,6 @@ impl TypeResult {
             type_: Cell::new(type_),
             is_incomplete: Cell::new(None),
             type_errors: Cell::new(None),
-            class_type: None,
             is_asymmetric_accessor: None,
             is_required: None,
             is_not_required: None,
@@ -640,7 +641,6 @@ impl Clone for TypeResult {
             type_: self.type_.clone(),
             is_incomplete: self.is_incomplete.clone(),
             type_errors: self.type_errors.clone(),
-            class_type: self.class_type,
             is_asymmetric_accessor: self.is_asymmetric_accessor,
             is_required: self.is_required,
             is_not_required: self.is_not_required,
@@ -688,7 +688,7 @@ impl TypeResultWithNode {
             type_list: cold.type_list.clone(),
             type_errors: type_result.type_errors.get(),
             inlined_type_dict: cold.inlined_type_dict,
-            class_type: type_result.class_type,
+            class_type: cold.class_type,
             is_empty_tuple_shorthand: cold.is_empty_tuple_shorthand,
             expected_type_diag_addendum: cold.expected_type_diag_addendum,
             is_asymmetric_accessor: type_result.is_asymmetric_accessor,

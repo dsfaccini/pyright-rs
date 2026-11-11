@@ -311,7 +311,7 @@ fn literal_with_lone_surrogate() {
     let str_class = create_class("str", "builtins.str", "builtins", ClassTypeFlags::BuiltIn);
     let str_instance = ClassType::clone_as_instance(str_class, true);
     let literal = |units: &[u16]| {
-        ClassType::clone_with_literal(str_instance, Some(LiteralValue::String(units.into()))).0
+        ClassType::clone_with_literal(str_instance, Some(LiteralValue::string(units))).0
     };
 
     assert_eq!(print_type(literal(&[0xd800]), PrintTypeFlags::None, callback), "Literal['\\ud800']");

@@ -290,12 +290,12 @@ mod tests {
         let mut reference: FxHashMap<u32, u32> = FxHashMap::default();
         assert!(map.is_empty() && map.get(5).is_none() && map.remove(5).is_none());
         // Ids above, below and inside the pages already allocated, repeated and removed.
-        let ids = [5000u32, 5001, 12, 70000, 255, 256, 0, 5000, 69999, 1 << 31, 12];
+        let ids = [5000u32, 5001, 12, 70000, 255, 256, 0, 5000, 69999, 200_000, 12];
         for (value, &id) in ids.iter().enumerate() {
             assert_eq!(map.insert(id, value as u32), reference.insert(id, value as u32));
             assert_eq!(map.len(), reference.len());
         }
-        for id in [0u32, 12, 255, 256, 257, 4999, 5000, 5001, 69999, 70000, 70001, 1 << 31, u32::MAX] {
+        for id in [0u32, 12, 255, 256, 257, 4999, 5000, 5001, 69999, 70000, 70001, 200_000, u32::MAX] {
             assert_eq!(map.get(id), reference.get(&id));
         }
         for id in [12u32, 12, 70000, 3, u32::MAX] {

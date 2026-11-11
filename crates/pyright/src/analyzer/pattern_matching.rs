@@ -1095,7 +1095,7 @@ pub(crate) fn is_int_literal_pattern_equal_to_bool(
     let bool_as_number: i64 = if subject_value { 1 } else { 0 };
     match pattern_value {
         Some(LiteralValue::Bigint(pattern_value)) => {
-            pattern_value == JsBigInt::from(bool_as_number)
+            *pattern_value == JsBigInt::from(bool_as_number)
         }
         Some(LiteralValue::Number(pattern_value)) => pattern_value == bool_as_number as f64,
         _ => false,

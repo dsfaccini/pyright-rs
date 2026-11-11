@@ -102,7 +102,6 @@ pub struct TypeResult {
     pub type_: Cell<P<Type>>,
     pub is_incomplete: Cell<Option<bool>>,
     pub type_errors: Cell<Option<bool>>,
-    pub class_type: Option<P<Type>>,
     pub is_asymmetric_accessor: Option<bool>,
     pub is_required: Option<bool>,
     pub is_not_required: Option<bool>,
@@ -118,6 +117,7 @@ pub struct TypeResultCold {
     pub unpacked_type: Option<P<Type>>,
     pub type_list: Option<Vec<TypeResultWithNode>>,
     pub inlined_type_dict: Option<ClassType>,
+    pub class_type: Option<P<Type>>,
     pub is_empty_tuple_shorthand: Option<bool>,
     pub expected_type_diag_addendum: Option<P<DiagnosticAddendum>>,
     pub narrowed_type_for_set: Option<P<Type>>,
@@ -132,6 +132,7 @@ impl TypeResultCold {
         unpacked_type: None,
         type_list: None,
         inlined_type_dict: None,
+        class_type: None,
         is_empty_tuple_shorthand: None,
         expected_type_diag_addendum: None,
         narrowed_type_for_set: None,
@@ -146,6 +147,7 @@ impl TypeResultCold {
             && self.unpacked_type.is_none()
             && self.type_list.is_none()
             && self.inlined_type_dict.is_none()
+            && self.class_type.is_none()
             && self.is_empty_tuple_shorthand.is_none()
             && self.expected_type_diag_addendum.is_none()
             && self.narrowed_type_for_set.is_none()

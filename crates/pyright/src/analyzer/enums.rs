@@ -872,7 +872,7 @@ pub fn get_type_of_enum_member(
             ClassType::clone_as_instance(
                 ClassType::clone_with_literal(
                     str_class,
-                    Some(LiteralValue::String((&value.item_name).into())),
+                    Some(LiteralValue::string(&value.item_name)),
                 ),
                 true,
             )
@@ -1043,7 +1043,7 @@ pub fn get_enum_auto_value_type(evaluator: &TypeEvaluator, node: ExpressionNode)
             if let Some(member_info) = member_info
                 && !member_info.type_errors.get().unwrap_or(false)
                 && is_function(member_info.type_.get())
-                && let Some(member_class_type) = member_info.class_type
+                && let Some(member_class_type) = member_info.cold().class_type
                 && is_class(member_class_type)
                 && !ClassType::is_built_in(
                     ClassType(member_class_type),

@@ -913,7 +913,7 @@ pub fn synthesize_typed_dict_class_methods(
                                 TupleTypeArg {
                                     type_: ClassType::clone_with_literal(
                                         ClassType::clone_as_instance(str_class_type, true),
-                                        Some(LiteralValue::String(name.into())),
+                                        Some(LiteralValue::string(name)),
                                     )
                                     .0,
                                     is_unbounded: false,
@@ -992,7 +992,7 @@ pub fn synthesize_typed_dict_class_methods(
             let name_literal_type = ClassType::clone_as_instance(
                 ClassType::clone_with_literal(
                     str_class_type,
-                    Some(LiteralValue::String(name.into())),
+                    Some(LiteralValue::string(name)),
                 ),
                 true,
             );
@@ -1213,7 +1213,7 @@ pub fn synthesize_typed_dict_class_methods(
                     .map(|(key, _)| {
                         ClassType::clone_with_literal(
                             str_type,
-                            Some(LiteralValue::String(key.into())),
+                            Some(LiteralValue::string(key)),
                         )
                         .0
                     })

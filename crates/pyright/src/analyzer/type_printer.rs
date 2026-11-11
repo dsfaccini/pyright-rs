@@ -137,7 +137,7 @@ pub fn print_literal_value(type_: ClassType, quotation: &str) -> String {
 
     let literal_str = match &literal_value {
         LiteralValue::String(literal_value) => {
-            let mut effective_literal_value = literal_value.clone();
+            let mut effective_literal_value = (**literal_value).clone();
 
             // Limit the length of the string literal.
             if literal_value.js_len() > MAX_LITERAL_STRING_LENGTH {

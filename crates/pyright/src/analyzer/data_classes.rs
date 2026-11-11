@@ -1129,7 +1129,7 @@ pub fn synthesize_data_class_methods(
                 type_: ClassType::clone_as_instance(
                     ClassType::clone_with_literal(
                         ClassType(str_type),
-                        Some(LiteralValue::String(name.into())),
+                        Some(LiteralValue::string(name)),
                     ),
                     true,
                 )
