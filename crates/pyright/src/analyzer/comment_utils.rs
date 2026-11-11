@@ -50,7 +50,7 @@ pub fn get_file_level_directives(
 
     for i in 0..tokens.count() {
         let token = tokens.get_item_at(i);
-        if let Some(comments) = token.comments {
+        if let Some(comments) = token.comments() {
             for comment in comments {
                 let (value, text_range) =
                     trim_text_with_range(&comment.value, TextRange { start: comment.start, length: comment.length });

@@ -1,13 +1,15 @@
 //! Port of `packages/pyright-internal/src/parser/tokenizerTypes.ts`.
 //!
-//! A token is one `Token` struct: the `TokenBase` fields plus `d`, an enum with
-//! the fields of the specific token interface (`KeywordToken`, `StringToken`, ...).
+//! `Token` is the `TokenBase` header. A token is allocated as its header followed
+//! by the fields of its specific interface (`KeywordToken`, `StringToken`, ...);
+//! `d()` returns them as a `TokenDetails` variant.
 //! Each specific interface also gets a typed handle, for example
 //! `StringToken(P<Token>)`, with `cast`, `d()` and `Deref` to `Token`, as parse
 //! nodes do (see `docs/porting.md`).
 
 use jsrt::flag_ops;
 use std::ops::Deref;
+use std::ptr;
 
 use jsrt::{JsStr, JsString, NormalizationForm, P};
 
@@ -309,34 +311,71 @@ impl HasTextRange for Comment {
 }
 
 // parser/tokenizerTypes.ts:208
+/// The `TokenBase` fields. A token is allocated as this header followed by the
+/// fields of its specific interface (`TokenAlloc`), so it takes the size of its
+/// own interface; `d()` returns them.
+#[repr(C)]
 #[derive(jsrt::Trace)]
 pub struct Token {
     pub type_: TokenType,
     pub start: i32,
     pub length: i32,
 
-    // Comments prior to the token.
-    pub comments: Option<&'static [Comment]>,
+    /// The specific interface the token was built as, `d()`'s variant. A plain
+    /// `Token.create` can carry any type, `Keyword` included.
+    kind: TokenKind,
 
-    /// The fields of the specific token interface. `None` for a plain `Token`.
-    pub d: TokenDetails,
+    // Comments prior to the token.
+    comments: Option<P<Vec<Comment>>>,
+}
+const _: () = assert!(size_of::<Token>() <= 24);
+
+#[repr(u8)]
+#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(jsrt::Trace)]
+enum TokenKind {
+    None,
+    Indent,
+    Dedent,
+    NewLine,
+    Keyword,
+    String,
+    FStringStart,
+    FStringMiddle,
+    FStringEnd,
+    Number,
+    Operator,
+    Identifier,
 }
 
-/// The fields that each specific token interface adds to `Token`.
+/// A token as allocated: the header, then the fields of its interface.
+#[repr(C)]
 #[derive(jsrt::Trace)]
-pub enum TokenDetails {
-    None,
-    Indent(IndentTokenDetails),
-    Dedent(DedentTokenDetails),
-    NewLine(NewLineTokenDetails),
-    Keyword(KeywordTokenDetails),
-    String(StringTokenDetails),
-    FStringStart(FStringStartTokenDetails),
-    FStringMiddle(FStringMiddleTokenDetails),
-    FStringEnd(FStringEndTokenDetails),
-    Number(NumberTokenDetails),
-    Operator(OperatorTokenDetails),
-    Identifier(IdentifierTokenDetails),
+struct TokenAlloc<D> {
+    token: Token,
+    d: D,
+}
+
+/// The fields one specific token interface adds to `Token`.
+trait TokenInterface: jsrt::Trace + 'static {
+    const KIND: TokenKind;
+}
+
+/// A token of a specific interface.
+fn alloc_token<D: TokenInterface>(
+    type_: TokenType,
+    start: i32,
+    length: i32,
+    comments: Option<P<Vec<Comment>>>,
+    d: D,
+) -> P<Token> {
+    let token = Token { type_, start, length, kind: D::KIND, comments };
+    P::new(TokenAlloc { token, d }).header(|alloc| &alloc.token)
+}
+
+/// A plain `Token`, with no interface fields.
+fn alloc_plain_token(type_: TokenType, start: i32, length: i32, comments: Option<P<Vec<Comment>>>) -> P<Token> {
+    P::new(Token { type_, start, length, kind: TokenKind::None, comments })
 }
 
 impl HasTextRange for Token {
@@ -349,8 +388,8 @@ impl HasTextRange for Token {
 }
 
 /// Moves a comment list into the arena, where tokens can share it.
-fn alloc_comments(comments: Option<Vec<Comment>>) -> Option<&'static [Comment]> {
-    comments.map(|c| P::new(c).get().as_slice())
+fn alloc_comments(comments: Option<Vec<Comment>>) -> Option<P<Vec<Comment>>> {
+    comments.map(P::new)
 }
 
 impl Token {
@@ -369,36 +408,97 @@ impl Token {
         type_: TokenType,
         start: i32,
         length: i32,
-        comments: Option<&'static [Comment]>,
+        comments: Option<P<Vec<Comment>>>,
     ) -> P<Token> {
-        P::new(Token {
-            start,
-            length,
-            type_,
-            comments,
-            d: TokenDetails::None,
-        })
+        alloc_plain_token(type_, start, length, comments)
     }
+
+    // Comments prior to the token.
+    pub fn comments(&self) -> Option<&'static [Comment]> {
+        self.comments.map(|comments| comments.get().as_slice())
+    }
+
+    /// The comment list itself, for a token that shares it.
+    pub fn shared_comments(&self) -> Option<P<Vec<Comment>>> {
+        self.comments
+    }
+
+    /// The fields of interface `D`.
+    fn details<D: TokenInterface>(&self) -> &'static D {
+        assert!(self.kind == D::KIND);
+        // SAFETY: checked above.
+        unsafe { self.details_unchecked() }
+    }
+
+    /// # Safety
+    /// `self.kind` is `D::KIND`.
+    unsafe fn details_unchecked<D: TokenInterface>(&self) -> &'static D {
+        // SAFETY: `alloc_token` makes every header of a kind other than `None` the
+        // first field of a `#[repr(C)]` `TokenAlloc` whose fields match `kind`, on
+        // the program heap, which is never freed.
+        unsafe { &(*ptr::from_ref(self).cast::<TokenAlloc<D>>()).d }
+    }
+
+    /// The fields of the specific token interface.
+    pub fn d(&self) -> TokenDetails {
+        // SAFETY: each arm reads the interface of its kind.
+        unsafe {
+            match self.kind {
+                TokenKind::None => TokenDetails::None,
+                TokenKind::Indent => TokenDetails::Indent(self.details_unchecked()),
+                TokenKind::Dedent => TokenDetails::Dedent(self.details_unchecked()),
+                TokenKind::NewLine => TokenDetails::NewLine(self.details_unchecked()),
+                TokenKind::Keyword => TokenDetails::Keyword(self.details_unchecked()),
+                TokenKind::String => TokenDetails::String(self.details_unchecked()),
+                TokenKind::FStringStart => TokenDetails::FStringStart(self.details_unchecked()),
+                TokenKind::FStringMiddle => TokenDetails::FStringMiddle(self.details_unchecked()),
+                TokenKind::FStringEnd => TokenDetails::FStringEnd(self.details_unchecked()),
+                TokenKind::Number => TokenDetails::Number(self.details_unchecked()),
+                TokenKind::Operator => TokenDetails::Operator(self.details_unchecked()),
+                TokenKind::Identifier => TokenDetails::Identifier(self.details_unchecked()),
+            }
+        }
+    }
+}
+
+/// The fields that each specific token interface adds to `Token`: `token.d()`.
+/// `None` for a plain `Token`.
+#[derive(Clone, Copy)]
+pub enum TokenDetails {
+    None,
+    Indent(&'static IndentTokenDetails),
+    Dedent(&'static DedentTokenDetails),
+    NewLine(&'static NewLineTokenDetails),
+    Keyword(&'static KeywordTokenDetails),
+    String(&'static StringTokenDetails),
+    FStringStart(&'static FStringStartTokenDetails),
+    FStringMiddle(&'static FStringMiddleTokenDetails),
+    FStringEnd(&'static FStringEndTokenDetails),
+    Number(&'static NumberTokenDetails),
+    Operator(&'static OperatorTokenDetails),
+    Identifier(&'static IdentifierTokenDetails),
 }
 
 macro_rules! token_handle {
     ($handle:ident, $variant:ident, $details:ident) => {
+        impl TokenInterface for $details {
+            const KIND: TokenKind = TokenKind::$variant;
+        }
+
         #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, jsrt::Trace)]
         pub struct $handle(pub P<Token>);
 
         impl $handle {
             pub fn cast(token: P<Token>) -> Option<$handle> {
-                match token.d {
-                    TokenDetails::$variant(_) => Some($handle(token)),
-                    _ => None,
+                if token.kind == TokenKind::$variant {
+                    Some($handle(token))
+                } else {
+                    None
                 }
             }
 
             pub fn d(&self) -> &'static $details {
-                match &self.0.get().d {
-                    TokenDetails::$variant(d) => d,
-                    _ => unreachable!(),
-                }
+                self.0.get().details()
             }
 
             pub fn token(self) -> P<Token> {
@@ -444,16 +544,16 @@ impl IndentToken {
         is_indent_ambiguous: bool,
         comments: Option<Vec<Comment>>,
     ) -> IndentToken {
-        IndentToken(P::new(Token {
+        IndentToken(alloc_token(
+            TokenType::Indent,
             start,
             length,
-            type_: TokenType::Indent,
-            comments: alloc_comments(comments),
-            d: TokenDetails::Indent(IndentTokenDetails {
+            alloc_comments(comments),
+            IndentTokenDetails {
                 is_indent_ambiguous,
                 indent_amount,
-            }),
-        }))
+            },
+        ))
     }
 }
 
@@ -476,17 +576,17 @@ impl DedentToken {
         is_dedent_ambiguous: bool,
         comments: Option<Vec<Comment>>,
     ) -> DedentToken {
-        DedentToken(P::new(Token {
+        DedentToken(alloc_token(
+            TokenType::Dedent,
             start,
             length,
-            type_: TokenType::Dedent,
-            comments: alloc_comments(comments),
-            d: TokenDetails::Dedent(DedentTokenDetails {
+            alloc_comments(comments),
+            DedentTokenDetails {
                 indent_amount,
                 matches_indent,
                 is_dedent_ambiguous,
-            }),
-        }))
+            },
+        ))
     }
 }
 
@@ -505,13 +605,13 @@ impl NewLineToken {
         new_line_type: NewLineType,
         comments: Option<Vec<Comment>>,
     ) -> NewLineToken {
-        NewLineToken(P::new(Token {
+        NewLineToken(alloc_token(
+            TokenType::NewLine,
             start,
             length,
-            type_: TokenType::NewLine,
-            comments: alloc_comments(comments),
-            d: TokenDetails::NewLine(NewLineTokenDetails { new_line_type }),
-        }))
+            alloc_comments(comments),
+            NewLineTokenDetails { new_line_type },
+        ))
     }
 }
 
@@ -530,13 +630,13 @@ impl KeywordToken {
         keyword_type: KeywordType,
         comments: Option<Vec<Comment>>,
     ) -> KeywordToken {
-        KeywordToken(P::new(Token {
+        KeywordToken(alloc_token(
+            TokenType::Keyword,
             start,
             length,
-            type_: TokenType::Keyword,
-            comments: alloc_comments(comments),
-            d: TokenDetails::Keyword(KeywordTokenDetails { keyword_type }),
-        }))
+            alloc_comments(comments),
+            KeywordTokenDetails { keyword_type },
+        ))
     }
 
     // parser/tokenizerTypes.ts:369
@@ -578,18 +678,18 @@ impl StringToken {
         } else {
             1
         };
-        StringToken(P::new(Token {
+        StringToken(alloc_token(
+            TokenType::String,
             start,
             length,
-            type_: TokenType::String,
-            comments: alloc_comments(comments),
-            d: TokenDetails::String(StringTokenDetails {
+            alloc_comments(comments),
+            StringTokenDetails {
                 flags,
                 escaped_value,
                 prefix_length,
                 quote_mark_length,
-            }),
-        }))
+            },
+        ))
     }
 }
 
@@ -622,17 +722,17 @@ impl FStringStartToken {
         } else {
             1
         };
-        FStringStartToken(P::new(Token {
+        FStringStartToken(alloc_token(
+            TokenType::FStringStart,
             start,
             length,
-            type_: TokenType::FStringStart,
-            comments: alloc_comments(comments),
-            d: TokenDetails::FStringStart(FStringStartTokenDetails {
+            alloc_comments(comments),
+            FStringStartTokenDetails {
                 flags,
                 prefix_length,
                 quote_mark_length,
-            }),
-        }))
+            },
+        ))
     }
 }
 
@@ -654,16 +754,16 @@ impl FStringMiddleToken {
         flags: StringTokenFlags,
         escaped_value: JsString,
     ) -> FStringMiddleToken {
-        FStringMiddleToken(P::new(Token {
+        FStringMiddleToken(alloc_token(
+            TokenType::FStringMiddle,
             start,
             length,
-            type_: TokenType::FStringMiddle,
-            comments: None,
-            d: TokenDetails::FStringMiddle(FStringMiddleTokenDetails {
+            None,
+            FStringMiddleTokenDetails {
                 flags,
                 escaped_value,
-            }),
-        }))
+            },
+        ))
     }
 }
 
@@ -677,13 +777,13 @@ token_handle!(FStringEndToken, FStringEnd, FStringEndTokenDetails);
 impl FStringEndToken {
     // parser/tokenizerTypes.ts:498
     pub fn create(start: i32, length: i32, flags: StringTokenFlags) -> FStringEndToken {
-        FStringEndToken(P::new(Token {
+        FStringEndToken(alloc_token(
+            TokenType::FStringEnd,
             start,
             length,
-            type_: TokenType::FStringEnd,
-            comments: None,
-            d: TokenDetails::FStringEnd(FStringEndTokenDetails { flags }),
-        }))
+            None,
+            FStringEndTokenDetails { flags },
+        ))
     }
 }
 
@@ -706,17 +806,17 @@ impl NumberToken {
         is_imaginary: bool,
         comments: Option<Vec<Comment>>,
     ) -> NumberToken {
-        NumberToken(P::new(Token {
+        NumberToken(alloc_token(
+            TokenType::Number,
             start,
             length,
-            type_: TokenType::Number,
-            comments: alloc_comments(comments),
-            d: TokenDetails::Number(NumberTokenDetails {
+            alloc_comments(comments),
+            NumberTokenDetails {
                 is_integer,
                 is_imaginary,
                 value,
-            }),
-        }))
+            },
+        ))
     }
 }
 
@@ -735,13 +835,13 @@ impl OperatorToken {
         operator_type: OperatorType,
         comments: Option<Vec<Comment>>,
     ) -> OperatorToken {
-        OperatorToken(P::new(Token {
+        OperatorToken(alloc_token(
+            TokenType::Operator,
             start,
             length,
-            type_: TokenType::Operator,
-            comments: alloc_comments(comments),
-            d: TokenDetails::Operator(OperatorTokenDetails { operator_type }),
-        }))
+            alloc_comments(comments),
+            OperatorTokenDetails { operator_type },
+        ))
     }
 }
 
@@ -768,7 +868,7 @@ impl IdentifierToken {
         start: i32,
         length: i32,
         value: String,
-        comments: Option<&'static [Comment]>,
+        comments: Option<P<Vec<Comment>>>,
     ) -> IdentifierToken {
         // Perform "NFKC normalization", as per the Python lexical spec.
         let normalized_value = if value.bytes().any(|b| b > 0x7f) {
@@ -777,14 +877,14 @@ impl IdentifierToken {
             value
         };
 
-        IdentifierToken(P::new(Token {
+        IdentifierToken(alloc_token(
+            TokenType::Identifier,
             start,
             length,
-            type_: TokenType::Identifier,
             comments,
-            d: TokenDetails::Identifier(IdentifierTokenDetails {
+            IdentifierTokenDetails {
                 value: normalized_value,
-            }),
-        }))
+            },
+        ))
     }
 }

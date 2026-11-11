@@ -5921,7 +5921,7 @@ impl Parser {
         string_token: P<Token>,
         unescaped_result: Option<&string_token_utils::UnescapedString>,
     ) {
-        let flags = match &string_token.d {
+        let flags = match string_token.d() {
             TokenDetails::String(d) => d.flags,
             TokenDetails::FStringStart(d) => d.flags,
             _ => unreachable!("a StringToken or FStringStartToken"),
@@ -6687,7 +6687,7 @@ impl Parser {
                 next_token.start,
                 next_token.length,
                 String::new(),
-                next_token.comments,
+                next_token.shared_comments(),
             ));
         }
 
@@ -6706,7 +6706,7 @@ impl Parser {
                     next_token.start,
                     next_token.length,
                     keyword_text,
-                    next_token.comments,
+                    next_token.shared_comments(),
                 ));
             }
         }

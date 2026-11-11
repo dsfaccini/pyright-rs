@@ -1080,7 +1080,7 @@ fn strings_f_string_with_comment() {
     assert_eq!(results.tokens.get_item_at(3).type_, TokenType::Identifier);
     let close_brace_token = results.tokens.get_item_at(4);
     assert_eq!(close_brace_token.type_, TokenType::CloseCurlyBrace);
-    let comments = close_brace_token.comments.unwrap();
+    let comments = close_brace_token.comments().unwrap();
     assert_eq!(comments.len(), 1);
     assert_eq!(comments[0].type_, CommentType::Regular);
     assert_eq!(comments[0].value, " comment");
@@ -2298,18 +2298,18 @@ fn comments1() {
 
     let token0 = results.tokens.get_item_at(0);
     assert_eq!(token0.type_, TokenType::NewLine);
-    assert_eq!(token0.comments.unwrap().len(), 1);
-    assert_eq!(token0.comments.unwrap()[0].value, " hello");
+    assert_eq!(token0.comments().unwrap().len(), 1);
+    assert_eq!(token0.comments().unwrap()[0].value, " hello");
 
     let token1 = results.tokens.get_item_at(1);
     assert_eq!(token1.type_, TokenType::String);
-    assert_eq!(token1.comments.unwrap().len(), 1);
-    assert_eq!(token1.comments.unwrap()[0].value, " good bye");
+    assert_eq!(token1.comments().unwrap().len(), 1);
+    assert_eq!(token1.comments().unwrap()[0].value, " good bye");
 
     let token2 = results.tokens.get_item_at(2);
     assert_eq!(token2.type_, TokenType::NewLine);
-    assert_eq!(token2.comments.unwrap().len(), 1);
-    assert_eq!(token2.comments.unwrap()[0].value, " another");
+    assert_eq!(token2.comments().unwrap().len(), 1);
+    assert_eq!(token2.comments().unwrap()[0].value, " another");
 
     assert_eq!(results.tokens.get_item_at_position(0), -1);
     assert_eq!(results.tokens.get_item_at_position(7), 0);
@@ -2334,21 +2334,21 @@ fn comments2() {
 
     let token17 = results.tokens.get_item_at(17);
     assert_eq!(token17.type_, TokenType::EndOfStream);
-    assert!(token17.comments.is_none());
+    assert!(token17.comments().is_none());
     let start = token17.start;
 
     let token16 = results.tokens.get_item_at(16);
     assert_eq!(token16.type_, TokenType::Dedent);
     assert_eq!(token16.start, start);
-    assert!(token16.comments.is_none());
+    assert!(token16.comments().is_none());
 
     // When multiple tokens have the same start position (and 0-length)
     // comments, if any, are stored on the first such token.
     let token15 = results.tokens.get_item_at(15);
     assert_eq!(token15.type_, TokenType::Dedent);
     assert_eq!(token15.start, start);
-    assert_eq!(token15.comments.unwrap().len(), 1);
-    assert_eq!(token15.comments.unwrap()[0].value, " comment");
+    assert_eq!(token15.comments().unwrap().len(), 1);
+    assert_eq!(token15.comments().unwrap()[0].value, " comment");
 
     let token14 = results.tokens.get_item_at(14);
     assert_ne!(token14.start, start);

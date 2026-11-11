@@ -45,7 +45,7 @@ pub fn token_type_name(token_type: TokenType) -> &'static str {
 /// `<TokenTypeName> <start>+<length>[ <field>=<scalar>]...`, fields sorted by name.
 pub fn token_line(token: &Token) -> String {
     let mut fields: Vec<(&str, String)> = vec![];
-    match &token.d {
+    match token.d() {
         TokenDetails::None => {}
         TokenDetails::Indent(d) => {
             fields.push(("indentAmount", format::number(d.indent_amount as f64)));
@@ -128,7 +128,7 @@ pub fn token_line(token: &Token) -> String {
 /// `<key>: <token line>`, then the token's comments nested below it.
 pub fn write_token(w: &mut DumpWriter, depth: usize, key: &str, token: &Token) {
     w.field(depth, key, &token_line(token));
-    if let Some(comments) = token.comments {
+    if let Some(comments) = token.comments() {
         w.field(depth + 1, "comments", &format::array_header(comments.len()));
         for (i, comment) in comments.iter().enumerate() {
             w.field(

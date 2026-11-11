@@ -23,9 +23,8 @@ use jsrt::NumberValue;
 
 use super::string_annotation_info::{StringAnnotationInfo, empty_string_annotation_info};
 use super::tokenizer_types::{
-    Comment, FStringEndToken, FStringMiddleToken, FStringStartToken, IdentifierToken,
-    IdentifierTokenDetails, KeywordToken, KeywordType, NumberToken, OperatorType, StringToken,
-    Token, TokenDetails, TokenType,
+    FStringEndToken, FStringMiddleToken, FStringStartToken, IdentifierToken, KeywordToken,
+    KeywordType, NumberToken, OperatorType, StringToken, Token, TokenType,
 };
 use crate::common::text_range::{HasTextRange, TextRange};
 
@@ -1029,18 +1028,8 @@ impl ClassNode {
         // The node's own id comes first; the nested name and suite literals have id 0.
         let id = get_next_node_id();
 
-        let empty_comments: &'static [Comment] = &[];
-        let first_token =
-            Token::create_with_shared_comments(TokenType::Keyword, 0, 0, Some(empty_comments));
-        let name_token = IdentifierToken(P::new(Token {
-            type_: TokenType::Identifier,
-            start: 0,
-            length: 0,
-            comments: Some(empty_comments),
-            d: TokenDetails::Identifier(IdentifierTokenDetails {
-                value: String::new(),
-            }),
-        }));
+        let first_token = Token::create(TokenType::Keyword, 0, 0, Some(vec![]));
+        let name_token = IdentifierToken::create(0, 0, String::new(), Some(vec![]));
         let name = NameNode(alloc_node(
             decorators_start,
             0,
