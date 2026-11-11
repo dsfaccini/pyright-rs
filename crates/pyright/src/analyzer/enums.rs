@@ -3,6 +3,7 @@
 //! Evaluator code: allocate with `P::new_eval` (docs/porting.md, "memory").
 
 use crate::analyzer::analyzer_node_info::get_file_info;
+use std::rc::Rc;
 use crate::analyzer::analyzer_node_info::{AnalyzerNodeInfoAccessor, AnalyzerNodeInfoReader};
 use crate::analyzer::declaration::Declaration;
 use crate::analyzer::parse_tree_utils::get_class_full_name;
@@ -200,12 +201,12 @@ pub fn create_enum_type(
         enum_class.d().shared.get().effective_metaclass.get(),
         None,
     );
-    class_type
+    Rc::make_mut(&mut *class_type
         .d()
         .shared
         .get()
         .base_classes
-        .borrow_mut()
+        .borrow_mut())
         .push(enum_class.0);
     compute_mro_linearization(class_type);
 

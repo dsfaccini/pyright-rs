@@ -1336,7 +1336,7 @@ pub fn get_specialized_tuple_type(type_: P<Type>) -> Option<ClassType> {
     // See if this class derives from Tuple or tuple. If it does, we'll assume that it
     // hasn't been overridden in a way that changes the behavior of the tuple class.
     let mro = class_type.d().shared.get().mro.borrow().clone();
-    let tuple_class = mro.into_iter().find(|mro_class| {
+    let tuple_class = mro.iter().copied().find(|mro_class| {
         crate::analyzer::types::is_instantiable_class(*mro_class) && is_tuple_class(ClassType(*mro_class))
     })?;
     if !crate::analyzer::types::is_instantiable_class(tuple_class) {
@@ -1942,7 +1942,7 @@ pub fn get_protocol_symbols_recursive(
     }
 
     let base_classes = class_type.d().shared.get().base_classes.borrow().clone();
-    for base_class in base_classes {
+    for base_class in base_classes.iter().copied() {
         if crate::analyzer::types::is_class(base_class) && ClassType(base_class).d().shared.get().flags.get().any(class_flags) {
             get_protocol_symbols_recursive(ClassType(base_class), symbol_map, class_flags, recursion_count + 1);
         }
@@ -2700,7 +2700,7 @@ pub fn derives_from_class_recursive(
     }
 
     let base_classes = class_type.d().shared.get().base_classes.borrow().clone();
-    for base_class in base_classes {
+    for base_class in base_classes.iter().copied() {
         if crate::analyzer::types::is_instantiable_class(base_class) {
             if derives_from_class_recursive(ClassType(base_class), base_class_to_find, ignore_unknown) {
                 return true;
@@ -3016,7 +3016,7 @@ pub fn get_members_for_class(
     include_instance_vars: bool,
 ) {
     let mro = class_type.d().shared.get().mro.borrow().clone();
-    for mro_class in mro {
+    for mro_class in mro.iter().copied() {
         if crate::analyzer::types::is_instantiable_class(mro_class) {
             // Add any new member variables from this class.
             let is_class_typed_dict = ClassType::is_typed_dict_class(ClassType(mro_class));
@@ -3056,7 +3056,7 @@ pub fn get_members_for_class(
         if let Some(metaclass) = metaclass {
             if crate::analyzer::types::is_instantiable_class(metaclass) {
                 let metaclass_mro = ClassType(metaclass).d().shared.get().mro.borrow().clone();
-                for mro_class in metaclass_mro {
+                for mro_class in metaclass_mro.iter().copied() {
                     if crate::analyzer::types::is_instantiable_class(mro_class) {
                         ClassType::get_symbol_table(ClassType(mro_class)).for_each(|symbol, name| {
                             let existing_symbol = symbol_table.get(name);
@@ -3447,7 +3447,7 @@ pub fn combine_same_sized_tuples(type_: P<Type>, tuple_type: Option<P<Type>>) ->
                     // tuple with a known size. This includes named tuples.
                     let mro = ClassType(subtype).d().shared.get().mro.borrow().clone();
                     tuple_class = mro
-                        .into_iter()
+                        .iter().copied()
                         .find(|mro_class| {
                             crate::analyzer::types::is_class(*mro_class)
                                 && is_tuple_class(ClassType(*mro_class))
@@ -3969,7 +3969,7 @@ pub fn compute_mro_linearization(class_type: ClassType) -> bool {
     let shared = class_type.d().shared.get();
 
     // Clear out any existing MRO information.
-    *shared.mro.borrow_mut() = Vec::new();
+    *shared.mro.borrow_mut() = Rc::new(Vec::new());
 
     let base_classes = shared.base_classes.borrow().clone();
     let filtered_base_classes: Vec<P<Type>> = base_classes
@@ -4047,7 +4047,7 @@ pub fn compute_mro_linearization(class_type: ClassType) -> bool {
         specialized_class_type = crate::analyzer::types::UnknownType::create(false).0;
     }
 
-    shared.mro.borrow_mut().push(specialized_class_type);
+    Rc::make_mut(&mut *shared.mro.borrow_mut()).push(specialized_class_type);
 
     // Helper function that returns true if the specified searchClass
     // is found in the "tail" (i.e. in elements 1 through n) of any
@@ -4099,14 +4099,14 @@ pub fn compute_mro_linearization(class_type: ClassType) -> bool {
                     if !crate::analyzer::types::is_class(head) && !crate::analyzer::types::is_any_or_unknown(head) {
                         head = crate::analyzer::types::UnknownType::create(false).0;
                     }
-                    shared.mro.borrow_mut().push(head);
+                    Rc::make_mut(&mut *shared.mro.borrow_mut()).push(head);
                     class_lists_to_merge[i].remove(0);
                     break;
                 }
 
                 if !is_in_tail(ClassType(first), &class_lists_to_merge) {
                     found_valid_head = true;
-                    shared.mro.borrow_mut().push(first);
+                    Rc::make_mut(&mut *shared.mro.borrow_mut()).push(first);
                     filter_class(ClassType(first), &mut class_lists_to_merge);
                     break;
                 }
@@ -4132,10 +4132,10 @@ pub fn compute_mro_linearization(class_type: ClassType) -> bool {
                 if !crate::analyzer::types::is_class(head) && !crate::analyzer::types::is_any_or_unknown(head) {
                     head = crate::analyzer::types::UnknownType::create(false).0;
                 }
-                shared.mro.borrow_mut().push(head);
+                Rc::make_mut(&mut *shared.mro.borrow_mut()).push(head);
                 class_lists_to_merge[non_empty_list].remove(0);
             } else {
-                shared.mro.borrow_mut().push(first);
+                Rc::make_mut(&mut *shared.mro.borrow_mut()).push(first);
                 filter_class(ClassType(first), &mut class_lists_to_merge);
             }
         }

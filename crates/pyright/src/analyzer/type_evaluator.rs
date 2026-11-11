@@ -966,7 +966,7 @@ impl TypeEvaluator {
                         self.infer_variance_for_class(class_type_result.class_type);
 
                         let type_params = class_type_result.class_type.d().shared.get().type_params.borrow().clone();
-                        let type_param = type_params.into_iter().find(|param| {
+                        let type_param = type_params.iter().copied().find(|param| {
                             analyzer::types::is_type_same(
                                 param.0,
                                 type_var_type.0,
@@ -1221,7 +1221,7 @@ impl TypeEvaluator {
                     Some(type_class),
                     None,
                 );
-                any_class.d().shared.get().base_classes.borrow_mut().push(object_class);
+                Rc::make_mut(&mut *any_class.d().shared.get().base_classes.borrow_mut()).push(object_class);
                 analyzer::type_utils::compute_mro_linearization(any_class);
                 let any_special_form = analyzer::types::AnyType::create_special_form();
 
@@ -7970,7 +7970,7 @@ impl TypeEvaluator {
                 if let Some(class_type_info) = class_type_info {
                     if !ClassType::is_partially_evaluated(class_type_info.class_type) {
                         type_params_for_scope =
-                            Some(class_type_info.class_type.d().shared.get().type_params.borrow().clone());
+                            Some(class_type_info.class_type.d().shared.get().type_params.borrow().to_vec());
                     }
                 }
 
@@ -15312,7 +15312,7 @@ impl TypeEvaluator {
                 dest_class
             };
             let mro = src_class.d().shared.get().mro.borrow().clone();
-            let base_class = mro.into_iter().find(|mro_class| {
+            let base_class = mro.iter().copied().find(|mro_class| {
                 analyzer::types::is_class(*mro_class)
                     && ClassType::is_same_generic_class(
                         instantiable_dest_type,
@@ -17280,12 +17280,12 @@ impl TypeEvaluator {
                         let base_classes =
                             self.get_base_classes_from_type_call(ClassType(base_tuple_type));
                         if let Some(base_classes) = base_classes {
-                            new_class_type
+                            Rc::make_mut(&mut *new_class_type
                                 .d()
                                 .shared
                                 .get()
                                 .base_classes
-                                .borrow_mut()
+                                .borrow_mut())
                                 .extend(base_classes);
                         }
                     }
@@ -17300,12 +17300,12 @@ impl TypeEvaluator {
                     .is_empty()
                 {
                     let object_type = self.get_built_in_type(error_node, "object");
-                    new_class_type
+                    Rc::make_mut(&mut *new_class_type
                         .d()
                         .shared
                         .get()
                         .base_classes
-                        .borrow_mut()
+                        .borrow_mut())
                         .push(object_type);
                 }
                 new_class_type
@@ -22088,12 +22088,12 @@ impl TypeEvaluator {
         } else {
             base_class
         };
-        class_type
+        Rc::make_mut(&mut *class_type
             .d()
             .shared
             .get()
             .base_classes
-            .borrow_mut()
+            .borrow_mut())
             .push(base_class_entry);
         analyzer::type_utils::compute_mro_linearization(class_type);
 
@@ -22263,12 +22263,12 @@ impl TypeEvaluator {
             base_tuple_type.d().shared.get().effective_metaclass.get(),
             None,
         );
-        class_type
+        Rc::make_mut(&mut *class_type
             .d()
             .shared
             .get()
             .base_classes
-            .borrow_mut()
+            .borrow_mut())
             .extend(base_classes);
 
         if !analyzer::type_utils::compute_mro_linearization(class_type) {
@@ -27181,7 +27181,7 @@ impl TypeEvaluator {
                 Some(analyzer::types::TypeVarScopeType::Class),
             );
             type_param.d().shared.get().declared_variance.set(type_param_variance);
-            special_class_type.d().shared.get().type_params.borrow_mut().push(type_param);
+            Rc::make_mut(&mut *special_class_type.d().shared.get().type_params.borrow_mut()).push(type_param);
         }
 
         let special_built_in_class_declaration = self
@@ -27239,7 +27239,7 @@ impl TypeEvaluator {
                     special_class_type = ClassType::clone_for_typing_alias(ClassType(base_class), assigned_name.to_string());
                 } else {
                     let shared = special_class_type.d().shared.get();
-                    shared.base_classes.borrow_mut().push(base_class);
+                    Rc::make_mut(&mut *shared.base_classes.borrow_mut()).push(base_class);
                     shared
                         .effective_metaclass
                         .set(ClassType(base_class).d().shared.get().effective_metaclass.get());
@@ -27248,7 +27248,7 @@ impl TypeEvaluator {
             }
             None => {
                 let shared = special_class_type.d().shared.get();
-                shared.base_classes.borrow_mut().push(analyzer::types::UnknownType::create(false).0);
+                Rc::make_mut(&mut *shared.base_classes.borrow_mut()).push(analyzer::types::UnknownType::create(false).0);
                 shared.effective_metaclass.set(Some(analyzer::types::UnknownType::create(false).0));
                 analyzer::type_utils::compute_mro_linearization(special_class_type);
             }
@@ -27317,12 +27317,12 @@ impl TypeEvaluator {
         // though it derives from 'str'.
         if assigned_name == "LiteralString" {
             let str_class = self.prefetched.borrow().as_ref().and_then(|p| p.str_class);
-            ClassType(special_type)
+            Rc::make_mut(&mut *ClassType(special_type)
                 .d()
                 .shared
                 .get()
                 .base_classes
-                .borrow_mut()
+                .borrow_mut())
                 .push(str_class.unwrap_or_else(|| analyzer::types::AnyType::create(false).0));
             analyzer::type_utils::compute_mro_linearization(ClassType(special_type));
 
@@ -27875,7 +27875,7 @@ impl TypeEvaluator {
             doc_string.as_deref(),
         );
 
-        *new_class_type.d().shared.get().base_classes.borrow_mut() = vec![type1.0, type2.0];
+        *new_class_type.d().shared.get().base_classes.borrow_mut() = Rc::new(vec![type1.0, type2.0]);
         analyzer::type_utils::compute_mro_linearization(new_class_type);
 
         let condition1 = type1.props.borrow().as_ref().and_then(|p| p.condition.clone());
@@ -28207,7 +28207,7 @@ impl TypeEvaluator {
                         );
                     }
 
-                    shared.base_classes.borrow_mut().push(arg_type);
+                    Rc::make_mut(&mut *shared.base_classes.borrow_mut()).push(arg_type);
                     if analyzer::types::is_instantiable_class(arg_type) {
                         let arg_class = ClassType(arg_type);
                         if ClassType::is_enum_class(arg_class) {
@@ -28465,7 +28465,7 @@ impl TypeEvaluator {
         {
             // If there are no other (known) base classes, the class implicitly derives from object.
             let object_type = self.get_built_in_type(node.0, "object");
-            shared.base_classes.borrow_mut().push(object_type);
+            Rc::make_mut(&mut *shared.base_classes.borrow_mut()).push(object_type);
         }
 
         // If genericTypeParams or protocolTypeParams are provided,
@@ -28476,7 +28476,7 @@ impl TypeEvaluator {
                 self.verify_generic_type_params(name_node.0, &type_params, generic_type_params);
             }
         }
-        *shared.type_params.borrow_mut() = generic_type_params.unwrap_or_else(|| type_params.clone());
+        *shared.type_params.borrow_mut() = Rc::new(generic_type_params.unwrap_or_else(|| type_params.clone()));
 
         // Determine if one or more type parameters is autovariance.
         let class_type_params = shared.type_params.borrow().clone();
@@ -28647,7 +28647,7 @@ impl TypeEvaluator {
                                     )
                                 })
                                 .collect();
-                            *shared.type_params.borrow_mut() = pseudo_type_params;
+                            *shared.type_params.borrow_mut() = Rc::new(pseudo_type_params);
                         }
                     }
                 }
@@ -29156,7 +29156,7 @@ impl TypeEvaluator {
 
         if effective_metaclass.is_none_or(analyzer::types::is_instantiable_class) {
             let base_classes = shared.base_classes.borrow().clone();
-            for base_class in base_classes {
+            for base_class in base_classes.iter().copied() {
                 if analyzer::types::is_instantiable_class(base_class) {
                     let base_class_meta = ClassType(base_class)
                         .d()
@@ -32683,7 +32683,7 @@ impl TypeEvaluator {
 
         // Make sure the argument list count is correct.
         let type_params =
-            if ClassType::is_pseudo_generic_class(class_type) { vec![] } else { ClassType::get_type_params(class_type) };
+            if ClassType::is_pseudo_generic_class(class_type) { vec![] } else { ClassType::get_type_params(class_type).to_vec() };
 
         // If there are no type parameters or args, the class is already specialized.
         // No need to do any more work.
@@ -36640,7 +36640,7 @@ impl TypeEvaluator {
 
             // Now handle generic base classes.
             let base_classes = dest_type.d().shared.get().base_classes.borrow().clone();
-            for base_class in base_classes {
+            for base_class in base_classes.iter().copied() {
                 if !is_assignable
                     || !analyzer::types::is_instantiable_class(base_class)
                     || ClassType::is_built_in(
@@ -36658,7 +36658,7 @@ impl TypeEvaluator {
 
                 if !ignore_base_class_variance {
                     let type_params = specialized_dest_base_class.d().shared.get().type_params.borrow().clone();
-                    for (index, param) in type_params.into_iter().enumerate() {
+                    for (index, param) in type_params.iter().copied().enumerate() {
                         if analyzer::types::is_param_spec(param.0)
                             || analyzer::types::is_type_var_tuple(param.0)
                             || param.d().shared.get().is_synthesized.get()
@@ -39317,7 +39317,7 @@ impl TypeEvaluator {
         // Make sure that the protocol class doesn't define any fields that
         // a normal function wouldn't be compatible with.
         let mro = obj_type.d().shared.get().mro.borrow().clone();
-        for mro_class in mro {
+        for mro_class in mro.iter().copied() {
             if analyzer::types::is_class(mro_class) && ClassType::is_protocol_class(ClassType::cast(mro_class).unwrap()) {
                 // Nothing below writes the symbol table, so a snapshot iterates it as the TS does.
                 let fields: Vec<(String, P<Symbol>)> = ClassType::get_symbol_table(ClassType::cast(mro_class).unwrap())

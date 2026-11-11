@@ -3,6 +3,7 @@
 //! Evaluator code: allocate with `P::new_eval` (docs/porting.md, "memory").
 
 use crate::analyzer::analyzer_node_info::AnalyzerNodeInfoAccessor;
+use std::rc::Rc;
 use crate::analyzer::constraint_solution::ConstraintSolution;
 use crate::analyzer::constraint_tracker::ConstraintTracker;
 use crate::analyzer::parse_tree_utils::get_class_full_name;
@@ -109,9 +110,9 @@ pub fn create_property(
     let type_var_scope_id = decorator_shared.type_var_scope_id.borrow().clone();
     *property_shared.type_var_scope_id.borrow_mut() = type_var_scope_id;
     let object_type = evaluator.get_built_in_type(decorator_node.0, "object");
-    property_shared
+    Rc::make_mut(&mut *property_shared
         .base_classes
-        .borrow_mut()
+        .borrow_mut())
         .push(if is_instantiable_class(object_type) {
             object_type
         } else {
@@ -255,9 +256,9 @@ pub fn clone_property_with_setter(
     let type_var_scope_id = class_shared.type_var_scope_id.borrow().clone();
     *property_shared.type_var_scope_id.borrow_mut() = type_var_scope_id;
     let object_type = evaluator.get_built_in_type(error_node.0, "object");
-    property_shared
+    Rc::make_mut(&mut *property_shared
         .base_classes
-        .borrow_mut()
+        .borrow_mut())
         .push(if is_instantiable_class(object_type) {
             object_type
         } else {
@@ -348,9 +349,9 @@ pub fn clone_property_with_deleter(
     let type_var_scope_id = class_shared.type_var_scope_id.borrow().clone();
     *property_shared.type_var_scope_id.borrow_mut() = type_var_scope_id;
     let object_type = evaluator.get_built_in_type(error_node.0, "object");
-    property_shared
+    Rc::make_mut(&mut *property_shared
         .base_classes
-        .borrow_mut()
+        .borrow_mut())
         .push(if is_instantiable_class(object_type) {
             object_type
         } else {

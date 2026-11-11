@@ -1347,7 +1347,7 @@ pub(crate) fn print_object_type_for_class_internal(
                         .any(|type_param| !is_unknown(type_param.0)))
             {
                 let mut type_param_strings: Vec<String> = Vec::new();
-                for type_param in &type_params {
+                for type_param in type_params.iter() {
                     type_param_strings.push(print_type_internal(
                         type_param.0,
                         print_type_flags,

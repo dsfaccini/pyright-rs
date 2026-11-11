@@ -7129,7 +7129,7 @@ impl Checker {
         let mut candidates: Vec<ClassType> = Vec::new();
 
         let base_classes = class_type.d().shared.get().base_classes.borrow().clone();
-        for base_class in base_classes {
+        for base_class in base_classes.iter().copied() {
             if !analyzer::types::is_instantiable_class(base_class) {
                 // An unknown base may introduce an unknown disjoint base, but it
                 // cannot make two already-incompatible known bases compatible,
@@ -7180,7 +7180,7 @@ impl Checker {
         // of the base classes are Any.
         let mut filtered_base_classes: Vec<ClassType> = Vec::new();
         let base_classes = class_type.d().shared.get().base_classes.borrow().clone();
-        for base_class in base_classes {
+        for base_class in base_classes.iter().copied() {
             if !analyzer::types::is_class(base_class) {
                 return;
             }
@@ -7203,7 +7203,7 @@ impl Checker {
             let solution = analyzer::type_utils::build_solution_from_specialized_class(base_class);
 
             let base_class_mro = base_class.d().shared.get().mro.borrow().clone();
-            for base_class_mro_class in base_class_mro {
+            for base_class_mro_class in base_class_mro.iter().copied() {
                 // There's no need to check for conflicts if this class isn't generic.
                 if analyzer::types::is_class(base_class_mro_class)
                     && !ClassType(base_class_mro_class).d().shared.get().type_params.borrow().is_empty()
@@ -7314,7 +7314,7 @@ impl Checker {
         // Filter any unknown base classes. Also remove Generic and Protocol
         // base classes.
         let class_base_classes = class_type.d().shared.get().base_classes.borrow().clone();
-        for base_class in class_base_classes {
+        for base_class in class_base_classes.iter().copied() {
             if analyzer::types::is_class(base_class)
                 && !ClassType::is_built_in(ClassType(base_class), Some(&["Generic"]))
                 && !ClassType::is_built_in(ClassType(base_class), Some(&["Protocol"]))
@@ -8033,7 +8033,7 @@ impl Checker {
             analyzer::typed_dicts::get_typed_dict_members_for_class(&self._evaluator, class_type, false);
 
         let base_classes = class_type.d().shared.get().base_classes.borrow().clone();
-        for base_class in base_classes {
+        for base_class in base_classes.iter().copied() {
             let diag = DiagnosticAddendum::new();
 
             if !analyzer::types::is_class(base_class)
@@ -8193,7 +8193,7 @@ impl Checker {
             let mut first_override: Option<ClassMember> = None;
 
             let base_classes = class_type.d().shared.get().base_classes.borrow().clone();
-            for base_class in base_classes {
+            for base_class in base_classes.iter().copied() {
                 if !analyzer::types::is_class(base_class) {
                     continue;
                 }

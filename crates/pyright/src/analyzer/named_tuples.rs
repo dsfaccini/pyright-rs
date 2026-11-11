@@ -3,6 +3,7 @@
 //! Evaluator code: allocate with `P::new_eval` (docs/porting.md, "memory").
 
 use crate::analyzer::analyzer_node_info::AnalyzerNodeInfoAccessor;
+use std::rc::Rc;
 use crate::analyzer::declaration::Declaration;
 use crate::analyzer::declaration::DeclarationDetails;
 use crate::analyzer::declaration::DeclarationType;
@@ -190,12 +191,12 @@ pub fn create_named_tuple_type(
         },
         None,
     );
-    class_type
+    Rc::make_mut(&mut *class_type
         .d()
         .shared
         .get()
         .base_classes
-        .borrow_mut()
+        .borrow_mut())
         .push(named_tuple_type);
     *class_type.d().shared.get().type_var_scope_id.borrow_mut() =
         Some(get_scope_id_for_node(error_node, node_info.reader()));
@@ -696,7 +697,7 @@ pub fn update_named_tuple_base_class(
     let class_shared = class_type.d().shared.get();
     let base_classes = class_shared.base_classes.borrow().clone();
     let new_base_classes: Vec<P<Type>> = base_classes
-        .into_iter()
+        .iter().copied()
         .map(|base_class| {
             if !is_instantiable_class(base_class)
                 || !ClassType::is_built_in(ClassType(base_class), Some(&["NamedTuple"]))
@@ -795,7 +796,7 @@ pub fn update_named_tuple_base_class(
             let cloned_shared = cloned_named_tuple_class.d().shared.get();
             let named_tuple_base_classes = cloned_shared.base_classes.borrow().clone();
             let new_named_tuple_base_classes: Vec<P<Type>> = named_tuple_base_classes
-                .into_iter()
+                .iter().copied()
                 .map(|named_tuple_base_class| {
                     if !is_instantiable_class(named_tuple_base_class)
                         || !ClassType::is_built_in(
@@ -815,7 +816,7 @@ pub fn update_named_tuple_base_class(
                     .0
                 })
                 .collect();
-            *cloned_shared.base_classes.borrow_mut() = new_named_tuple_base_classes;
+            *cloned_shared.base_classes.borrow_mut() = Rc::new(new_named_tuple_base_classes);
 
             compute_mro_linearization(cloned_named_tuple_class);
 
@@ -823,7 +824,7 @@ pub fn update_named_tuple_base_class(
             cloned_named_tuple_class.0
         })
         .collect();
-    *class_shared.base_classes.borrow_mut() = new_base_classes;
+    *class_shared.base_classes.borrow_mut() = Rc::new(new_base_classes);
 
     is_update_needed
 }

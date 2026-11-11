@@ -909,13 +909,13 @@ pub struct ClassDetailsShared {
     pub file_uri: Uri,
     pub flags: Cell<ClassTypeFlags>,
     pub type_source_id: i32,
-    pub base_classes: RefCell<Vec<P<Type>>>,
-    pub mro: RefCell<Vec<P<Type>>>,
+    pub base_classes: RefCell<Rc<Vec<P<Type>>>>,
+    pub mro: RefCell<Rc<Vec<P<Type>>>>,
     pub declaration: Cell<Option<P<Declaration>>>,
     pub declared_metaclass: Cell<Option<P<Type>>>,
     pub effective_metaclass: Cell<Option<P<Type>>>,
     pub fields: Cell<SymbolTable>,
-    pub type_params: RefCell<Vec<TypeVarType>>,
+    pub type_params: RefCell<Rc<Vec<TypeVarType>>>,
     pub type_var_scope_id: RefCell<Option<String>>,
     pub doc_string: Option<String>,
     pub data_class_entries: RefCell<Option<Vec<P<DataClassEntry>>>>,
@@ -1100,13 +1100,13 @@ impl ClassType {
                     file_uri: *file_uri,
                     flags: Cell::new(flags),
                     type_source_id,
-                    base_classes: RefCell::new(Vec::new()),
-                    mro: RefCell::new(Vec::new()),
+                    base_classes: RefCell::new(Rc::new(Vec::new())),
+                    mro: RefCell::new(Rc::new(Vec::new())),
                     declaration: Cell::new(None),
                     declared_metaclass: Cell::new(declared_metaclass),
                     effective_metaclass: Cell::new(effective_metaclass),
                     fields: Cell::new(SymbolTable::new()),
-                    type_params: RefCell::new(Vec::new()),
+                    type_params: RefCell::new(Rc::new(Vec::new())),
                     type_var_scope_id: RefCell::new(None),
                     doc_string: doc_string.map(str::to_string),
                     data_class_entries: RefCell::new(None),
@@ -1823,7 +1823,7 @@ impl ClassType {
         // most-derived known candidate so transitive conflicts are still reported.
         let mro = class_type.d().shared.get().mro.borrow().clone();
         let candidates: Vec<ClassType> = mro
-            .into_iter()
+            .iter().copied()
             .filter(|mro_class| {
                 is_instantiable_class(*mro_class)
                     && ClassType::is_disjoint_base(ClassType(*mro_class))
@@ -1839,7 +1839,7 @@ impl ClassType {
         candidates.iter().copied().find(|candidate| {
             candidates.iter().all(|other_candidate| {
                 let mro = candidate.d().shared.get().mro.borrow().clone();
-                mro.into_iter().any(|mro_class| {
+                mro.iter().copied().any(|mro_class| {
                     is_instantiable_class(mro_class)
                         && ClassType::is_same_generic_class(
                             ClassType(mro_class),
@@ -1963,7 +1963,7 @@ impl ClassType {
     }
 
     // analyzer/types.ts:1371
-    pub fn get_type_params(class_type: ClassType) -> Vec<TypeVarType> {
+    pub fn get_type_params(class_type: ClassType) -> Rc<Vec<TypeVarType>> {
         class_type.d().shared.get().type_params.borrow().clone()
     }
 
@@ -2250,7 +2250,7 @@ impl ClassType {
         }
 
         let base_classes = subclass_type.d().shared.get().base_classes.borrow().clone();
-        for base_class in base_classes {
+        for base_class in base_classes.iter().copied() {
             if is_instantiable_class(base_class) {
                 if ClassType::is_derived_from(
                     ClassType(base_class),
@@ -2275,7 +2275,7 @@ impl ClassType {
 
     // analyzer/types.ts:1584
     pub fn get_reverse_mro(class_type: ClassType) -> Vec<P<Type>> {
-        let mut mro = class_type.d().shared.get().mro.borrow().clone();
+        let mut mro = class_type.d().shared.get().mro.borrow().to_vec();
         mro.reverse();
         mro
     }
@@ -6173,7 +6173,7 @@ impl CalculateInheritedSlotsNamesDeferred {
             let mut extended_slots_names = local_slots_names;
 
             let base_classes = shared.base_classes.borrow().clone();
-            for base_class in base_classes {
+            for base_class in base_classes.iter().copied() {
                 if is_instantiable_class(base_class) {
                     let base_class = ClassType(base_class);
                     if !ClassType::is_built_in(base_class, Some(&["object"]))

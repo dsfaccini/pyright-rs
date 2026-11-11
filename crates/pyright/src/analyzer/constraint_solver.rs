@@ -364,7 +364,7 @@ pub fn add_constraints_for_expected_type(
 ) -> bool {
     if is_any(expected_type) {
         let type_params = type_.d().shared.get().type_params.borrow().clone();
-        for type_param in type_params {
+        for type_param in type_params.iter().copied() {
             constraints.set_bounds(type_param, Some(expected_type), Some(expected_type), None);
         }
         return true;
@@ -402,7 +402,7 @@ pub fn add_constraints_for_expected_type(
     if ClassType::is_same_generic_class(expected_class, type_, 0) {
         let solution = build_solution_from_specialized_class(expected_class);
         let type_params = ClassType::get_type_params(expected_class);
-        for type_param in type_params {
+        for type_param in type_params.iter().copied() {
             let mut type_arg_value = solution.get_main_solution_set().get_type(type_param);
 
             if let (Some(value), Some(live_type_var_scopes)) =

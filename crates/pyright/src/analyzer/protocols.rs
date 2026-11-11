@@ -217,7 +217,7 @@ pub fn is_method_only_protocol(class_type: ClassType) -> bool {
 
     // First check for data members in any protocol base classes.
     let base_classes = class_type.d().shared.get().base_classes.borrow().clone();
-    for base_class in base_classes {
+    for base_class in base_classes.iter().copied() {
         if is_class(base_class)
             && ClassType::is_protocol_class(ClassType(base_class))
             && !is_method_only_protocol(ClassType(base_class))
@@ -267,7 +267,7 @@ pub fn is_protocol_unsafe_overlap(
     let mut is_unsafe_overlap = true;
 
     let mro = protocol.d().shared.get().mro.borrow().clone();
-    for mro_class in mro {
+    for mro_class in mro.iter().copied() {
         if !is_unsafe_overlap
             || !is_instantiable_class(mro_class)
             || !ClassType::is_protocol_class(ClassType(mro_class))
@@ -542,7 +542,7 @@ pub(crate) fn assign_to_protocol_internal(
     };
 
     let mro = dest_type.d().shared.get().mro.borrow().clone();
-    for mro_class in mro {
+    for mro_class in mro.iter().copied() {
         if !is_instantiable_class(mro_class) || !ClassType::is_protocol_class(ClassType(mro_class))
         {
             continue;
@@ -1085,7 +1085,7 @@ pub(crate) fn assign_to_protocol_internal(
             }
         } else if let Some(constraints) = constraints {
             let type_params = dest_type.d().shared.get().type_params.borrow().clone();
-            for type_param in type_params {
+            for type_param in type_params.iter().copied() {
                 let type_arg_entry = protocol_constraints
                     .get_main_constraint_set()
                     .get_type_var(type_param);
@@ -1112,7 +1112,7 @@ pub(crate) fn create_protocol_constraints(
     let protocol_constraints = ConstraintTracker::new();
 
     let type_params = dest_type.d().shared.get().type_params.borrow().clone();
-    for (index, type_param) in type_params.into_iter().enumerate() {
+    for (index, type_param) in type_params.iter().copied().enumerate() {
         let entry = constraints.and_then(|constraints| {
             constraints
                 .get_main_constraint_set()

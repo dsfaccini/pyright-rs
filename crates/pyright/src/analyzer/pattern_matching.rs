@@ -1718,7 +1718,7 @@ pub(crate) fn is_class_special_case_for_class_pattern(class_type: ClassType) -> 
 
     // If the class derives from a built-in class, it is considered a special case.
     let mro = class_type.d().shared.get().mro.borrow().clone();
-    for mro_class in mro {
+    for mro_class in mro.iter().copied() {
         if is_class(mro_class)
             && is_special_case_name(&ClassType(mro_class).d().shared.get().full_name)
         {
@@ -1769,7 +1769,7 @@ pub(crate) fn narrow_type_of_class_pattern_arg(
             use_self_for_pattern = true;
         } else if positional_arg_names.is_empty() {
             let mro = match_class.d().shared.get().mro.borrow().clone();
-            for mro_class in mro {
+            for mro_class in mro.iter().copied() {
                 if is_class(mro_class)
                     && is_class_special_case_for_class_pattern(ClassType(mro_class))
                 {
@@ -2152,7 +2152,7 @@ pub(crate) fn get_sequence_pattern_info(
             if is_class_instance(concrete_subtype) {
                 let concrete_class = ClassType(concrete_subtype);
                 let mro = concrete_class.d().shared.get().mro.borrow().clone();
-                for mro_class in mro {
+                for mro_class in mro.iter().copied() {
                     if !is_instantiable_class(mro_class) {
                         break;
                     }

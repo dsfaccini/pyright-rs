@@ -1,6 +1,7 @@
 //! Port of `packages/pyright-internal/src/tests/typePrinter.test.ts`.
 
 use jsrt::P;
+use std::rc::Rc;
 
 use crate::analyzer::type_printer::{FunctionReturnTypeCallback, PrintTypeFlags, print_type};
 use crate::analyzer::types::{
@@ -94,7 +95,7 @@ fn class_types() {
     let type_var_s = TypeVarType::create_instance("S", TypeVarKind::TypeVar);
     let type_var_t = TypeVarType::create_instance("T", TypeVarKind::TypeVar);
 
-    class_type_a.d().shared.get().type_params.borrow_mut().extend([type_var_s, type_var_t]);
+    Rc::make_mut(&mut *class_type_a.d().shared.get().type_params.borrow_mut()).extend([type_var_s, type_var_t]);
 
     assert_eq!(print_type(class_type_a.0, PrintTypeFlags::None, callback), "type[A[S, T]]");
 
@@ -122,7 +123,7 @@ fn class_types_python_syntax_omits_type_args_for_stub_only_generics() {
     let attrgetter = create_class("attrgetter", "operator", "operator.attrgetter", ClassTypeFlags::DefinedInStub);
 
     let type_var_t = TypeVarType::create_instance("_T", TypeVarKind::TypeVar);
-    attrgetter.d().shared.get().type_params.borrow_mut().push(type_var_t);
+    Rc::make_mut(&mut *attrgetter.d().shared.get().type_params.borrow_mut()).push(type_var_t);
 
     let class_type_str = create_class("str", "builtins", "builtins.str", ClassTypeFlags::BuiltIn);
     let instance_str = ClassType::clone_as_instance(class_type_str, true);
@@ -144,7 +145,7 @@ fn class_types_python_syntax_omits_type_args_for_stub_only_generics() {
         ClassTypeFlags::BuiltIn | ClassTypeFlags::DefinedInStub,
     );
     let type_var_e = TypeVarType::create_instance("_E", TypeVarKind::TypeVar);
-    list_class.d().shared.get().type_params.borrow_mut().push(type_var_e);
+    Rc::make_mut(&mut *list_class.d().shared.get().type_params.borrow_mut()).push(type_var_e);
 
     let instance_list = ClassType::clone_as_instance(list_class, true);
     let specialized_list = ClassType::specialize(instance_list, Some(&[instance_str.0]), None, false, None, None);
@@ -161,7 +162,7 @@ fn class_types_python_syntax_formats_param_spec_specialized_generic_arguments() 
 
     let param_spec_p = TypeVarType::create_instance("P", TypeVarKind::ParamSpec);
     let type_var_r = TypeVarType::create_instance("R", TypeVarKind::TypeVar);
-    class_type_a.d().shared.get().type_params.borrow_mut().extend([param_spec_p, type_var_r]);
+    Rc::make_mut(&mut *class_type_a.d().shared.get().type_params.borrow_mut()).extend([param_spec_p, type_var_r]);
 
     let instance_a = ClassType::clone_as_instance(class_type_a, true);
 

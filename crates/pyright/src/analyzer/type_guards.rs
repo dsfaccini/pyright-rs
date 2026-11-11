@@ -2411,7 +2411,7 @@ pub(crate) fn narrow_type_for_instance(
                         concrete_var_shared.doc_string.as_deref(),
                     );
                     *new_class_type.d().shared.get().base_classes.borrow_mut() =
-                        vec![concrete_var_type.0];
+                        Rc::new(vec![concrete_var_type.0]);
                     compute_mro_linearization(new_class_type);
 
                     let new_class_type = class_of(add_condition_to_type(

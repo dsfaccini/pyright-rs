@@ -3,6 +3,7 @@
 //! Evaluator code: allocate with `P::new_eval` (docs/porting.md, "memory").
 
 use crate::analyzer::analyzer_node_info::AnalyzerNodeInfoAccessor;
+use std::rc::Rc;
 use crate::analyzer::constraint_tracker::ConstraintTracker;
 use crate::analyzer::declaration::Declaration;
 use crate::analyzer::declaration::DeclarationDetails;
@@ -144,12 +145,12 @@ pub fn create_typed_dict_type(
         typed_dict_class.d().shared.get().effective_metaclass.get(),
         None,
     );
-    class_type
+    Rc::make_mut(&mut *class_type
         .d()
         .shared
         .get()
         .base_classes
-        .borrow_mut()
+        .borrow_mut())
         .push(typed_dict_class.0);
     compute_mro_linearization(class_type);
 
@@ -367,12 +368,12 @@ pub fn create_typed_dict_type_inlined(
         typed_dict_class.d().shared.get().effective_metaclass.get(),
         None,
     );
-    class_type
+    Rc::make_mut(&mut *class_type
         .d()
         .shared
         .get()
         .base_classes
-        .borrow_mut()
+        .borrow_mut())
         .push(typed_dict_class.0);
     compute_mro_linearization(class_type);
 
@@ -1597,7 +1598,7 @@ pub(crate) fn get_typed_dict_members_for_class_recursive(
     let recursion_count = recursion_count + 1;
 
     let base_classes = class_type.d().shared.get().base_classes.borrow().clone();
-    for base_class_type in base_classes {
+    for base_class_type in base_classes.iter().copied() {
         if is_instantiable_class(base_class_type)
             && ClassType::is_typed_dict_class(ClassType(base_class_type))
         {
