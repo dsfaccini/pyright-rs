@@ -180,3 +180,18 @@ Small. **Output risk.** Low, given invalidation never happens in a CLI run. **Co
 - Profile: build with `RUSTFLAGS="-C force-frame-pointers=yes"`, run `perf record -F 999 --call-graph fp` through `run.sh pydantic-ai <out>`, then `perf script --no-inline -F ip,sym` into `stacks.py`, and `phase.py`, `attr.py`, `allockind.py` on the result.
 - `run.sh` runs a recorded corpus under the shared pydantic-ai lock and a 30G memory cap, as `bench/measure.sh` does.
 - Prototypes: apply `explore-prototypes.patch` to e3dedfc. Switches: `PYRIGHT_RS_PROTO_DENSE`, `PYRIGHT_RS_PROTO_DIRTY`, `PYRIGHT_RS_PROTO_NOREUSE`, `PYRIGHT_RS_PROTO_SCAN`; the counting allocator is always on in that build; `cargo run --release --example par_parse -- <reference dump> <threads>`.
+
+## status after the `hot` agent
+
+`main` 02a0ff9, fat LTO, 34 hotspot commits merged: pydantic-ai 267.2 G instructions (388.7 G at b110b3b), samples 9.81 G (13.95 G). A fresh profile holds no single fix worth 0.5%. What remains, inclusive shares of a pydantic-ai profile with collection off:
+- allocator (mimalloc and Rust's allocation glue): 8.97% of leaf samples. 291 M allocations per run; no site exceeds 22 M, and removing 13 M of them measured −0.0%.
+- arena allocation (`P::new`, `P::new_eval`): 4.60%.
+- `get_abstract_symbols`: 6.53%, pyright's MRO walk on each abstract-class instantiation.
+- `clone_type` and `ClassDetailsPriv::clone`: 4.70%, the shallow copy TypeScript also makes.
+- `print_type`: 2.64%, mostly `is_type_same` in union printing.
+- type cache reads and writes: 2.08%. A slab indexed by node id would take about 400 MB for 13 M ids (estimate).
+- symbol-table and scope-id string work: 2.06% and 1.16%, the interning lever above.
+- constraint-set maps (`set_type`, `set_bounds`): 1.99%.
+- `ParameterizedString::format`: 1.33%, of which `js_replace_all` 0.71%.
+- code-flow `get_cache_entry`: 1.48%, two lookups as in TypeScript; one lookup measured no change.
+- `DiagnosticAddendum`: 0.99%, 12.7 M allocations.
