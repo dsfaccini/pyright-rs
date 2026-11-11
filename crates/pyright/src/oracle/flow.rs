@@ -175,7 +175,7 @@ pub fn dump_flow(
         let Some(info) = reader.get(*node) else {
             continue;
         };
-        let after_flow_node = info.after_flow_node.get();
+        let after_flow_node = info.cold().and_then(|c| c.after_flow_node.get());
         let flow_node = info.flow_node.get();
         if let Some(after) = after_flow_node {
             numbering.visit(after);

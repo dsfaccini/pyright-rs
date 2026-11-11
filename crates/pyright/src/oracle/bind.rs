@@ -436,19 +436,20 @@ pub fn dump_bind(
         let Some(info) = reader.get(*node) else {
             continue;
         };
+        let cold = info.cold();
         let fields = Value::Object(vec![
-            ("codeFlowComplexity", opt(info.code_flow_complexity.get(), Value::number)),
+            ("codeFlowComplexity", opt(cold.and_then(|c| c.code_flow_complexity.get()), Value::number)),
             (
                 "codeFlowExpressions",
-                opt(info.code_flow_expressions.get(), |set| {
+                opt(cold.and_then(|c| c.code_flow_expressions.get()), |set| {
                     Value::Set(set.borrow().iter().map(|s| Value::str(s)).collect())
                 }),
             ),
-            ("declaration", opt(info.declaration.get(), |d| declaration_value(&d))),
-            ("dunderAllInfo", opt(info.dunder_all_info.get(), |d| dunder_all_info_value(&d))),
-            ("importInfo", opt(info.import_info.get(), |r| import_result_value(&r))),
-            ("scope", opt(info.scope.get(), |s| scope_ref(numbering, s))),
-            ("staticConditionValue", opt(info.static_condition_value.get(), Value::bool)),
+            ("declaration", opt(cold.and_then(|c| c.declaration.get()), |d| declaration_value(&d))),
+            ("dunderAllInfo", opt(cold.and_then(|c| c.dunder_all_info.get()), |d| dunder_all_info_value(&d))),
+            ("importInfo", opt(cold.and_then(|c| c.import_info.get()), |r| import_result_value(&r))),
+            ("scope", opt(cold.and_then(|c| c.scope.get()), |s| scope_ref(numbering, s))),
+            ("staticConditionValue", opt(cold.and_then(|c| c.static_condition_value.get()), Value::bool)),
         ]);
         let Value::Object(fields) = fields else {
             unreachable!()
