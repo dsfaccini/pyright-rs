@@ -841,6 +841,14 @@ mod tests {
     use super::*;
     use crate::P;
 
+    /// The heap tests share the process's pool of released blocks, so one test can
+    /// claim a block another test expects to reuse. They run one at a time.
+    static POOL: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn serial() -> std::sync::MutexGuard<'static, ()> {
+        POOL.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
     #[derive(jsrt::Trace)]
     #[trace(eval)]
     struct Node {
@@ -860,6 +868,7 @@ mod tests {
 
     #[test]
     fn frees_what_no_root_reaches() {
+        let _serial = serial();
         let drops = Rc::new(());
         let root = P::new(Holder { node: Cell::new(None) });
         let mut chain = None;
@@ -888,6 +897,7 @@ mod tests {
 
     #[test]
     fn reuses_swept_slots() {
+        let _serial = serial();
         let drops = Rc::new(());
         let garbage = node(None, &drops, 0);
         let addr = garbage.addr_for_test();
@@ -909,6 +919,7 @@ mod tests {
 
     #[test]
     fn traces_registered_roots() {
+        let _serial = serial();
         let drops = Rc::new(());
         STACK.with(|s| s.borrow_mut().push(node(None, &drops, 7)));
         collect(false);
@@ -919,6 +930,7 @@ mod tests {
     #[test]
     #[should_panic(expected = "use of a swept")]
     fn check_mode_panics_on_use_of_a_swept_object() {
+        let _serial = serial();
         let drops = Rc::new(());
         let garbage = node(None, &drops, 3);
         collect(true);
@@ -928,6 +940,7 @@ mod tests {
 
     #[test]
     fn check_mode_never_reuses() {
+        let _serial = serial();
         let drops = Rc::new(());
         let addr = node(None, &drops, 0).addr_for_test();
         collect(true);
@@ -945,6 +958,7 @@ mod tests {
     #[test]
     #[should_panic(expected = "#[trace(program)] field holds an evaluator handle")]
     fn check_mode_verifies_program_fields() {
+        let _serial = serial();
         collect(true);
         let drops = Rc::new(());
         let _claim = P::new(Claim { node: Cell::new(Some(node(None, &drops, 0))) });
@@ -973,6 +987,7 @@ mod tests {
     /// would skip `a`'s children and free `b` while `a` still holds it.
     #[test]
     fn unwound_collection_leaves_no_marks() {
+        let _serial = serial();
         let b = cyclic(None, 1);
         let a = cyclic(Some(b), 2);
         let c = cyclic(None, 3);
@@ -1001,6 +1016,7 @@ mod tests {
     /// An oversize type panics before taking the registry lock, so other types still allocate.
     #[test]
     fn oversize_type_leaves_the_registry_usable() {
+        let _serial = serial();
         assert!(std::panic::catch_unwind(|| P::new_eval(Huge([0; MAX_SLOT + 1]))).is_err());
         assert!(std::thread::spawn(|| P::new_eval(Fresh(1)).0).join().is_ok());
         assert_eq!(P::new_eval(Fresh(2)).0, 2);
@@ -1021,6 +1037,7 @@ mod tests {
     /// and survivors stay intact through two more sweeps.
     #[test]
     fn released_blocks_change_type_and_thread() {
+        let _serial = serial();
         let released: Vec<usize> = std::thread::spawn(|| {
             let blocks = (0..64).map(|_| P::new_eval(Big { _pad: [0; 512] }).addr_for_test() & !(BLOCK - 1)).collect();
             collect(false);
@@ -1070,6 +1087,7 @@ mod tests {
     #[test]
     #[should_panic(expected = "the heap was used inside an allocation or a collection")]
     fn allocation_inside_a_collection_panics() {
+        let _serial = serial();
         let _root = P::new(AllocatingRoot(AllocatesWhileTraced));
         collect(false);
     }
