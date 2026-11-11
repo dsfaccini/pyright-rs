@@ -389,6 +389,7 @@ struct TypeInfo {
     recip: u32,
     count: u32,
     drop: unsafe fn(usize),
+    prefetch_owned: unsafe fn(usize),
     trace: TraceFn,
 }
 
@@ -414,6 +415,10 @@ unsafe fn drop_erased<T>(addr: usize) {
     unsafe { ptr::drop_in_place(addr as *mut T) }
 }
 
+unsafe fn prefetch_owned_erased<T: Trace>(addr: usize) {
+    unsafe { (*(addr as *const T)).prefetch_owned() }
+}
+
 unsafe fn trace_erased<T: Trace>(addr: usize, t: &mut Tracer) {
     unsafe { (*(addr as *const T)).trace(t) }
 }
@@ -429,6 +434,7 @@ fn register<T: Trace + 'static>() -> u32 {
         recip: (1u64 << 32).div_ceil(slot as u64) as u32,
         count: (BLOCK / slot) as u32,
         drop: drop_erased::<T>,
+        prefetch_owned: prefetch_owned_erased::<T>,
         trace: trace_erased::<T>,
     };
     let mut registry = lock(&REGISTRY);
@@ -1056,7 +1062,7 @@ fn dangling(meta: &BlockMeta, w: usize, bit: u64) -> ! {
 }
 
 #[inline(always)]
-fn prefetch(addr: usize) {
+pub(crate) fn prefetch(addr: usize) {
     #[cfg(target_arch = "x86_64")]
     // SAFETY: a prefetch never faults.
     unsafe {
@@ -1175,6 +1181,9 @@ fn rss_in(range: &Range) -> usize {
     }
     total
 }
+
+/// The sweep prefetches the buffers of the dead object this many after the one it drops.
+const SWEEP_AHEAD: usize = 4;
 
 /// Calls `f` once for every slot below `limit` that overlaps a marked card.
 fn for_card_slots(cards: &[u8], slot: usize, limit: usize, mut f: impl FnMut(usize)) {
@@ -1551,9 +1560,21 @@ impl ThreadHeap {
                     unsafe {
                         let marked = *meta.bits.add(words + w);
                         let mut dead = *meta.bits.add(w) & !marked;
+                        // Prefetch the buffers of the dead object `SWEEP_AHEAD` after the one dropped.
+                        let mut ahead = dead;
+                        for _ in 0..SWEEP_AHEAD {
+                            if ahead != 0 {
+                                (class.info.prefetch_owned)(base + (w * 64 + ahead.trailing_zeros() as usize) * slot);
+                                ahead &= ahead - 1;
+                            }
+                        }
                         while dead != 0 {
                             let j = dead.trailing_zeros() as usize;
                             dead &= dead - 1;
+                            if ahead != 0 {
+                                (class.info.prefetch_owned)(base + (w * 64 + ahead.trailing_zeros() as usize) * slot);
+                                ahead &= ahead - 1;
+                            }
                             let i = w * 64 + j;
                             let addr = base + i * slot;
                             (class.info.drop)(addr);

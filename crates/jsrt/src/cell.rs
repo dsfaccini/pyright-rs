@@ -311,6 +311,13 @@ unsafe impl<T: ?Sized + Trace> Trace for RefCell<T> {
     const HAS_CELL: bool = T::HOLDS_EVAL;
     const CELL_OUT_OF_LINE: bool = T::CELL_OUT_OF_LINE;
     #[inline]
+    fn prefetch_owned(&self) {
+        // SAFETY: as in `trace`; a dead object's cell is never borrowed.
+        if let Ok(v) = unsafe { self.try_borrow_unguarded() } {
+            v.prefetch_owned();
+        }
+    }
+    #[inline]
     fn trace(&self, t: &mut Tracer) {
         // SAFETY: the reference does not outlive this call, and tracing never writes.
         match unsafe { self.try_borrow_unguarded() } {
@@ -325,6 +332,12 @@ unsafe impl<T: Trace> Trace for OnceCell<T> {
     const HOLDS_EVAL: bool = T::HOLDS_EVAL;
     const HAS_CELL: bool = T::HOLDS_EVAL;
     const CELL_OUT_OF_LINE: bool = T::CELL_OUT_OF_LINE;
+    #[inline]
+    fn prefetch_owned(&self) {
+        if let Some(v) = self.get() {
+            v.prefetch_owned();
+        }
+    }
     #[inline]
     fn trace(&self, t: &mut Tracer) {
         if let Some(v) = self.get() {
@@ -345,6 +358,12 @@ unsafe impl<T: Trace> Trace for OptionRefCell<T> {
     const HOLDS_EVAL: bool = T::HOLDS_EVAL;
     const HAS_CELL: bool = T::HOLDS_EVAL;
     const CELL_OUT_OF_LINE: bool = T::CELL_OUT_OF_LINE;
+    #[inline]
+    fn prefetch_owned(&self) {
+        if let Some(cell) = self.0.get() {
+            heap::prefetch(ptr::from_ref::<std::cell::RefCell<Option<T>>>(cell).cast::<u8>() as usize);
+        }
+    }
     #[inline]
     fn trace(&self, t: &mut Tracer) {
         if let Some(cell) = self.0.get() {

@@ -38,6 +38,11 @@ pub unsafe trait Trace {
 
     fn trace(&self, t: &mut Tracer);
 
+    /// Prefetches the buffers this value owns directly, which dropping it frees.
+    /// The sweep calls it on dead objects a few slots ahead of the one it drops.
+    #[inline]
+    fn prefetch_owned(&self) {}
+
     /// The type's allocator id, cached in a static the derive emits for a
     /// non-generic type. `None` makes the heap look the type up by `TypeId`.
     #[doc(hidden)]
@@ -62,9 +67,21 @@ macro_rules! leaf {
 }
 
 leaf!(
-    (), bool, char, u8, u16, u32, u64, u128, usize, i8, i16, i32, i64, i128, isize, f32, f64, str, String,
+    (), bool, char, u8, u16, u32, u64, u128, usize, i8, i16, i32, i64, i128, isize, f32, f64, str,
     PathBuf, regex::Regex, num_bigint::BigInt, serde_json::Value, std::time::Instant, std::time::Duration,
 );
+
+unsafe impl Trace for String {
+    const HOLDS_EVAL: bool = false;
+    #[inline]
+    fn trace(&self, _: &mut Tracer) {}
+    #[inline]
+    fn prefetch_owned(&self) {
+        if self.capacity() != 0 {
+            crate::heap::prefetch(self.as_ptr() as usize);
+        }
+    }
+}
 
 macro_rules! fn_ptr {
     ($($a:ident),*) => {
@@ -101,6 +118,12 @@ unsafe impl<T> Trace for PhantomData<T> {
 }
 
 unsafe impl<T: Trace> Trace for Option<T> {
+    #[inline]
+    fn prefetch_owned(&self) {
+        if let Some(v) = self {
+            v.prefetch_owned();
+        }
+    }
     const HOLDS_EVAL: bool = T::HOLDS_EVAL;
     const HAS_CELL: bool = T::HAS_CELL;
     const CELL_OUT_OF_LINE: bool = T::CELL_OUT_OF_LINE;
@@ -135,6 +158,12 @@ unsafe impl<T: Trace, const N: usize> Trace for [T; N] {
 }
 
 unsafe impl<T: Trace> Trace for Vec<T> {
+    #[inline]
+    fn prefetch_owned(&self) {
+        if self.capacity() != 0 {
+            crate::heap::prefetch(self.as_ptr() as usize);
+        }
+    }
     const HOLDS_EVAL: bool = T::HOLDS_EVAL;
     const HAS_CELL: bool = T::HAS_CELL;
     const CELL_OUT_OF_LINE: bool = T::HAS_CELL;
@@ -157,6 +186,10 @@ unsafe impl<T: Trace> Trace for VecDeque<T> {
 }
 
 unsafe impl<T: ?Sized + Trace> Trace for Box<T> {
+    #[inline]
+    fn prefetch_owned(&self) {
+        crate::heap::prefetch(std::ptr::from_ref::<T>(self).cast::<u8>() as usize);
+    }
     const HOLDS_EVAL: bool = T::HOLDS_EVAL;
     const HAS_CELL: bool = T::HAS_CELL;
     const CELL_OUT_OF_LINE: bool = T::HAS_CELL;
@@ -169,6 +202,11 @@ unsafe impl<T: ?Sized + Trace> Trace for Box<T> {
 /// An `Rc` is acyclic (`docs/porting.md`, "object references"), so tracing
 /// through it ends. A value shared by several holders is traced once per holder.
 unsafe impl<T: ?Sized + Trace> Trace for Rc<T> {
+    /// Dropping an `Rc` writes its count, next to the value.
+    #[inline]
+    fn prefetch_owned(&self) {
+        crate::heap::prefetch(std::ptr::from_ref::<T>(self).cast::<u8>() as usize);
+    }
     const HOLDS_EVAL: bool = T::HOLDS_EVAL;
     const HAS_CELL: bool = T::HAS_CELL;
     const CELL_OUT_OF_LINE: bool = T::HAS_CELL;
@@ -220,6 +258,12 @@ unsafe impl<T: Trace> Trace for OnceCell<T> {
 }
 
 unsafe impl<K: Trace, V: Trace, S> Trace for IndexMap<K, V, S> {
+    #[inline]
+    fn prefetch_owned(&self) {
+        if self.capacity() != 0 {
+            crate::heap::prefetch(self.as_slice() as *const _ as *const u8 as usize);
+        }
+    }
     const HOLDS_EVAL: bool = K::HOLDS_EVAL || V::HOLDS_EVAL;
     const HAS_CELL: bool = K::HAS_CELL || V::HAS_CELL;
     const CELL_OUT_OF_LINE: bool = K::HAS_CELL || V::HAS_CELL;
@@ -235,6 +279,12 @@ unsafe impl<K: Trace, V: Trace, S> Trace for IndexMap<K, V, S> {
 }
 
 unsafe impl<T: Trace, S> Trace for IndexSet<T, S> {
+    #[inline]
+    fn prefetch_owned(&self) {
+        if self.capacity() != 0 {
+            crate::heap::prefetch(self.as_slice() as *const _ as *const u8 as usize);
+        }
+    }
     const HOLDS_EVAL: bool = T::HOLDS_EVAL;
     const HAS_CELL: bool = T::HAS_CELL;
     const CELL_OUT_OF_LINE: bool = T::HAS_CELL;

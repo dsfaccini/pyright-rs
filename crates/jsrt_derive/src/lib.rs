@@ -47,9 +47,20 @@ fn flags(attrs: &[Attribute]) -> syn::Result<Flags> {
 }
 
 /// The match pattern binding every field, and the statements tracing them.
-fn fields(fields: &Fields, holds: &mut Vec<TokenStream2>, cells: &mut Vec<TokenStream2>, outs: &mut Vec<TokenStream2>) -> syn::Result<(TokenStream2, TokenStream2)> {
+/// The consts' terms each field contributes.
+#[derive(Default)]
+struct Consts {
+    holds: Vec<TokenStream2>,
+    cells: Vec<TokenStream2>,
+    outs: Vec<TokenStream2>,
+}
+
+/// The match pattern binding every field, the statements tracing them, and the
+/// statements prefetching their owned buffers.
+fn fields(fields: &Fields, consts: &mut Consts) -> syn::Result<(TokenStream2, TokenStream2, TokenStream2)> {
     let mut binds = Vec::new();
     let mut body = Vec::new();
+    let mut prefetch = Vec::new();
     for (i, field) in fields.iter().enumerate() {
         let f = flags(&field.attrs)?;
         let bind = format_ident!("__f{i}");
@@ -67,9 +78,10 @@ fn fields(fields: &Fields, holds: &mut Vec<TokenStream2>, cells: &mut Vec<TokenS
             });
             continue;
         }
-        holds.push(quote!(<#ty as ::jsrt::Trace>::HOLDS_EVAL));
-        cells.push(quote!(<#ty as ::jsrt::Trace>::HAS_CELL));
-        outs.push(quote!(<#ty as ::jsrt::Trace>::CELL_OUT_OF_LINE));
+        prefetch.push(quote!(::jsrt::Trace::prefetch_owned(#bind);));
+        consts.holds.push(quote!(<#ty as ::jsrt::Trace>::HOLDS_EVAL));
+        consts.cells.push(quote!(<#ty as ::jsrt::Trace>::HAS_CELL));
+        consts.outs.push(quote!(<#ty as ::jsrt::Trace>::CELL_OUT_OF_LINE));
         body.push(quote! {
             if <#ty as ::jsrt::Trace>::HOLDS_EVAL || __t.checking() { ::jsrt::Trace::trace(#bind, __t); }
         });
@@ -79,31 +91,33 @@ fn fields(fields: &Fields, holds: &mut Vec<TokenStream2>, cells: &mut Vec<TokenS
         Fields::Unnamed(_) => quote!(( #(#binds,)* )),
         Fields::Unit => quote!(),
     };
-    Ok((pattern, quote!(#(#body)*)))
+    Ok((pattern, quote!(#(#body)*), quote!(#(#prefetch)*)))
 }
 
 fn expand(mut input: DeriveInput) -> syn::Result<TokenStream2> {
     let container = flags(&input.attrs)?;
     let name = &input.ident;
-    let mut holds = Vec::new();
-    let mut cells = Vec::new();
-    let mut outs = Vec::new();
+    let mut consts = Consts::default();
+    let mut prefetch_arms = Vec::new();
     let arms = match &input.data {
         Data::Struct(data) => {
-            let (pattern, body) = fields(&data.fields, &mut holds, &mut cells, &mut outs)?;
+            let (pattern, body, prefetch) = fields(&data.fields, &mut consts)?;
+            prefetch_arms.push(quote!(Self #pattern => { #prefetch }));
             vec![quote!(Self #pattern => { #body })]
         }
         Data::Enum(data) => {
             let mut arms = Vec::new();
             for variant in &data.variants {
                 let ident = &variant.ident;
-                let (pattern, body) = fields(&variant.fields, &mut holds, &mut cells, &mut outs)?;
+                let (pattern, body, prefetch) = fields(&variant.fields, &mut consts)?;
+                prefetch_arms.push(quote!(Self::#ident #pattern => { #prefetch }));
                 arms.push(quote!(Self::#ident #pattern => { #body }));
             }
             arms
         }
         Data::Union(_) => return Err(syn::Error::new_spanned(name, "Trace cannot be derived for a union")),
     };
+    let Consts { holds, cells, outs } = consts;
     let holds_eval = if container.holds_eval { quote!(true) } else { quote!(false #(|| #holds)*) };
     let eval = container.eval;
     // `#[trace(holds_eval)]` breaks a const cycle, so the type claims no cells:
@@ -142,6 +156,13 @@ fn expand(mut input: DeriveInput) -> syn::Result<TokenStream2> {
             fn trace(&self, __t: &mut ::jsrt::Tracer) {
                 match self {
                     #(#arms)*
+                }
+            }
+            #[allow(unused_variables)]
+            #[inline]
+            fn prefetch_owned(&self) {
+                match self {
+                    #(#prefetch_arms)*
                 }
             }
         }
