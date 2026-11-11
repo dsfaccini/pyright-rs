@@ -1646,6 +1646,9 @@ mod tests {
         POOL.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
+    /// Object counts of the largest tests: Miri runs them at a tenth of the size.
+    const SCALE: usize = if cfg!(miri) { 10 } else { 1 };
+
     #[derive(jsrt::Trace)]
     #[trace(eval)]
     struct Node {
@@ -1854,7 +1857,8 @@ mod tests {
         let drops = Rc::new(());
         let kept = P::new(Kept { v: crate::cell::RefCell::new(Vec::new()) });
         let mut reused = 0;
-        for id in 0..40_000u32 {
+        let n = 40_000 / SCALE as u32;
+        for id in 0..n {
             let n = node(None, &drops, id);
             reused += usize::from(released.contains(&(n.addr_for_test() & !(BLOCK - 1))));
             if id % 2 == 0 {
@@ -1863,11 +1867,11 @@ mod tests {
         }
         assert!(reused > 0);
         collect(false);
-        assert_eq!(Rc::strong_count(&drops), 1 + 20_000);
+        assert_eq!(Rc::strong_count(&drops), 1 + n as usize / 2);
         kept.v.borrow_mut().truncate(5);
         collect(false);
         assert_eq!(Rc::strong_count(&drops), 1 + 5);
-        for id in 0..40_000u32 {
+        for id in 0..n {
             node(None, &drops, 9_000_000 + id);
         }
         for (k, n) in kept.v.borrow().iter().enumerate() {
@@ -1881,10 +1885,11 @@ mod tests {
     fn parallel_mark_matches_serial() {
         let _serial = serial();
         let drops = Rc::new(());
-        let roots: Vec<_> = (0..2000).map(|_| P::new(Holder { node: Cell::new(None) })).collect();
+        let (roots, length) = (2000 / SCALE, 100 / SCALE as u32);
+        let roots: Vec<_> = (0..roots).map(|_| P::new(Holder { node: Cell::new(None) })).collect();
         for (r, root) in roots.iter().enumerate() {
             let mut chain = None;
-            for id in 0..100 {
+            for id in 0..length {
                 chain = Some(node(chain, &drops, id));
             }
             if r % 2 == 0 {
@@ -1892,12 +1897,13 @@ mod tests {
             }
         }
         with_heap(|heap| heap.collect(Collection { check: false, log: 0, threads: 4, minor: false, generational: false }));
-        assert_eq!(Rc::strong_count(&drops), 1 + 1000 * 100);
+        let (half, length) = (roots.len() / 2, length as usize);
+        assert_eq!(Rc::strong_count(&drops), 1 + half * length);
         for root in roots.iter().step_by(2) {
             root.node.set(root.node.get().unwrap().next.get());
         }
         with_heap(|heap| heap.collect(Collection { check: false, log: 0, threads: 1, minor: false, generational: false }));
-        assert_eq!(Rc::strong_count(&drops), 1 + 1000 * 99);
+        assert_eq!(Rc::strong_count(&drops), 1 + half * (length - 1));
         for root in &roots {
             root.node.set(None);
         }
@@ -1934,9 +1940,10 @@ mod tests {
             std::thread::spawn(move || {
                 let result = std::panic::catch_unwind(|| {
                     let drops = Rc::new(());
-                    let roots: Vec<_> = (0..4000).map(|i| P::new(Holder { node: Cell::new(Some(node(None, &drops, i))) })).collect();
-                    for round in 0..300 {
-                        for i in 0..2000 {
+                    let roots = (0..4000 / SCALE as u32).map(|i| P::new(Holder { node: Cell::new(Some(node(None, &drops, i))) }));
+                    let roots: Vec<_> = roots.collect();
+                    for round in 0..300 / SCALE / SCALE {
+                        for i in 0..2000 / SCALE as u32 {
                             node(None, &drops, i);
                         }
                         with_heap(|heap| heap.collect(Collection { check: false, log: 0, threads: 4, minor: false, generational: false }));
