@@ -17,6 +17,7 @@ if [ -z "${PYRIGHT_RS_BIN:-}" ]; then
   cargo build -q --release --manifest-path "$ROOT/Cargo.toml" || exit 1
   PYRIGHT_RS_BIN=$ROOT/target/release/pyright-rs
 fi
+PYRIGHT_RS_BIN=$(realpath "$PYRIGHT_RS_BIN")
 export PYRIGHT_RS_MODULE_PATH=${PYRIGHT_RS_MODULE_PATH:-$HOME/pyright-oracle/packages/pyright/dist}
 cmd=$HOME/pyright-rs-data/reference/$corpus/command.json
 cwd=$(python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['cwd'])" "$cmd")
@@ -37,8 +38,10 @@ for i in range(1, runs + 1):
     try:
         w, m = (tmp / f"time{i}").read_text().split()[-2:]
         n = next(l for l in (tmp / f"perf{i}").read_text().splitlines() if "instructions" in l).split(",")[0]
+        if not n.isdigit() or int(n) == 0:
+            raise ValueError(n)
     except (OSError, StopIteration, ValueError):
-        print(f"run {i}: no result (killed at the memory cap?)"); continue
+        print(f"run {i}: no result (killed at the memory cap, or the command failed)"); continue
     ins.append(int(n)); wall.append(float(w)); rss.append(int(m) / 1048576)
 if ins:
     print(f"{corpus}: {statistics.median(ins) / 1e9:.2f} G instructions, {statistics.median(wall):.2f} s wall, "
