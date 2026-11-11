@@ -3338,16 +3338,17 @@ pub fn is_partly_unknown(type_: P<Type>, recursion_count: u32) -> bool {
         }
 
         if !ClassType::is_pseudo_generic_class(class_type) {
-            // `tupleTypeArgs?.map(..) || typeArgs`: an empty mapped array is truthy.
-            let type_args = {
+            // `tupleTypeArgs?.map(..) || typeArgs`: an empty mapped array is truthy. `typeArgs`
+            // is read in place, through the shared slice.
+            let type_args: Option<std::rc::Rc<[P<Type>]>> = {
                 let priv_ = class_type.d().priv_.borrow();
                 match &priv_.tuple_type_args {
-                    Some(tuple_type_args) => Some(tuple_type_args.borrow().iter().map(|t| t.type_).collect::<Vec<_>>()),
-                    None => priv_.type_args.clone().map(|a| a.to_vec()),
+                    Some(tuple_type_args) => Some(tuple_type_args.borrow().iter().map(|t| t.type_).collect()),
+                    None => priv_.type_args.clone(),
                 }
             };
             if let Some(type_args) = type_args {
-                for arg_type in type_args {
+                for &arg_type in type_args.iter() {
                     if is_partly_unknown(arg_type, recursion_count) {
                         return true;
                     }

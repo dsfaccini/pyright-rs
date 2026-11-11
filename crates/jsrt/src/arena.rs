@@ -38,7 +38,17 @@ pub struct AllocStat {
     pub eval_bytes: u64,
 }
 
+/// Whether `PYRIGHT_RS_ALLOC_STATS` is set, read once per process: `record` runs on every
+/// allocation and checks this before it touches the per-thread table.
+fn stats_enabled() -> bool {
+    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ENABLED.get_or_init(|| std::env::var_os("PYRIGHT_RS_ALLOC_STATS").is_some())
+}
+
 fn record<T>(eval: bool) {
+    if !stats_enabled() {
+        return;
+    }
     let enabled = STATS.with(|stats| {
         if let Some(stats) = stats.borrow_mut().as_mut() {
             let stat = stats.entry(std::any::type_name::<T>()).or_default();
@@ -184,7 +194,7 @@ pub fn eval_arena_allocated_bytes() -> usize {
 }
 
 /// Per-type allocation counts, largest byte total first, when the
-/// `PYRIGHT_RS_ALLOC_STATS` environment variable was set at thread start.
+/// `PYRIGHT_RS_ALLOC_STATS` environment variable was set at process start.
 pub fn alloc_stats() -> Option<Vec<(&'static str, AllocStat)>> {
     STATS.with(|stats| {
         let stats = stats.borrow();
