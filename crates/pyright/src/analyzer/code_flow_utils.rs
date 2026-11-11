@@ -610,7 +610,7 @@ mod tests {
         AnalyzerNodeInfoContextImpl, create_analyzer_node_info_accessor,
     };
     use crate::analyzer::code_flow_types::{
-        FlowBranchLabelDetails, FlowConditionDetails, FlowLabelDetails, FlowNodeDetails,
+        FlowBranchLabelDetails, FlowConditionDetails, FlowLabelDetails, FlowPlain,
         FlowPostContextManagerLabelDetails, FlowPreFinallyGateDetails,
         FlowVariableAnnotationDetails,
     };
@@ -624,7 +624,7 @@ mod tests {
     }
 
     fn plain(flags: FlowFlags, id: u32) -> P<FlowNode> {
-        FlowNode::create(flags, id, FlowNodeDetails::Plain)
+        FlowNode::create(flags, id, FlowPlain)
     }
 
     fn label_details(antecedents: Vec<P<FlowNode>>) -> FlowLabelDetails {
@@ -637,10 +637,10 @@ mod tests {
         FlowNode::create(
             FlowFlags::BranchLabel,
             id,
-            FlowNodeDetails::BranchLabel(FlowBranchLabelDetails {
+            FlowBranchLabelDetails {
                 label: label_details(antecedents),
                 pre_branch_antecedent: None,
-            }),
+            },
         )
     }
 
@@ -648,7 +648,7 @@ mod tests {
         FlowNode::create(
             FlowFlags::LoopLabel,
             id,
-            FlowNodeDetails::Label(label_details(antecedents)),
+            label_details(antecedents),
         )
     }
 
@@ -658,11 +658,11 @@ mod tests {
         FlowNode::create(
             flags,
             id,
-            FlowNodeDetails::Condition(FlowConditionDetails {
+            FlowConditionDetails {
                 expression,
                 reference: None,
                 antecedent,
-            }),
+            },
         )
     }
 
@@ -677,7 +677,7 @@ mod tests {
         let gate = FlowNode::create(
             FlowFlags::PreFinallyGate,
             2,
-            FlowNodeDetails::PreFinallyGate(FlowPreFinallyGateDetails { antecedent: start }),
+            FlowPreFinallyGateDetails { antecedent: start },
         );
         let unreachable = plain(FlowFlags::UnreachableStructural, 3);
         let branch_label = branch(4, vec![gate, start, unreachable]);
@@ -685,9 +685,9 @@ mod tests {
         let annotate = FlowNode::create(
             FlowFlags::VariableAnnotation,
             6,
-            FlowNodeDetails::VariableAnnotation(FlowVariableAnnotationDetails {
+            FlowVariableAnnotationDetails {
                 antecedent: loop_node,
-            }),
+            },
         );
         FlowLabel::cast(loop_node)
             .unwrap()
@@ -698,12 +698,12 @@ mod tests {
         let context_manager_label = FlowNode::create(
             FlowFlags::PostContextManager | FlowFlags::BranchLabel,
             7,
-            FlowNodeDetails::PostContextManagerLabel(FlowPostContextManagerLabelDetails {
+            FlowPostContextManagerLabelDetails {
                 label: label_details(vec![annotate, branch_label]),
                 expressions: Vec::new(),
                 is_async: false,
                 block_if_swallows_exceptions: false,
-            }),
+            },
         );
 
         assert_eq!(

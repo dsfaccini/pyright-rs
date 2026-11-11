@@ -38,7 +38,7 @@ fn flow_references(flow_node: &FlowNode) -> Vec<P<FlowNode>> {
     if let Some(antecedent) = flow_node.antecedent() {
         refs.push(antecedent);
     }
-    match &flow_node.d {
+    match flow_node.d() {
         FlowNodeDetails::Label(d) => refs.extend(d.antecedents.borrow().iter().copied()),
         FlowNodeDetails::BranchLabel(d) => {
             refs.extend(d.label.antecedents.borrow().iter().copied());
@@ -90,7 +90,7 @@ fn flow_node_value(flow_node: &FlowNode, numbering: &FlowNumbering, symbol_names
         ]
     };
 
-    match &flow_node.d {
+    match flow_node.d() {
         FlowNodeDetails::Plain => {}
         FlowNodeDetails::Label(d) => fields.extend(label_fields(d)),
         FlowNodeDetails::BranchLabel(d) => {

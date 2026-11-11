@@ -9,6 +9,7 @@
 use jsrt::flag_ops;
 use jsrt::cell::{Cell, RefCell};
 use std::ops::Deref;
+use std::ptr;
 
 use jsrt::{JsSet, P};
 
@@ -68,44 +69,165 @@ pub fn get_unique_flow_node_id() -> u32 {
 }
 
 // analyzer/codeFlowTypes.ts:65
+/// The `FlowNode` fields. A flow node is allocated as this header followed by the
+/// fields of the interface the binder built it as (`FlowAlloc`), so it takes the
+/// size of its own interface; `d()` returns them.
+#[repr(C)]
 #[derive(jsrt::Trace)]
 pub struct FlowNode {
     pub flags: Cell<FlowFlags>,
     pub id: u32,
-    pub d: FlowNodeDetails,
+    kind: FlowKind,
+}
+const _: () = assert!(size_of::<FlowNode>() <= 12);
+
+/// The interface a flow node was built as, `d()`'s variant.
+#[repr(u8)]
+#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(jsrt::Trace)]
+pub enum FlowKind {
+    Plain,
+    Label,
+    BranchLabel,
+    Assignment,
+    VariableAnnotation,
+    WildcardImport,
+    Condition,
+    NarrowForPattern,
+    ExhaustedMatch,
+    Call,
+    PreFinallyGate,
+    PostFinally,
+    PostContextManagerLabel,
 }
 
-/// The interface the binder built the node as. `Plain` is a bare `FlowNode`
-/// (start and unreachable nodes).
+/// A flow node as allocated: the header, then the fields of its interface.
+#[repr(C)]
 #[derive(jsrt::Trace)]
+struct FlowAlloc<D> {
+    node: FlowNode,
+    d: D,
+}
+
+/// The fields one flow node interface adds to `FlowNode`.
+pub trait FlowInterface: jsrt::Trace + 'static {
+    const KIND: FlowKind;
+}
+
+/// The fields of a bare `FlowNode` (start and unreachable nodes): none.
+#[derive(jsrt::Trace)]
+pub struct FlowPlain;
+
+impl FlowInterface for FlowPlain {
+    const KIND: FlowKind = FlowKind::Plain;
+}
+
+impl FlowInterface for FlowLabelDetails {
+    const KIND: FlowKind = FlowKind::Label;
+}
+
+impl FlowInterface for FlowBranchLabelDetails {
+    const KIND: FlowKind = FlowKind::BranchLabel;
+}
+
+impl FlowInterface for FlowAssignmentDetails {
+    const KIND: FlowKind = FlowKind::Assignment;
+}
+
+impl FlowInterface for FlowVariableAnnotationDetails {
+    const KIND: FlowKind = FlowKind::VariableAnnotation;
+}
+
+impl FlowInterface for FlowWildcardImportDetails {
+    const KIND: FlowKind = FlowKind::WildcardImport;
+}
+
+impl FlowInterface for FlowConditionDetails {
+    const KIND: FlowKind = FlowKind::Condition;
+}
+
+impl FlowInterface for FlowNarrowForPatternDetails {
+    const KIND: FlowKind = FlowKind::NarrowForPattern;
+}
+
+impl FlowInterface for FlowExhaustedMatchDetails {
+    const KIND: FlowKind = FlowKind::ExhaustedMatch;
+}
+
+impl FlowInterface for FlowCallDetails {
+    const KIND: FlowKind = FlowKind::Call;
+}
+
+impl FlowInterface for FlowPreFinallyGateDetails {
+    const KIND: FlowKind = FlowKind::PreFinallyGate;
+}
+
+impl FlowInterface for FlowPostFinallyDetails {
+    const KIND: FlowKind = FlowKind::PostFinally;
+}
+
+impl FlowInterface for FlowPostContextManagerLabelDetails {
+    const KIND: FlowKind = FlowKind::PostContextManagerLabel;
+}
+
+/// The interface the binder built the node as: `node.d()`. `Plain` is a bare
+/// `FlowNode` (start and unreachable nodes).
+#[derive(Clone, Copy)]
 pub enum FlowNodeDetails {
     Plain,
-    Label(FlowLabelDetails),
-    BranchLabel(FlowBranchLabelDetails),
-    Assignment(FlowAssignmentDetails),
-    VariableAnnotation(FlowVariableAnnotationDetails),
-    WildcardImport(FlowWildcardImportDetails),
-    Condition(FlowConditionDetails),
-    NarrowForPattern(FlowNarrowForPatternDetails),
-    ExhaustedMatch(FlowExhaustedMatchDetails),
-    Call(FlowCallDetails),
-    PreFinallyGate(FlowPreFinallyGateDetails),
-    PostFinally(FlowPostFinallyDetails),
-    PostContextManagerLabel(FlowPostContextManagerLabelDetails),
+    Label(&'static FlowLabelDetails),
+    BranchLabel(&'static FlowBranchLabelDetails),
+    Assignment(&'static FlowAssignmentDetails),
+    VariableAnnotation(&'static FlowVariableAnnotationDetails),
+    WildcardImport(&'static FlowWildcardImportDetails),
+    Condition(&'static FlowConditionDetails),
+    NarrowForPattern(&'static FlowNarrowForPatternDetails),
+    ExhaustedMatch(&'static FlowExhaustedMatchDetails),
+    Call(&'static FlowCallDetails),
+    PreFinallyGate(&'static FlowPreFinallyGateDetails),
+    PostFinally(&'static FlowPostFinallyDetails),
+    PostContextManagerLabel(&'static FlowPostContextManagerLabelDetails),
 }
 
 impl FlowNode {
-    pub fn create(flags: FlowFlags, id: u32, d: FlowNodeDetails) -> P<FlowNode> {
-        P::new(FlowNode {
-            flags: Cell::new(flags),
-            id,
-            d,
-        })
+    pub fn create<D: FlowInterface>(flags: FlowFlags, id: u32, d: D) -> P<FlowNode> {
+        let node = FlowNode { flags: Cell::new(flags), id, kind: D::KIND };
+        P::new(FlowAlloc { node, d }).header(|alloc| &alloc.node)
+    }
+
+    /// # Safety
+    /// `self.kind` is `D::KIND`.
+    unsafe fn details_unchecked<D: FlowInterface>(&self) -> &'static D {
+        // SAFETY: `create` makes every header the first field of a `#[repr(C)]`
+        // `FlowAlloc` whose fields match `kind`, on the program heap, which is never freed.
+        unsafe { &(*ptr::from_ref(self).cast::<FlowAlloc<D>>()).d }
+    }
+
+    /// The fields of the interface the binder built the node as.
+    pub fn d(&self) -> FlowNodeDetails {
+        // SAFETY: each arm reads the interface of its kind.
+        unsafe {
+            match self.kind {
+                FlowKind::Plain => FlowNodeDetails::Plain,
+                FlowKind::Label => FlowNodeDetails::Label(self.details_unchecked()),
+                FlowKind::BranchLabel => FlowNodeDetails::BranchLabel(self.details_unchecked()),
+                FlowKind::Assignment => FlowNodeDetails::Assignment(self.details_unchecked()),
+                FlowKind::VariableAnnotation => FlowNodeDetails::VariableAnnotation(self.details_unchecked()),
+                FlowKind::WildcardImport => FlowNodeDetails::WildcardImport(self.details_unchecked()),
+                FlowKind::Condition => FlowNodeDetails::Condition(self.details_unchecked()),
+                FlowKind::NarrowForPattern => FlowNodeDetails::NarrowForPattern(self.details_unchecked()),
+                FlowKind::ExhaustedMatch => FlowNodeDetails::ExhaustedMatch(self.details_unchecked()),
+                FlowKind::Call => FlowNodeDetails::Call(self.details_unchecked()),
+                FlowKind::PreFinallyGate => FlowNodeDetails::PreFinallyGate(self.details_unchecked()),
+                FlowKind::PostFinally => FlowNodeDetails::PostFinally(self.details_unchecked()),
+                FlowKind::PostContextManagerLabel => FlowNodeDetails::PostContextManagerLabel(self.details_unchecked()),
+            }
+        }
     }
 
     /// The `antecedent` field of the interfaces that have one.
     pub fn antecedent(&self) -> Option<P<FlowNode>> {
-        match &self.d {
+        match self.d() {
             FlowNodeDetails::Assignment(d) => Some(d.antecedent),
             FlowNodeDetails::VariableAnnotation(d) => Some(d.antecedent),
             FlowNodeDetails::WildcardImport(d) => Some(d.antecedent),
@@ -130,7 +252,7 @@ macro_rules! flow_handle {
 
         impl $handle {
             pub fn cast(node: P<FlowNode>) -> Option<$handle> {
-                match &node.get().d {
+                match node.get().d() {
                     $(FlowNodeDetails::$variant(_))|+ => Some($handle(node)),
                     _ => None,
                 }
@@ -180,7 +302,7 @@ flow_handle!(
 
 impl FlowLabel {
     pub fn d(&self) -> &'static FlowLabelDetails {
-        match &self.0.get().d {
+        match self.0.get().d() {
             FlowNodeDetails::Label(d) => d,
             FlowNodeDetails::BranchLabel(d) => &d.label,
             FlowNodeDetails::PostContextManagerLabel(d) => &d.label,
@@ -214,7 +336,7 @@ flow_handle!(FlowBranchLabel, FlowBranchLabelDetails, BranchLabel);
 
 impl FlowBranchLabel {
     pub fn d(&self) -> &'static FlowBranchLabelDetails {
-        match &self.0.get().d {
+        match self.0.get().d() {
             FlowNodeDetails::BranchLabel(d) => d,
             _ => unreachable!(),
         }
@@ -231,7 +353,7 @@ macro_rules! simple_flow_handle {
 
         impl $handle {
             pub fn d(&self) -> &'static $details {
-                match &self.0.get().d {
+                match self.0.get().d() {
                     FlowNodeDetails::$variant(d) => d,
                     _ => unreachable!(),
                 }
@@ -377,7 +499,7 @@ flow_handle!(
 
 impl FlowPostContextManagerLabel {
     pub fn d(&self) -> &'static FlowPostContextManagerLabelDetails {
-        match &self.0.get().d {
+        match self.0.get().d() {
             FlowNodeDetails::PostContextManagerLabel(d) => d,
             _ => unreachable!(),
         }

@@ -15,7 +15,7 @@ use super::code_flow_types::{
     CodeFlowReferenceExpressionNode, FlowAssignmentDetails, FlowBranchLabel,
     FlowBranchLabelDetails, FlowCallDetails, FlowConditionDetails, FlowExhaustedMatchDetails,
     FlowFlags, FlowLabel, FlowLabelDetails, FlowNarrowForPatternDetails, FlowNode,
-    FlowNodeDetails, FlowPostContextManagerLabel, FlowPostContextManagerLabelDetails,
+    FlowPlain, FlowPostContextManagerLabel, FlowPostContextManagerLabelDetails,
     FlowPostFinallyDetails, FlowPreFinallyGate, FlowPreFinallyGateDetails,
     FlowVariableAnnotationDetails, FlowWildcardImportDetails, WILDCARD_IMPORT_REFERENCE_KEY,
     create_key_for_reference, get_unique_flow_node_id,
@@ -260,14 +260,14 @@ thread_local! {
     static UNREACHABLE_STATIC_CONDITION_FLOW_NODE: P<FlowNode> = FlowNode::create(
         FlowFlags::UnreachableStaticCondition,
         get_unique_flow_node_id(),
-        FlowNodeDetails::Plain,
+        FlowPlain,
     );
 
     // analyzer/binder.ts:341
     static UNREACHABLE_STRUCTURAL_FLOW_NODE: P<FlowNode> = FlowNode::create(
         FlowFlags::UnreachableStructural,
         get_unique_flow_node_id(),
-        FlowNodeDetails::Plain,
+        FlowPlain,
     );
 }
 
@@ -2037,9 +2037,9 @@ impl ParseTreeVisitor<bool> for Binder {
         let pre_finally_gate = FlowPreFinallyGate(FlowNode::create(
             FlowFlags::PreFinallyGate,
             self._get_unique_flow_node_id(),
-            FlowNodeDetails::PreFinallyGate(FlowPreFinallyGateDetails {
+            FlowPreFinallyGateDetails {
                 antecedent: pre_finally_return_or_raise_label.node(),
-            }),
+            },
         ));
 
         let affected = self._track_code_flow_expressions(|this| {
@@ -2114,11 +2114,11 @@ impl ParseTreeVisitor<bool> for Binder {
             let post_finally_node = FlowNode::create(
                 FlowFlags::PostFinally,
                 self._get_unique_flow_node_id(),
-                FlowNodeDetails::PostFinally(FlowPostFinallyDetails {
+                FlowPostFinallyDetails {
                     finally_node: finally_suite,
                     antecedent: self.cur_flow(),
                     pre_finally_gate,
-                }),
+                },
             );
             self._current_flow_node = Some(if is_after_else_and_excepts_reachable {
                 post_finally_node
@@ -3551,7 +3551,7 @@ impl Binder {
 
     // analyzer/binder.ts:3081
     fn _create_start_flow_node(&mut self) -> P<FlowNode> {
-        FlowNode::create(FlowFlags::Start, self._get_unique_flow_node_id(), FlowNodeDetails::Plain)
+        FlowNode::create(FlowFlags::Start, self._get_unique_flow_node_id(), FlowPlain)
     }
 
     // analyzer/binder.ts:3089
@@ -3559,10 +3559,10 @@ impl Binder {
         FlowBranchLabel(FlowNode::create(
             FlowFlags::BranchLabel,
             self._get_unique_flow_node_id(),
-            FlowNodeDetails::BranchLabel(FlowBranchLabelDetails {
+            FlowBranchLabelDetails {
                 label: FlowLabelDetails::new(),
                 pre_branch_antecedent,
-            }),
+            },
         ))
     }
 
@@ -3575,11 +3575,11 @@ impl Binder {
         let flow_node = FlowNode::create(
             FlowFlags::NarrowForPattern,
             self._get_unique_flow_node_id(),
-            FlowNodeDetails::NarrowForPattern(FlowNarrowForPatternDetails {
+            FlowNarrowForPatternDetails {
                 subject_expression,
                 statement,
                 antecedent: self.cur_flow(),
-            }),
+            },
         );
 
         self._current_flow_node = Some(flow_node);
@@ -3595,12 +3595,12 @@ impl Binder {
         FlowPostContextManagerLabel(FlowNode::create(
             FlowFlags::PostContextManager | FlowFlags::BranchLabel,
             self._get_unique_flow_node_id(),
-            FlowNodeDetails::PostContextManagerLabel(FlowPostContextManagerLabelDetails {
+            FlowPostContextManagerLabelDetails {
                 label: FlowLabelDetails::new(),
                 expressions,
                 is_async,
                 block_if_swallows_exceptions,
-            }),
+            },
         ))
     }
 
@@ -3609,7 +3609,7 @@ impl Binder {
         FlowLabel(FlowNode::create(
             FlowFlags::LoopLabel,
             self._get_unique_flow_node_id(),
-            FlowNodeDetails::Label(FlowLabelDetails::new()),
+            FlowLabelDetails::new(),
         ))
     }
 
@@ -3819,11 +3819,11 @@ impl Binder {
         let conditional_flow_node = FlowNode::create(
             flags,
             self._get_unique_flow_node_id(),
-            FlowNodeDetails::Condition(FlowConditionDetails {
+            FlowConditionDetails {
                 reference: filtered_expr_list.first().map(|expr| NameNode(*expr)),
                 expression,
                 antecedent,
-            }),
+            },
         );
 
         self._add_except_targets(conditional_flow_node);
@@ -4108,10 +4108,10 @@ impl Binder {
             let flow_node = FlowNode::create(
                 FlowFlags::Call,
                 self._get_unique_flow_node_id(),
-                FlowNodeDetails::Call(FlowCallDetails {
+                FlowCallDetails {
                     node,
                     antecedent: self.cur_flow(),
-                }),
+                },
             );
 
             self._current_flow_node = Some(flow_node);
@@ -4124,9 +4124,9 @@ impl Binder {
             let flow_node = FlowNode::create(
                 FlowFlags::VariableAnnotation,
                 self._get_unique_flow_node_id(),
-                FlowNodeDetails::VariableAnnotation(FlowVariableAnnotationDetails {
+                FlowVariableAnnotationDetails {
                     antecedent: self.cur_flow(),
-                }),
+                },
             );
 
             self._current_flow_node = Some(flow_node);
@@ -4157,11 +4157,11 @@ impl Binder {
             let flow_node = FlowNode::create(
                 flags,
                 id,
-                FlowNodeDetails::Assignment(FlowAssignmentDetails {
+                FlowAssignmentDetails {
                     node,
                     antecedent: self.cur_flow(),
                     target_symbol_id,
-                }),
+                },
             );
 
             // Assume that an assignment to a member access expression
@@ -4189,11 +4189,11 @@ impl Binder {
             let flow_node = FlowNode::create(
                 FlowFlags::WildcardImport,
                 self._get_unique_flow_node_id(),
-                FlowNodeDetails::WildcardImport(FlowWildcardImportDetails {
+                FlowWildcardImportDetails {
                     node,
                     names,
                     antecedent: self.cur_flow(),
-                }),
+                },
             );
 
             self._add_except_targets(flow_node);
@@ -4209,11 +4209,11 @@ impl Binder {
             let flow_node = FlowNode::create(
                 FlowFlags::ExhaustedMatch,
                 self._get_unique_flow_node_id(),
-                FlowNodeDetails::ExhaustedMatch(FlowExhaustedMatchDetails {
+                FlowExhaustedMatchDetails {
                     node,
                     antecedent: self.cur_flow(),
                     subject_expression: node.d().expr.get(),
-                }),
+                },
             );
 
             self._current_flow_node = Some(flow_node);
