@@ -475,7 +475,8 @@ pub struct AbstractSymbolsMemoEntry {
 
 thread_local! {
     /// Rust-only: counts the writes that change a type object some print may already have
-    /// read (`note_type_mutation`). A `print_type` memo entry holds only while it is unchanged.
+    /// read (`note_type_mutation`). A `print_type` or `combine_types` memo entry holds only
+    /// while it is unchanged.
     static TYPE_MUTATION_EPOCH: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
 
     /// Rust-only: how many class, function, lambda and type parameter constructions are under
@@ -505,7 +506,7 @@ pub(crate) fn type_mutation_epoch() -> u64 {
 }
 
 /// Records a write to a field that `print_type` reads, on a type object that may already have
-/// been printed: it ends every `print_type` memo entry. pyright treats type objects as
+/// been printed: it ends every `print_type` and `combine_types` memo entry. pyright treats type objects as
 /// immutable once built, except for the writes that call this; writes during a construction
 /// reach only the object being built, which `TypeConstruction` covers.
 pub(crate) fn note_type_mutation() {
@@ -513,8 +514,8 @@ pub(crate) fn note_type_mutation() {
 }
 
 /// Marks a class, function, lambda or type parameter construction: it publishes the new object
-/// in the type cache, then fills it in. No `print_type` memo entry is stored while one runs,
-/// so no entry holds an object that is still being built.
+/// in the type cache, then fills it in. No `print_type` or `combine_types` memo entry is stored
+/// while one runs, so no entry holds an object that is still being built.
 pub(crate) struct TypeConstruction;
 
 impl TypeConstruction {
@@ -522,6 +523,11 @@ impl TypeConstruction {
         TYPE_CONSTRUCTION_DEPTH.set(TYPE_CONSTRUCTION_DEPTH.get() + 1);
         TypeConstruction
     }
+}
+
+/// Whether a `TypeConstruction` is under way.
+pub(crate) fn type_construction_in_progress() -> bool {
+    TYPE_CONSTRUCTION_DEPTH.get() != 0
 }
 
 impl Drop for TypeConstruction {

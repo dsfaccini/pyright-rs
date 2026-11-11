@@ -5764,8 +5764,128 @@ pub struct CombineTypesOptions {
     pub max_subtype_count: Option<u32>,
 }
 
-// analyzer/types.ts:3850
+/// Rust-only: `COMBINE_MEMO_SLOTS` slots of `combine_types` results by input list and options
+/// (`PYRIGHT_RS_COMBINE_TYPES_MEMO`), for lists of `COMBINE_MEMO_MIN_MEMBERS` or more members.
+const COMBINE_MEMO_SLOTS: usize = 4096;
+const COMBINE_MEMO_MIN_MEMBERS: usize = 9;
+
+#[derive(jsrt::Trace)]
+struct CombineMemoEntry {
+    subtypes: Rc<[P<Type>]>,
+    options: u64,
+    epoch: u64,
+    /// The result when it is one of `subtypes` or of their union members. Otherwise the result
+    /// is a new union of those members, and this is a copy of it that no caller holds.
+    result: P<Type>,
+    is_new_union: bool,
+}
+
+thread_local! {
+    static COMBINE_MEMO: RefCell<Vec<Option<CombineMemoEntry>>> = {
+        // Holds evaluator handles: a collector root.
+        jsrt::heap::add_root(|t| COMBINE_MEMO.with(|m| jsrt::Trace::trace(m, t)));
+        RefCell::new((0..COMBINE_MEMO_SLOTS).map(|_| None).collect())
+    };
+}
+
+/// Rust-only: `compute_combined_type`, remembered (`PYRIGHT_RS_COMBINE_TYPES_MEMO`). The
+/// result depends only on the subtype objects and the options, so a call with the same list
+/// returns the same result while no type changed in place (`note_type_mutation`). pyright
+/// builds a new union on every call, so a remembered new union goes out as a fresh copy, and
+/// results that hold any other object built by the call (a `bool` merged from both literals, a
+/// pseudo-generic class specialized with Unknowns) are not remembered.
 pub fn combine_types(subtypes: &[P<Type>], options: Option<&CombineTypesOptions>) -> P<Type> {
+    let mode = jsrt::switch_mode!("PYRIGHT_RS_COMBINE_TYPES_MEMO");
+    if mode == jsrt::SwitchMode::Off {
+        return compute_combined_type(subtypes, options);
+    }
+    let member_count: usize = subtypes
+        .iter()
+        .map(|t| UnionType::cast(*t).map_or(1, |union| union.d().priv_.borrow().subtypes.len()))
+        .sum();
+    if member_count < COMBINE_MEMO_MIN_MEMBERS {
+        return compute_combined_type(subtypes, options);
+    }
+    let options_key = options.map_or(0, |options| {
+        u64::from(options.skip_elide_redundant_literals.unwrap_or(false))
+            | options.max_subtype_count.map_or(0, |max| (u64::from(max) + 1) << 1)
+    });
+    let slot = {
+        let mut hash = options_key;
+        for subtype in subtypes {
+            hash = (hash ^ (subtype.get() as *const Type as u64)).wrapping_mul(0x9e37_79b9_7f4a_7c15);
+        }
+        (hash >> (64 - COMBINE_MEMO_SLOTS.trailing_zeros())) as usize
+    };
+    let epoch = analyzer::type_evaluator::type_mutation_epoch();
+    let remembered = COMBINE_MEMO.with(|memo| {
+        memo.borrow()[slot]
+            .as_ref()
+            .filter(|entry| entry.epoch == epoch && entry.options == options_key && *entry.subtypes == *subtypes)
+            .map(|entry| (entry.result, entry.is_new_union))
+    });
+    if let Some((result, is_new_union)) = remembered {
+        if mode == jsrt::SwitchMode::Check {
+            let computed = compute_combined_type(subtypes, options);
+            let same = if is_new_union {
+                let (a, b) = (UnionType::cast(computed), UnionType(result));
+                a.is_some_and(|a| {
+                    let (a_priv, b_priv) = (a.d().priv_.borrow(), b.d().priv_.borrow());
+                    *a_priv.subtypes == *b_priv.subtypes
+                        && a_priv.type_alias_sources.as_ref().map(|s| s.iter().copied().collect::<Vec<_>>())
+                            == b_priv.type_alias_sources.as_ref().map(|s| s.iter().copied().collect::<Vec<_>>())
+                        && a.0.flags.get() == b.0.flags.get()
+                        && a.0.props.borrow().is_none()
+                        && !combine_input_members_contain(subtypes, a.0)
+                })
+            } else {
+                computed == result
+            };
+            assert!(same, "PYRIGHT_RS_COMBINE_TYPES_MEMO=check: the remembered result differs");
+            return computed;
+        }
+        return if is_new_union { TypeBase::clone_type(result) } else { result };
+    }
+
+    let before = analyzer::type_evaluator::uncached_evaluation_count();
+    let result = compute_combined_type(subtypes, options);
+    if analyzer::type_evaluator::type_mutation_epoch() == epoch
+        && analyzer::type_evaluator::uncached_evaluation_count() == before
+        && !analyzer::type_evaluator::type_construction_in_progress()
+    {
+        let remembered = if combine_input_members_contain(subtypes, result) {
+            Some((result, false))
+        } else {
+            UnionType::cast(result)
+                .filter(|union| {
+                    union.d().priv_.borrow().subtypes.iter().all(|t| combine_input_members_contain(subtypes, *t))
+                })
+                .map(|union| (TypeBase::clone_type(union.0), true))
+        };
+        if let Some((remembered, is_new_union)) = remembered {
+            COMBINE_MEMO.with(|memo| {
+                memo.borrow_mut()[slot] = Some(CombineMemoEntry {
+                    subtypes: Rc::from(subtypes),
+                    options: options_key,
+                    epoch,
+                    result: remembered,
+                    is_new_union,
+                });
+            });
+        }
+    }
+    result
+}
+
+/// Rust-only: whether `type_` is one of `subtypes` or a member of one of their unions.
+fn combine_input_members_contain(subtypes: &[P<Type>], type_: P<Type>) -> bool {
+    subtypes.iter().any(|subtype| {
+        *subtype == type_ || UnionType::cast(*subtype).is_some_and(|union| union.d().priv_.borrow().subtypes.contains(&type_))
+    })
+}
+
+// analyzer/types.ts:3850
+fn compute_combined_type(subtypes: &[P<Type>], options: Option<&CombineTypesOptions>) -> P<Type> {
     // Filter out any Never or NoReturn types.
     let (never_types, subtypes) =
         common::collection_utils::partition(subtypes.iter().copied(), |t| is_never(*t));
