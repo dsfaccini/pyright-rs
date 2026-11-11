@@ -5908,7 +5908,7 @@ impl Checker {
         function_type: FunctionType,
         is_method: bool,
     ) {
-        let function_name = function_type.d().shared.get().name.clone();
+        let function_name = function_type.d().shared.get().name;
 
         // Is this an '__init__' method? Verify that it returns None.
         if is_method && function_name == "__init__" {
@@ -9403,8 +9403,8 @@ impl Checker {
             effective_flags |= analyzer::type_utils::MemberAccessFlags::SkipObjectBaseClass;
         }
 
-        let method_name = method_type.d().shared.get().name.clone();
-        let method_member = analyzer::type_utils::look_up_class_member(class_type, &method_name, effective_flags, None);
+        let method_name = method_type.d().shared.get().name;
+        let method_member = analyzer::type_utils::look_up_class_member(class_type, method_name, effective_flags, None);
         if method_member.is_none() {
             return;
         }

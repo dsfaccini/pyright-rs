@@ -256,6 +256,10 @@ interface = "analyzer/codeFlowEngine.ts:CodeFlowAnalyzer"
 # Doc strings, copied by every `{ ...shared }` of a function or class: shared, as a JS string is.
 "analyzer/types.ts:FunctionDetailsShared.docString" = "Option<std::rc::Rc<str>>"
 "analyzer/types.ts:ClassDetailsShared.docString" = "std::rc::Rc<str>"
+# Function names, copied by every `{ ...shared }`: interned atoms (`jsrt::Atom`, docs/porting.md "strings").
+"analyzer/types.ts:FunctionDetailsShared.name" = "jsrt::Atom"
+"analyzer/types.ts:FunctionDetailsShared.fullName" = "jsrt::Atom"
+"analyzer/types.ts:FunctionDetailsShared.moduleName" = "jsrt::Atom"
 # docs/porting.md "strings": a Python string literal's value can hold a lone surrogate, which
 # printLiteralValue keeps (`JSON.stringify` escapes it).
 "analyzer/types.ts:LiteralValue#3" = "jsrt::JsString"

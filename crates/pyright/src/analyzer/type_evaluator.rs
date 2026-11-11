@@ -1797,7 +1797,7 @@ impl TypeEvaluator {
             name = ClassType(type_).d().shared.get().name.to_string();
         } else if analyzer::types::is_function(type_) {
             is_type_checking_only = FunctionType::is_type_check_only(FunctionType(type_));
-            name = FunctionType(type_).d().shared.get().name.clone();
+            name = FunctionType(type_).d().shared.get().name.to_string();
         }
 
         if is_type_checking_only {
@@ -15675,7 +15675,7 @@ impl TypeEvaluator {
                 let overloads = OverloadedType::get_overloads(type_);
                 let function_name =
                     if !overloads.is_empty() && !overloads[0].d().shared.get().name.is_empty() {
-                        overloads[0].d().shared.get().name.clone()
+                        overloads[0].d().shared.get().name.to_string()
                     } else {
                         "<anonymous function>".to_string()
                     };
@@ -15761,11 +15761,11 @@ impl TypeEvaluator {
             // If there is more than one filtered match, report that no match
             // was possible and emit a diagnostic that provides the most likely.
             if emit_no_overload_found_error {
-                let name = best_match.overload.d().shared.get().name.clone();
+                let name = best_match.overload.d().shared.get().name;
                 let function_name = if name.is_empty() {
                     "<anonymous function>".to_string()
                 } else {
-                    name
+                    name.to_string()
                 };
                 let diagnostic = self.add_diagnostic(
                     DiagnosticRule::reportCallIssue,
@@ -20388,7 +20388,7 @@ impl TypeEvaluator {
         let mut is_compatible = true;
         // `functionName` is only tested for truthiness, so an empty name counts as absent.
         let function_name: Option<String> = type_result
-            .map(|r| FunctionType(r.type_.get()).d().shared.get().name.clone())
+            .map(|r| FunctionType(r.type_.get()).d().shared.get().name.to_string())
             .filter(|name| !name.is_empty());
         let mut skipped_bare_type_var_expected_type = false;
 

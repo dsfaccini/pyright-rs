@@ -284,7 +284,7 @@ pub(crate) fn apply_partial_transform_to_function(
     let mut reported_positional_error = false;
     let constraints = ConstraintTracker::new();
 
-    let orig_function_name = orig_function_type.d().shared.get().name.clone();
+    let orig_function_name = orig_function_type.d().shared.get().name;
 
     let remaining_args_list = arg_list.get(1..).unwrap_or(&[]);
     for (arg_index, arg) in remaining_args_list.iter().enumerate() {

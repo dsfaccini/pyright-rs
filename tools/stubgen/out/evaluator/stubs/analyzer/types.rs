@@ -19,7 +19,7 @@ use crate::parser::parse_nodes::{
 };
 use crate::{analyzer, common, parser};
 use jsrt::cell::{Cell, RefCell, RefMut};
-use jsrt::{JsBigInt, JsMap, JsSet, JsString, NumberValue, OptionRefCell, P, flag_ops};
+use jsrt::{Atom, JsBigInt, JsMap, JsSet, JsString, NumberValue, OptionRefCell, P, flag_ops};
 use std::ops::Deref;
 use std::rc::Rc;
 
@@ -1214,9 +1214,9 @@ flag_ops!(FunctionTypeFlags);
 
 // analyzer/types.ts:1729
 pub struct FunctionDetailsShared {
-    pub name: String,
-    pub full_name: String,
-    pub module_name: String,
+    pub name: Atom,
+    pub full_name: Atom,
+    pub module_name: Atom,
     pub flags: Cell<FunctionTypeFlags>,
     pub type_params: RefCell<Vec<TypeVarType>>,
     pub parameters: Cell<P<RefCell<Vec<FunctionParam>>>>,

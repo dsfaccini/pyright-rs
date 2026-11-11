@@ -1596,7 +1596,7 @@ pub(crate) fn get_converter_input_type(
             let overloads = OverloadedType::get_overloads(OverloadedType(converter_type));
             let func_name =
                 if !overloads.is_empty() && !overloads[0].d().shared.get().name.is_empty() {
-                    overloads[0].d().shared.get().name.clone()
+                    overloads[0].d().shared.get().name.to_string()
                 } else {
                     "<anonymous function>".to_string()
                 };
@@ -1962,11 +1962,11 @@ pub(crate) fn is_dataclass_field_constructor(
     let mut call_name: Option<String> = None;
 
     if is_function(type_) {
-        call_name = Some(FunctionType(type_).d().shared.get().full_name.clone());
+        call_name = Some(FunctionType(type_).d().shared.get().full_name.to_string());
     } else if is_overloaded(type_) {
         let overloads = OverloadedType::get_overloads(OverloadedType(type_));
         if !overloads.is_empty() {
-            call_name = Some(overloads[0].d().shared.get().full_name.clone());
+            call_name = Some(overloads[0].d().shared.get().full_name.to_string());
         }
     } else if is_instantiable_class(type_) {
         call_name = Some(ClassType(type_).d().shared.get().full_name.to_string());
@@ -2159,7 +2159,7 @@ pub fn validate_data_class_transform_decorator(
                                 .shared
                                 .get()
                                 .full_name
-                                .clone(),
+                                .to_string(),
                         );
                     } else if is_overloaded(tuple_arg.type_) {
                         let overloads =
@@ -2168,7 +2168,7 @@ pub fn validate_data_class_transform_decorator(
                             behaviors
                                 .field_descriptor_names
                                 .borrow_mut()
-                                .push(overloads[0].d().shared.get().full_name.clone());
+                                .push(overloads[0].d().shared.get().full_name.to_string());
                         }
                     }
                 }
