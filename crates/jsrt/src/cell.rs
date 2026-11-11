@@ -1,7 +1,7 @@
 //! Interior-mutable cells for heap objects: `Cell`, `RefCell` and `OnceCell` with
 //! the std API, plus a write barrier for the generational collector
-//! (`docs/collector-design.md`, "write barrier"), and [`OptionRefCell`], sized for
-//! objects created by the million.
+//! (`docs/collector-design.md`, "write barrier"), and [`OptionRefCell`] and
+//! [`EvalOptionRefCell`], sized for objects created by the million.
 //!
 //! Every write that can store an evaluator handle into a cell calls
 //! [`heap::remember`] with the cell's address first: `Cell::set` and its kin,
@@ -16,6 +16,7 @@ use std::ptr;
 
 pub use std::cell::{Ref, RefMut};
 
+use crate::P;
 use crate::heap::{self, Tracer};
 use crate::trace::Trace;
 
@@ -472,6 +473,85 @@ impl<T: Clone + Trace> Clone for OptionRefCell<T> {
     }
 }
 
+/// [`OptionRefCell`] with its storage on the evaluator heap, allocated on the first
+/// `borrow_mut` as its own object. A `Box` would give the owner drop glue, so the sweep would
+/// read the slot of every dead owner; with this cell a dead owner whose cell was never written
+/// is freed from the bitmaps alone (`docs/collector-design.md`, "sweep"). For the cold half of
+/// an evaluator type the evaluator creates and drops by the million (`TypeResult`).
+pub struct EvalOptionRefCell<T: 'static>(OnceCell<P<RefCell<Option<T>>>>);
+
+// SAFETY: traces the storage's handle; the storage traces the value.
+unsafe impl<T: Trace + 'static> Trace for EvalOptionRefCell<T> {
+    const HOLDS_EVAL: bool = true;
+    const HAS_CELL: bool = true;
+    #[inline]
+    fn trace(&self, t: &mut Tracer) {
+        self.0.trace(t);
+    }
+}
+
+impl<T: 'static> EvalOptionRefCell<T> {
+    pub const fn new() -> Self {
+        EvalOptionRefCell(OnceCell::new())
+    }
+
+    /// Panics while a `borrow_mut` of an allocated cell is live, as `RefCell::borrow` does.
+    pub fn borrow(&self) -> OptionRef<'_, T> {
+        match self.0.get() {
+            None => OptionRef::Unallocated,
+            Some(cell) => OptionRef::Borrowed(cell.get().borrow()),
+        }
+    }
+
+    /// The value, or `empty` while the cell is unallocated or `None` (`OptionRefCell::borrow_or`).
+    pub fn borrow_or(&self, empty: &'static T) -> OptionRefOr<'_, T> {
+        OptionRefOr(self.borrow(), empty)
+    }
+}
+
+impl<T: Trace + 'static> EvalOptionRefCell<T> {
+    /// Allocates the storage on first use. Panics while another borrow of it is live.
+    pub fn borrow_mut(&self) -> RefMut<'_, Option<T>> {
+        self.0.get_or_init(|| P::new_eval(RefCell::new(None))).get().borrow_mut()
+    }
+
+    /// The value, allocated as `T::default()` on first use.
+    pub fn borrow_mut_or_default(&self) -> RefMut<'_, T>
+    where
+        T: Default,
+    {
+        RefMut::map(self.borrow_mut(), |value| value.get_or_insert_with(Default::default))
+    }
+}
+
+/// A cell holding `value`, allocated only when it is `Some`.
+impl<T: Trace + 'static> From<Option<T>> for EvalOptionRefCell<T> {
+    fn from(value: Option<T>) -> Self {
+        let cell = EvalOptionRefCell::new();
+        if value.is_some() {
+            *cell.borrow_mut() = value;
+        }
+        cell
+    }
+}
+
+impl<T: 'static> Default for EvalOptionRefCell<T> {
+    fn default() -> Self {
+        EvalOptionRefCell::new()
+    }
+}
+
+/// A copy with its own storage, unallocated while the value is `None`.
+impl<T: Clone + Trace + 'static> Clone for EvalOptionRefCell<T> {
+    fn clone(&self) -> Self {
+        let copy = EvalOptionRefCell::new();
+        if let Some(value) = self.borrow().as_ref() {
+            *copy.borrow_mut() = Some(value.clone());
+        }
+        copy
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -487,6 +567,27 @@ mod tests {
         assert_eq!(cell.clone().borrow().as_deref(), Some("a"));
         *cell.borrow_mut() = None;
         assert!(cell.borrow().is_none() && cell.clone().0.get().is_none());
+    }
+
+    #[derive(crate::Trace)]
+    #[trace(eval)]
+    struct Leaf(u32);
+
+    #[test]
+    fn eval_option_ref_cell_allocates_on_first_write() {
+        assert_eq!(size_of::<EvalOptionRefCell<P<Leaf>>>(), size_of::<usize>());
+        assert!(!std::mem::needs_drop::<EvalOptionRefCell<P<Leaf>>>());
+        let cell: EvalOptionRefCell<P<Leaf>> = EvalOptionRefCell::new();
+        assert!(cell.borrow().is_none() && cell.clone().0.get().is_none());
+        let leaf = P::new_eval(Leaf(7));
+        *cell.borrow_mut() = Some(leaf);
+        let storage = *cell.0.get().unwrap();
+        assert_eq!(cell.borrow().map(|leaf| leaf.0), Some(7));
+        let copy = cell.clone();
+        assert!(!P::ptr_eq(*copy.0.get().unwrap(), storage));
+        assert!(copy.borrow().is_some_and(|copied| P::ptr_eq(copied, leaf)));
+        *cell.borrow_mut() = None;
+        assert!(cell.clone().0.get().is_none() && copy.borrow().is_some());
     }
 
     #[test]

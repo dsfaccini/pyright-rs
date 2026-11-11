@@ -27,7 +27,7 @@ pub mod vscode_uri;
 
 pub use arena::{Header, P};
 pub use atom::{Atom, AtomKey};
-pub use cell::OptionRefCell;
+pub use cell::{EvalOptionRefCell, OptionRefCell};
 pub use heap::{ClassSlot, GcMode, Tracer};
 pub use jsrt_derive::Trace;
 pub use trace::Trace;
