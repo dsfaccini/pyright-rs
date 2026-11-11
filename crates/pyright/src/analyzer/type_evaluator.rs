@@ -3466,10 +3466,10 @@ impl TypeEvaluator {
             }
 
             return Some(P::new_eval(TypeResult {
-                class_type: member_info.class_type,
                 is_incomplete: Cell::new(Some(member_info.is_type_incomplete)),
                 is_asymmetric_accessor: Some(member_info.is_asymmetric_accessor),
                 cold: TypeResultCold {
+                    class_type: member_info.class_type,
                     narrowed_type_for_set: member_info.narrowed_type_for_set,
                     member_access_deprecation_info: member_info.member_access_deprecation_info.clone(),
                     ..Default::default()
@@ -3496,7 +3496,11 @@ impl TypeEvaluator {
 
                 if analyzer::types::is_any_or_unknown(type_arg) {
                     return Some(P::new_eval(TypeResult {
-                        class_type: Some(analyzer::types::UnknownType::create(false).0),
+                        cold: TypeResultCold {
+                            class_type: Some(analyzer::types::UnknownType::create(false).0),
+                            ..Default::default()
+                        }
+                        .into_cold(),
                         ..TypeResult::new(type_arg)
                     }));
                 }
@@ -9681,7 +9685,7 @@ impl TypeEvaluator {
             }
         };
 
-        let method_class_type = method_type_result.class_type;
+        let method_class_type = method_type_result.cold().class_type;
         let mut method_type = method_type_result.type_.get();
 
         let Some(method_class_type) = method_class_type else {
@@ -29595,7 +29599,8 @@ impl TypeEvaluator {
             if let Some(init_subclass_method_info) = init_subclass_method_info {
                 let init_subclass_method_type = init_subclass_method_info.type_.get();
 
-                if let Some(method_class_type) = init_subclass_method_info.class_type {
+                let init_subclass_class_type = init_subclass_method_info.cold().class_type;
+                if let Some(method_class_type) = init_subclass_class_type {
                     let call_result = self.validate_call_args(
                         name_node.0,
                         &arg_list,

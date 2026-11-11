@@ -345,8 +345,9 @@ interface = "analyzer/codeFlowEngine.ts:CodeFlowAnalyzer"
 # `cold: Option<Box<..>>` and allocates on first write ("cold fields" in docs/evaluator-design.md).
 [cold]
 # Each list holds the fields that fewer than 1% of objects set on the python-chess and samples
-# corpora (2026-11-10), plus overloadsUsedForCall (3% of results).
-"analyzer/typeEvaluatorTypes.ts:TypeResult" = ["bindToSelfType", "unpackedType", "typeList", "inlinedTypeDict", "isEmptyTupleShorthand", "expectedTypeDiagAddendum", "narrowedTypeForSet", "overloadsUsedForCall", "memberAccessDeprecationInfo", "magicMethodDeprecationInfo"]
+# corpora (2026-11-10), plus overloadsUsedForCall (3% of results), and classType, which no live
+# result holds at the end of a pydantic-ai check (2026-11-11).
+"analyzer/typeEvaluatorTypes.ts:TypeResult" = ["classType", "bindToSelfType", "unpackedType", "typeList", "inlinedTypeDict", "isEmptyTupleShorthand", "expectedTypeDiagAddendum", "narrowedTypeForSet", "overloadsUsedForCall", "memberAccessDeprecationInfo", "magicMethodDeprecationInfo"]
 "analyzer/types.ts:FunctionDetailsShared" = ["docString", "deprecatedMessage", "decoratorDataClassBehaviors", "inferredReturnType"]
 "analyzer/types.ts:ClassDetailsPriv" = ["aliasName", "typedDictNarrowedEntries", "isTypedDictPartial", "isAsymmetricDescriptor", "isAsymmetricAttributeAccessor", "fgetInfo", "fsetInfo", "fdelInfo", "deprecatedInstanceMessage", "partialCallType"]
 

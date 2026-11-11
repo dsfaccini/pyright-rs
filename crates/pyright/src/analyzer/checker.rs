@@ -6192,7 +6192,7 @@ impl Checker {
         );
 
         // If this __new__ comes from a built-in class like Enum, we'll ignore it.
-        if let Some(result_class_type) = new_member_type_result.and_then(|result| result.class_type) {
+        if let Some(result_class_type) = new_member_type_result.and_then(|result| result.cold().class_type) {
             if analyzer::types::is_class(result_class_type) && ClassType::is_built_in(ClassType(result_class_type), None) {
                 new_member_type_result = None;
             }
@@ -6207,7 +6207,7 @@ impl Checker {
         );
 
         // If this __init__ comes from a built-in class like Enum, we'll ignore it.
-        if let Some(result_class_type) = init_member_type_result.and_then(|result| result.class_type) {
+        if let Some(result_class_type) = init_member_type_result.and_then(|result| result.cold().class_type) {
             if analyzer::types::is_class(result_class_type) && ClassType::is_built_in(ClassType(result_class_type), None) {
                 init_member_type_result = None;
             }
@@ -6965,7 +6965,7 @@ impl Checker {
         if new_method_result.type_errors.get().unwrap_or(false) {
             return;
         }
-        let Some(new_method_class) = new_method_result.class_type.filter(|class_type| analyzer::types::is_class(*class_type))
+        let Some(new_method_class) = new_method_result.cold().class_type.filter(|class_type| analyzer::types::is_class(*class_type))
         else {
             return;
         };
@@ -6985,7 +6985,7 @@ impl Checker {
             return;
         }
         let Some(init_method_class) =
-            init_method_result.class_type.filter(|class_type| analyzer::types::is_class(*class_type))
+            init_method_result.cold().class_type.filter(|class_type| analyzer::types::is_class(*class_type))
         else {
             return;
         };
