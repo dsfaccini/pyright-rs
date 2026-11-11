@@ -671,7 +671,7 @@ pub(crate) fn apply_partial_transform_to_function(
         },
     );
     new_shared.declaration.set(partial_shared.declaration.get());
-    let specialized_type_var_scope_id = specialized_shared.type_var_scope_id.borrow().clone();
+    let specialized_type_var_scope_id = *specialized_shared.type_var_scope_id.borrow();
     *new_shared.type_var_scope_id.borrow_mut() = specialized_type_var_scope_id;
 
     Some(FunctionResult {

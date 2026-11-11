@@ -2912,7 +2912,7 @@ impl Checker {
                     return;
                 }
                 let name_type_var = TypeVarType(name_type);
-                let scope_id = name_type_var.d().priv_.borrow().scope_id.clone();
+                let scope_id = name_type_var.d().priv_.borrow().scope_id;
                 let type_var_name = name_type_var.d().shared.get().name.borrow().clone();
                 let cur_param = cur_param_node.get();
                 let cur_param_name = || {
@@ -2922,8 +2922,8 @@ impl Checker {
                 };
 
                 // Does this name refer to a TypeVar that is scoped to this function?
-                if scope_id.as_deref()
-                    == Some(analyzer::parse_tree_utils::get_scope_id_for_node(node.0, reader).as_str())
+                if scope_id
+                    == Some(analyzer::parse_tree_utils::get_scope_id_for_node(node.0, reader))
                 {
                     // We exempt constrained TypeVars, TypeVars that are type arguments of
                     // other types, and ParamSpecs. There are legitimate uses for singleton
@@ -3008,7 +3008,7 @@ impl Checker {
                 // Does this name refer to a TypeVar that is scoped to the class associated with
                 // this constructor method?
                 if let Some(constructor_class) = constructor_class {
-                    if scope_id.as_deref() == constructor_class.d().shared.get().type_var_scope_id.borrow().as_deref() {
+                    if scope_id == *constructor_class.d().shared.get().type_var_scope_id.borrow() {
                         let is_param_type_with_ellipsis_usage = cur_param.is_some_and(|cur_param| {
                             cur_param
                                 .d()
@@ -8577,18 +8577,17 @@ impl Checker {
             Some(child_class_self.0),
         );
 
-        let child_type_var_scope_id = child_class_type
+        let child_type_var_scope_id = (*child_class_type
             .d()
             .shared
             .get()
             .type_var_scope_id
-            .borrow()
-            .clone()
+            .borrow())
             .filter(|scope_id| !scope_id.is_empty());
         if let Some(child_type_var_scope_id) = child_type_var_scope_id {
             override_type = analyzer::type_utils::make_type_vars_bound(
                 override_type,
-                Some(&[child_type_var_scope_id.clone()][..]),
+                Some(&[child_type_var_scope_id][..]),
             );
             base_type = analyzer::type_utils::make_type_vars_bound(base_type, Some(&[child_type_var_scope_id][..]));
         }
@@ -9491,7 +9490,7 @@ impl Checker {
                 let type_vars = analyzer::type_utils::get_type_var_args_recursive(param_type, 0);
 
                 if type_vars.iter().any(|type_var| {
-                    type_var.d().priv_.borrow().scope_id.as_deref() == method_class.d().shared.get().type_var_scope_id.borrow().as_deref()
+                    type_var.d().priv_.borrow().scope_id == *method_class.d().shared.get().type_var_scope_id.borrow()
                         && !TypeVarType::is_self(*type_var)
                 }) {
                     self._evaluator.add_diagnostic(

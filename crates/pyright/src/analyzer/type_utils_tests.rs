@@ -56,7 +56,7 @@ fn transform_type_variable_metadata_without_changing_its_identity() {
     let target_leaf = AnyType::create(false).0;
     let source_type_var = TypeVarType::clone_for_scope_id(
         TypeVarType::create_instance("T", TypeVarKind::TypeVar),
-        "source-scope".to_string(),
+        "source-scope".into(),
         Some("source".to_string()),
         Some(TypeVarScopeType::Class),
     );

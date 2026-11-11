@@ -5,7 +5,7 @@
 use crate::analyzer::type_complexity::get_complexity_score_for_type;
 use crate::analyzer::types::TypeSameOptions;
 use crate::analyzer::types::is_type_same;
-use crate::analyzer::types::{Type, TypeVarType};
+use crate::analyzer::types::{Type, TypeVarScopeId, TypeVarType};
 use jsrt::{JsSet, LazyJsMap, NonEmptyList, P};
 use jsrt::cell::RefCell;
 use std::rc::Rc;
@@ -28,7 +28,7 @@ pub struct TypeVarConstraints {
 #[trace(eval)]
 pub struct ConstraintSet {
     pub(crate) _type_var_map: RefCell<LazyJsMap<Rc<str>, TypeVarConstraints>>,
-    pub(crate) _scope_ids: RefCell<Option<Box<JsSet<String>>>>,
+    pub(crate) _scope_ids: RefCell<Option<Box<JsSet<TypeVarScopeId>>>>,
 }
 // Most sets stay empty: the map and the scope ids are allocated on first insert (PLAN.md step 6).
 const _: () = assert!(size_of::<ConstraintSet>() <= 32);
@@ -61,7 +61,7 @@ impl ConstraintSet {
         let scope_ids = self._scope_ids.borrow().clone();
         if let Some(scope_ids) = scope_ids {
             for scope_id in scope_ids.iter() {
-                constraint_set.add_scope_id(scope_id);
+                constraint_set.add_scope_id(*scope_id);
             }
         }
 
@@ -196,25 +196,25 @@ impl ConstraintSet {
     }
 
     // analyzer/constraintTracker.ts:154
-    pub fn add_scope_id(&self, scope_id: &str) {
+    pub fn add_scope_id(&self, scope_id: TypeVarScopeId) {
         let mut scope_ids = self._scope_ids.borrow_mut();
         if scope_ids.is_none() {
             *scope_ids = Some(Box::default());
         }
 
-        scope_ids.as_mut().unwrap().insert(scope_id.to_string());
+        scope_ids.as_mut().unwrap().insert(scope_id);
     }
 
     // analyzer/constraintTracker.ts:162
-    pub fn has_scope_id(&self, scope_id: &str) -> bool {
+    pub fn has_scope_id(&self, scope_id: TypeVarScopeId) -> bool {
         match &*self._scope_ids.borrow() {
             None => false,
-            Some(scope_ids) => scope_ids.contains(scope_id),
+            Some(scope_ids) => scope_ids.contains(&scope_id),
         }
     }
 
     // analyzer/constraintTracker.ts:170
-    pub fn get_scope_ids(&self) -> JsSet<String> {
+    pub fn get_scope_ids(&self) -> JsSet<TypeVarScopeId> {
         // `new Set(undefined)` is an empty set.
         self._scope_ids.borrow().as_deref().cloned().unwrap_or_default()
     }
@@ -260,7 +260,7 @@ impl ConstraintTracker {
     }
 
     // analyzer/constraintTracker.ts:200
-    pub fn clone_with_signature(&self, scope_id: &str) -> P<ConstraintTracker> {
+    pub fn clone_with_signature(&self, scope_id: TypeVarScopeId) -> P<ConstraintTracker> {
         let cloned = self.clone_();
 
         if !scope_id.is_empty() {

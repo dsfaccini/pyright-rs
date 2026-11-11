@@ -18,7 +18,7 @@ use crate::analyzer::type_utils::{
     transform_expected_type, transform_possible_recursive_type_alias,
 };
 use crate::analyzer::types::UnionType;
-use crate::analyzer::types::{ClassType, ParamSpecType, Type, TypeVarType};
+use crate::analyzer::types::{ClassType, ParamSpecType, Type, TypeVarScopeId, TypeVarType};
 use crate::analyzer::types::{
     CombineTypesOptions, FunctionType, TupleTypeArg, TypeBase, TypeSameOptions, TypeVarKind,
     Variance, combine_types, is_any, is_any_or_unknown, is_class, is_class_instance, is_function,
@@ -358,7 +358,7 @@ pub fn add_constraints_for_expected_type(
     type_: ClassType,
     expected_type: P<Type>,
     constraints: P<ConstraintTracker>,
-    live_type_var_scopes: Option<&[String]>,
+    live_type_var_scopes: Option<&[TypeVarScopeId]>,
     usage_offset: Option<i32>,
 ) -> bool {
     if is_any(expected_type) {
@@ -459,7 +459,7 @@ pub fn add_constraints_for_expected_type(
                 .get()
                 .declared_variance
                 .set(Variance::Invariant);
-            type_var.d().priv_.borrow_mut().scope_id = expected_type_scope_id.as_deref().map(Into::into);
+            type_var.d().priv_.borrow_mut().scope_id = expected_type_scope_id;
             type_var
         })
         .collect();

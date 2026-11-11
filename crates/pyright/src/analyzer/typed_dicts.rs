@@ -610,13 +610,12 @@ pub fn synthesize_typed_dict_class_methods(
         let create_default_type_var = |func: FunctionType| -> TypeVarType {
             let mut default_type_var =
                 TypeVarType::create_instance("__TDefault", TypeVarKind::TypeVar);
-            let func_scope_id = func
+            let func_scope_id = (*func
                 .d()
                 .shared
                 .get()
                 .type_var_scope_id
-                .borrow()
-                .clone()
+                .borrow())
                 .unwrap();
             default_type_var = TypeVarType::clone_for_scope_id(
                 default_type_var,

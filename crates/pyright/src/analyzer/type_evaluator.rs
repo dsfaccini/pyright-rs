@@ -38,7 +38,7 @@ use crate::analyzer::type_utils::{
 };
 use crate::analyzer::types::{
     ClassType, FunctionParam, FunctionType, FunctionTypeFlags, LiteralValue, OverloadedType,
-    ParamSpecType, TupleTypeArg, Type, TypeAliasInfo, TypeCondition, TypeVarTupleType, TypeVarType,
+    ParamSpecType, TupleTypeArg, Type, TypeAliasInfo, TypeCondition, TypeVarScopeId, TypeVarTupleType, TypeVarType,
     TypedDictEntries, UnionType, Variance,
 };
 use crate::common::config_options::DiagnosticLevel;
@@ -507,12 +507,12 @@ impl TypeEvaluator {
     }
 
     // analyzer/typeEvaluator.ts:703
-    pub(crate) fn get_scope_id_for_node(&self, node: P<ParseNode>) -> String {
+    pub(crate) fn get_scope_id_for_node(&self, node: P<ParseNode>) -> TypeVarScopeId {
         analyzer::parse_tree_utils::get_scope_id_for_node(node, self.node_info.reader())
     }
 
     // analyzer/typeEvaluator.ts:707
-    pub(crate) fn get_type_var_scopes_for_node(&self, node: P<ParseNode>) -> Vec<String> {
+    pub(crate) fn get_type_var_scopes_for_node(&self, node: P<ParseNode>) -> Vec<TypeVarScopeId> {
         analyzer::parse_tree_utils::get_type_var_scopes_for_node(node, self.node_info.reader())
     }
 
@@ -8002,7 +8002,7 @@ impl TypeEvaluator {
                     };
                     if let (Some(scope_id), Some(scope_name), Some(scope_type)) = (scope_id, scope_name, scope_type) {
                         // Use the scoped version of the TypeVar rather than the (unscoped) original type.
-                        type_ = TypeVarType::clone_for_scope_id(type_, scope_id.to_string(), Some(scope_name.to_string()), Some(scope_type));
+                        type_ = TypeVarType::clone_for_scope_id(type_, scope_id, Some(scope_name.to_string()), Some(scope_type));
                         type_.d().shared.get().declared_variance.set(match_.d().shared.get().declared_variance.get());
                         return ScopedTypeVarResult {
                             type_,
@@ -17755,7 +17755,7 @@ impl TypeEvaluator {
 
                 if analyzer::type_utils::get_type_var_scope_ids(overload.0)
                     .iter()
-                    .any(|id| Some(id.as_str()) == param_spec_scope_id.as_deref())
+                    .any(|id| Some(*id) == param_spec_scope_id)
                 {
                     param_spec_arg_list = Some(Vec::new());
                     param_spec_target = Some(TypeVarType::clone_for_param_spec_access(
@@ -17773,7 +17773,7 @@ impl TypeEvaluator {
             let param_spec_scope_id = param_spec.d().priv_.borrow().scope_id.clone();
             if analyzer::type_utils::get_type_var_scope_ids(overload.0)
                 .iter()
-                .any(|id| Some(id.as_str()) == param_spec_scope_id.as_deref())
+                .any(|id| Some(*id) == param_spec_scope_id)
             {
                 has_param_spec_args_kwargs = true;
                 param_spec_arg_list = Some(Vec::new());
@@ -20003,7 +20003,7 @@ impl TypeEvaluator {
         &self,
         call_node: ExpressionNode,
         return_type: P<Type>,
-        live_type_var_scopes: &[String],
+        live_type_var_scopes: &[TypeVarScopeId],
     ) -> P<Type> {
         let Some(return_function_type) = FunctionType::cast(return_type) else {
             return return_type;
@@ -20017,7 +20017,7 @@ impl TypeEvaluator {
                     let scope_id = t.d().priv_.borrow().scope_id.clone();
                     !live_type_var_scopes
                         .iter()
-                        .any(|live_scope_id| scope_id.as_deref() == Some(live_scope_id.as_str()))
+                        .any(|live_scope_id| scope_id == Some(*live_scope_id))
                 })
                 .collect();
 
@@ -20398,7 +20398,7 @@ impl TypeEvaluator {
 
             // Is the expected type a "bare" in-scope TypeVar or a union of bare in-scope TypeVars?
             let mut is_expected_type_bare_type_var = true;
-            let type_result_scope_id: Option<String> = type_result.and_then(|r| {
+            let type_result_scope_id: Option<TypeVarScopeId> = type_result.and_then(|r| {
                 FunctionType(r.type_.get())
                     .d()
                     .shared
@@ -20411,7 +20411,7 @@ impl TypeEvaluator {
                 arg_param.param_type,
                 &mut |subtype, _, _| {
                     if !analyzer::types::is_type_var(subtype)
-                        || TypeVarType(subtype).d().priv_.borrow().scope_id.as_deref() != type_result_scope_id.as_deref()
+                        || TypeVarType(subtype).d().priv_.borrow().scope_id != type_result_scope_id
                     {
                         is_expected_type_bare_type_var = false;
                     }
@@ -27057,7 +27057,7 @@ impl TypeEvaluator {
                 best_error_node,
                 *type_param,
                 &type_params[..index],
-                &shared_info.type_var_scope_id,
+                shared_info.type_var_scope_id,
             );
         }
 
@@ -27084,7 +27084,7 @@ impl TypeEvaluator {
                 .copied()
                 .filter(|type_var| {
                     let priv_ = type_var.d().priv_.borrow();
-                    priv_.scope_id.as_deref() != Some(shared_info.type_var_scope_id.as_str())
+                    priv_.scope_id != Some(shared_info.type_var_scope_id)
                         && priv_.scope_type == Some(analyzer::types::TypeVarScopeType::Class)
                 })
                 .collect();
@@ -28546,7 +28546,7 @@ impl TypeEvaluator {
                         type_param_node.d().default_expr.get().unwrap_or_else(|| type_param_node.d().name.get().0);
                 }
             }
-            self.validate_type_param_default(best_error_node, *type_param, &class_type_params[..index], &scope_id);
+            self.validate_type_param_default(best_error_node, *type_param, &class_type_params[..index], scope_id);
         }
 
         if !analyzer::type_utils::compute_mro_linearization(class_type) {
@@ -28965,7 +28965,7 @@ impl TypeEvaluator {
         error_node: ExpressionNode,
         type_param: TypeVarType,
         other_live_type_params: &[TypeVarType],
-        scope_id: &str,
+        scope_id: TypeVarScopeId,
     ) {
         let type_param_shared = type_param.d().shared.get();
         if !type_param_shared.is_default_explicit.get()
@@ -28974,7 +28974,7 @@ impl TypeEvaluator {
         {
             let type_var_with_default = other_live_type_params.iter().copied().find(|param| {
                 param.d().shared.get().is_default_explicit.get()
-                    && param.d().priv_.borrow().scope_id.as_deref() == Some(scope_id)
+                    && param.d().priv_.borrow().scope_id == Some(scope_id)
             });
 
             if let Some(type_var_with_default) = type_var_with_default {
@@ -29829,13 +29829,13 @@ impl TypeEvaluator {
                 analyzer::type_utils::add_type_vars_to_list_if_unique(
                     &mut separate_type_params_seen,
                     &type_var_args,
-                    type_var_scope_id.as_deref(),
+                    type_var_scope_id,
                 );
             } else {
                 analyzer::type_utils::add_type_vars_to_list_if_unique(
                     &mut shared.type_params.borrow_mut(),
                     &type_var_args,
-                    type_var_scope_id.as_deref(),
+                    type_var_scope_id,
                 );
             }
         };
@@ -30189,7 +30189,7 @@ impl TypeEvaluator {
                 }
             }
 
-            self.validate_type_param_default(best_error_node, type_param, &function_type_params[..index], &scope_id);
+            self.validate_type_param_default(best_error_node, type_param, &function_type_params[..index], scope_id);
         }
 
         // Clear the "partially evaluated" flag to indicate that the functionType
@@ -37989,7 +37989,7 @@ impl TypeEvaluator {
                 for overload in overloads {
                     let overload_scope_id = analyzer::type_utils::get_type_var_scope_id(overload.0).unwrap_or_default();
                     let constraints_clone =
-                        constraints.map(|constraints| constraints.clone_with_signature(&overload_scope_id));
+                        constraints.map(|constraints| constraints.clone_with_signature(overload_scope_id));
 
                     if self.assign_type(dest_type, overload.0, /* diag */ None, constraints_clone, flags, recursion_count) {
                         filtered_overloads.push(overload);

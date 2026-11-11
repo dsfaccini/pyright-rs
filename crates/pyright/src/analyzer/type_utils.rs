@@ -13,7 +13,7 @@ use crate::analyzer::constraint_solution::{ConstraintSolution, ConstraintSolutio
 use crate::analyzer::symbol::{Symbol, SymbolTable};
 use crate::analyzer::types::{
     ClassType, ClassTypeFlags, FunctionType, ModuleType, SignatureWithOffsets, TupleTypeArg, Type,
-    TypeCondition, TypeSameOptions, TypeVarType, Variance,
+    TypeCondition, TypeSameOptions, TypeVarScopeId, TypeVarType, Variance,
 };
 use jsrt::{JsMap, JsSet, P, SmallJsSet, flag_ops};
 use jsrt::cell::{Cell, RefCell};
@@ -1146,7 +1146,7 @@ pub fn transform_possible_recursive_type_alias(
 }
 
 // analyzer/typeUtils.ts:1069
-pub fn get_type_var_scope_id(type_: P<Type>) -> Option<String> {
+pub fn get_type_var_scope_id(type_: P<Type>) -> Option<TypeVarScopeId> {
     if crate::analyzer::types::is_class(type_) {
         return ClassType(type_).d().shared.get().type_var_scope_id.borrow().clone();
     }
@@ -1156,17 +1156,17 @@ pub fn get_type_var_scope_id(type_: P<Type>) -> Option<String> {
     }
 
     if crate::analyzer::types::is_type_var(type_) {
-        return TypeVarType(type_).d().priv_.borrow().scope_id.as_deref().map(str::to_string);
+        return TypeVarType(type_).d().priv_.borrow().scope_id;
     }
 
     None
 }
 
 // analyzer/typeUtils.ts:1087
-pub fn get_type_var_scope_ids(type_: P<Type>) -> Vec<String> {
+pub fn get_type_var_scope_ids(type_: P<Type>) -> Vec<TypeVarScopeId> {
     // This is similar to getTypeVarScopeId except that it includes
     // the secondary scope IDs for functions.
-    let mut scope_ids: Vec<String> = Vec::new();
+    let mut scope_ids: Vec<TypeVarScopeId> = Vec::new();
 
     let scope_id = get_type_var_scope_id(type_);
     if let Some(scope_id) = scope_id {
@@ -1829,7 +1829,7 @@ pub fn ensure_signatures_are_unique(
 
 // analyzer/typeUtils.ts:1582
 pub fn make_function_type_vars_bound(type_: P<Type>) -> P<Type> {
-    let mut scope_ids: Vec<String> = Vec::new();
+    let mut scope_ids: Vec<TypeVarScopeId> = Vec::new();
     do_for_each_signature(type_, &mut |signature, _| {
         let local_scope_id = get_type_var_scope_id(signature.0);
         if let Some(local_scope_id) = local_scope_id {
@@ -1843,7 +1843,7 @@ pub fn make_function_type_vars_bound(type_: P<Type>) -> P<Type> {
 }
 
 // analyzer/typeUtils.ts:1595
-pub fn make_type_vars_bound(type_: P<Type>, scope_ids: Option<&[String]>) -> P<Type> {
+pub fn make_type_vars_bound(type_: P<Type>, scope_ids: Option<&[TypeVarScopeId]>) -> P<Type> {
     if scope_ids.is_some_and(|scope_ids| scope_ids.is_empty()) {
         return type_;
     }
@@ -1853,7 +1853,7 @@ pub fn make_type_vars_bound(type_: P<Type>, scope_ids: Option<&[String]>) -> P<T
 }
 
 // analyzer/typeUtils.ts:1605
-pub fn make_type_vars_free(type_: P<Type>, scope_ids: &[String]) -> P<Type> {
+pub fn make_type_vars_free(type_: P<Type>, scope_ids: &[TypeVarScopeId]) -> P<Type> {
     if scope_ids.is_empty() {
         return type_;
     }
@@ -1900,7 +1900,7 @@ pub fn validate_type_var_default(
 // analyzer/typeUtils.ts:1646
 pub fn transform_expected_type(
     expected_type: P<Type>,
-    live_type_var_scopes: &[String],
+    live_type_var_scopes: &[TypeVarScopeId],
     usage_offset: Option<i32>,
 ) -> P<Type> {
     let mut transformer = UnificationTypeTransformer::new(live_type_var_scopes.to_vec(), usage_offset);
@@ -2438,11 +2438,11 @@ pub fn get_class_fields_recursive(class_type: ClassType) -> JsMap<String, ClassM
 pub fn add_type_vars_to_list_if_unique(
     list1: &mut Vec<TypeVarType>,
     list2: &[TypeVarType],
-    type_var_scope_id: Option<&str>,
+    type_var_scope_id: Option<TypeVarScopeId>,
 ) {
     for type2 in list2 {
         if let Some(type_var_scope_id) = type_var_scope_id {
-            if !type_var_scope_id.is_empty() && type2.d().priv_.borrow().scope_id.as_deref() != Some(type_var_scope_id) {
+            if !type_var_scope_id.is_empty() && type2.d().priv_.borrow().scope_id != Some(type_var_scope_id) {
                 continue;
             }
         }
@@ -2715,7 +2715,7 @@ pub fn synthesize_type_var_for_self_cls(class_type: ClassType, is_cls_param: boo
     let shared = self_type.d().shared.get();
     shared.is_synthesized.set(true);
     shared.is_synthesized_self.set(true);
-    self_type.d().priv_.borrow_mut().scope_id = Some(scope_id.as_str().into());
+    self_type.d().priv_.borrow_mut().scope_id = Some(scope_id);
     self_type.d().priv_.borrow_mut().scope_name = Some("".into());
     let name_with_scope = TypeVarType::make_name_with_scope(
         &shared.name.borrow(),
@@ -4596,9 +4596,9 @@ pub(crate) fn transform_type_pair_recursive(
 // analyzer/typeUtils.ts:3687
 pub trait TypeVarTransformer {
     // analyzer/typeUtils.ts:3688
-    fn _pending_type_var_transformations(&self) -> &SmallJsSet<Rc<str>>;
+    fn _pending_type_var_transformations(&self) -> &SmallJsSet<TypeVarScopeId>;
 
-    fn _pending_type_var_transformations_mut(&mut self) -> &mut SmallJsSet<Rc<str>>;
+    fn _pending_type_var_transformations_mut(&mut self) -> &mut SmallJsSet<TypeVarScopeId>;
 
     // analyzer/typeUtils.ts:3689
     fn _pending_function_transformations(&self) -> &Vec<P<Type>>;
@@ -4606,7 +4606,7 @@ pub trait TypeVarTransformer {
     fn _pending_function_transformations_mut(&mut self) -> &mut Vec<P<Type>>;
 
     // analyzer/typeUtils.ts:3691
-    fn pending_type_var_transformations(&self) -> SmallJsSet<Rc<str>> {
+    fn pending_type_var_transformations(&self) -> SmallJsSet<TypeVarScopeId> {
         self._pending_type_var_transformations().clone()
     }
 
@@ -4681,7 +4681,7 @@ pub trait TypeVarTransformer {
             // type variables in the same scope recursively by setting it the scope in the
             // _pendingTypeVarTransformations set.
             let scope_id = type_var.d().priv_.borrow().scope_id.clone();
-            if !self._is_type_var_scope_pending(scope_id.as_deref()) {
+            if !self._is_type_var_scope_pending(scope_id) {
                 let mut param_spec_access: Option<crate::analyzer::types::ParamSpecAccess> = None;
 
                 // If this is a ParamSpec with a ".args" or ".kwargs" access, strip
@@ -4723,9 +4723,9 @@ pub trait TypeVarTransformer {
 
                 let scope_id = type_var.d().priv_.borrow().scope_id.clone();
                 if let Some(scope_id) = scope_id.filter(|id| !id.is_empty()) {
-                    self._pending_type_var_transformations_mut().insert(scope_id.clone());
+                    self._pending_type_var_transformations_mut().insert(scope_id);
                     replacement_type = self.apply(replacement_type, recursion_count);
-                    self._pending_type_var_transformations_mut().shift_remove(&*scope_id);
+                    self._pending_type_var_transformations_mut().shift_remove(&scope_id);
                 }
             }
 
@@ -5315,26 +5315,26 @@ pub trait TypeVarTransformer {
     }
 
     // analyzer/typeUtils.ts:4256
-    fn _is_type_var_scope_pending(&mut self, type_var_scope_id: Option<&str>) -> bool {
+    fn _is_type_var_scope_pending(&mut self, type_var_scope_id: Option<TypeVarScopeId>) -> bool {
         type_var_scope_id.is_some_and(|scope_id| !scope_id.is_empty())
-            && self._pending_type_var_transformations().contains(type_var_scope_id.unwrap())
+            && self._pending_type_var_transformations().contains(&type_var_scope_id.unwrap())
     }
 }
 
 // analyzer/typeUtils.ts:4263
 pub struct TypeVarDefaultValidator {
-    pub(crate) _pending_type_var_transformations: SmallJsSet<Rc<str>>,
+    pub(crate) _pending_type_var_transformations: SmallJsSet<TypeVarScopeId>,
     pub(crate) _pending_function_transformations: Vec<P<Type>>,
     pub(crate) _live_type_params: Vec<TypeVarType>,
     pub(crate) _invalid_type_vars: JsSet<String>,
 }
 
 impl TypeVarTransformer for TypeVarDefaultValidator {
-    fn _pending_type_var_transformations(&self) -> &SmallJsSet<Rc<str>> {
+    fn _pending_type_var_transformations(&self) -> &SmallJsSet<TypeVarScopeId> {
         &self._pending_type_var_transformations
     }
 
-    fn _pending_type_var_transformations_mut(&mut self) -> &mut SmallJsSet<Rc<str>> {
+    fn _pending_type_var_transformations_mut(&mut self) -> &mut SmallJsSet<TypeVarScopeId> {
         &mut self._pending_type_var_transformations
     }
 
@@ -5383,18 +5383,18 @@ impl TypeVarDefaultValidator {
 
 // analyzer/typeUtils.ts:4278
 pub struct UniqueFunctionSignatureTransformer {
-    pub(crate) _pending_type_var_transformations: SmallJsSet<Rc<str>>,
+    pub(crate) _pending_type_var_transformations: SmallJsSet<TypeVarScopeId>,
     pub(crate) _pending_function_transformations: Vec<P<Type>>,
     pub(crate) _signature_tracker: P<UniqueSignatureTracker>,
     pub(crate) _expression_offset: i32,
 }
 
 impl TypeVarTransformer for UniqueFunctionSignatureTransformer {
-    fn _pending_type_var_transformations(&self) -> &SmallJsSet<Rc<str>> {
+    fn _pending_type_var_transformations(&self) -> &SmallJsSet<TypeVarScopeId> {
         &self._pending_type_var_transformations
     }
 
-    fn _pending_type_var_transformations_mut(&mut self) -> &mut SmallJsSet<Rc<str>> {
+    fn _pending_type_var_transformations_mut(&mut self) -> &mut SmallJsSet<TypeVarScopeId> {
         &mut self._pending_type_var_transformations
     }
 
@@ -5436,11 +5436,11 @@ impl TypeVarTransformer for UniqueFunctionSignatureTransformer {
             // `doForEachConstraintSet` and `transformTypeVar`, which this class does not override.
             struct Super<'a>(&'a mut UniqueFunctionSignatureTransformer);
             impl TypeVarTransformer for Super<'_> {
-                fn _pending_type_var_transformations(&self) -> &SmallJsSet<Rc<str>> {
+                fn _pending_type_var_transformations(&self) -> &SmallJsSet<TypeVarScopeId> {
                     self.0._pending_type_var_transformations()
                 }
 
-                fn _pending_type_var_transformations_mut(&mut self) -> &mut SmallJsSet<Rc<str>> {
+                fn _pending_type_var_transformations_mut(&mut self) -> &mut SmallJsSet<TypeVarScopeId> {
                     self.0._pending_type_var_transformations_mut()
                 }
 
@@ -5513,17 +5513,17 @@ impl UniqueFunctionSignatureTransformer {
 
 // analyzer/typeUtils.ts:4342
 pub struct BoundTypeVarTransform {
-    pub(crate) _pending_type_var_transformations: SmallJsSet<Rc<str>>,
+    pub(crate) _pending_type_var_transformations: SmallJsSet<TypeVarScopeId>,
     pub(crate) _pending_function_transformations: Vec<P<Type>>,
-    pub(crate) _scope_ids: Option<Vec<String>>,
+    pub(crate) _scope_ids: Option<Vec<TypeVarScopeId>>,
 }
 
 impl TypeVarTransformer for BoundTypeVarTransform {
-    fn _pending_type_var_transformations(&self) -> &SmallJsSet<Rc<str>> {
+    fn _pending_type_var_transformations(&self) -> &SmallJsSet<TypeVarScopeId> {
         &self._pending_type_var_transformations
     }
 
-    fn _pending_type_var_transformations_mut(&mut self) -> &mut SmallJsSet<Rc<str>> {
+    fn _pending_type_var_transformations_mut(&mut self) -> &mut SmallJsSet<TypeVarScopeId> {
         &mut self._pending_type_var_transformations
     }
 
@@ -5551,7 +5551,7 @@ impl TypeVarTransformer for BoundTypeVarTransform {
 
 impl BoundTypeVarTransform {
     // analyzer/typeUtils.ts:4343
-    pub fn new(_scope_ids: Option<Vec<String>>) -> Self {
+    pub fn new(_scope_ids: Option<Vec<TypeVarScopeId>>) -> Self {
         BoundTypeVarTransform {
             _pending_type_var_transformations: SmallJsSet::default(),
             _pending_function_transformations: Vec::new(),
@@ -5582,17 +5582,17 @@ impl BoundTypeVarTransform {
 
 // analyzer/typeUtils.ts:4375
 pub struct FreeTypeVarTransform {
-    pub(crate) _pending_type_var_transformations: SmallJsSet<Rc<str>>,
+    pub(crate) _pending_type_var_transformations: SmallJsSet<TypeVarScopeId>,
     pub(crate) _pending_function_transformations: Vec<P<Type>>,
-    pub(crate) _scope_ids: Vec<String>,
+    pub(crate) _scope_ids: Vec<TypeVarScopeId>,
 }
 
 impl TypeVarTransformer for FreeTypeVarTransform {
-    fn _pending_type_var_transformations(&self) -> &SmallJsSet<Rc<str>> {
+    fn _pending_type_var_transformations(&self) -> &SmallJsSet<TypeVarScopeId> {
         &self._pending_type_var_transformations
     }
 
-    fn _pending_type_var_transformations_mut(&mut self) -> &mut SmallJsSet<Rc<str>> {
+    fn _pending_type_var_transformations_mut(&mut self) -> &mut SmallJsSet<TypeVarScopeId> {
         &mut self._pending_type_var_transformations
     }
 
@@ -5623,7 +5623,7 @@ impl TypeVarTransformer for FreeTypeVarTransform {
 
 impl FreeTypeVarTransform {
     // analyzer/typeUtils.ts:4376
-    pub fn new(_scope_ids: Vec<String>) -> Self {
+    pub fn new(_scope_ids: Vec<TypeVarScopeId>) -> Self {
         FreeTypeVarTransform {
             _pending_type_var_transformations: SmallJsSet::default(),
             _pending_function_transformations: Vec::new(),
@@ -5644,7 +5644,7 @@ impl FreeTypeVarTransform {
 
 // analyzer/typeUtils.ts:4399
 pub struct ApplySolvedTypeVarsTransformer {
-    pub(crate) _pending_type_var_transformations: SmallJsSet<Rc<str>>,
+    pub(crate) _pending_type_var_transformations: SmallJsSet<TypeVarScopeId>,
     pub(crate) _pending_function_transformations: Vec<P<Type>>,
     pub(crate) _is_solving_default_type: bool,
     pub(crate) _active_constraint_set_index: Option<i32>,
@@ -5653,11 +5653,11 @@ pub struct ApplySolvedTypeVarsTransformer {
 }
 
 impl TypeVarTransformer for ApplySolvedTypeVarsTransformer {
-    fn _pending_type_var_transformations(&self) -> &SmallJsSet<Rc<str>> {
+    fn _pending_type_var_transformations(&self) -> &SmallJsSet<TypeVarScopeId> {
         &self._pending_type_var_transformations
     }
 
-    fn _pending_type_var_transformations_mut(&mut self) -> &mut SmallJsSet<Rc<str>> {
+    fn _pending_type_var_transformations_mut(&mut self) -> &mut SmallJsSet<TypeVarScopeId> {
         &mut self._pending_type_var_transformations
     }
 
@@ -6110,18 +6110,18 @@ impl ApplySolvedTypeVarsTransformer {
 
 // analyzer/typeUtils.ts:4728
 pub struct UnificationTypeTransformer {
-    pub(crate) _pending_type_var_transformations: SmallJsSet<Rc<str>>,
+    pub(crate) _pending_type_var_transformations: SmallJsSet<TypeVarScopeId>,
     pub(crate) _pending_function_transformations: Vec<P<Type>>,
-    pub(crate) _live_type_var_scopes: Vec<String>,
+    pub(crate) _live_type_var_scopes: Vec<TypeVarScopeId>,
     pub(crate) _usage_offset: Option<i32>,
 }
 
 impl TypeVarTransformer for UnificationTypeTransformer {
-    fn _pending_type_var_transformations(&self) -> &SmallJsSet<Rc<str>> {
+    fn _pending_type_var_transformations(&self) -> &SmallJsSet<TypeVarScopeId> {
         &self._pending_type_var_transformations
     }
 
-    fn _pending_type_var_transformations_mut(&mut self) -> &mut SmallJsSet<Rc<str>> {
+    fn _pending_type_var_transformations_mut(&mut self) -> &mut SmallJsSet<TypeVarScopeId> {
         &mut self._pending_type_var_transformations
     }
 
@@ -6149,7 +6149,7 @@ impl TypeVarTransformer for UnificationTypeTransformer {
 
 impl UnificationTypeTransformer {
     // analyzer/typeUtils.ts:4729
-    pub fn new(_live_type_var_scopes: Vec<String>, _usage_offset: Option<i32>) -> Self {
+    pub fn new(_live_type_var_scopes: Vec<TypeVarScopeId>, _usage_offset: Option<i32>) -> Self {
         UnificationTypeTransformer {
             _pending_type_var_transformations: SmallJsSet::default(),
             _pending_function_transformations: Vec::new(),
@@ -6168,7 +6168,7 @@ impl UnificationTypeTransformer {
             .free_type_var
             .and_then(|free_type_var| free_type_var.d().priv_.borrow().scope_id.clone());
         self._live_type_var_scopes.iter().any(|live_scope_id| {
-            scope_id.as_deref() == Some(live_scope_id.as_str()) || free_type_var_scope_id.as_deref() == Some(live_scope_id.as_str())
+            scope_id == Some(*live_scope_id) || free_type_var_scope_id == Some(*live_scope_id)
         })
     }
 }
@@ -6177,7 +6177,7 @@ impl UnificationTypeTransformer {
 #[derive(Clone)]
 pub struct ApplyTypeVarOptionsReplaceUnsolved {
     /// Shared: `applySolvedTypeVars` hands its options to the transformer it builds.
-    pub scope_ids: Rc<[String]>,
+    pub scope_ids: Rc<[TypeVarScopeId]>,
     pub tuple_class_type: Option<ClassType>,
     pub unsolved_exempt_type_vars: Option<Vec<TypeVarType>>,
     pub use_unknown: Option<bool>,

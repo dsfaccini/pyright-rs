@@ -18,7 +18,7 @@ use crate::common::uri::uri::Uri;
 use crate::parser::parse_nodes::{
     ArgumentNode, ClassNode, ExpressionNode, NameNode, ParamCategory, TypeAnnotationNode,
 };
-use jsrt::{JsBigInt, JsMap, JsSet, NumberValue, P, flag_ops};
+use jsrt::{Atom, JsBigInt, JsMap, JsSet, NumberValue, P, flag_ops};
 use jsrt::cell::{Cell, RefCell, RefMut};
 use std::ops::Deref;
 use std::rc::Rc;
@@ -64,7 +64,7 @@ pub type UnionableType = P<Type>;
 // analyzer/types.ts:77: `Type`, the union of every member, is `P<Type>`: struct Type and enum TypeDetails.
 
 // analyzer/types.ts:81
-pub type TypeVarScopeId = String;
+pub type TypeVarScopeId = Atom;
 
 // analyzer/types.ts:82
 pub const UNIFICATION_SCOPE_ID: &str = "-";
@@ -168,7 +168,7 @@ pub struct TypeAliasSharedInfo {
     pub full_name: String,
     pub module_name: String,
     pub file_uri: Uri,
-    pub type_var_scope_id: String,
+    pub type_var_scope_id: TypeVarScopeId,
     pub is_type_alias_type: bool,
     pub type_params: RefCell<Option<Vec<TypeVarType>>>,
     pub computed_variance: Cell<Option<P<RefCell<Vec<Variance>>>>>,
@@ -926,7 +926,7 @@ pub struct ClassDetailsShared {
     pub effective_metaclass: Cell<Option<P<Type>>>,
     pub fields: Cell<SymbolTable>,
     pub type_params: RefCell<Rc<Vec<TypeVarType>>>,
-    pub type_var_scope_id: RefCell<Option<String>>,
+    pub type_var_scope_id: RefCell<Option<TypeVarScopeId>>,
     pub doc_string: Option<String>,
     pub data_class_entries: RefCell<Option<Vec<P<DataClassEntry>>>>,
     pub data_class_behaviors: Cell<Option<P<DataClassBehaviors>>>,
@@ -2420,7 +2420,7 @@ pub struct FunctionDetailsShared {
     pub parameters: Cell<P<RefCell<Vec<FunctionParam>>>>,
     pub declared_return_type: Cell<Option<P<Type>>>,
     pub declaration: Cell<Option<P<Declaration>>>,
-    pub type_var_scope_id: RefCell<Option<String>>,
+    pub type_var_scope_id: RefCell<Option<TypeVarScopeId>>,
     pub method_class: Cell<Option<ClassType>>,
     // Fields few objects set ([cold] in tools/stubgen/typemap.toml): read with `cold()`, write with `cold_mut()`.
     pub cold: RefCell<Option<Box<FunctionDetailsSharedCold>>>,
@@ -2510,7 +2510,7 @@ pub struct SignatureWithOffsets {
 #[derive(Clone, Default)]
 #[derive(jsrt::Trace)]
 pub struct FunctionDetailsPriv {
-    pub constructor_type_var_scope_id: Option<String>,
+    pub constructor_type_var_scope_id: Option<TypeVarScopeId>,
     pub specialized_types: Option<P<SpecializedFunctionTypes>>,
     pub call_site_return_type_cache: Option<Box<Vec<CallSiteInferenceTypeCacheEntry>>>,
     pub stripped_first_param_type: Option<P<Type>>,
@@ -2982,8 +2982,8 @@ impl FunctionType {
     // analyzer/types.ts:2057
     pub fn clone_with_new_type_var_scope_id(
         type_: FunctionType,
-        new_scope_id: Option<String>,
-        new_constructor_scope_id: Option<String>,
+        new_scope_id: Option<TypeVarScopeId>,
+        new_constructor_scope_id: Option<TypeVarScopeId>,
         type_params: Vec<TypeVarType>,
     ) -> FunctionType {
         let new_function = FunctionType(TypeBase::clone_type(type_.0));
@@ -4357,7 +4357,7 @@ pub enum Variance {
 #[derive(Clone)]
 pub struct RecursiveAliasInfo {
     pub name: String,
-    pub scope_id: String,
+    pub scope_id: TypeVarScopeId,
     pub is_pep695_syntax: bool,
     pub type_params: Option<Vec<TypeVarType>>,
 }
@@ -4422,7 +4422,7 @@ pub enum TypeVarScopeType {
 #[derive(Clone, Default)]
 #[derive(jsrt::Trace)]
 pub struct TypeVarDetailsPriv {
-    pub scope_id: Option<Rc<str>>,
+    pub scope_id: Option<TypeVarScopeId>,
     pub scope_name: Option<Rc<str>>,
     pub scope_type: Option<TypeVarScopeType>,
     pub name_with_scope: Option<Rc<str>>,
@@ -4634,7 +4634,7 @@ impl TypeVarType {
     // analyzer/types.ts:3011
     pub fn clone_for_scope_id(
         type_: TypeVarType,
-        scope_id: String,
+        scope_id: TypeVarScopeId,
         scope_name: Option<String>,
         scope_type: Option<TypeVarScopeType>,
     ) -> TypeVarType {
@@ -4762,7 +4762,7 @@ impl TypeVarType {
         let new_instance = TypeVarType(TypeBase::clone_type(type_.0));
         let mut priv_ = new_instance.d().priv_.borrow_mut();
         priv_.is_unification_var = Some(true);
-        priv_.scope_id = Some(UNIFICATION_SCOPE_ID.into());
+        priv_.scope_id = Some(jsrt::atom!("-")); // UNIFICATION_SCOPE_ID
         priv_.name_with_scope = new_name_with_scope;
         drop(priv_);
         new_instance
@@ -4788,11 +4788,11 @@ impl TypeVarType {
     }
 
     // analyzer/types.ts:3134
-    pub fn make_bound_scope_id(scope_id: Option<&str>) -> Option<String> {
+    pub fn make_bound_scope_id(scope_id: Option<TypeVarScopeId>) -> Option<TypeVarScopeId> {
         let scope_id = scope_id.filter(|scope_id| !scope_id.is_empty())?;
 
         // Append an asterisk to denote a bound scope.
-        Some(format!("{scope_id}*"))
+        Some(TypeVarScopeId::new(&[&scope_id, "*"].concat()))
     }
 
     // analyzer/types.ts:3143
@@ -4815,7 +4815,7 @@ impl TypeVarType {
 
         let clone = TypeVarType::clone_for_scope_id(
             type_,
-            TypeVarType::make_bound_scope_id(Some(&scope_id)).unwrap_or_default(),
+            TypeVarType::make_bound_scope_id(Some(scope_id)).unwrap_or_default(),
             scope_name.as_deref().map(str::to_string),
             scope_type,
         );
