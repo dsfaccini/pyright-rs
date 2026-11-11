@@ -6,7 +6,7 @@ use crate::analyzer::type_complexity::get_complexity_score_for_type;
 use crate::analyzer::types::TypeSameOptions;
 use crate::analyzer::types::is_type_same;
 use crate::analyzer::types::{Type, TypeVarType};
-use jsrt::{JsSet, LazyJsMap, P};
+use jsrt::{JsSet, LazyJsMap, NonEmptyList, P};
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -237,7 +237,7 @@ impl ConstraintSet {
 #[derive(jsrt::Trace)]
 #[trace(eval)]
 pub struct ConstraintTracker {
-    pub(crate) _constraint_sets: RefCell<Box<[P<ConstraintSet>]>>,
+    pub(crate) _constraint_sets: RefCell<NonEmptyList<P<ConstraintSet>>>,
 }
 const _: () = assert!(size_of::<ConstraintTracker>() <= 24);
 
@@ -245,7 +245,7 @@ impl ConstraintTracker {
     // analyzer/constraintTracker.ts:188
     pub fn new() -> P<ConstraintTracker> {
         P::new_eval(ConstraintTracker {
-            _constraint_sets: RefCell::new(Box::new([ConstraintSet::new()])),
+            _constraint_sets: RefCell::new(NonEmptyList::one(ConstraintSet::new())),
         })
     }
 
@@ -253,13 +253,8 @@ impl ConstraintTracker {
     pub fn clone_(&self) -> P<ConstraintTracker> {
         let new_type_var_map = ConstraintTracker::new();
 
-        let sets: Vec<P<ConstraintSet>> = self
-            ._constraint_sets
-            .borrow()
-            .iter()
-            .map(|set| ConstraintSet::clone_(set))
-            .collect();
-        *new_type_var_map._constraint_sets.borrow_mut() = sets.into();
+        let sets = self._constraint_sets.borrow().map(|set| ConstraintSet::clone_(&set));
+        *new_type_var_map._constraint_sets.borrow_mut() = sets;
 
         new_type_var_map
     }
@@ -273,15 +268,14 @@ impl ConstraintTracker {
                 ._constraint_sets
                 .borrow()
                 .iter()
-                .copied()
                 .filter(|context| context.has_scope_id(scope_id))
                 .collect();
 
-            if !filtered_sets.is_empty() {
-                *cloned._constraint_sets.borrow_mut() = filtered_sets.into();
+            if let Some(filtered_sets) = NonEmptyList::from_slice(&filtered_sets) {
+                *cloned._constraint_sets.borrow_mut() = filtered_sets;
             } else {
                 let sets = cloned._constraint_sets.borrow().clone();
-                for context in sets {
+                for context in sets.iter() {
                     context.add_scope_id(scope_id);
                 }
             }
@@ -292,19 +286,14 @@ impl ConstraintTracker {
 
     // analyzer/constraintTracker.ts:219
     pub fn copy_from_clone(&self, clone: P<ConstraintTracker>) {
-        let sets: Vec<P<ConstraintSet>> = clone
-            ._constraint_sets
-            .borrow()
-            .iter()
-            .map(|context| ConstraintSet::clone_(context))
-            .collect();
-        *self._constraint_sets.borrow_mut() = sets.into();
+        let sets = clone._constraint_sets.borrow().map(|context| ConstraintSet::clone_(&context));
+        *self._constraint_sets.borrow_mut() = sets;
     }
 
     // analyzer/constraintTracker.ts:223
     pub fn copy_bounds(&self, entry: &TypeVarConstraints) {
         let sets = self._constraint_sets.borrow().clone();
-        for set in sets {
+        for set in sets.iter() {
             set.set_bounds(
                 entry.type_var,
                 entry.lower_bound,
@@ -321,7 +310,7 @@ impl ConstraintTracker {
         // Limit the number of constraint sets. There are rare circumstances
         // where this can grow to unbounded numbers and exhaust memory.
         if (contexts.len() as u32) < MAX_CONSTRAINT_SET_COUNT {
-            *self._constraint_sets.borrow_mut() = contexts.into();
+            *self._constraint_sets.borrow_mut() = NonEmptyList::from_slice(contexts).unwrap();
         }
     }
 
@@ -335,7 +324,7 @@ impl ConstraintTracker {
 
         sets.iter()
             .enumerate()
-            .all(|(index, set)| set.is_same(other_sets[index]))
+            .all(|(index, set)| set.is_same(other_sets.get(index).unwrap()))
     }
 
     // analyzer/constraintTracker.ts:248
@@ -353,7 +342,7 @@ impl ConstraintTracker {
         retain_literals: Option<bool>,
     ) {
         let sets = self._constraint_sets.borrow().clone();
-        for set in sets {
+        for set in sets.iter() {
             set.set_bounds(type_var, lower_bound, upper_bound, retain_literals);
         }
     }
@@ -363,7 +352,7 @@ impl ConstraintTracker {
         let mut total = 0.0;
 
         let sets = self._constraint_sets.borrow().clone();
-        for set in &sets {
+        for set in sets.iter() {
             total += set.get_score();
         }
 
@@ -373,7 +362,7 @@ impl ConstraintTracker {
 
     // analyzer/constraintTracker.ts:269
     pub fn get_main_constraint_set(&self) -> P<ConstraintSet> {
-        self._constraint_sets.borrow()[0]
+        self._constraint_sets.borrow().first()
     }
 
     // analyzer/constraintTracker.ts:273
@@ -383,16 +372,15 @@ impl ConstraintTracker {
 
     // analyzer/constraintTracker.ts:277
     pub fn do_for_each_constraint_set(&self, callback: &mut dyn FnMut(P<ConstraintSet>, i32)) {
-        let sets = self.get_constraint_sets();
-        for (index, set) in sets.into_iter().enumerate() {
+        let sets = self._constraint_sets.borrow().clone();
+        for (index, set) in sets.iter().enumerate() {
             callback(set, index as i32);
         }
     }
 
     // analyzer/constraintTracker.ts:283
     pub fn get_constraint_set(&self, index: i32) -> P<ConstraintSet> {
-        let sets = self._constraint_sets.borrow();
-        assert!(index >= 0 && (index as usize) < sets.len());
-        sets[index as usize]
+        let index = usize::try_from(index).expect("constraint set index is not negative");
+        self._constraint_sets.borrow().get(index).expect("constraint set index is in range")
     }
 }
