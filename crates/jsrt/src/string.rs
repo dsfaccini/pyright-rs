@@ -79,7 +79,60 @@ impl From<&str> for JsString {
         if s.is_ascii() {
             return JsString(s.bytes().map(u16::from).collect());
         }
-        s.encode_utf16().collect()
+        // Text with a few other chars widens its ASCII runs byte by byte too.
+        let mut units = Vec::with_capacity(s.len());
+        for segment in Utf8Segments::new(s) {
+            match segment {
+                Utf8Segment::Ascii(run) => units.extend(run.iter().map(|&b| u16::from(b))),
+                Utf8Segment::Other(c) => units.extend_from_slice(c.encode_utf16(&mut [0; 2])),
+            }
+        }
+        JsString::from(units)
+    }
+}
+
+/// A piece of a `str`: a run of ASCII bytes, or one other char.
+pub enum Utf8Segment<'a> {
+    Ascii(&'a [u8]),
+    Other(char),
+}
+
+/// The ASCII runs and other chars of a `str`, in order. Scanning 16 bytes at a
+/// time, it lets text that is nearly all ASCII take the ASCII path.
+pub struct Utf8Segments<'a> {
+    s: &'a str,
+    i: usize,
+}
+
+impl<'a> Utf8Segments<'a> {
+    pub fn new(s: &'a str) -> Self {
+        Utf8Segments { s, i: 0 }
+    }
+}
+
+impl<'a> Iterator for Utf8Segments<'a> {
+    type Item = Utf8Segment<'a>;
+
+    fn next(&mut self) -> Option<Utf8Segment<'a>> {
+        let bytes = self.s.as_bytes();
+        let start = self.i;
+        let first = *bytes.get(start)?;
+        if first >= 0x80 {
+            let c = self.s[start..].chars().next()?;
+            self.i += c.len_utf8();
+            return Some(Utf8Segment::Other(c));
+        }
+        let mut i = start;
+        while let Some(chunk) = bytes.get(i..i + 16).and_then(|c| <[u8; 16]>::try_from(c).ok())
+            && u128::from_ne_bytes(chunk) & 0x8080_8080_8080_8080_8080_8080_8080_8080 == 0
+        {
+            i += 16;
+        }
+        while bytes.get(i).is_some_and(|&b| b < 0x80) {
+            i += 1;
+        }
+        self.i = i;
+        Some(Utf8Segment::Ascii(&bytes[start..i]))
     }
 }
 
@@ -933,6 +986,38 @@ impl JsStr for str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn from_str_and_length_match_encode_utf16() {
+        let long = "0123456789abcdef".repeat(5);
+        for text in [
+            "",
+            "ascii only",
+            "\u{e9}",
+            "a\u{e9}b",
+            "\u{1F600}",
+            &format!("{long}\u{2026}{long}x\u{1F600}\u{7F}\u{80}"),
+            &format!("\u{10FFFF}{long}"),
+        ] {
+            let units: Vec<u16> = text.encode_utf16().collect();
+            assert_eq!(&*JsString::from(text), &units[..], "{text:?}");
+            assert_eq!(text.js_len() as usize, units.len(), "{text:?}");
+            let mut joined = Vec::new();
+            for segment in Utf8Segments::new(text) {
+                match segment {
+                    Utf8Segment::Ascii(run) => {
+                        assert!(!run.is_empty() && run.is_ascii());
+                        joined.extend_from_slice(run);
+                    }
+                    Utf8Segment::Other(c) => {
+                        assert!(!c.is_ascii());
+                        joined.extend_from_slice(c.encode_utf8(&mut [0; 4]).as_bytes());
+                    }
+                }
+            }
+            assert_eq!(joined, text.as_bytes());
+        }
+    }
 
     #[test]
     fn utf16_macro() {
