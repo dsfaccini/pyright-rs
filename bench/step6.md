@@ -136,3 +136,9 @@ pyright's pydantic-ai peak varied between measurements: 8.65 GiB in the referenc
 | `dist` | 175.09 G | 6.04 G |
 
 From the first round's baseline (308f470: 388.7 G, 52.3 s, 11.8 GiB on pydantic-ai), `dist` runs 55% fewer instructions and peaks 52% lower. From the second round's start (cc3de3f, `dist`: 217.1 G, 28.5 s, 7.29 GiB), 19% fewer instructions and a 22% lower peak.
+
+## collection trigger
+
+The `trigger` agent (765231c, `notes/trigger.md`): minor collections trace only the cache entries written since the last collection, the card scan tests eight cards at a time, and the sweep skips bitmap words with nothing dead. pydantic-ai, `release`, 3 runs: 213.36 G → 212.99 G instructions at the default, peak 5.68 GiB either way; with `PYRIGHT_RS_GC_MIN_MIB=64`, 225.53 G → 218.28 G at 5.07 GiB.
+
+`PYRIGHT_RS_GC_TAPER=1` shrinks the trigger's floor as the check nears its end: pydantic-ai peaks at 5.19 GiB for 0.24% more instructions than f02fe2a, but 2 to 3% more wall time in paired runs. It stays off by default: speed comes first, and the default already peaks 43% below pyright. A trigger that also counts the buffers garbage holds left the peak unchanged, since the peak comes from the last interval's size.
