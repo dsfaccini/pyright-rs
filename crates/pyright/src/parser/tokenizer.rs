@@ -6,6 +6,7 @@
 use std::sync::OnceLock;
 
 use jsrt::number::{math_round, parse_bigint, parse_float, parse_int};
+use jsrt::string::string_from_utf16_lossy;
 use jsrt::{Atom, JsMap, JsStr, JsString, NumberValue, P};
 
 use super::character_stream::CharacterStream;
@@ -409,11 +410,11 @@ fn remove_underscores_from_range(text: &[u16], start: i32, end: i32) -> String {
     }
 
     if first_underscore_index < 0 {
-        return String::from_utf16_lossy(&text[start as usize..end as usize]);
+        return string_from_utf16_lossy(&text[start as usize..end as usize]);
     }
 
     let mut result =
-        String::from_utf16_lossy(&text[start as usize..first_underscore_index as usize]);
+        string_from_utf16_lossy(&text[start as usize..first_underscore_index as usize]);
     let mut i = first_underscore_index + 1;
     while i < end {
         if text[i as usize] != Char::Underscore {
@@ -2181,7 +2182,7 @@ impl<'a> Tokenizer<'a> {
         let source_text = self._cs.get_text();
         let end = start + length;
         let comment_value = &source_text[start as usize..end as usize];
-        let comment = Comment::create(start, length, String::from_utf16_lossy(comment_value), None);
+        let comment = Comment::create(start, length, string_from_utf16_lossy(comment_value), None);
 
         // Fast pre-filter: any ignore directive must contain the substring 'ignore'.
         // Search only the current comment so comment-heavy files remain linear in size.
@@ -2270,7 +2271,7 @@ impl<'a> Tokenizer<'a> {
                         start: current_offset,
                         length: end_trimmed.len() as i32,
                     },
-                    text: String::from_utf16_lossy(end_trimmed),
+                    text: string_from_utf16_lossy(end_trimmed),
                 });
             }
 
@@ -2740,7 +2741,7 @@ fn js_slice_lossy(text: &[u16], start: i32, end: i32) -> String {
     if start >= end {
         return String::new();
     }
-    String::from_utf16_lossy(&text[start..end])
+    string_from_utf16_lossy(&text[start..end])
 }
 
 #[cfg(test)]

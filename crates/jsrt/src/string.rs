@@ -30,7 +30,7 @@ impl JsString {
     /// Decodes to a `String`. A lone surrogate becomes U+FFFD, which keeps the
     /// UTF-16 length.
     pub fn to_string_lossy(&self) -> String {
-        String::from_utf16_lossy(&self.0)
+        string_from_utf16_lossy(&self.0)
     }
 
     /// JS `isWellFormed`: true when the string holds no lone surrogate.
@@ -89,6 +89,18 @@ impl From<&str> for JsString {
         }
         JsString::from(units)
     }
+}
+
+/// `String::from_utf16_lossy`, which decodes one char at a time; ASCII text
+/// narrows in bulk.
+pub fn string_from_utf16_lossy(units: &[u16]) -> String {
+    if units.iter().fold(0, |all, &unit| all | unit) < 0x80 {
+        let bytes = units.iter().map(|&unit| unit.to_le_bytes()[0]).collect();
+        if let Ok(text) = String::from_utf8(bytes) {
+            return text;
+        }
+    }
+    String::from_utf16_lossy(units)
 }
 
 /// A piece of a `str`: a run of ASCII bytes, or one other char.
@@ -1001,6 +1013,7 @@ mod tests {
         ] {
             let units: Vec<u16> = text.encode_utf16().collect();
             assert_eq!(&*JsString::from(text), &units[..], "{text:?}");
+            assert_eq!(string_from_utf16_lossy(&units), text);
             assert_eq!(text.js_len() as usize, units.len(), "{text:?}");
             let mut joined = Vec::new();
             for segment in Utf8Segments::new(text) {
