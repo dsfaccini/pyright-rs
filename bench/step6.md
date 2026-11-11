@@ -105,5 +105,8 @@ From the round's baseline (308f470: 388.7 G, 52.3 s, 11.8 GiB on pydantic-ai), `
 |---|---|---|---|
 | cc3de3f | start of the round | 266.9 G instructions, 7.29 GiB | 9.85 G, 0.54 GiB |
 | 50778f0 | collector sweep and mark work (`gc`); names, symbol tables and code-flow keys as interned atoms, a scope-id cache and a message-key index (`intern`) | 243.7 G instructions (−8.7%), 31.2 s, 7.09 GiB | 9.28 G (−5.8%), 0.94 s, 0.51 GiB |
+| d16e837 | collector allocation prefetch (`gc`); smaller `TypeResult`, shared doc strings, empty props unallocated, name atoms, `IdMap` type caches (`evalmem`); deferred MRO specialization, abstract-symbols memo, lazy addendum formatting, `print_type` memo (`memo`); Miri-clean unsafe code (`sound`) | 216.7 G instructions (−18.8%), 26.5 s, 5.79 GiB | 9.01 G (−8.5%), 0.92 s, 0.48 GiB |
 
 At 50778f0 the pydantic-ai gate passes: output and all 40,176 dumps identical, also with `PYRIGHT_RS_SCOPE_ID_CACHE=check` and `PYRIGHT_RS_LOCALIZE_INDEX=check`.
+
+At d16e837 the pydantic-ai gate passes: output and all 40,176 dumps identical, also with `PYRIGHT_RS_DEFER_MRO_SPECIALIZATION`, `PYRIGHT_RS_ABSTRACT_SYMBOLS_MEMO`, `PYRIGHT_RS_LAZY_ADDENDUM_FORMAT` and `PYRIGHT_RS_PRINT_TYPE_MEMO` at `check`.
