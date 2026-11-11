@@ -637,18 +637,14 @@ impl JsStr for [u16] {
 
 // `str`: UTF-16 indices mapped onto UTF-8 byte offsets.
 
-fn is_char_start(b: u8) -> bool {
-    b & 0xC0 != 0x80
-}
-
 /// UTF-16 length of a `str`.
 fn units_in(s: &str) -> usize {
     if s.is_ascii() {
         return s.len();
     }
-    s.bytes()
-        .map(|b| usize::from(is_char_start(b)) + usize::from(b >= 0xF0))
-        .sum()
+    // One unit per char, and a second for each char past U+FFFF: those start
+    // with a byte of 0xF0 or more.
+    s.chars().count() + s.bytes().filter(|&b| b >= 0xF0).count()
 }
 
 /// Byte offset of the char holding UTF-16 unit `index`, and whether `index` is
