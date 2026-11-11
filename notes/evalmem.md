@@ -9,10 +9,12 @@ Shrink the live evaluator data that sets pydantic-ai's peak RSS: types, function
 - The cold half of a handle struct (`TypeResult`, `FunctionDetailsShared`) is `jsrt::OptionRefCell<<Struct>Cold>`, one pointer: `cold()` returns `jsrt::cell::OptionRefOr`, which derefs to the cold struct. `TypeResult` is 32 bytes.
 - `FunctionDetailsShared.name`, `full_name` and `module_name` are atoms. `FunctionType::create` and its callers still take `&str`. Take `.to_string()` where a `String` is needed.
 - `FunctionParam.name` is `Option<Atom>`: `FunctionParam` is 40 bytes. `.as_deref()` still gives `Option<&str>`.
+- The type caches (`TypeEvaluator.type_cache`, `return_type_inference_type_cache`, `SpeculativeCache::Type`) are `TypeCacheMap`, a `jsrt::IdMap<StoredTypeCacheEntry>`: `get`, `insert` and `remove` take the node id by value. `StoredTypeCacheEntry::new(entry)` packs a `TypeCacheEntry` into 16 bytes, `.get()` unpacks it. `incomplete_gen_count` must stay below 2^31 (asserted).
 - `MemberAccessDeprecationInfo` and `MagicMethodDeprecationInfo` are held as `Rc` (`[modes]` "rc"): `TypeResultCold` is 112 bytes, down from 240.
 
 ## Shared-file edits
 
+- `crates/jsrt/src/collections.rs`: `IdMap`, a map keyed by a dense `u32` id in pages of 32 slots.
 - `crates/jsrt/src/cell.rs`: `OptionRefCell::borrow_or`, `borrow_mut_or_default`, `OptionRefOr`.
 - `tools/stubgen`: `emit.ts` emits a handle's cold half as `jsrt::OptionRefCell`; `typemap.toml` records the doc strings and the deprecation infos; `out/` regenerated. `docs/evaluator-design.md`, "cold fields".
 - Function names: `checker.rs`, `constructor_transform.rs`, `data_classes.rs`, `function_transform.rs`, `type_evaluator.rs`, `type_utils.rs`.
@@ -40,6 +42,7 @@ Field counts on the same run (a temporary diagnostic, not committed):
 
 - 7.54M live types: 4.91M classes, 1.30M functions, 0.91M unions, 0.32M type variables. 4.02M have `props` allocated, 2.78M of them empty (88 bytes each). 2.36M have `cached` allocated.
 - 892K `FunctionDetailsShared` from 61K declarations: 215K hold a doc string, 429 MiB of them, deep copies made by each `{ ...type.shared }` clone.
+- The type cache map at `main` d91164c: 3.71M entries, 7.34M buckets (264 MiB), node ids up to 13.3M. Keys fill 60% of the 16-id pages they touch, 59% at 32, 56% at 64, 51% at 256, 45% at 1024. 17 return-type inference caches over the run, 505 entries in all.
 - 539K `TypeResult` cold halves (240 bytes each): 438K for `overloadsUsedForCall` alone, 98K for `expectedTypeDiagAddendum`.
 
 ## Attempts
@@ -52,3 +55,6 @@ Field counts on the same run (a temporary diagnostic, not committed):
 | `TypeResult` 40 → 32 bytes, `TypeResultCold` 240 → 112 bytes | 241.17 G (−0.46%) | 6.16 GiB | 9.26 G | 0.48 GiB |
 | function names are atoms (`FunctionDetailsShared` 168 → 120 bytes) | 241.38 G (+0.09%) | 6.08 GiB | 9.26 G | 0.48 GiB |
 | parameter names are atoms (`FunctionParam` 48 → 40 bytes) | 241.30 G (−0.03%) | 6.04 GiB | 9.28 G (+0.2%) | 0.48 GiB |
+| type caches as `jsrt::IdMap` pages of 16-byte entries, 256 slots a page | 240.40 G | 5.76 GiB | 9.24 G | 0.51 GiB |
+| the same, 64 slots a page | 240.37 G | 5.77 GiB | 9.24 G | 0.49 GiB |
+| the same, 32 slots a page (kept) | 240.38 G (−0.38%) | 5.76 GiB | 9.24 G (−0.4%) | 0.48 GiB |

@@ -203,9 +203,107 @@ impl<T: Copy> NonEmptyList<T> {
     }
 }
 
+/// Slots per [`IdMap`] page.
+const ID_MAP_PAGE: usize = 32;
+
+/// A map keyed by a dense `u32` id, such as a parse node id: lookup-only, like
+/// [`FxHashMap`], for maps that are read and written by id and never iterated. Ids are
+/// grouped in pages of `ID_MAP_PAGE` slots, each allocated on the first insert into its
+/// range; the page table spans only the pages between the lowest and the highest id
+/// inserted. A lookup is two loads, and a page half full holds an entry in twice its size,
+/// where a hash map holds it in its size plus key, padding and spare buckets.
+#[derive(jsrt::Trace)]
+pub struct IdMap<V> {
+    /// The page number of `pages[0]`.
+    first_page: usize,
+    pages: Vec<Option<Box<[Option<V>; ID_MAP_PAGE]>>>,
+    len: usize,
+}
+
+impl<V> Default for IdMap<V> {
+    fn default() -> Self {
+        IdMap { first_page: 0, pages: Vec::new(), len: 0 }
+    }
+}
+
+impl<V> IdMap<V> {
+    pub fn len(&self) -> usize {
+        self.len
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+
+    #[inline]
+    pub fn get(&self, id: u32) -> Option<&V> {
+        let id = id as usize;
+        let page = (id / ID_MAP_PAGE).wrapping_sub(self.first_page);
+        self.pages.get(page)?.as_ref()?[id % ID_MAP_PAGE].as_ref()
+    }
+
+    pub fn contains_key(&self, id: u32) -> bool {
+        self.get(id).is_some()
+    }
+
+    /// The previous value of `id`, as `HashMap::insert` returns it.
+    pub fn insert(&mut self, id: u32, value: V) -> Option<V> {
+        let id = id as usize;
+        let page = id / ID_MAP_PAGE;
+        if self.pages.is_empty() {
+            self.first_page = page;
+        } else if page < self.first_page {
+            self.pages.splice(0..0, std::iter::repeat_with(|| None).take(self.first_page - page));
+            self.first_page = page;
+        }
+        let index = page - self.first_page;
+        if index >= self.pages.len() {
+            self.pages.resize_with(index + 1, || None);
+        }
+        let slots = self.pages[index].get_or_insert_with(|| Box::new([const { None }; ID_MAP_PAGE]));
+        let old = slots[id % ID_MAP_PAGE].replace(value);
+        if old.is_none() {
+            self.len += 1;
+        }
+        old
+    }
+
+    /// Removes `id`'s value and returns it. Its page stays allocated.
+    pub fn remove(&mut self, id: u32) -> Option<V> {
+        let id = id as usize;
+        let page = (id / ID_MAP_PAGE).wrapping_sub(self.first_page);
+        let old = self.pages.get_mut(page)?.as_mut()?[id % ID_MAP_PAGE].take();
+        if old.is_some() {
+            self.len -= 1;
+        }
+        old
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn id_map_reads_what_a_hash_map_reads() {
+        let mut map: IdMap<u32> = IdMap::default();
+        let mut reference: FxHashMap<u32, u32> = FxHashMap::default();
+        assert!(map.is_empty() && map.get(5).is_none() && map.remove(5).is_none());
+        // Ids above, below and inside the pages already allocated, repeated and removed.
+        let ids = [5000u32, 5001, 12, 70000, 255, 256, 0, 5000, 69999, 1 << 31, 12];
+        for (value, &id) in ids.iter().enumerate() {
+            assert_eq!(map.insert(id, value as u32), reference.insert(id, value as u32));
+            assert_eq!(map.len(), reference.len());
+        }
+        for id in [0u32, 12, 255, 256, 257, 4999, 5000, 5001, 69999, 70000, 70001, 1 << 31, u32::MAX] {
+            assert_eq!(map.get(id), reference.get(&id));
+        }
+        for id in [12u32, 12, 70000, 3, u32::MAX] {
+            assert_eq!(map.remove(id), reference.remove(&id));
+            assert_eq!((map.len(), map.contains_key(id)), (reference.len(), false));
+        }
+        assert_eq!(map.get(5000), Some(&7));
+    }
 
     #[test]
     fn lazy_map_allocates_on_first_insert() {

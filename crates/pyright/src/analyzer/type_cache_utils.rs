@@ -4,7 +4,7 @@
 
 use crate::analyzer::code_flow_engine::CachedType;
 use crate::analyzer::parse_tree_utils::is_node_contained_within;
-use crate::analyzer::type_evaluator::TypeCacheEntry;
+use crate::analyzer::type_evaluator::TypeCacheMap;
 use crate::analyzer::type_evaluator_types::TypeResult;
 use crate::analyzer::types::Type;
 use crate::analyzer::types::TypeSameOptions;
@@ -165,7 +165,7 @@ impl SpeculativeTypeTracker {
         for entry in context.unwrap().entries_to_undo {
             match entry.cache {
                 SpeculativeCache::Type(cache) => {
-                    cache.borrow_mut().remove(&entry.id);
+                    cache.borrow_mut().remove(entry.id);
                 }
                 SpeculativeCache::FlowNodeType(cache) => {
                     cache.borrow_mut().remove(&entry.id);
@@ -316,7 +316,7 @@ impl SpeculativeTypeTracker {
 #[derive(Clone, Copy)]
 #[derive(jsrt::Trace)]
 pub enum SpeculativeCache {
-    Type(P<RefCell<FxHashMap<u32, TypeCacheEntry>>>),
+    Type(P<RefCell<TypeCacheMap>>),
     FlowNodeType(P<RefCell<FxHashMap<u32, Option<CachedType>>>>),
 }
 
