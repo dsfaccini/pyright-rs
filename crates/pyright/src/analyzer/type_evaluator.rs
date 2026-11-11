@@ -38,7 +38,7 @@ use crate::analyzer::type_utils::{
 };
 use crate::analyzer::types::{
     ClassType, FunctionParam, FunctionType, FunctionTypeFlags, LiteralValue, OverloadedType,
-    ParamSpecType, TupleTypeArg, Type, TypeAliasInfo, TypeCondition, TypeVarTupleType, TypeVarType,
+    ParamSpecType, TupleTypeArg, Type, TypeAliasInfo, TypeCondition, TypeVarScopeId, TypeVarTupleType, TypeVarType,
     TypedDictEntries, UnionType, Variance,
 };
 use crate::common::config_options::DiagnosticLevel;
@@ -400,7 +400,7 @@ pub struct TypeEvaluator {
     // analyzer/typeEvaluator.ts:689
     pub(crate) prefetched: RefCell<Option<PartialPrefetchedTypes>>,
     // analyzer/typeEvaluator.ts:5327
-    pub(crate) type_form_special_form_diagnostic_factories: Vec<(&'static [&'static str], fn() -> String)>,
+    pub(crate) type_form_special_form_diagnostic_factories: Vec<(Vec<jsrt::Atom>, fn() -> String)>,
     // analyzer/typeEvaluator.ts:30477
     // `evaluatorInterface`: the object createTypeEvaluator returns, which is this struct.
     pub(crate) evaluator_interface: OnceCell<P<TypeEvaluator>>,
@@ -425,23 +425,23 @@ pub fn create_type_evaluator(
     }));
 
     // analyzer/typeEvaluator.ts:5327
-    let factory = |names: &'static [&'static str], message: fn() -> String| (names, message);
-    let type_form_special_form_diagnostic_factories: Vec<(&'static [&'static str], fn() -> String)> = vec![
-        factory(&["Final"], crate::localization::localize::LocMessage::final_context),
-        factory(&["Optional"], crate::localization::localize::LocMessage::optional_extra_args),
-        factory(&["Protocol"], crate::localization::localize::LocMessage::protocol_not_allowed),
-        factory(&["TypedDict"], crate::localization::localize::LocMessage::typed_dict_not_allowed),
-        factory(&["TypeAlias"], crate::localization::localize::LocMessage::type_annotation_variable),
-        factory(&["Literal"], crate::localization::localize::LocMessage::literal_not_allowed),
-        factory(&["TypeGuard", "TypeIs"], crate::localization::localize::LocMessage::type_guard_arg_count),
-        factory(&["Union"], crate::localization::localize::LocMessage::union_type_arg_count),
-        factory(&["Annotated"], crate::localization::localize::LocMessage::annotated_type_arg_missing),
-        factory(&["ClassVar"], crate::localization::localize::LocMessage::class_var_not_allowed),
-        factory(&["Required"], crate::localization::localize::LocMessage::required_arg_count),
-        factory(&["NotRequired"], crate::localization::localize::LocMessage::not_required_arg_count),
-        factory(&["ReadOnly"], crate::localization::localize::LocMessage::read_only_arg_count),
-        factory(&["Unpack"], crate::localization::localize::LocMessage::unpack_arg_count),
-        factory(&["Concatenate"], crate::localization::localize::LocMessage::concatenate_context),
+    let factory = |names: &[jsrt::Atom], message: fn() -> String| (names.to_vec(), message);
+    let type_form_special_form_diagnostic_factories: Vec<(Vec<jsrt::Atom>, fn() -> String)> = vec![
+        factory(&[jsrt::atom!("Final")], crate::localization::localize::LocMessage::final_context),
+        factory(&[jsrt::atom!("Optional")], crate::localization::localize::LocMessage::optional_extra_args),
+        factory(&[jsrt::atom!("Protocol")], crate::localization::localize::LocMessage::protocol_not_allowed),
+        factory(&[jsrt::atom!("TypedDict")], crate::localization::localize::LocMessage::typed_dict_not_allowed),
+        factory(&[jsrt::atom!("TypeAlias")], crate::localization::localize::LocMessage::type_annotation_variable),
+        factory(&[jsrt::atom!("Literal")], crate::localization::localize::LocMessage::literal_not_allowed),
+        factory(&[jsrt::atom!("TypeGuard"), jsrt::atom!("TypeIs")], crate::localization::localize::LocMessage::type_guard_arg_count),
+        factory(&[jsrt::atom!("Union")], crate::localization::localize::LocMessage::union_type_arg_count),
+        factory(&[jsrt::atom!("Annotated")], crate::localization::localize::LocMessage::annotated_type_arg_missing),
+        factory(&[jsrt::atom!("ClassVar")], crate::localization::localize::LocMessage::class_var_not_allowed),
+        factory(&[jsrt::atom!("Required")], crate::localization::localize::LocMessage::required_arg_count),
+        factory(&[jsrt::atom!("NotRequired")], crate::localization::localize::LocMessage::not_required_arg_count),
+        factory(&[jsrt::atom!("ReadOnly")], crate::localization::localize::LocMessage::read_only_arg_count),
+        factory(&[jsrt::atom!("Unpack")], crate::localization::localize::LocMessage::unpack_arg_count),
+        factory(&[jsrt::atom!("Concatenate")], crate::localization::localize::LocMessage::concatenate_context),
     ];
 
     let evaluator = P::new_eval(TypeEvaluator {
@@ -507,12 +507,12 @@ impl TypeEvaluator {
     }
 
     // analyzer/typeEvaluator.ts:703
-    pub(crate) fn get_scope_id_for_node(&self, node: P<ParseNode>) -> String {
+    pub(crate) fn get_scope_id_for_node(&self, node: P<ParseNode>) -> TypeVarScopeId {
         analyzer::parse_tree_utils::get_scope_id_for_node(node, self.node_info.reader())
     }
 
     // analyzer/typeEvaluator.ts:707
-    pub(crate) fn get_type_var_scopes_for_node(&self, node: P<ParseNode>) -> Vec<String> {
+    pub(crate) fn get_type_var_scopes_for_node(&self, node: P<ParseNode>) -> Vec<TypeVarScopeId> {
         analyzer::parse_tree_utils::get_type_var_scopes_for_node(node, self.node_info.reader())
     }
 
@@ -1360,7 +1360,7 @@ impl TypeEvaluator {
         if analyzer::types::is_instantiable_class(result_type)
             && ClassType(result_type).d().priv_.borrow().include_promotions.unwrap_or(false)
             && !ClassType(result_type).d().priv_.borrow().include_subclasses.unwrap_or(false)
-            && ClassType::is_built_in(ClassType(result_type), Some(&["bytes"]))
+            && ClassType::is_built_in(ClassType(result_type), Some(&[jsrt::atom!("bytes")]))
         {
             if self
                 .node_info
@@ -1773,7 +1773,7 @@ impl TypeEvaluator {
                 .as_ref()
                 .and_then(|props| props.special_form);
             if let Some(special_form) = special_form {
-                if ClassType::is_built_in(special_form, Some(&["TypeAliasType"])) {
+                if ClassType::is_built_in(special_form, Some(&[jsrt::atom!("TypeAliasType")])) {
                     type_result.type_.set(analyzer::types::TypeBase::clone_as_special_form(
                         type_result.type_.get(),
                         None,
@@ -1794,7 +1794,7 @@ impl TypeEvaluator {
             && !ClassType(type_).d().priv_.borrow().include_subclasses.unwrap_or(false)
         {
             is_type_checking_only = ClassType::is_type_check_only(ClassType(type_));
-            name = ClassType(type_).d().shared.get().name.clone();
+            name = ClassType(type_).d().shared.get().name.to_string();
         } else if analyzer::types::is_function(type_) {
             is_type_checking_only = FunctionType::is_type_check_only(FunctionType(type_));
             name = FunctionType(type_).d().shared.get().name.clone();
@@ -1858,7 +1858,7 @@ impl TypeEvaluator {
         if analyzer::types::is_class_instance(result_type)
             && ClassType::is_built_in(
                 ClassType(result_type),
-                Some(&["EllipsisType", "ellipsis"]),
+                Some(&[jsrt::atom!("EllipsisType"), jsrt::atom!("ellipsis")]),
             )
         {
             return;
@@ -2059,7 +2059,7 @@ impl TypeEvaluator {
             ));
         } else if flags.any(EvalFlags::AllowUnpackedTuple)
             && analyzer::types::is_instantiable_class(iter_type)
-            && ClassType::is_built_in(ClassType(iter_type), Some(&["tuple"]))
+            && ClassType::is_built_in(ClassType(iter_type), Some(&[jsrt::atom!("tuple")]))
         {
             type_result =
                 P::new_eval(TypeResult::new(ClassType::clone_for_unpacked(ClassType(iter_type)).0));
@@ -2172,11 +2172,11 @@ impl TypeEvaluator {
             let expr_type = expr_type_result.type_.get();
             if analyzer::types::is_class_instance(expr_type) {
                 let expr_class = ClassType(expr_type);
-                if ClassType::is_built_in(expr_class, Some(&["str"]))
+                if ClassType::is_built_in(expr_class, Some(&[jsrt::atom!("str")]))
                     && expr_class.d().priv_.borrow().literal_value.is_some()
                 {
                     is_expr_literal_string = true;
-                } else if ClassType::is_built_in(expr_class, Some(&["LiteralString"])) {
+                } else if ClassType::is_built_in(expr_class, Some(&[jsrt::atom!("LiteralString")])) {
                     is_expr_literal_string = true;
                 }
 
@@ -2480,12 +2480,12 @@ impl TypeEvaluator {
                         let expr_subclass = ClassType(expr_subtype);
                         if ClassType::is_built_in(
                             expr_subclass,
-                            Some(&["LiteralString"]),
+                            Some(&[jsrt::atom!("LiteralString")]),
                         ) {
                             return;
                         }
 
-                        if ClassType::is_built_in(expr_subclass, Some(&["str"]))
+                        if ClassType::is_built_in(expr_subclass, Some(&[jsrt::atom!("str")]))
                             && expr_subclass.d().priv_.borrow().literal_value.is_some()
                         {
                             return;
@@ -2590,7 +2590,7 @@ impl TypeEvaluator {
 
                     if ClassType::is_built_in(
                         ClassType(subtype),
-                        Some(&["LiteralString"]),
+                        Some(&[jsrt::atom!("LiteralString")]),
                     ) {
                         // Handle "LiteralString" specially.
                         let str_class = self.prefetched.borrow().as_ref().and_then(|p| p.str_class);
@@ -2809,10 +2809,10 @@ impl TypeEvaluator {
                     if ClassType::is_built_in(
                         class_type,
                         Some(&[
-                            "bool",
-                            "int",
-                            "str",
-                            "bytes",
+                            jsrt::atom!("bool"),
+                            jsrt::atom!("int"),
+                            jsrt::atom!("str"),
+                            jsrt::atom!("bytes"),
                         ]),
                     ) {
                         return !is_literal_truthy(&literal_value)
@@ -2866,7 +2866,7 @@ impl TypeEvaluator {
                             if analyzer::types::is_class_instance(return_type)
                                 && ClassType::is_built_in(
                                     ClassType(return_type),
-                                    Some(&["bool"]),
+                                    Some(&[jsrt::atom!("bool")]),
                                 )
                                 && matches!(
                                     ClassType(return_type).d().priv_.borrow().literal_value,
@@ -2887,7 +2887,7 @@ impl TypeEvaluator {
                 // return !ClassType.isFinal(type);
                 // However, pragmatically if the class is not an `object`, it's typically
                 // OK to assume that it will not be overridden in this manner.
-                ClassType::is_built_in(class_type, Some(&["object"]))
+                ClassType::is_built_in(class_type, Some(&[jsrt::atom!("object")]))
             }
         }
     }
@@ -2955,10 +2955,10 @@ impl TypeEvaluator {
                     if ClassType::is_built_in(
                         class_type,
                         Some(&[
-                            "bool",
-                            "int",
-                            "str",
-                            "bytes",
+                            jsrt::atom!("bool"),
+                            jsrt::atom!("int"),
+                            jsrt::atom!("str"),
+                            jsrt::atom!("bytes"),
                         ]),
                     ) {
                         return is_literal_truthy(&literal_value)
@@ -3002,7 +3002,7 @@ impl TypeEvaluator {
                             if analyzer::types::is_class_instance(return_type)
                                 && ClassType::is_built_in(
                                     ClassType(return_type),
-                                    Some(&["bool"]),
+                                    Some(&[jsrt::atom!("bool")]),
                                 )
                                 && matches!(
                                     ClassType(return_type).d().priv_.borrow().literal_value,
@@ -3058,7 +3058,7 @@ impl TypeEvaluator {
 
                     // If the object is a bool, make it "false", since
                     // "true" is a truthy value.
-                    if ClassType::is_built_in(concrete_class, Some(&["bool"])) {
+                    if ClassType::is_built_in(concrete_class, Some(&[jsrt::atom!("bool")])) {
                         return Some(
                             ClassType::clone_with_literal(
                                 concrete_class,
@@ -3072,7 +3072,7 @@ impl TypeEvaluator {
                     // This is slightly unsafe in that someone could subclass `int`, `str`
                     // or `bytes` and override the `__bool__` method to change its behavior,
                     // but this is extremely unlikely (and ill advised).
-                    if ClassType::is_built_in(concrete_class, Some(&["int"])) {
+                    if ClassType::is_built_in(concrete_class, Some(&[jsrt::atom!("int")])) {
                         return Some(
                             ClassType::clone_with_literal(
                                 concrete_class,
@@ -3082,7 +3082,7 @@ impl TypeEvaluator {
                         );
                     } else if ClassType::is_built_in(
                         concrete_class,
-                        Some(&["str", "bytes"]),
+                        Some(&[jsrt::atom!("str"), jsrt::atom!("bytes")]),
                     ) {
                         return Some(
                             ClassType::clone_with_literal(
@@ -3138,7 +3138,7 @@ impl TypeEvaluator {
 
                     // If the object is a bool, make it "true", since
                     // "false" is a falsy value.
-                    if ClassType::is_built_in(concrete_class, Some(&["bool"])) {
+                    if ClassType::is_built_in(concrete_class, Some(&[jsrt::atom!("bool")])) {
                         return Some(
                             ClassType::clone_with_literal(
                                 concrete_class,
@@ -3162,7 +3162,7 @@ impl TypeEvaluator {
                     // }
                     // However, we're going to pragmatically assume that any classes
                     // other than `object` will not be overridden in this manner.
-                    if ClassType::is_built_in(concrete_class, Some(&["object"])) {
+                    if ClassType::is_built_in(concrete_class, Some(&[jsrt::atom!("object")])) {
                         return Some(subtype);
                     }
                 }
@@ -3186,7 +3186,7 @@ impl TypeEvaluator {
                 if analyzer::types::is_class_instance(subtype)
                     && ClassType::is_built_in(
                         ClassType(subtype),
-                        Some(&["TypeGuard", "TypeIs"]),
+                        Some(&[jsrt::atom!("TypeGuard"), jsrt::atom!("TypeIs")]),
                     )
                 {
                     let bool_class = self.prefetched.borrow().as_ref().and_then(|p| p.bool_class);
@@ -3286,7 +3286,7 @@ impl TypeEvaluator {
         if usage.method == "get" && object_type_is_instantiable {
             if let Some(metaclass) = metaclass {
                 if analyzer::types::is_instantiable_class(metaclass)
-                    && !ClassType::is_built_in(ClassType(metaclass), Some(&["type"]))
+                    && !ClassType::is_built_in(ClassType(metaclass), Some(&[jsrt::atom!("type")]))
                     && !ClassType::is_same_generic_class(ClassType(metaclass), object_type, 0)
                 {
                     let desc_member_info = self.get_type_of_class_member_name(
@@ -3409,7 +3409,7 @@ impl TypeEvaluator {
 
         // If this is a type[Any] or type[Unknown], allow any other members.
         if analyzer::types::is_class_instance(object_type.0)
-            && ClassType::is_built_in(object_type, Some(&["type"]))
+            && ClassType::is_built_in(object_type, Some(&[jsrt::atom!("type")]))
             && object_type.d().priv_.borrow().include_subclasses.unwrap_or(false)
         {
             if !flags.any(
@@ -4161,7 +4161,7 @@ impl TypeEvaluator {
 
                                     let key_type = FunctionType::get_param_type(*overload, 0);
                                     let is_slice = analyzer::types::is_class_instance(key_type)
-                                        && ClassType::is_built_in(ClassType(key_type), Some(&["slice"]));
+                                        && ClassType::is_built_in(ClassType(key_type), Some(&[jsrt::atom!("slice")]));
                                     expects_slice == is_slice
                                 })
                                 .map(|overload| overload.0);
@@ -5236,7 +5236,7 @@ impl TypeEvaluator {
                 analyzer::types::is_class_instance(declared_type)
                     && ClassType::is_built_in(
                         ClassType(declared_type),
-                        Some(&["TypeAlias"]),
+                        Some(&[jsrt::atom!("TypeAlias")]),
                     )
             }
             None => false,
@@ -5989,7 +5989,7 @@ impl TypeEvaluator {
                 }
 
                 if exclude_bytes
-                    && ClassType::is_built_in(class_subtype, Some(&["bytes"]))
+                    && ClassType::is_built_in(class_subtype, Some(&[jsrt::atom!("bytes")]))
                 {
                     return Some(subtype);
                 }
@@ -5999,7 +5999,7 @@ impl TypeEvaluator {
 
                 let full_name = class_subtype.d().shared.get().full_name.clone();
                 let promotion_type_names = TYPE_PROMOTIONS
-                    .with(|type_promotions| type_promotions.get(&full_name).cloned());
+                    .with(|type_promotions| type_promotions.get(full_name.as_str()).cloned());
                 if let Some(promotion_type_names) = promotion_type_names {
                     for promotion_type_name in &promotion_type_names {
                         let name_split: Vec<&str> = promotion_type_name.split('.').collect();
@@ -6181,8 +6181,7 @@ impl TypeEvaluator {
                                             .priv_
                                             .borrow()
                                             .name_with_scope
-                                            .as_deref()
-                                            == Some(&*type_var_name)
+                                            == Some(type_var_name)
                                     });
 
                                 // If this type variable is being constrained to a single index,
@@ -6555,13 +6554,13 @@ impl TypeEvaluator {
                 if analyzer::types::is_instantiable_class(call_type)
                     && (ClassType::is_built_in(
                         ClassType(call_type),
-                        Some(&["TypeVar"]),
+                        Some(&[jsrt::atom!("TypeVar")]),
                     ) || ClassType::is_built_in(
                         ClassType(call_type),
-                        Some(&["TypeVarTuple"]),
+                        Some(&[jsrt::atom!("TypeVarTuple")]),
                     ) || ClassType::is_built_in(
                         ClassType(call_type),
-                        Some(&["ParamSpec"]),
+                        Some(&[jsrt::atom!("ParamSpec")]),
                     ))
                 {
                     let type_var_target = match TypeAnnotationNode::cast(target) {
@@ -7251,7 +7250,7 @@ impl TypeEvaluator {
         if flags.any(EvalFlags::InstantiableType | EvalFlags::TypeFormArg) {
             if !flags.any(EvalFlags::AllowGeneric) {
                 if analyzer::types::is_instantiable_class(type_)
-                    && ClassType::is_built_in(ClassType(type_), Some(&["Generic"]))
+                    && ClassType::is_built_in(ClassType(type_), Some(&[jsrt::atom!("Generic")]))
                 {
                     self.add_diagnostic(
                         DiagnosticRule::reportGeneralTypeIssues,
@@ -7321,7 +7320,7 @@ impl TypeEvaluator {
                 return rejected_type;
             }
 
-            if ClassType::is_built_in(ClassType(type_), Some(&["Self"])) {
+            if ClassType::is_built_in(ClassType(type_), Some(&[jsrt::atom!("Self")])) {
                 type_ = self.create_self_type(ClassType(type_), node, None, flags);
                 if analyzer::types::is_type_var(type_) {
                     type_ = analyzer::types::TypeBase::clone_with_type_form(
@@ -7371,7 +7370,7 @@ impl TypeEvaluator {
             && !ClassType(type_).d().priv_.borrow().include_subclasses.unwrap_or(false)
             && !ClassType::is_special_built_in(ClassType(type_), None)
         {
-            if ClassType::is_built_in(ClassType(type_), Some(&["Any"])) {
+            if ClassType::is_built_in(ClassType(type_), Some(&[jsrt::atom!("Any")])) {
                 type_ = analyzer::types::TypeBase::clone_with_type_form(
                     type_,
                     Some(analyzer::types::AnyType::create(false).0),
@@ -7518,7 +7517,7 @@ impl TypeEvaluator {
         // If this is a type alias and we are not supposed to specialize it, return it as is.
         if flags.any(EvalFlags::NoSpecialize) && props.type_alias_info.is_some() {
             // Special-case TypeAliasType which should be converted in this case.
-            if !ClassType::is_built_in(special_form, Some(&["TypeAliasType"])) {
+            if !ClassType::is_built_in(special_form, Some(&[jsrt::atom!("TypeAliasType")])) {
                 return type_;
             }
         }
@@ -8002,7 +8001,7 @@ impl TypeEvaluator {
                     };
                     if let (Some(scope_id), Some(scope_name), Some(scope_type)) = (scope_id, scope_name, scope_type) {
                         // Use the scoped version of the TypeVar rather than the (unscoped) original type.
-                        type_ = TypeVarType::clone_for_scope_id(type_, scope_id.to_string(), Some(scope_name.to_string()), Some(scope_type));
+                        type_ = TypeVarType::clone_for_scope_id(type_, scope_id, Some(scope_name.to_string()), Some(scope_type));
                         type_.d().shared.get().declared_variance.set(match_.d().shared.get().declared_variance.get());
                         return ScopedTypeVarResult {
                             type_,
@@ -8923,7 +8922,7 @@ impl TypeEvaluator {
         let mut type_ = match type_ {
             Some(type_) => type_,
             None => {
-                let function_class_names = ["function", "FunctionType"];
+                let function_class_names = [jsrt::atom!("function"), jsrt::atom!("FunctionType")];
                 let is_function_rule = analyzer::types::is_function_or_overloaded(base_type)
                     || (analyzer::types::is_class_instance(base_type)
                         && ClassType::is_built_in(ClassType(base_type), Some(&function_class_names)));
@@ -10316,7 +10315,7 @@ impl TypeEvaluator {
                     let base_class = ClassType(base_type);
                     let full_name = base_class.d().shared.get().full_name.clone();
                     let min_python_version = NON_SUBSCRIPTABLE_BUILTIN_TYPES
-                        .with(|types| types.get(&full_name).cloned());
+                        .with(|types| types.get(full_name.as_str()).cloned());
                     if let Some(min_python_version) = min_python_version {
                         if PythonVersion::is_less_than(
                             &file_info.execution_environment.python_version,
@@ -10984,7 +10983,7 @@ impl TypeEvaluator {
                 } else if analyzer::types::is_instantiable_class(type_arg_type)
                     && ClassType::is_built_in(
                         ClassType(type_arg_type),
-                        Some(&["Concatenate"]),
+                        Some(&[jsrt::atom!("Concatenate")]),
                     )
                 {
                     let concat_type_args = ClassType(type_arg_type)
@@ -11277,7 +11276,7 @@ impl TypeEvaluator {
         if analyzer::types::is_class_instance(base_type_result.type_.get())
             && ClassType::is_built_in(
                 ClassType(base_type_result.type_.get()),
-                Some(&["TypeAliasType"]),
+                Some(&[jsrt::atom!("TypeAliasType")]),
             )
         {
             if let Some(type_form) = base_type_form {
@@ -11390,7 +11389,7 @@ impl TypeEvaluator {
                 if analyzer::types::is_instantiable_class(effective_metaclass)
                     && !ClassType::is_built_in(
                         ClassType(effective_metaclass),
-                        Some(&["type", "_InitVarMeta"]),
+                        Some(&[jsrt::atom!("type"), jsrt::atom!("_InitVarMeta")]),
                     )
                     && !flags.any(EvalFlags::InstantiableType)
                 {
@@ -11449,7 +11448,7 @@ impl TypeEvaluator {
                 return Some(self.create_literal_type(concrete_class, node, flags));
             }
 
-            if ClassType::is_built_in(concrete_class, Some(&["InitVar"])) {
+            if ClassType::is_built_in(concrete_class, Some(&[jsrt::atom!("InitVar")])) {
                 // Special-case InitVar, used in dataclasses.
                 let type_args = self.get_type_args(node, flags, None);
                 let is_type_form_arg = flags.any(EvalFlags::TypeFormArg);
@@ -11494,17 +11493,17 @@ impl TypeEvaluator {
             }
 
             let is_annotated_class = analyzer::types::is_instantiable_class(concrete_subtype)
-                && ClassType::is_built_in(concrete_class, Some(&["Annotated"]));
+                && ClassType::is_built_in(concrete_class, Some(&[jsrt::atom!("Annotated")]));
             let has_custom_class_get_item = analyzer::types::is_instantiable_class(concrete_subtype)
                 && ClassType::has_custom_class_get_item(concrete_class);
             let is_generic_class = !concrete_class.d().shared.get().type_params.borrow().is_empty()
                 || ClassType::is_special_built_in(concrete_class, None)
-                || ClassType::is_built_in(concrete_class, Some(&["type"]))
+                || ClassType::is_built_in(concrete_class, Some(&[jsrt::atom!("type")]))
                 || ClassType::is_partially_evaluated(concrete_class);
             let is_final_annotation = analyzer::types::is_instantiable_class(concrete_subtype)
-                && ClassType::is_built_in(concrete_class, Some(&["Final"]));
+                && ClassType::is_built_in(concrete_class, Some(&[jsrt::atom!("Final")]));
             let is_class_var_annotation = analyzer::types::is_instantiable_class(concrete_subtype)
-                && ClassType::is_built_in(concrete_class, Some(&["ClassVar"]));
+                && ClassType::is_built_in(concrete_class, Some(&[jsrt::atom!("ClassVar")]));
 
             // This feature is currently experimental.
             let supports_typed_dict_type_arg = self
@@ -11512,7 +11511,7 @@ impl TypeEvaluator {
                 .get_file_info(node.0)
                 .diagnostic_rule_set
                 .enable_experimental_features
-                && ClassType::is_built_in(concrete_class, Some(&["TypedDict"]));
+                && ClassType::is_built_in(concrete_class, Some(&[jsrt::atom!("TypedDict")]));
 
             let mut type_args = self.get_type_args(
                 node,
@@ -11978,7 +11977,7 @@ impl TypeEvaluator {
                 .get();
 
             let literal_number = if analyzer::types::is_class_instance(value_type)
-                && ClassType::is_built_in(ClassType(value_type), Some(&["int"]))
+                && ClassType::is_built_in(ClassType(value_type), Some(&[jsrt::atom!("int")]))
                 && analyzer::type_utils::is_literal_type(ClassType(value_type))
             {
                 match ClassType(value_type).d().priv_.borrow().literal_value {
@@ -12011,7 +12010,7 @@ impl TypeEvaluator {
                     }
                 }
             } else if analyzer::types::is_class_instance(value_type)
-                && ClassType::is_built_in(ClassType(value_type), Some(&["slice"]))
+                && ClassType::is_built_in(ClassType(value_type), Some(&[jsrt::atom!("slice")]))
             {
                 let tuple_type = analyzer::type_utils::get_specialized_tuple_type(base_type.0);
 
@@ -12628,7 +12627,7 @@ impl TypeEvaluator {
                 if analyzer::types::is_class(type_result.type_)
                     && ClassType::is_built_in(
                         ClassType(type_result.type_),
-                        Some(&["ClassVar"]),
+                        Some(&[jsrt::atom!("ClassVar")]),
                     )
                 {
                     self.add_diagnostic(
@@ -12818,7 +12817,7 @@ impl TypeEvaluator {
                 // Handle the "typing.assert_type" call.
                 type_result = self.get_type_of_assert_type(node, inference_context);
             } else if analyzer::types::is_class(base_type)
-                && ClassType::is_built_in(ClassType(base_type), Some(&["TypeForm"]))
+                && ClassType::is_built_in(ClassType(base_type), Some(&[jsrt::atom!("TypeForm")]))
             {
                 // Handle the "typing.TypeForm" call.
                 type_result = self.get_type_of_type_form(node, ClassType(base_type));
@@ -12884,7 +12883,7 @@ impl TypeEvaluator {
             // have invalid type parameters.
             let base_type = base_type_result.type_.get();
             let is_cyclical_type_var_call = analyzer::types::is_instantiable_class(base_type)
-                && ClassType::is_built_in(ClassType(base_type), Some(&["TypeVar"]))
+                && ClassType::is_built_in(ClassType(base_type), Some(&[jsrt::atom!("TypeVar")]))
                 && self.node_info.get_file_info(node.0).is_typing_stub_file;
             let is_type_form_call = analyzer::types::is_instantiable_class(base_type)
                 && self.is_type_form_class(ClassType(base_type));
@@ -13732,7 +13731,7 @@ impl TypeEvaluator {
                 if !analyzer::types::is_class_instance(expected_text_type)
                     || !ClassType::is_built_in(
                         ClassType(expected_text_type),
-                        Some(&["str"]),
+                        Some(&[jsrt::atom!("str")]),
                     )
                     || literal_string.is_none()
                 {
@@ -14052,7 +14051,7 @@ impl TypeEvaluator {
                         if analyzer::types::is_instantiable_class(concrete_target_class_type) {
                             if !ClassType::is_built_in(
                                 ClassType(concrete_target_class_type),
-                                Some(&["type"]),
+                                Some(&[jsrt::atom!("type")]),
                             ) && !analyzer::type_utils::derives_from_class_recursive(
                                 ClassType(second_arg_subtype),
                                 ClassType(concrete_target_class_type),
@@ -15330,7 +15329,7 @@ impl TypeEvaluator {
         }
 
         let Some(specialized_src_type) = specialized_src_type else {
-            return if ClassType::is_built_in(dest_class, Some(&["object"])) {
+            return if ClassType::is_built_in(dest_class, Some(&[jsrt::atom!("object")])) {
                 Some(true)
             } else {
                 None
@@ -17198,7 +17197,7 @@ impl TypeEvaluator {
         if let Some(call_node) = CallNode::cast(error_node) {
             if let Some(rt) = return_type {
                 if analyzer::types::is_class_instance(rt)
-                    && ClassType::is_built_in(ClassType(rt), Some(&["deprecated"]))
+                    && ClassType::is_built_in(ClassType(rt), Some(&[jsrt::atom!("deprecated")]))
                 {
                     return_type = Some(
                         ClassType::clone_for_deprecated_instance(
@@ -17230,7 +17229,7 @@ impl TypeEvaluator {
                         analyzer::types::is_instantiable_class(*base_class)
                             && ClassType::is_built_in(
                                 ClassType(*base_class),
-                                Some(&["type"]),
+                                Some(&[jsrt::atom!("type")]),
                             )
                     })
             {
@@ -17245,7 +17244,7 @@ impl TypeEvaluator {
                     if analyzer::types::is_class_instance(first_arg_type)
                         && ClassType::is_built_in(
                             ClassType(first_arg_type),
-                            Some(&["str"]),
+                            Some(&[jsrt::atom!("str")]),
                         )
                     {
                         let literal_value = ClassType(first_arg_type)
@@ -17428,7 +17427,7 @@ impl TypeEvaluator {
         if analyzer::types::is_type_var(unexpanded_call_type)
             && analyzer::types::TypeBase::is_instantiable(unexpanded_call_type)
             && analyzer::types::is_class(expanded_call_type.0)
-            && ClassType::is_built_in(expanded_call_type, Some(&["type"]))
+            && ClassType::is_built_in(expanded_call_type, Some(&[jsrt::atom!("type")]))
         {
             // Handle the case where a type[T] is being called. We presume this
             // will instantiate an object of type T.
@@ -17755,7 +17754,7 @@ impl TypeEvaluator {
 
                 if analyzer::type_utils::get_type_var_scope_ids(overload.0)
                     .iter()
-                    .any(|id| Some(id.as_str()) == param_spec_scope_id.as_deref())
+                    .any(|id| Some(*id) == param_spec_scope_id)
                 {
                     param_spec_arg_list = Some(Vec::new());
                     param_spec_target = Some(TypeVarType::clone_for_param_spec_access(
@@ -17773,7 +17772,7 @@ impl TypeEvaluator {
             let param_spec_scope_id = param_spec.d().priv_.borrow().scope_id.clone();
             if analyzer::type_utils::get_type_var_scope_ids(overload.0)
                 .iter()
-                .any(|id| Some(id.as_str()) == param_spec_scope_id.as_deref())
+                .any(|id| Some(*id) == param_spec_scope_id)
             {
                 has_param_spec_args_kwargs = true;
                 param_spec_arg_list = Some(Vec::new());
@@ -20003,7 +20002,7 @@ impl TypeEvaluator {
         &self,
         call_node: ExpressionNode,
         return_type: P<Type>,
-        live_type_var_scopes: &[String],
+        live_type_var_scopes: &[TypeVarScopeId],
     ) -> P<Type> {
         let Some(return_function_type) = FunctionType::cast(return_type) else {
             return return_type;
@@ -20017,7 +20016,7 @@ impl TypeEvaluator {
                     let scope_id = t.d().priv_.borrow().scope_id.clone();
                     !live_type_var_scopes
                         .iter()
-                        .any(|live_scope_id| scope_id.as_deref() == Some(live_scope_id.as_str()))
+                        .any(|live_scope_id| scope_id == Some(*live_scope_id))
                 })
                 .collect();
 
@@ -20398,7 +20397,7 @@ impl TypeEvaluator {
 
             // Is the expected type a "bare" in-scope TypeVar or a union of bare in-scope TypeVars?
             let mut is_expected_type_bare_type_var = true;
-            let type_result_scope_id: Option<String> = type_result.and_then(|r| {
+            let type_result_scope_id: Option<TypeVarScopeId> = type_result.and_then(|r| {
                 FunctionType(r.type_.get())
                     .d()
                     .shared
@@ -20411,7 +20410,7 @@ impl TypeEvaluator {
                 arg_param.param_type,
                 &mut |subtype, _, _| {
                     if !analyzer::types::is_type_var(subtype)
-                        || TypeVarType(subtype).d().priv_.borrow().scope_id.as_deref() != type_result_scope_id.as_deref()
+                        || TypeVarType(subtype).d().priv_.borrow().scope_id != type_result_scope_id
                     {
                         is_expected_type_bare_type_var = false;
                     }
@@ -21659,7 +21658,7 @@ impl TypeEvaluator {
             if analyzer::types::is_class_instance(type_result.type_.get())
                 && ClassType::is_built_in(
                     ClassType(type_result.type_.get()),
-                    Some(&["EllipsisType", "ellipsis"]),
+                    Some(&[jsrt::atom!("EllipsisType"), jsrt::atom!("ellipsis")]),
                 )
             {
                 FunctionType::add_default_params(function_type, false);
@@ -22027,7 +22026,7 @@ impl TypeEvaluator {
             .and_then(|p| p.special_form);
         if let Some(special_form) = special_form {
             if analyzer::types::is_class_instance(special_form.0)
-                && ClassType::is_built_in(special_form, Some(&["Annotated"]))
+                && ClassType::is_built_in(special_form, Some(&[jsrt::atom!("Annotated")]))
             {
                 self.add_diagnostic(
                     DiagnosticRule::reportGeneralTypeIssues,
@@ -22226,7 +22225,7 @@ impl TypeEvaluator {
             .type_
             .get();
         if !analyzer::types::is_class_instance(arg0_type)
-            || !ClassType::is_built_in(ClassType(arg0_type), Some(&["str"]))
+            || !ClassType::is_built_in(ClassType(arg0_type), Some(&[jsrt::atom!("str")]))
         {
             return None;
         }
@@ -22458,7 +22457,7 @@ impl TypeEvaluator {
                                             .shared
                                             .get()
                                             .name
-                                            .clone(),
+                                            .to_string(),
                                         method_name: method_name.to_string(),
                                     },
                                 );
@@ -23132,7 +23131,7 @@ impl TypeEvaluator {
                         return None;
                     }
                     let key_class = ClassType(key_type);
-                    if !ClassType::is_built_in(key_class, Some(&["str"]))
+                    if !ClassType::is_built_in(key_class, Some(&[jsrt::atom!("str")]))
                         || !analyzer::type_utils::is_literal_type(key_class)
                     {
                         return None;
@@ -24190,7 +24189,7 @@ impl TypeEvaluator {
                 if analyzer::types::is_class_instance(yield_from_subtype)
                     && ClassType::is_built_in(
                         ClassType(yield_from_subtype),
-                        Some(&["Coroutine", "CoroutineType"]),
+                        Some(&[jsrt::atom!("Coroutine"), jsrt::atom!("CoroutineType")]),
                     )
                 {
                     return Some(analyzer::types::UnknownType::create(false).0);
@@ -25237,7 +25236,7 @@ impl TypeEvaluator {
                 } else if analyzer::types::is_instantiable_class(type_args[0].type_)
                     && ClassType::is_built_in(
                         ClassType(type_args[0].type_),
-                        Some(&["Concatenate"]),
+                        Some(&[jsrt::atom!("Concatenate")]),
                     )
                 {
                     let concat_type_args = ClassType(type_args[0].type_)
@@ -27057,7 +27056,7 @@ impl TypeEvaluator {
                 best_error_node,
                 *type_param,
                 &type_params[..index],
-                &shared_info.type_var_scope_id,
+                shared_info.type_var_scope_id,
             );
         }
 
@@ -27084,7 +27083,7 @@ impl TypeEvaluator {
                 .copied()
                 .filter(|type_var| {
                     let priv_ = type_var.d().priv_.borrow();
-                    priv_.scope_id.as_deref() != Some(shared_info.type_var_scope_id.as_str())
+                    priv_.scope_id != Some(shared_info.type_var_scope_id)
                         && priv_.scope_type == Some(analyzer::types::TypeVarScopeType::Class)
                 })
                 .collect();
@@ -27220,7 +27219,7 @@ impl TypeEvaluator {
                 if analyzer::types::is_instantiable_class(class)
                     && ClassType::is_built_in(
                         ClassType(class),
-                        Some(&["_TypedDict", "TypedDictFallback"]),
+                        Some(&[jsrt::atom!("_TypedDict"), jsrt::atom!("TypedDictFallback")]),
                     )
                 {
                     let flags = ClassType(class).d().shared.get().flags.get();
@@ -27967,7 +27966,7 @@ impl TypeEvaluator {
         *shared.type_var_scope_id.borrow_mut() = Some(self.get_scope_id_for_node(node.0));
 
         // Is this a special type that supports type promotions according to PEP 484?
-        if TYPE_PROMOTIONS.with(|type_promotions| type_promotions.contains_key(&shared.full_name)) {
+        if TYPE_PROMOTIONS.with(|type_promotions| type_promotions.contains_key(shared.full_name.as_str())) {
             class_type.d().priv_.borrow_mut().include_promotions = Some(true);
         }
 
@@ -28107,7 +28106,7 @@ impl TypeEvaluator {
                                 self.register_deferred_class_completion(node, Some(arg_class));
                             }
 
-                            if ClassType::is_built_in(arg_class, Some(&["Protocol"])) {
+                            if ClassType::is_built_in(arg_class, Some(&[jsrt::atom!("Protocol")])) {
                                 if !file_info.is_stub_file
                                     && !ClassType::is_typing_extension_class(arg_class)
                                     && common::python_version::PythonVersion::is_less_than(
@@ -28125,7 +28124,7 @@ impl TypeEvaluator {
                                 add_flags(analyzer::types::ClassTypeFlags::ProtocolClass);
                             }
 
-                            if ClassType::is_built_in(arg_class, Some(&["property"])) {
+                            if ClassType::is_built_in(arg_class, Some(&[jsrt::atom!("property")])) {
                                 add_flags(analyzer::types::ClassTypeFlags::PropertyClass);
                             }
 
@@ -28134,14 +28133,14 @@ impl TypeEvaluator {
                             if common::python_version::PythonVersion::is_greater_or_equal_to(
                                 &python_version,
                                 &common::python_version::PYTHON_VERSION3_6,
-                            ) && ClassType::is_built_in(arg_class, Some(&["NamedTuple"]))
+                            ) && ClassType::is_built_in(arg_class, Some(&[jsrt::atom!("NamedTuple")]))
                             {
                                 is_named_tuple_subclass = true;
                             }
 
                             // If the class directly derives from TypedDict or from a class that is
                             // a TypedDict, it is considered a TypedDict.
-                            if ClassType::is_built_in(arg_class, Some(&["TypedDict"]))
+                            if ClassType::is_built_in(arg_class, Some(&[jsrt::atom!("TypedDict")]))
                                 || ClassType::is_typed_dict_class(arg_class)
                             {
                                 add_flags(analyzer::types::ClassTypeFlags::TypedDictClass);
@@ -28172,7 +28171,7 @@ impl TypeEvaluator {
                             // generate an error.
                             let special_form = arg_type.props.borrow().as_ref().and_then(|p| p.special_form);
                             if special_form
-                                .is_some_and(|f| ClassType::is_built_in(f, Some(&["TypeAliasType"])))
+                                .is_some_and(|f| ClassType::is_built_in(f, Some(&[jsrt::atom!("TypeAliasType")])))
                             {
                                 self.add_diagnostic(
                                     DiagnosticRule::reportGeneralTypeIssues,
@@ -28247,7 +28246,7 @@ impl TypeEvaluator {
                         let arg_class = ClassType(arg_type);
                         let has_type_args =
                             arg_class.d().priv_.borrow().type_args.as_ref().is_some_and(|a| !a.is_empty());
-                        if ClassType::is_built_in(arg_class, Some(&["Generic"])) {
+                        if ClassType::is_built_in(arg_class, Some(&[jsrt::atom!("Generic")])) {
                             // 'Generic' is implicitly added if type parameter syntax is used.
                             if node_type_params.is_some() {
                                 self.add_diagnostic(
@@ -28267,7 +28266,7 @@ impl TypeEvaluator {
                                 }
                                 generic_type_params = Some(self.build_type_params_from_type_args(arg_class));
                             }
-                        } else if ClassType::is_built_in(arg_class, Some(&["Protocol"]))
+                        } else if ClassType::is_built_in(arg_class, Some(&[jsrt::atom!("Protocol")]))
                             && has_type_args
                             && protocol_type_params.is_none()
                         {
@@ -28442,9 +28441,9 @@ impl TypeEvaluator {
 
             for base_class in base_classes.iter().copied() {
                 if analyzer::types::is_instantiable_class(base_class) {
-                    if ClassType::is_built_in(ClassType(base_class), Some(&["NamedTuple"])) {
+                    if ClassType::is_built_in(ClassType(base_class), Some(&[jsrt::atom!("NamedTuple")])) {
                         derives_from_named_tuple = true;
-                    } else if !ClassType::is_built_in(ClassType(base_class), Some(&["Generic"])) {
+                    } else if !ClassType::is_built_in(ClassType(base_class), Some(&[jsrt::atom!("Generic")])) {
                         found_illegal_base_class = true;
                     }
                 }
@@ -28462,7 +28461,7 @@ impl TypeEvaluator {
 
         // Make sure we don't have 'object' derive from itself. Infinite
         // recursion will result.
-        if !ClassType::is_built_in(class_type, Some(&["object"]))
+        if !ClassType::is_built_in(class_type, Some(&[jsrt::atom!("object")]))
             && !base_classes.iter().any(|base_class| analyzer::types::is_class(*base_class))
         {
             // If there are no other (known) base classes, the class implicitly derives from object.
@@ -28546,7 +28545,7 @@ impl TypeEvaluator {
                         type_param_node.d().default_expr.get().unwrap_or_else(|| type_param_node.d().name.get().0);
                 }
             }
-            self.validate_type_param_default(best_error_node, *type_param, &class_type_params[..index], &scope_id);
+            self.validate_type_param_default(best_error_node, *type_param, &class_type_params[..index], scope_id);
         }
 
         if !analyzer::type_utils::compute_mro_linearization(class_type) {
@@ -28659,7 +28658,7 @@ impl TypeEvaluator {
         // Determine if the class has a custom __class_getitem__ method. This applies
         // only to classes that have no type parameters, since those with type parameters
         // are assumed to follow normal subscripting semantics for generic classes.
-        if shared.type_params.borrow().is_empty() && !ClassType::is_built_in(class_type, Some(&["type"])) {
+        if shared.type_params.borrow().is_empty() && !ClassType::is_built_in(class_type, Some(&[jsrt::atom!("type")])) {
             let base_classes = shared.base_classes.borrow().clone();
             if base_classes.iter().any(|base_class| {
                 analyzer::types::is_instantiable_class(*base_class) && ClassType::has_custom_class_get_item(ClassType(*base_class))
@@ -28706,7 +28705,7 @@ impl TypeEvaluator {
                         add_flags(analyzer::types::ClassTypeFlags::EnumClass);
                     }
 
-                    if analyzer::type_utils::derives_from_stdlib_class(ClassType(metaclass_type), "ABCMeta") {
+                    if analyzer::type_utils::derives_from_stdlib_class(ClassType(metaclass_type), jsrt::atom!("ABCMeta")) {
                         add_flags(analyzer::types::ClassTypeFlags::SupportsAbstractMethods);
                     }
                 }
@@ -28733,12 +28732,12 @@ impl TypeEvaluator {
                 || !analyzer::types::is_instantiable_class(effective_metaclass)
                 || !ClassType::is_built_in(
                     ClassType(effective_metaclass),
-                    Some(&["EnumMeta", "EnumType"]),
+                    Some(&[jsrt::atom!("EnumMeta"), jsrt::atom!("EnumType")]),
                 )
                 || mro.iter().any(|mro_class| {
                     analyzer::types::is_class(*mro_class)
                         && (ClassType::is_enum_member_set_may_be_incomplete(ClassType(*mro_class))
-                            || (!ClassType::is_built_in(ClassType(*mro_class), Some(&["Enum"]))
+                            || (!ClassType::is_built_in(ClassType(*mro_class), Some(&[jsrt::atom!("Enum")]))
                                 && ClassType::get_symbol_table(ClassType(*mro_class)).has("_missing_")))
                 }))
         {
@@ -28830,7 +28829,7 @@ impl TypeEvaluator {
                     && !ClassType::is_typed_dict_class(ClassType(base_class))
                     && !ClassType::is_built_in(
                         ClassType(base_class),
-                        Some(&["_TypedDict", "TypedDictFallback", "Generic"]),
+                        Some(&[jsrt::atom!("_TypedDict"), jsrt::atom!("TypedDictFallback"), jsrt::atom!("Generic")]),
                     )
                 {
                     found_invalid_base_class = true;
@@ -28965,7 +28964,7 @@ impl TypeEvaluator {
         error_node: ExpressionNode,
         type_param: TypeVarType,
         other_live_type_params: &[TypeVarType],
-        scope_id: &str,
+        scope_id: TypeVarScopeId,
     ) {
         let type_param_shared = type_param.d().shared.get();
         if !type_param_shared.is_default_explicit.get()
@@ -28974,7 +28973,7 @@ impl TypeEvaluator {
         {
             let type_var_with_default = other_live_type_params.iter().copied().find(|param| {
                 param.d().shared.get().is_default_explicit.get()
-                    && param.d().priv_.borrow().scope_id.as_deref() == Some(scope_id)
+                    && param.d().priv_.borrow().scope_id == Some(scope_id)
             });
 
             if let Some(type_var_with_default) = type_var_with_default {
@@ -29385,7 +29384,7 @@ impl TypeEvaluator {
             // typeshed definition doesn't override __init_subclass__.
             let metaclass_calls_init_subclass = ClassType::is_built_in(
                 ClassType(effective_metaclass),
-                Some(&["ABCMeta", "type"]),
+                Some(&[jsrt::atom!("ABCMeta"), jsrt::atom!("type")]),
             ) && !ClassType::is_typed_dict_class(class_type);
 
             if !metaclass_calls_init_subclass {
@@ -29829,13 +29828,13 @@ impl TypeEvaluator {
                 analyzer::type_utils::add_type_vars_to_list_if_unique(
                     &mut separate_type_params_seen,
                     &type_var_args,
-                    type_var_scope_id.as_deref(),
+                    type_var_scope_id,
                 );
             } else {
                 analyzer::type_utils::add_type_vars_to_list_if_unique(
                     &mut shared.type_params.borrow_mut(),
                     &type_var_args,
-                    type_var_scope_id.as_deref(),
+                    type_var_scope_id,
                 );
             }
         };
@@ -30189,7 +30188,7 @@ impl TypeEvaluator {
                 }
             }
 
-            self.validate_type_param_default(best_error_node, type_param, &function_type_params[..index], &scope_id);
+            self.validate_type_param_default(best_error_node, type_param, &function_type_params[..index], scope_id);
         }
 
         // Clear the "partially evaluated" flag to indicate that the functionType
@@ -30370,7 +30369,7 @@ impl TypeEvaluator {
             } else if analyzer::types::is_class_instance(default_value_type)
                 && ClassType::is_built_in(
                     ClassType(default_value_type),
-                    Some(&["tuple", "list", "set", "dict"]),
+                    Some(&[jsrt::atom!("tuple"), jsrt::atom!("list"), jsrt::atom!("set"), jsrt::atom!("dict")]),
                 )
             {
                 // Do not infer certain types like tuple because it's likely to be
@@ -30750,7 +30749,7 @@ impl TypeEvaluator {
                                 if analyzer::types::is_class_instance(iterator_type)
                                     && ClassType::is_built_in(
                                         ClassType(iterator_type),
-                                        Some(&["Coroutine", "CoroutineType"]),
+                                        Some(&[jsrt::atom!("Coroutine"), jsrt::atom!("CoroutineType")]),
                                     )
                                 {
                                     let type_args = ClassType(iterator_type).d().priv_.borrow().type_args.clone();
@@ -30899,7 +30898,7 @@ impl TypeEvaluator {
             } else {
                 None
             };
-            if !class_type.is_some_and(|c| analyzer::type_utils::derives_from_stdlib_class(c, "NotImplementedError")) {
+            if !class_type.is_some_and(|c| analyzer::type_utils::derives_from_stdlib_class(c, jsrt::atom!("NotImplementedError"))) {
                 return false;
             }
         }
@@ -30968,7 +30967,7 @@ impl TypeEvaluator {
             }
 
             if analyzer::types::is_instantiable_class(exception_type) {
-                if ClassType::is_built_in(ClassType(exception_type), Some(&["BaseException"])) {
+                if ClassType::is_built_in(ClassType(exception_type), Some(&[jsrt::atom!("BaseException")])) {
                     includes_base_exception = true;
                 }
                 return ClassType::clone_as_instance(ClassType(exception_type), true).0;
@@ -32623,7 +32622,7 @@ impl TypeEvaluator {
         {
             // Handle "type" specially, since it needs to act like "Type"
             // in Python 3.9 and newer.
-            if let Some(type_args) = type_args.filter(|_| ClassType::is_built_in(class_type, Some(&["type"]))) {
+            if let Some(type_args) = type_args.filter(|_| ClassType::is_built_in(class_type, Some(&[jsrt::atom!("type")]))) {
                 if !type_args.is_empty() {
                     // Treat type[function] as illegal.
                     if analyzer::types::is_function_or_overloaded(type_args[0].type_) {
@@ -32860,7 +32859,7 @@ impl TypeEvaluator {
                     }
 
                     if analyzer::types::is_instantiable_class(type_arg.type_)
-                        && ClassType::is_built_in(ClassType(type_arg.type_), Some(&["Concatenate"]))
+                        && ClassType::is_built_in(ClassType(type_arg.type_), Some(&[jsrt::atom!("Concatenate")]))
                     {
                         let concat_type_args = ClassType(type_arg.type_).d().priv_.borrow().type_args.clone();
                         if let Some(concat_type_args) = concat_type_args.filter(|args| !args.is_empty()) {
@@ -33031,7 +33030,7 @@ impl TypeEvaluator {
                 if analyzer::types::is_instantiable_class(type_arg.type_)
                     && ClassType::is_built_in(
                         ClassType::cast(type_arg.type_).unwrap(),
-                        Some(&["Concatenate"]),
+                        Some(&[jsrt::atom!("Concatenate")]),
                     )
                 {
                     self.add_diagnostic(
@@ -33072,7 +33071,7 @@ impl TypeEvaluator {
             if analyzer::types::is_instantiable_class(type_arg_type)
                 && ClassType::is_built_in(
                     ClassType::cast(type_arg_type).unwrap(),
-                    Some(&["Concatenate"]),
+                    Some(&[jsrt::atom!("Concatenate")]),
                 )
             {
                 return Some(type_args.to_vec());
@@ -34369,7 +34368,7 @@ impl TypeEvaluator {
                     if analyzer::types::is_class_instance(declared_type)
                         && ClassType::is_built_in(
                             ClassType::cast(declared_type).unwrap(),
-                            Some(&["TypeAlias"]),
+                            Some(&[jsrt::atom!("TypeAlias")]),
                         )
                     {
                         return DeclaredSymbolTypeInfo {
@@ -34884,13 +34883,13 @@ impl TypeEvaluator {
                     let call_type = base_type_result.type_.get();
 
                     let exempt_builtins = [
-                        "TypeVar",
-                        "ParamSpec",
-                        "TypeVarTuple",
-                        "TypedDict",
-                        "NamedTuple",
-                        "NewType",
-                        "TypeAliasType",
+                        jsrt::atom!("TypeVar"),
+                        jsrt::atom!("ParamSpec"),
+                        jsrt::atom!("TypeVarTuple"),
+                        jsrt::atom!("TypedDict"),
+                        jsrt::atom!("NamedTuple"),
+                        jsrt::atom!("NewType"),
+                        jsrt::atom!("TypeAliasType"),
                     ];
 
                     if analyzer::types::is_instantiable_class(call_type)
@@ -34899,7 +34898,7 @@ impl TypeEvaluator {
                         is_unambiguous_type = true;
                     } else if analyzer::types::is_function(call_type)
                         && exempt_builtins.iter().any(|name| {
-                            FunctionType::is_built_in(FunctionType::cast(call_type).unwrap(), Some(&[*name]))
+                            FunctionType::is_built_in(FunctionType::cast(call_type).unwrap(), Some(&[name.as_str()]))
                         })
                     {
                         is_unambiguous_type = true;
@@ -36300,7 +36299,7 @@ impl TypeEvaluator {
 
             // Handle some special cases where a TypedDict can act like
             // a Mapping[str, T] or a dict[str, T].
-            if ClassType::is_built_in(dest_type, Some(&["Mapping"])) {
+            if ClassType::is_built_in(dest_type, Some(&[jsrt::atom!("Mapping")])) {
                 let mapping_value_type = analyzer::typed_dicts::get_typed_dict_mapping_equivalent(self, src_type);
 
                 let (mapping_class, str_class) = {
@@ -36328,7 +36327,7 @@ impl TypeEvaluator {
                         None,
                     );
                 }
-            } else if ClassType::is_built_in(dest_type, Some(&["dict", "MutableMapping"])) {
+            } else if ClassType::is_built_in(dest_type, Some(&[jsrt::atom!("dict"), jsrt::atom!("MutableMapping")])) {
                 let dict_value_type =
                     analyzer::typed_dicts::get_typed_dict_dict_equivalent(self, src_type, recursion_count);
 
@@ -36364,7 +36363,7 @@ impl TypeEvaluator {
         let include_promotions = dest_type.d().priv_.borrow().include_promotions.unwrap_or(false);
         if include_promotions {
             let dest_full_name = dest_type.d().shared.get().full_name.clone();
-            let promotion_list = TYPE_PROMOTIONS.with(|promotions| promotions.get(&dest_full_name).cloned());
+            let promotion_list = TYPE_PROMOTIONS.with(|promotions| promotions.get(dest_full_name.as_str()).cloned());
             if let Some(promotion_list) = promotion_list
                 && promotion_list.iter().any(|src_name| {
                     let mro = src_type.d().shared.get().mro.borrow().clone();
@@ -36476,7 +36475,7 @@ impl TypeEvaluator {
         }
 
         // Everything is assignable to an object.
-        if ClassType::is_built_in(dest_type, Some(&["object"])) {
+        if ClassType::is_built_in(dest_type, Some(&[jsrt::atom!("object")])) {
             if !flags.any(AssignTypeFlags::Invariant) {
                 return true;
             }
@@ -36495,8 +36494,8 @@ impl TypeEvaluator {
             let dest_full_name = dest_type.d().shared.get().full_name.clone();
             let src_full_name = src_type.d().shared.get().full_name.clone();
             if dest_error_type_text == src_error_type_text && !dest_full_name.is_empty() && !src_full_name.is_empty() {
-                dest_error_type_text = dest_full_name;
-                src_error_type_text = src_full_name;
+                dest_error_type_text = dest_full_name.to_string();
+                src_error_type_text = src_full_name.to_string();
             }
 
             diag.add_message(crate::localization::localize::LocAddendum::type_incompatible().format(&[
@@ -36505,9 +36504,9 @@ impl TypeEvaluator {
             ]));
 
             // Tell the user about the disableBytesTypePromotions if that is involved.
-            if ClassType::is_built_in(dest_type, Some(&["bytes"])) {
+            if ClassType::is_built_in(dest_type, Some(&[jsrt::atom!("bytes")])) {
                 let dest_full_name = dest_type.d().shared.get().full_name.clone();
-                let promotions = TYPE_PROMOTIONS.with(|promotions| promotions.get(&dest_full_name).cloned());
+                let promotions = TYPE_PROMOTIONS.with(|promotions| promotions.get(dest_full_name.as_str()).cloned());
                 if let Some(promotions) = promotions
                     && promotions.iter().any(|name| *name == src_type.d().shared.get().full_name)
                 {
@@ -36640,7 +36639,7 @@ impl TypeEvaluator {
                     || !analyzer::types::is_instantiable_class(base_class)
                     || ClassType::is_built_in(
                         ClassType::cast(base_class).unwrap(),
-                        Some(&["object", "Protocol", "Generic"]),
+                        Some(&[jsrt::atom!("object"), jsrt::atom!("Protocol"), jsrt::atom!("Generic")]),
                     )
                     || ClassType::cast(base_class).unwrap().d().shared.get().type_params.borrow().is_empty()
                 {
@@ -36761,8 +36760,8 @@ impl TypeEvaluator {
                 // we need to handle this as a special case because the NamedTuple may
                 // include typeParams from its parent class.
                 let mut effective_cur_src_type = cur_src_type;
-                if ClassType::is_built_in(cur_src_type, Some(&["NamedTuple"]))
-                    && ClassType::is_built_in(ancestor_type, Some(&["tuple"]))
+                if ClassType::is_built_in(cur_src_type, Some(&[jsrt::atom!("NamedTuple")]))
+                    && ClassType::is_built_in(ancestor_type, Some(&[jsrt::atom!("tuple")]))
                     && let Some(prev_src_type) = prev_src_type
                 {
                     effective_cur_src_type = prev_src_type;
@@ -36981,7 +36980,7 @@ impl TypeEvaluator {
                 }
 
                 // Special-case TypeForm to retain literals when solving TypeVars.
-                if ClassType::is_built_in(dest_type, Some(&["TypeForm"])) {
+                if ClassType::is_built_in(dest_type, Some(&[jsrt::atom!("TypeForm")])) {
                     effective_flags |= AssignTypeFlags::RetainLiteralsForTypeVar;
                 }
 
@@ -37015,16 +37014,16 @@ impl TypeEvaluator {
 
                                 if is_compatible && ClassType::is_same_generic_class(dest_type, src_type, 0) {
                                     // Add additional notes to help the user if this is a common type mismatch.
-                                    if ClassType::is_built_in(dest_type, Some(&["dict"])) && src_arg_index == 1
+                                    if ClassType::is_built_in(dest_type, Some(&[jsrt::atom!("dict")])) && src_arg_index == 1
                                     {
                                         child_diag.add_message(
                                             crate::localization::localize::LocAddendum::invariant_suggestion_dict(),
                                         );
-                                    } else if ClassType::is_built_in(dest_type, Some(&["list"])) {
+                                    } else if ClassType::is_built_in(dest_type, Some(&[jsrt::atom!("list")])) {
                                         child_diag.add_message(
                                             crate::localization::localize::LocAddendum::invariant_suggestion_list(),
                                         );
-                                    } else if ClassType::is_built_in(dest_type, Some(&["set"])) {
+                                    } else if ClassType::is_built_in(dest_type, Some(&[jsrt::atom!("set")])) {
                                         child_diag.add_message(
                                             crate::localization::localize::LocAddendum::invariant_suggestion_set(),
                                         );
@@ -37078,7 +37077,7 @@ impl TypeEvaluator {
             if flags.any(AssignTypeFlags::AllowIsinstanceSpecialForms) {
                 if ClassType::is_built_in(
                     special_form,
-                    Some(&["Callable", "UnionType", "Generic"]),
+                    Some(&[jsrt::atom!("Callable"), jsrt::atom!("UnionType"), jsrt::atom!("Generic")]),
                 ) {
                     is_special_form_exempt = true;
                 }
@@ -37098,7 +37097,7 @@ impl TypeEvaluator {
         // A subscripted runtime built-in such as list[int] is represented as its
         // precise class type, but it is also a types.GenericAlias object at runtime.
         if analyzer::types::is_class_instance(dest_type)
-            && ClassType::is_built_in(ClassType::cast(dest_type).unwrap(), Some(&["GenericAlias"]))
+            && ClassType::is_built_in(ClassType::cast(dest_type).unwrap(), Some(&[jsrt::atom!("GenericAlias")]))
             && analyzer::types::is_instantiable_class(src_type)
         {
             let src_class = ClassType::cast(src_type).unwrap();
@@ -37210,7 +37209,7 @@ impl TypeEvaluator {
                 // Add a special case for when the source is a str, which is itself
                 // a recursive type (since it derives from Sequence[str]).
                 if analyzer::types::is_class_instance(src_type)
-                    && ClassType::is_built_in(ClassType::cast(src_type).unwrap(), Some(&["str"]))
+                    && ClassType::is_built_in(ClassType::cast(src_type).unwrap(), Some(&[jsrt::atom!("str")]))
                     && analyzer::types::is_union(transformed_dest_type)
                 {
                     let subtypes = UnionType::cast(transformed_dest_type).unwrap().d().priv_.borrow().subtypes.clone();
@@ -37218,7 +37217,7 @@ impl TypeEvaluator {
                         analyzer::types::is_class_instance(subtype)
                             && ClassType::is_built_in(
                                 ClassType::cast(subtype).unwrap(),
-                                Some(&["object", "str"]),
+                                Some(&[jsrt::atom!("object"), jsrt::atom!("str")]),
                             )
                     });
                 }
@@ -37574,7 +37573,7 @@ impl TypeEvaluator {
 
         // Is the src a specialized "type" object?
         if analyzer::types::is_class_instance(expanded_src_type)
-            && ClassType::is_built_in(ClassType::cast(expanded_src_type).unwrap(), Some(&["type"]))
+            && ClassType::is_built_in(ClassType::cast(expanded_src_type).unwrap(), Some(&[jsrt::atom!("type")]))
         {
             let src_type_args = ClassType::cast(expanded_src_type).unwrap().d().priv_.borrow().type_args.clone();
             let type_type_arg: P<Type>;
@@ -37640,7 +37639,7 @@ impl TypeEvaluator {
                     }
                 }
 
-                if ClassType::is_built_in(dest_class, Some(&["type"]))
+                if ClassType::is_built_in(dest_class, Some(&[jsrt::atom!("type")]))
                     && src_type.props.borrow().as_ref().and_then(|p| p.instantiable_depth).unwrap_or(0) > 0
                 {
                     return true;
@@ -37686,7 +37685,7 @@ impl TypeEvaluator {
 
         if analyzer::types::is_class_instance(dest_type) {
             let dest_class = ClassType::cast(dest_type).unwrap();
-            if ClassType::is_built_in(dest_class, Some(&["type"])) {
+            if ClassType::is_built_in(dest_class, Some(&[jsrt::atom!("type")])) {
                 if analyzer::types::is_instantiable_class(src_type)
                     && self.is_special_form_class(ClassType::cast(src_type).unwrap(), flags)
                     && analyzer::types::TypeBase::get_instantiable_depth(src_type) == 0
@@ -37729,7 +37728,7 @@ impl TypeEvaluator {
 
             // Handle the TypeForm special form. Add a special case for
             // type[T] to be assignable to TypeForm[T].
-            if ClassType::is_built_in(dest_class, Some(&["TypeForm"])) {
+            if ClassType::is_built_in(dest_class, Some(&[jsrt::atom!("TypeForm")])) {
                 let dest_class_type_args = dest_class.d().priv_.borrow().type_args.clone();
                 let dest_type_arg = if let Some(dest_class_type_args) = dest_class_type_args
                     && dest_class_type_args.len() > 0
@@ -37741,7 +37740,7 @@ impl TypeEvaluator {
 
                 let mut src_type_arg: Option<P<Type>> = None;
                 if analyzer::types::is_class_instance(concrete_src_type)
-                    && ClassType::is_built_in(ClassType::cast(concrete_src_type).unwrap(), Some(&["type"]))
+                    && ClassType::is_built_in(ClassType::cast(concrete_src_type).unwrap(), Some(&[jsrt::atom!("type")]))
                 {
                     src_type_arg = Some(concrete_src_type);
                 } else if analyzer::types::is_instantiable_class(concrete_src_type) {
@@ -37792,14 +37791,14 @@ impl TypeEvaluator {
                 }
 
                 // Handle LiteralString special form.
-                if ClassType::is_built_in(dest_class, Some(&["LiteralString"])) {
+                if ClassType::is_built_in(dest_class, Some(&[jsrt::atom!("LiteralString")])) {
                     let concrete_src_has_literal = concrete_src_class.d().priv_.borrow().literal_value.is_some();
-                    if ClassType::is_built_in(concrete_src_class, Some(&["str"])) && concrete_src_has_literal {
+                    if ClassType::is_built_in(concrete_src_class, Some(&[jsrt::atom!("str")])) && concrete_src_has_literal {
                         return !flags.any(AssignTypeFlags::Invariant);
-                    } else if ClassType::is_built_in(concrete_src_class, Some(&["LiteralString"])) {
+                    } else if ClassType::is_built_in(concrete_src_class, Some(&[jsrt::atom!("LiteralString")])) {
                         return true;
                     }
-                } else if ClassType::is_built_in(concrete_src_class, Some(&["LiteralString"])) {
+                } else if ClassType::is_built_in(concrete_src_class, Some(&[jsrt::atom!("LiteralString")])) {
                     let str_class = self.prefetched.borrow().as_ref().and_then(|p| p.str_class);
                     if let Some(str_class) = str_class
                         && analyzer::types::is_instantiable_class(str_class)
@@ -37854,7 +37853,7 @@ impl TypeEvaluator {
                 }
             } else if analyzer::types::is_module(concrete_src_type) {
                 // Is the destination the built-in "ModuleType"?
-                if ClassType::is_built_in(dest_class, Some(&["ModuleType"])) {
+                if ClassType::is_built_in(dest_class, Some(&[jsrt::atom!("ModuleType")])) {
                     return true;
                 }
 
@@ -37989,7 +37988,7 @@ impl TypeEvaluator {
                 for overload in overloads {
                     let overload_scope_id = analyzer::type_utils::get_type_var_scope_id(overload.0).unwrap_or_default();
                     let constraints_clone =
-                        constraints.map(|constraints| constraints.clone_with_signature(&overload_scope_id));
+                        constraints.map(|constraints| constraints.clone_with_signature(overload_scope_id));
 
                     if self.assign_type(dest_type, overload.0, /* diag */ None, constraints_clone, flags, recursion_count) {
                         filtered_overloads.push(overload);
@@ -38094,7 +38093,7 @@ impl TypeEvaluator {
         }
 
         if analyzer::types::is_class(dest_type)
-            && ClassType::is_built_in(ClassType::cast(dest_type).unwrap(), Some(&["object"]))
+            && ClassType::is_built_in(ClassType::cast(dest_type).unwrap(), Some(&[jsrt::atom!("object")]))
         {
             if (analyzer::types::is_instantiable_class(dest_type) && analyzer::types::TypeBase::is_instantiable(src_type))
                 || analyzer::types::is_class_instance(dest_type)
@@ -38238,7 +38237,7 @@ impl TypeEvaluator {
             let return_type = FunctionType::get_effective_return_type(function_type, true);
             return_type.is_some_and(|return_type| {
                 analyzer::types::is_class_instance(return_type)
-                    && ClassType::is_built_in(ClassType::cast(return_type).unwrap(), Some(&["GenericAlias"]))
+                    && ClassType::is_built_in(ClassType::cast(return_type).unwrap(), Some(&[jsrt::atom!("GenericAlias")]))
             })
         };
 
@@ -38289,7 +38288,7 @@ impl TypeEvaluator {
                 if !ClassType::is_special_built_in(src_class, None) {
                     src_type_form_type = Some(ClassType::clone_as_instance(src_class, true).0);
                 }
-            } else if ClassType::is_built_in(src_class, Some(&["type"])) {
+            } else if ClassType::is_built_in(src_class, Some(&[jsrt::atom!("type")])) {
                 let type_args = src_class.d().priv_.borrow().type_args.clone();
                 src_type_form_type = Some(match type_args {
                     Some(type_args) if !type_args.is_empty() => type_args[0],
@@ -38315,7 +38314,7 @@ impl TypeEvaluator {
             &mut |subtype, _index, _all_subtypes| {
                 if result_type.is_some()
                     || !analyzer::types::is_class_instance(subtype)
-                    || !ClassType::is_built_in(ClassType::cast(subtype).unwrap(), Some(&["TypeForm"]))
+                    || !ClassType::is_built_in(ClassType::cast(subtype).unwrap(), Some(&[jsrt::atom!("TypeForm")]))
                 {
                     return;
                 }
@@ -38835,12 +38834,12 @@ impl TypeEvaluator {
 
         if analyzer::types::is_instantiable_class(left_type)
             || (analyzer::types::is_class_instance(left_type)
-                && ClassType::is_built_in(ClassType::cast(left_type).unwrap(), Some(&["type"])))
+                && ClassType::is_built_in(ClassType::cast(left_type).unwrap(), Some(&[jsrt::atom!("type")])))
         {
             let left_class = ClassType::cast(left_type).unwrap();
             if analyzer::types::is_instantiable_class(right_type)
                 || (analyzer::types::is_class_instance(right_type)
-                    && ClassType::is_built_in(ClassType::cast(right_type).unwrap(), Some(&["type"])))
+                    && ClassType::is_built_in(ClassType::cast(right_type).unwrap(), Some(&[jsrt::atom!("type")])))
             {
                 let generic_left_type = ClassType::specialize(left_class, /* type_args */ None, None, false, None, None);
                 let generic_right_type = ClassType::specialize(
@@ -38914,13 +38913,13 @@ impl TypeEvaluator {
                     // they are comparable under certain circumstances.
                     let mut bool_type: Option<ClassType> = None;
                     let mut int_type: Option<ClassType> = None;
-                    if ClassType::is_built_in(left_class, Some(&["bool"]))
-                        && ClassType::is_built_in(right_class, Some(&["int"]))
+                    if ClassType::is_built_in(left_class, Some(&[jsrt::atom!("bool")]))
+                        && ClassType::is_built_in(right_class, Some(&[jsrt::atom!("int")]))
                     {
                         bool_type = Some(left_class);
                         int_type = Some(right_class);
-                    } else if ClassType::is_built_in(right_class, Some(&["bool"]))
-                        && ClassType::is_built_in(left_class, Some(&["int"]))
+                    } else if ClassType::is_built_in(right_class, Some(&[jsrt::atom!("bool")]))
+                        && ClassType::is_built_in(left_class, Some(&[jsrt::atom!("int")]))
                     {
                         bool_type = Some(right_class);
                         int_type = Some(left_class);
@@ -39260,7 +39259,7 @@ impl TypeEvaluator {
                 .unwrap_or_default()
                 .into_iter()
                 .filter(|constraint| {
-                    constraint.type_var.d().priv_.borrow().name_with_scope.as_deref() == Some(&*dest_type_var_name)
+                    constraint.type_var.d().priv_.borrow().name_with_scope == Some(dest_type_var_name)
                 })
                 .collect();
 
@@ -39271,7 +39270,7 @@ impl TypeEvaluator {
 
             !applicable_conditions.iter().any(|condition| {
                 let condition_name_with_scope = condition.type_var.d().priv_.borrow().name_with_scope.clone();
-                if condition_name_with_scope.as_deref() == Some(&*TypeVarType::get_name_with_scope(dest_type)) {
+                if condition_name_with_scope == Some(TypeVarType::get_name_with_scope(dest_type)) {
                     if let Some(bound_type) = dest_type.d().shared.get().bound_type.get() {
                         common::debug::assert(
                             condition.constraint_index == 0,
@@ -40559,7 +40558,7 @@ impl TypeEvaluator {
                     if analyzer::types::is_class_instance(src_return_type)
                         && ClassType::is_built_in(
                             ClassType::cast(src_return_type).unwrap(),
-                            Some(&["TypeGuard", "TypeIs"]),
+                            Some(&[jsrt::atom!("TypeGuard"), jsrt::atom!("TypeIs")]),
                         )
                         && bool_class.is_some_and(|bool_class| analyzer::types::is_instantiable_class(bool_class))
                     {
@@ -41502,7 +41501,7 @@ impl TypeEvaluator {
             }
 
             if analyzer::types::is_class_instance(src_type)
-                && ClassType::is_built_in(ClassType::cast(src_type).unwrap(), Some(&["Concatenate"]))
+                && ClassType::is_built_in(ClassType::cast(src_type).unwrap(), Some(&[jsrt::atom!("Concatenate")]))
             {
                 return Some(src_type);
             }
@@ -41888,7 +41887,7 @@ impl TypeEvaluator {
             }),
         );
         analyzer::types::is_class_instance(type_)
-            && ClassType::is_built_in(ClassType::cast(type_).unwrap(), Some(&["TypeAlias"]))
+            && ClassType::is_built_in(ClassType::cast(type_).unwrap(), Some(&[jsrt::atom!("TypeAlias")]))
     }
 
     // analyzer/typeEvaluator.ts:30187
@@ -41981,7 +41980,7 @@ impl TypeEvaluator {
             // alias even though all of the union subtypes are Unknown.
             let special_form = type_.props.borrow().as_ref().and_then(|props| props.special_form);
             if let Some(special_form) = special_form {
-                if ClassType::is_built_in(special_form, Some(&["UnionType"])) {
+                if ClassType::is_built_in(special_form, Some(&[jsrt::atom!("UnionType")])) {
                     return true;
                 }
             }
@@ -42041,7 +42040,7 @@ impl TypeEvaluator {
             let call_type = self.get_type_of_expression(call_left_node, EvalFlags::CallBaseDefaults, None).type_.get();
 
             if analyzer::types::is_instantiable_class(call_type)
-                && ClassType::is_built_in(ClassType::cast(call_type).unwrap(), Some(&["TypedDict"]))
+                && ClassType::is_built_in(ClassType::cast(call_type).unwrap(), Some(&[jsrt::atom!("TypedDict")]))
             {
                 return true;
             }

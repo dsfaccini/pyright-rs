@@ -151,7 +151,7 @@ pub(crate) fn is_data_class_keyword_only_separator(
         }),
     );
     is_class_instance(annotated_type)
-        && ClassType::is_built_in(ClassType(annotated_type), Some(&["KW_ONLY"]))
+        && ClassType::is_built_in(ClassType(annotated_type), Some(&[jsrt::atom!("KW_ONLY")]))
 }
 
 // analyzer/dataClasses.ts:120
@@ -600,7 +600,7 @@ pub fn synthesize_data_class_methods(
                             if is_class_instance(value_type)
                                 && ClassType::is_built_in(
                                     ClassType(value_type),
-                                    Some(&["str"]),
+                                    Some(&[jsrt::atom!("str")]),
                                 )
                                 && is_literal_type(ClassType(value_type))
                             {
@@ -1488,9 +1488,9 @@ pub(crate) fn get_converter_input_type(
     // will be used to check compatibility of the provided converter.
     let type_var = TypeVarType::create_instance("__converterInput", TypeVarKind::TypeVar);
     let scope_id = get_scope_id_for_node(converter_node.0, node_info.reader());
-    type_var.d().priv_.borrow_mut().scope_id = Some(scope_id.into());
+    type_var.d().priv_.borrow_mut().scope_id = Some(scope_id);
     let target_function = FunctionType::create_synthesized_instance("", FunctionTypeFlags::None);
-    let type_var_scope_id = type_var.d().priv_.borrow().scope_id.as_deref().map(str::to_string);
+    let type_var_scope_id = type_var.d().priv_.borrow().scope_id;
     *target_function
         .d()
         .shared
@@ -1704,7 +1704,7 @@ pub(crate) fn get_descriptor_for_converter_field(
         .shared
         .get()
         .type_var_scope_id
-        .borrow_mut() = Some(scope_id.clone());
+        .borrow_mut() = Some(scope_id);
 
     // Make the descriptor generic, copying the type parameters from the dataclass.
     let dataclass_type_params: Vec<TypeVarType> =
@@ -1714,8 +1714,8 @@ pub(crate) fn get_descriptor_for_converter_field(
         .map(|type_parm| {
             let type_param = TypeVarType::clone_for_scope_id(
                 *type_parm,
-                scope_id.clone(),
-                Some(descriptor_class.d().shared.get().name.clone()),
+                scope_id,
+                Some(descriptor_class.d().shared.get().name.to_string()),
                 Some(TypeVarScopeType::Class),
             );
             type_param.d().priv_.borrow_mut().computed_variance = Some(Variance::Covariant);
@@ -1969,7 +1969,7 @@ pub(crate) fn is_dataclass_field_constructor(
             call_name = Some(overloads[0].d().shared.get().full_name.clone());
         }
     } else if is_instantiable_class(type_) {
-        call_name = Some(ClassType(type_).d().shared.get().full_name.clone());
+        call_name = Some(ClassType(type_).d().shared.get().full_name.to_string());
     }
 
     let Some(call_name) = call_name.filter(|call_name| !call_name.is_empty()) else {
@@ -2115,7 +2115,7 @@ pub fn validate_data_class_transform_decorator(
                     .type_
                     .get();
                 let tuple_type_args = if !is_class_instance(value_type)
-                    || !ClassType::is_built_in(ClassType(value_type), Some(&["tuple"]))
+                    || !ClassType::is_built_in(ClassType(value_type), Some(&[jsrt::atom!("tuple")]))
                 {
                     None
                 } else {
@@ -2150,7 +2150,7 @@ pub fn validate_data_class_transform_decorator(
                                 .shared
                                 .get()
                                 .full_name
-                                .clone(),
+                                .to_string(),
                         );
                     } else if is_function(tuple_arg.type_) {
                         behaviors.field_descriptor_names.borrow_mut().push(

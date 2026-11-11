@@ -3300,7 +3300,7 @@ pub fn get_variable_doc_string_node(node: ExpressionNode) -> Option<StringListNo
 // not change each time the file is parsed (unless, of course, the
 // file contents change).
 // analyzer/parseTreeUtils.ts:2713
-pub fn get_scope_id_for_node(node: P<ParseNode>, node_info: &dyn AnalyzerNodeInfoReader) -> String {
+pub fn get_scope_id_for_node(node: P<ParseNode>, node_info: &dyn AnalyzerNodeInfoReader) -> TypeVarScopeId {
     let mut name: &str = "";
     if let Some(class_node) = ClassNode::cast(node) {
         name = class_node.d().name.get().d().value();
@@ -3309,13 +3309,19 @@ pub fn get_scope_id_for_node(node: P<ParseNode>, node_info: &dyn AnalyzerNodeInf
     }
 
     let file_info = analyzer_node_info::get_file_info(node, node_info);
-    let mut scope_id = String::with_capacity(file_info.file_id.len() + name.len() + 12);
-    scope_id.push_str(&file_info.file_id);
-    scope_id.push('.');
-    jsrt::number::push_integer(&mut scope_id, node.start.get().into());
-    scope_id.push('-');
-    scope_id.push_str(name);
-    scope_id
+    // The text is built in one buffer per thread and interned.
+    thread_local! {
+        static SCOPE_ID: std::cell::RefCell<String> = const { std::cell::RefCell::new(String::new()) };
+    }
+    SCOPE_ID.with_borrow_mut(|scope_id| {
+        scope_id.clear();
+        scope_id.push_str(&file_info.file_id);
+        scope_id.push('.');
+        jsrt::number::push_integer(scope_id, node.start.get().into());
+        scope_id.push('-');
+        scope_id.push_str(name);
+        TypeVarScopeId::new(scope_id)
+    })
 }
 
 // Walks up the parse tree and finds all scopes that can provide

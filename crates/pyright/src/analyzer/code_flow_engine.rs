@@ -1183,7 +1183,7 @@ impl CodeFlowEngine {
             {
                 if ClassType::is_built_in(
                     return_class,
-                    Some(&["Coroutine", "CoroutineType"]),
+                    Some(&[jsrt::atom!("Coroutine"), jsrt::atom!("CoroutineType")]),
                 ) {
                     let type_args = return_class.d().priv_.borrow().type_args.clone();
                     if let Some(type_args) = type_args.filter(|type_args| type_args.len() >= 3) {
@@ -1242,7 +1242,7 @@ impl CodeFlowEngine {
                         let exception_type = self.evaluator.get_type(raise_expr);
 
                         if let Some(exception_class) = exception_type.and_then(ClassType::cast) {
-                            if derives_from_stdlib_class(exception_class, "NotImplementedError") {
+                            if derives_from_stdlib_class(exception_class, jsrt::atom!("NotImplementedError")) {
                                 found_raise_not_implemented = true;
                             }
                         }
@@ -1335,7 +1335,7 @@ impl CodeFlowEngine {
                     {
                         if ClassType::is_built_in(
                             return_class,
-                            Some(&["Coroutine", "CoroutineType"]),
+                            Some(&[jsrt::atom!("Coroutine"), jsrt::atom!("CoroutineType")]),
                         ) {
                             let type_args = return_class.d().priv_.borrow().type_args.clone();
                             if let Some(type_args) =
@@ -1366,7 +1366,7 @@ impl CodeFlowEngine {
                 if let Some(return_class) =
                     ClassType::cast(return_type).filter(|_| is_class_instance(return_type))
                 {
-                    if ClassType::is_built_in(return_class, Some(&["bool"])) {
+                    if ClassType::is_built_in(return_class, Some(&[jsrt::atom!("bool")])) {
                         let literal_value = return_class.d().priv_.borrow().literal_value.clone();
                         if literal_value.is_none()
                             || matches!(literal_value, Some(LiteralValue::Boolean(true)))

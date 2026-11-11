@@ -195,7 +195,7 @@ fn module_types_compare_by_symbol_table_identity() {
 fn type_var_scope_and_bound_forms() {
     let type_var = TypeVarType::clone_for_scope_id(
         TypeVarType::create_instance("T", TypeVarKind::TypeVar),
-        "scope".to_string(),
+        "scope".into(),
         Some("f".to_string()),
         Some(TypeVarScopeType::Function),
     );

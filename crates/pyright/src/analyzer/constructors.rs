@@ -156,7 +156,7 @@ pub fn validate_constructor_args(
             &ApplyTypeVarOptions {
                 type_class_type: None,
                 replace_unsolved: Some(ApplyTypeVarOptionsReplaceUnsolved {
-                    scope_ids: vec![alias_info.shared.type_var_scope_id.clone()].into(),
+                    scope_ids: vec![alias_info.shared.type_var_scope_id].into(),
                     tuple_class_type: evaluator.get_tuple_class_type(),
                     unsolved_exempt_type_vars: None,
                     use_unknown: None,
@@ -1187,7 +1187,7 @@ pub(crate) fn create_function_from_new_method(
             let param_type = FunctionType::get_param_type(new_subtype, index as i32);
             let type_vars = get_type_var_args_recursive(param_type, 0);
             type_vars.iter().any(|type_var| {
-                type_var.d().priv_.borrow().scope_id.as_deref() == get_type_var_scope_id(class_type.0).as_deref()
+                type_var.d().priv_.borrow().scope_id == get_type_var_scope_id(class_type.0)
             })
         });
 
@@ -1212,13 +1212,12 @@ pub(crate) fn create_function_from_new_method(
 
         let converted_new = FunctionType::clone(bound_new, false, None);
         let converted_new_shared = converted_new.d().shared.get();
-        let type_var_scope_id = new_subtype
+        let type_var_scope_id = *new_subtype
             .d()
             .shared
             .get()
             .type_var_scope_id
-            .borrow()
-            .clone();
+            .borrow();
         *converted_new_shared.type_var_scope_id.borrow_mut() = type_var_scope_id;
 
         if converted_new_shared.cold().doc_string.is_none()

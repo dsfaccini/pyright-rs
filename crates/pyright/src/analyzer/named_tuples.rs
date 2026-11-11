@@ -235,13 +235,12 @@ pub fn create_named_tuple_type(
         .shared
         .get()
         .type_var_scope_id
-        .borrow_mut() = class_type
+        .borrow_mut() = *class_type
         .d()
         .shared
         .get()
         .type_var_scope_id
-        .borrow()
-        .clone();
+        .borrow();
     FunctionType::add_param(
         constructor_type,
         &FunctionParam::create(
@@ -424,7 +423,7 @@ pub fn create_named_tuple_type(
                         if is_class_instance(name_type)
                             && ClassType::is_built_in(
                                 ClassType(name_type),
-                                Some(&["str"]),
+                                Some(&[jsrt::atom!("str")]),
                             )
                             && is_literal_type(ClassType(name_type))
                         {
@@ -699,7 +698,7 @@ pub fn update_named_tuple_base_class(
         .iter().copied()
         .map(|base_class| {
             if !is_instantiable_class(base_class)
-                || !ClassType::is_built_in(ClassType(base_class), Some(&["NamedTuple"]))
+                || !ClassType::is_built_in(ClassType(base_class), Some(&[jsrt::atom!("NamedTuple")]))
             {
                 return base_class;
             }
@@ -742,8 +741,8 @@ pub fn update_named_tuple_base_class(
                 .d()
                 .shared
                 .set(P::new_eval(ClassDetailsShared {
-                    name: shared.name.clone(),
-                    full_name: shared.full_name.clone(),
+                    name: shared.name,
+                    full_name: shared.full_name,
                     module_name: shared.module_name.clone(),
                     file_uri: shared.file_uri,
                     flags: Cell::new(shared.flags.get()),
@@ -755,7 +754,7 @@ pub fn update_named_tuple_base_class(
                     effective_metaclass: Cell::new(shared.effective_metaclass.get()),
                     fields: Cell::new(shared.fields.get()),
                     type_params: RefCell::new(shared.type_params.borrow().clone()),
-                    type_var_scope_id: RefCell::new(shared.type_var_scope_id.borrow().clone()),
+                    type_var_scope_id: RefCell::new(*shared.type_var_scope_id.borrow()),
                     doc_string: shared.doc_string.clone(),
                     data_class_entries: RefCell::new(shared.data_class_entries.borrow().clone()),
                     data_class_behaviors: Cell::new(shared.data_class_behaviors.get()),
@@ -800,7 +799,7 @@ pub fn update_named_tuple_base_class(
                     if !is_instantiable_class(named_tuple_base_class)
                         || !ClassType::is_built_in(
                             ClassType(named_tuple_base_class),
-                            Some(&["tuple"]),
+                            Some(&[jsrt::atom!("tuple")]),
                         )
                     {
                         return named_tuple_base_class;

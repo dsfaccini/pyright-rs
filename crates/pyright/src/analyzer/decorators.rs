@@ -128,18 +128,18 @@ pub fn get_function_info_from_decorators(
         } else if is_class(decorator_type) {
             let decorator_class = ClassType(decorator_type);
             if TypeBase::is_instantiable(decorator_type) {
-                if ClassType::is_built_in(decorator_class, Some(&["staticmethod"])) {
+                if ClassType::is_built_in(decorator_class, Some(&[jsrt::atom!("staticmethod")])) {
                     if is_in_class {
                         flags |= FunctionTypeFlags::StaticMethod;
                     }
                 } else if ClassType::is_built_in(
                     decorator_class,
-                    Some(&["classmethod"]),
+                    Some(&[jsrt::atom!("classmethod")]),
                 ) && is_in_class
                 {
                     flags |= FunctionTypeFlags::ClassMethod;
                 }
-            } else if ClassType::is_built_in(decorator_class, Some(&["deprecated"])) {
+            } else if ClassType::is_built_in(decorator_class, Some(&[jsrt::atom!("deprecated")])) {
                 deprecation_message = decorator_class
                     .d()
                     .priv_
@@ -627,7 +627,7 @@ pub fn apply_class_decorator(
         }
     } else if is_class_instance(decorator_type) {
         let decorator_class = ClassType(decorator_type);
-        if ClassType::is_built_in(decorator_class, Some(&["deprecated"])) {
+        if ClassType::is_built_in(decorator_class, Some(&[jsrt::atom!("deprecated")])) {
             let deprecated_message = decorator_class
                 .d()
                 .priv_
@@ -676,7 +676,7 @@ pub(crate) fn get_type_of_decorator(
     if is_instantiable_class(decorator_type_result.type_.get())
         && ClassType::is_built_in(
             ClassType(decorator_type_result.type_.get()),
-            Some(&["classmethod"]),
+            Some(&[jsrt::atom!("classmethod")]),
         )
         && is_property(function_or_class_type)
     {
