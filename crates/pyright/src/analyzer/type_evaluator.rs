@@ -38196,11 +38196,28 @@ impl TypeEvaluator {
     }
 
     // analyzer/typeEvaluator.ts:27089
+    /// `ClassType.isBuiltIn(type, 'TypeForm') || (ClassType.isSpecialBuiltIn(type) && (name === 'TypeForm'
+    /// || aliasName === 'TypeForm'))`, with both calls inlined: every branch needs `name`, `fullName` or
+    /// `aliasName` to be 'TypeForm', so other classes return before the flags are read.
     pub(crate) fn is_type_form_class(&self, type_: ClassType) -> bool {
-        ClassType::is_built_in(type_, Some(&["TypeForm"]))
-            || (ClassType::is_special_built_in(type_, None)
-                && (type_.d().shared.get().name == "TypeForm"
-                    || type_.d().priv_.borrow().cold().alias_name.as_deref() == Some("TypeForm")))
+        let shared = type_.d().shared.get();
+        let priv_ = type_.d().priv_.borrow();
+        let alias_name = priv_.cold().alias_name.as_deref();
+        let name_matches = shared.name == "TypeForm";
+        let alias_matches = alias_name == Some("TypeForm");
+        if !name_matches && !alias_matches && shared.full_name != "TypeForm" {
+            return false;
+        }
+
+        let flags = shared.flags.get();
+        // ClassType.isBuiltIn(type, 'TypeForm')
+        if flags.any(analyzer::types::ClassTypeFlags::BuiltIn) && (name_matches || shared.full_name == "TypeForm" || alias_matches) {
+            return true;
+        }
+        // ClassType.isSpecialBuiltIn(type)
+        let is_special_built_in =
+            flags.any(analyzer::types::ClassTypeFlags::SpecialBuiltIn) || alias_name.is_some_and(|alias_name| !alias_name.is_empty());
+        is_special_built_in && (name_matches || alias_matches)
     }
 
     // analyzer/typeEvaluator.ts:27097
