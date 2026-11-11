@@ -8,6 +8,7 @@ Shrink the live evaluator data that sets pydantic-ai's peak RSS: types, function
 - `FunctionDetailsSharedCold.doc_string` and `ClassDetailsShared.doc_string` are `Option<Rc<str>>`, shared by the copies `{ ...shared }` makes. `FunctionType::create`, `create_instance`, `create_instantiable`, `clone_with_doc_string` and `ClassType::create_instantiable` take `Option<Rc<str>>`.
 - The cold half of a handle struct (`TypeResult`, `FunctionDetailsShared`) is `jsrt::OptionRefCell<<Struct>Cold>`, one pointer: `cold()` returns `jsrt::cell::OptionRefOr`, which derefs to the cold struct. `TypeResult` is 32 bytes.
 - `FunctionDetailsShared.name`, `full_name` and `module_name` are atoms. `FunctionType::create` and its callers still take `&str`. Take `.to_string()` where a `String` is needed.
+- `FunctionParam.name` is `Option<Atom>`: `FunctionParam` is 40 bytes. `.as_deref()` still gives `Option<&str>`.
 - `MemberAccessDeprecationInfo` and `MagicMethodDeprecationInfo` are held as `Rc` (`[modes]` "rc"): `TypeResultCold` is 112 bytes, down from 240.
 
 ## Shared-file edits
@@ -50,3 +51,4 @@ Field counts on the same run (a temporary diagnostic, not committed):
 | doc strings shared (`Rc<str>`) | 242.29 G (−0.05%) | 6.37 GiB | 9.26 G | 0.50 GiB |
 | `TypeResult` 40 → 32 bytes, `TypeResultCold` 240 → 112 bytes | 241.17 G (−0.46%) | 6.16 GiB | 9.26 G | 0.48 GiB |
 | function names are atoms (`FunctionDetailsShared` 168 → 120 bytes) | 241.38 G (+0.09%) | 6.08 GiB | 9.26 G | 0.48 GiB |
+| parameter names are atoms (`FunctionParam` 48 → 40 bytes) | 241.30 G (−0.03%) | 6.04 GiB | 9.28 G (+0.2%) | 0.48 GiB |

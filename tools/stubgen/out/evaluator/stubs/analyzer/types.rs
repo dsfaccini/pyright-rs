@@ -1136,7 +1136,7 @@ flag_ops!(FunctionParamFlags);
 pub struct FunctionParam {
     pub category: ParamCategory,
     pub flags: FunctionParamFlags,
-    pub name: Option<Rc<str>>,
+    pub name: Option<Atom>,
     pub _type: P<Type>,
     pub _default_type: Option<P<Type>>,
     pub default_expr: Option<ExpressionNode>,

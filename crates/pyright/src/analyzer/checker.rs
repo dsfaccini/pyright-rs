@@ -9478,7 +9478,7 @@ impl Checker {
             return;
         };
         // `!paramInfo.name`: an empty name is falsy too.
-        let Some(param_info_name) = param_info.name.clone().filter(|name| !name.is_empty()) else {
+        let Some(param_info_name) = param_info.name.filter(|name| !name.is_empty()) else {
             return;
         };
 
