@@ -31,7 +31,7 @@ pub fn apply_function_transform(
 ) -> FunctionResult {
     if is_function(function_type) {
         let function_type = FunctionType(function_type);
-        let full_name = function_type.d().shared.get().full_name.clone();
+        let full_name = function_type.d().shared.get().full_name;
         if full_name == "functools.total_ordering" {
             return apply_total_ordering_transform(evaluator, error_node, arg_list, result);
         }

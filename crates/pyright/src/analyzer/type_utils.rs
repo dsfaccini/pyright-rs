@@ -932,21 +932,21 @@ pub fn get_full_name_of_type(type_: P<Type>) -> Option<String> {
 
         crate::analyzer::types::TypeCategory::Class => Some(ClassType(type_).d().shared.get().full_name.to_string()),
 
-        crate::analyzer::types::TypeCategory::Function => Some(FunctionType(type_).d().shared.get().full_name.clone()),
+        crate::analyzer::types::TypeCategory::Function => Some(FunctionType(type_).d().shared.get().full_name.to_string()),
 
-        crate::analyzer::types::TypeCategory::Module => Some(ModuleType(type_).d().priv_.borrow().module_name.clone()),
+        crate::analyzer::types::TypeCategory::Module => Some(ModuleType(type_).d().priv_.borrow().module_name.to_string()),
 
         crate::analyzer::types::TypeCategory::Overloaded => {
             let overloaded_type = crate::analyzer::types::OverloadedType(type_);
             let overloads = crate::analyzer::types::OverloadedType::get_overloads(overloaded_type);
             if !overloads.is_empty() {
-                return Some(overloads[0].d().shared.get().full_name.clone());
+                return Some(overloads[0].d().shared.get().full_name.to_string());
             }
 
             let implementation = crate::analyzer::types::OverloadedType::get_implementation(overloaded_type);
             if let Some(implementation) = implementation {
                 if crate::analyzer::types::is_function(implementation) {
-                    return Some(FunctionType(implementation).d().shared.get().full_name.clone());
+                    return Some(FunctionType(implementation).d().shared.get().full_name.to_string());
                 }
             }
 

@@ -256,6 +256,10 @@ interface = "analyzer/codeFlowEngine.ts:CodeFlowAnalyzer"
 # Doc strings, copied by every `{ ...shared }` of a function or class: shared, as a JS string is.
 "analyzer/types.ts:FunctionDetailsShared.docString" = "Option<std::rc::Rc<str>>"
 "analyzer/types.ts:ClassDetailsShared.docString" = "std::rc::Rc<str>"
+# Function names, copied by every `{ ...shared }`: interned atoms (`jsrt::Atom`, docs/porting.md "strings").
+"analyzer/types.ts:FunctionDetailsShared.name" = "jsrt::Atom"
+"analyzer/types.ts:FunctionDetailsShared.fullName" = "jsrt::Atom"
+"analyzer/types.ts:FunctionDetailsShared.moduleName" = "jsrt::Atom"
 # docs/porting.md "strings": a Python string literal's value can hold a lone surrogate, which
 # printLiteralValue keeps (`JSON.stringify` escapes it).
 "analyzer/types.ts:LiteralValue#3" = "jsrt::JsString"
@@ -263,16 +267,18 @@ interface = "analyzer/codeFlowEngine.ts:CodeFlowAnalyzer"
 "analyzer/typePrinterUtils.ts:printBytesLiteral.value" = "&[u16]"
 # Copied into every parameter list a function clone or specialization builds, and into each
 # VirtualParamDetails.
-"analyzer/types.ts:FunctionParam.name" = "Option<std::rc::Rc<str>>"
+"analyzer/types.ts:FunctionParam.name" = "Option<jsrt::Atom>"
 # Getters that return live state their callers write to.
 "analyzer/types.ts:TypeBase.addProps.return" = "jsrt::cell::RefMut<'static, crate::analyzer::types::TypeBaseProps>"
 # The type caches are passed by reference to the speculative type tracker, which deletes from the
 # very map it was given (typeCacheUtils.ts:133); the return-inference ones are swapped per call.
 # Nothing iterates typeCache, a code-flow node type cache or _speculativeTypeCache, so they are
-# lookup-only hash maps: a delete is O(1), as Map.delete is.
-"analyzer/typeEvaluator.ts:createTypeEvaluator.typeCache" = "jsrt::P<jsrt::cell::RefCell<jsrt::FxHashMap<u32, crate::analyzer::type_evaluator::TypeCacheEntry>>>"
+# lookup-only hash maps: a delete is O(1), as Map.delete is. The type caches, keyed by parse node
+# id, are `jsrt::IdMap` pages of 16-byte entries (`TypeCacheMap`, defined in [items]): 3.7M entries
+# took 264 MiB as a hash map on pydantic-ai, and half as much as pages.
+"analyzer/typeEvaluator.ts:createTypeEvaluator.typeCache" = "jsrt::P<jsrt::cell::RefCell<crate::analyzer::type_evaluator::TypeCacheMap>>"
 "analyzer/typeEvaluator.ts:createTypeEvaluator.typeFormTypeCache" = "jsrt::P<jsrt::cell::RefCell<jsrt::JsMap<u32, Vec<crate::analyzer::type_evaluator::TypeFormTypeCacheEntry>>>>"
-"analyzer/typeEvaluator.ts:createTypeEvaluator.returnTypeInferenceTypeCache" = "Option<jsrt::P<jsrt::cell::RefCell<jsrt::FxHashMap<u32, crate::analyzer::type_evaluator::TypeCacheEntry>>>>"
+"analyzer/typeEvaluator.ts:createTypeEvaluator.returnTypeInferenceTypeCache" = "Option<jsrt::P<jsrt::cell::RefCell<crate::analyzer::type_evaluator::TypeCacheMap>>>"
 "analyzer/typeEvaluator.ts:createTypeEvaluator.returnTypeInferenceTypeFormTypeCache" = "Option<jsrt::P<jsrt::cell::RefCell<jsrt::JsMap<u32, Vec<crate::analyzer::type_evaluator::TypeFormTypeCacheEntry>>>>>"
 "analyzer/typeEvaluator.ts:createTypeEvaluator.getTypeFormTypeCache.return" = "jsrt::P<jsrt::cell::RefCell<jsrt::JsMap<u32, Vec<crate::analyzer::type_evaluator::TypeFormTypeCacheEntry>>>>"
 # The speculative tracker deletes entries from the very cache it was handed (typeCacheUtils.ts:133):
@@ -358,8 +364,23 @@ plain = []
 /// cache (codeFlowEngine.ts:314). TypeScript passes the map itself; the holder shares it.
 #[derive(Clone, Copy)]
 pub enum SpeculativeCache {
-    Type(jsrt::P<jsrt::cell::RefCell<jsrt::FxHashMap<u32, crate::analyzer::type_evaluator::TypeCacheEntry>>>),
+    Type(jsrt::P<jsrt::cell::RefCell<crate::analyzer::type_evaluator::TypeCacheMap>>),
     FlowNodeType(jsrt::P<jsrt::cell::RefCell<jsrt::FxHashMap<u32, Option<crate::analyzer::code_flow_engine::CachedType>>>>),
+}
+"""
+"analyzer/typeEvaluator.ts:TypeCacheEntry" = """
+/// `typeCache` and `returnTypeInferenceTypeCache` (typeEvaluator.ts:676, 686): `Map<number,
+/// TypeCacheEntry>` keyed by node id, looked up, written and deleted from, never iterated.
+pub type TypeCacheMap = jsrt::IdMap<StoredTypeCacheEntry>;
+
+/// A `TypeCacheEntry` as a type cache stores it, in 16 bytes instead of 24: the top bit of
+/// `gen_and_has_flags` says whether `flags` is set.
+#[derive(Clone, Copy)]
+#[derive(jsrt::Trace)]
+pub struct StoredTypeCacheEntry {
+    pub type_result: jsrt::P<crate::analyzer::type_evaluator_types::TypeResult>,
+    gen_and_has_flags: u32,
+    flags: crate::analyzer::type_evaluator_types::EvalFlags,
 }
 """
 # TypeResult::new and Clone rely on the Cell and RefCell imports its fields give the module.

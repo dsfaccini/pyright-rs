@@ -43,7 +43,7 @@ pub fn dump_types(program: &Program, root: ModuleNode, printed: &mut FxHashMap<P
         let (type_, is_incomplete, flags) = {
             let type_cache = evaluator.type_cache.get();
             let cache = type_cache.borrow();
-            let Some(cache_entry) = cache.get(&node.id.get()) else {
+            let Some(cache_entry) = cache.get(node.id.get()).map(|entry| entry.get()) else {
                 continue;
             };
             let type_result = cache_entry.type_result;

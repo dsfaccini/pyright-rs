@@ -299,6 +299,42 @@ pub struct TypeCacheEntry {
     pub flags: Option<EvalFlags>,
 }
 
+/// `typeCache` and `returnTypeInferenceTypeCache` (typeEvaluator.ts:676, 686): `Map<number,
+/// TypeCacheEntry>` keyed by node id, looked up, written and deleted from, never iterated.
+pub type TypeCacheMap = jsrt::IdMap<StoredTypeCacheEntry>;
+
+/// A `TypeCacheEntry` as a type cache stores it, in 16 bytes instead of 24: the top bit of
+/// `gen_and_has_flags` says whether `flags` is set.
+#[derive(Clone, Copy)]
+#[derive(jsrt::Trace)]
+pub struct StoredTypeCacheEntry {
+    pub type_result: P<TypeResult>,
+    gen_and_has_flags: u32,
+    flags: EvalFlags,
+}
+const _: () = assert!(size_of::<StoredTypeCacheEntry>() <= 16);
+
+impl StoredTypeCacheEntry {
+    const HAS_FLAGS: u32 = 1 << 31;
+
+    pub fn new(entry: TypeCacheEntry) -> StoredTypeCacheEntry {
+        assert!(entry.incomplete_gen_count < Self::HAS_FLAGS, "the incomplete generation count exceeds 2^31");
+        StoredTypeCacheEntry {
+            type_result: entry.type_result,
+            gen_and_has_flags: entry.incomplete_gen_count | if entry.flags.is_some() { Self::HAS_FLAGS } else { 0 },
+            flags: entry.flags.unwrap_or_default(),
+        }
+    }
+
+    pub fn get(&self) -> TypeCacheEntry {
+        TypeCacheEntry {
+            type_result: self.type_result,
+            incomplete_gen_count: self.gen_and_has_flags & !Self::HAS_FLAGS,
+            flags: (self.gen_and_has_flags & Self::HAS_FLAGS != 0).then_some(self.flags),
+        }
+    }
+}
+
 // analyzer/typeEvaluator.ts:640
 #[derive(Clone)]
 #[derive(jsrt::Trace)]
@@ -367,7 +403,7 @@ pub struct TypeEvaluator {
     // analyzer/typeEvaluator.ts:675
     pub(crate) code_flow_analyzer_cache: RefCell<JsMap<u32, Vec<CodeFlowAnalyzerCacheEntry>>>,
     // analyzer/typeEvaluator.ts:676
-    pub(crate) type_cache: Cell<P<RefCell<FxHashMap<u32, TypeCacheEntry>>>>,
+    pub(crate) type_cache: Cell<P<RefCell<TypeCacheMap>>>,
     // analyzer/typeEvaluator.ts:677
     pub(crate) type_form_type_cache: Cell<P<RefCell<JsMap<u32, Vec<TypeFormTypeCacheEntry>>>>>,
     // analyzer/typeEvaluator.ts:678
@@ -391,7 +427,7 @@ pub struct TypeEvaluator {
     pub(crate) return_type_inference_context_stack: RefCell<Vec<ReturnTypeInferenceContext>>,
     // analyzer/typeEvaluator.ts:686
     pub(crate) return_type_inference_type_cache:
-        Cell<Option<P<RefCell<FxHashMap<u32, TypeCacheEntry>>>>>,
+        Cell<Option<P<RefCell<TypeCacheMap>>>>,
     // analyzer/typeEvaluator.ts:687
     pub(crate) return_type_inference_type_form_type_cache:
         Cell<Option<P<RefCell<JsMap<u32, Vec<TypeFormTypeCacheEntry>>>>>>,
@@ -454,7 +490,7 @@ pub fn create_type_evaluator(
         assign_class_to_self_stack: RefCell::new(Vec::new()),
         function_recursion_map: RefCell::new(JsMap::default()),
         code_flow_analyzer_cache: RefCell::new(JsMap::default()),
-        type_cache: Cell::new(P::new_eval(RefCell::new(FxHashMap::default()))),
+        type_cache: Cell::new(P::new_eval(RefCell::new(TypeCacheMap::default()))),
         type_form_type_cache: Cell::new(P::new_eval(RefCell::new(JsMap::default()))),
         effective_type_cache: RefCell::new(FxHashMap::default()),
         expected_type_cache: RefCell::new(JsMap::default()),
@@ -542,7 +578,7 @@ impl TypeEvaluator {
     pub fn dispose_evaluator(&self) {
         *self.function_recursion_map.borrow_mut() = JsMap::default();
         *self.code_flow_analyzer_cache.borrow_mut() = JsMap::default();
-        self.type_cache.set(P::new_eval(RefCell::new(FxHashMap::default())));
+        self.type_cache.set(P::new_eval(RefCell::new(TypeCacheMap::default())));
         self.type_form_type_cache.set(P::new_eval(RefCell::new(JsMap::default())));
         *self.effective_type_cache.borrow_mut() = FxHashMap::default();
         *self.expected_type_cache.borrow_mut() = JsMap::default();
@@ -555,10 +591,10 @@ impl TypeEvaluator {
         // analysis of a function, contextualized based on call-site argument types?
         if let Some(cache) = self.return_type_inference_type_cache.get() {
             if self.is_node_in_return_type_inference_context(node) {
-                return cache.borrow().get(&node.id.get()).cloned();
+                return cache.borrow().get(node.id.get()).map(StoredTypeCacheEntry::get);
             }
         }
-        self.type_cache.get().borrow().get(&node.id.get()).cloned()
+        self.type_cache.get().borrow().get(node.id.get()).map(StoredTypeCacheEntry::get)
     }
 
     // analyzer/typeEvaluator.ts:771
@@ -771,16 +807,16 @@ impl TypeEvaluator {
             _ => self.type_cache.get(),
         };
 
-        let old_value = type_cache_to_use.borrow().get(&node.id.get()).map(|entry| entry.type_result);
+        let old_value = type_cache_to_use.borrow().get(node.id.get()).map(|entry| entry.type_result);
         self.update_incomplete_generation_count(type_result, old_value);
 
         type_cache_to_use.borrow_mut().insert(
             node.id.get(),
-            TypeCacheEntry {
+            StoredTypeCacheEntry::new(TypeCacheEntry {
                 type_result,
                 flags,
                 incomplete_gen_count: self.incomplete_gen_count.get(),
-            },
+            }),
         );
 
         // If the entry is located within a part of the parse tree that is currently being
@@ -1797,7 +1833,7 @@ impl TypeEvaluator {
             name = ClassType(type_).d().shared.get().name.to_string();
         } else if analyzer::types::is_function(type_) {
             is_type_checking_only = FunctionType::is_type_check_only(FunctionType(type_));
-            name = FunctionType(type_).d().shared.get().name.clone();
+            name = FunctionType(type_).d().shared.get().name.to_string();
         }
 
         if is_type_checking_only {
@@ -15675,7 +15711,7 @@ impl TypeEvaluator {
                 let overloads = OverloadedType::get_overloads(type_);
                 let function_name =
                     if !overloads.is_empty() && !overloads[0].d().shared.get().name.is_empty() {
-                        overloads[0].d().shared.get().name.clone()
+                        overloads[0].d().shared.get().name.to_string()
                     } else {
                         "<anonymous function>".to_string()
                     };
@@ -15761,11 +15797,11 @@ impl TypeEvaluator {
             // If there is more than one filtered match, report that no match
             // was possible and emit a diagnostic that provides the most likely.
             if emit_no_overload_found_error {
-                let name = best_match.overload.d().shared.get().name.clone();
+                let name = best_match.overload.d().shared.get().name;
                 let function_name = if name.is_empty() {
                     "<anonymous function>".to_string()
                 } else {
-                    name
+                    name.to_string()
                 };
                 let diagnostic = self.add_diagnostic(
                     DiagnosticRule::reportCallIssue,
@@ -20388,7 +20424,7 @@ impl TypeEvaluator {
         let mut is_compatible = true;
         // `functionName` is only tested for truthiness, so an empty name counts as absent.
         let function_name: Option<String> = type_result
-            .map(|r| FunctionType(r.type_.get()).d().shared.get().name.clone())
+            .map(|r| FunctionType(r.type_.get()).d().shared.get().name.to_string())
             .filter(|name| !name.is_empty());
         let mut skipped_bare_type_var_expected_type = false;
 
@@ -35966,7 +36002,7 @@ impl TypeEvaluator {
                     .push(ReturnTypeInferenceContext { function_node, code_flow_analyzer });
 
                 // `try` body; the `finally` block follows it.
-                self.return_type_inference_type_cache.set(Some(P::new_eval(RefCell::new(FxHashMap::default()))));
+                self.return_type_inference_type_cache.set(Some(P::new_eval(RefCell::new(TypeCacheMap::default()))));
                 self.return_type_inference_type_form_type_cache.set(Some(P::new_eval(RefCell::new(JsMap::default()))));
 
                 let mut all_arg_types_are_unknown = true;

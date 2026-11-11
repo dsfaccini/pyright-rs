@@ -2346,12 +2346,12 @@ flag_ops!(FunctionParamFlags);
 pub struct FunctionParam {
     pub category: ParamCategory,
     pub flags: FunctionParamFlags,
-    pub name: Option<Rc<str>>,
+    pub name: Option<Atom>,
     pub _type: P<Type>,
     pub _default_type: Option<P<Type>>,
     pub default_expr: Option<ExpressionNode>,
 }
-const _: () = assert!(size_of::<FunctionParam>() <= 48);
+const _: () = assert!(size_of::<FunctionParam>() <= 40);
 
 impl FunctionParam {
     // analyzer/types.ts:1619
@@ -2437,9 +2437,9 @@ flag_ops!(FunctionTypeFlags);
 #[derive(jsrt::Trace)]
 #[trace(eval)]
 pub struct FunctionDetailsShared {
-    pub name: String,
-    pub full_name: String,
-    pub module_name: String,
+    pub name: Atom,
+    pub full_name: Atom,
+    pub module_name: Atom,
     pub flags: Cell<FunctionTypeFlags>,
     pub type_params: RefCell<Vec<TypeVarType>>,
     pub parameters: Cell<P<RefCell<Vec<FunctionParam>>>>,
@@ -2451,7 +2451,7 @@ pub struct FunctionDetailsShared {
     pub cold: OptionRefCell<FunctionDetailsSharedCold>,
 }
 // Copied by every FunctionType clone that changes it; rare fields live in the cold half (PLAN.md step 6).
-const _: () = assert!(size_of::<FunctionDetailsShared>() <= 168);
+const _: () = assert!(size_of::<FunctionDetailsShared>() <= 120);
 
 // analyzer/types.ts:1729
 #[derive(Clone, Default)]
@@ -2646,9 +2646,9 @@ impl FunctionType {
             cached_requires_specialization: Cell::new(None),
             d: TypeDetails::Function(FunctionTypeDetails {
                 shared: Cell::new(P::new_eval(FunctionDetailsShared {
-                    name: name.to_string(),
-                    full_name: full_name.to_string(),
-                    module_name: module_name.to_string(),
+                    name: Atom::new(name),
+                    full_name: Atom::new(full_name),
+                    module_name: Atom::new(module_name),
                     flags: Cell::new(function_flags),
                     type_params: RefCell::new(Vec::new()),
                     parameters: Cell::new(P::new_eval(RefCell::new(Vec::new()))),

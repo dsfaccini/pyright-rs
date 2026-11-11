@@ -57,7 +57,7 @@ use crate::parser::parse_nodes::{
 };
 use crate::{analyzer, common, parser};
 use jsrt::cell::{Cell, OnceCell, RefCell};
-use jsrt::{FxHashMap, JsMap, JsSet, P};
+use jsrt::{IdMap, JsMap, JsSet, P, Trace};
 use std::rc::Rc;
 
 // analyzer/typeEvaluator.ts:391
@@ -322,7 +322,7 @@ pub struct TypeEvaluator {
     // analyzer/typeEvaluator.ts:675
     pub(crate) code_flow_analyzer_cache: RefCell<JsMap<u32, Vec<CodeFlowAnalyzerCacheEntry>>>,
     // analyzer/typeEvaluator.ts:676
-    pub(crate) type_cache: Cell<P<RefCell<FxHashMap<u32, TypeCacheEntry>>>>,
+    pub(crate) type_cache: Cell<P<RefCell<TypeCacheMap>>>,
     // analyzer/typeEvaluator.ts:677
     pub(crate) type_form_type_cache: Cell<P<RefCell<JsMap<u32, Vec<TypeFormTypeCacheEntry>>>>>,
     // analyzer/typeEvaluator.ts:678
@@ -342,8 +342,7 @@ pub struct TypeEvaluator {
     // analyzer/typeEvaluator.ts:685
     pub(crate) return_type_inference_context_stack: RefCell<Vec<ReturnTypeInferenceContext>>,
     // analyzer/typeEvaluator.ts:686
-    pub(crate) return_type_inference_type_cache:
-        Cell<Option<P<RefCell<FxHashMap<u32, TypeCacheEntry>>>>>,
+    pub(crate) return_type_inference_type_cache: Cell<Option<P<RefCell<TypeCacheMap>>>>,
     // analyzer/typeEvaluator.ts:687
     pub(crate) return_type_inference_type_form_type_cache:
         Cell<Option<P<RefCell<JsMap<u32, Vec<TypeFormTypeCacheEntry>>>>>>,
@@ -3813,6 +3812,20 @@ pub struct CreateTypeEvaluatorGetOverloadArgParamPairsReturn {
 pub struct CreateTypeEvaluatorPrintSrcDestTypesReturn {
     pub source_type: String,
     pub dest_type: String,
+}
+
+// Defined in tools/stubgen/typemap.toml [items].
+/// `typeCache` and `returnTypeInferenceTypeCache` (typeEvaluator.ts:676, 686): `Map<number,
+/// TypeCacheEntry>` keyed by node id, looked up, written and deleted from, never iterated.
+pub type TypeCacheMap = IdMap<StoredTypeCacheEntry>;
+
+/// A `TypeCacheEntry` as a type cache stores it, in 16 bytes instead of 24: the top bit of
+/// `gen_and_has_flags` says whether `flags` is set.
+#[derive(Clone, Copy, Trace)]
+pub struct StoredTypeCacheEntry {
+    pub type_result: P<TypeResult>,
+    gen_and_has_flags: u32,
+    flags: EvalFlags,
 }
 
 // Defined in tools/stubgen/typemap.toml [items].

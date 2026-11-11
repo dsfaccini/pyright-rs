@@ -10,7 +10,7 @@
 )]
 
 use crate::analyzer::code_flow_engine::CachedType;
-use crate::analyzer::type_evaluator::TypeCacheEntry;
+use crate::analyzer::type_evaluator::TypeCacheMap;
 use crate::analyzer::type_evaluator_types::TypeResult;
 use crate::analyzer::types::Type;
 use crate::parser::parse_nodes::ParseNode;
@@ -162,7 +162,7 @@ impl SpeculativeTypeTracker {
 /// cache (codeFlowEngine.ts:314). TypeScript passes the map itself; the holder shares it.
 #[derive(Clone, Copy)]
 pub enum SpeculativeCache {
-    Type(P<RefCell<FxHashMap<u32, TypeCacheEntry>>>),
+    Type(P<RefCell<TypeCacheMap>>),
     FlowNodeType(P<RefCell<FxHashMap<u32, Option<CachedType>>>>),
 }
 
