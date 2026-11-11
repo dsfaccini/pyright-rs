@@ -199,7 +199,7 @@ fn type_var_scope_and_bound_forms() {
         Some("f".to_string()),
         Some(TypeVarScopeType::Function),
     );
-    assert_eq!(TypeVarType::get_name_with_scope(type_var), "T.scope.f");
+    assert_eq!(&*TypeVarType::get_name_with_scope(type_var), "T.scope.f");
     assert_eq!(TypeVarType::get_readable_name(type_var, true), "T@f");
 
     let bound = TypeVarType::clone_as_bound(type_var);

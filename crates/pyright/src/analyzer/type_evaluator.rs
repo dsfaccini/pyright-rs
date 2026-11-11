@@ -6180,7 +6180,7 @@ impl TypeEvaluator {
                                             .borrow()
                                             .name_with_scope
                                             .as_deref()
-                                            == Some(type_var_name.as_str())
+                                            == Some(&*type_var_name)
                                     });
 
                                 // If this type variable is being constrained to a single index,
@@ -39248,7 +39248,7 @@ impl TypeEvaluator {
                 .unwrap_or_default()
                 .into_iter()
                 .filter(|constraint| {
-                    constraint.type_var.d().priv_.borrow().name_with_scope.as_deref() == Some(dest_type_var_name.as_str())
+                    constraint.type_var.d().priv_.borrow().name_with_scope.as_deref() == Some(&*dest_type_var_name)
                 })
                 .collect();
 
@@ -39259,7 +39259,7 @@ impl TypeEvaluator {
 
             !applicable_conditions.iter().any(|condition| {
                 let condition_name_with_scope = condition.type_var.d().priv_.borrow().name_with_scope.clone();
-                if condition_name_with_scope.as_deref() == Some(TypeVarType::get_name_with_scope(dest_type).as_str()) {
+                if condition_name_with_scope.as_deref() == Some(&*TypeVarType::get_name_with_scope(dest_type)) {
                     if let Some(bound_type) = dest_type.d().shared.get().bound_type.get() {
                         common::debug::assert(
                             condition.constraint_index == 0,

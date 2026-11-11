@@ -8,6 +8,7 @@ use crate::analyzer::types::is_type_same;
 use crate::analyzer::types::{Type, TypeVarType};
 use jsrt::{JsSet, LazyJsMap, P};
 use std::cell::RefCell;
+use std::rc::Rc;
 
 // analyzer/constraintTracker.ts:24
 pub(crate) const MAX_CONSTRAINT_SET_COUNT: u32 = 1024;
@@ -26,7 +27,7 @@ pub struct TypeVarConstraints {
 #[derive(jsrt::Trace)]
 #[trace(eval)]
 pub struct ConstraintSet {
-    pub(crate) _type_var_map: RefCell<LazyJsMap<String, TypeVarConstraints>>,
+    pub(crate) _type_var_map: RefCell<LazyJsMap<Rc<str>, TypeVarConstraints>>,
     pub(crate) _scope_ids: RefCell<Option<Box<JsSet<String>>>>,
 }
 // Most sets stay empty: the map and the scope ids are allocated on first insert (PLAN.md step 6).
@@ -91,7 +92,7 @@ impl ConstraintSet {
         }
 
         let mut is_same = true;
-        let entries: Vec<(String, TypeVarConstraints)> = self
+        let entries: Vec<(Rc<str>, TypeVarConstraints)> = self
             ._type_var_map
             .borrow()
             .iter()

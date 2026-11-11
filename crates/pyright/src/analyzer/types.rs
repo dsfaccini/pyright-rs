@@ -4849,12 +4849,12 @@ impl TypeVarType {
     }
 
     // analyzer/types.ts:3204
-    pub fn get_name_with_scope(type_var_type: TypeVarType) -> String {
+    pub fn get_name_with_scope(type_var_type: TypeVarType) -> Rc<str> {
         // If there is no name with scope, fall back on the (unscoped) name.
         let name_with_scope = type_var_type.d().priv_.borrow().name_with_scope.clone();
         match name_with_scope {
-            Some(name_with_scope) if !name_with_scope.is_empty() => name_with_scope.to_string(),
-            _ => type_var_type.d().shared.get().name.borrow().clone(),
+            Some(name_with_scope) if !name_with_scope.is_empty() => name_with_scope,
+            _ => Rc::from(type_var_type.d().shared.get().name.borrow().as_str()),
         }
     }
 
