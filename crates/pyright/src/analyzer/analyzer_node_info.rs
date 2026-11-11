@@ -1041,10 +1041,7 @@ pub fn is_code_unreachable(node: impl Into<P<ParseNode>>, reader: &dyn AnalyzerN
     while let Some(node) = cur_node {
         let flow_node = get_flow_node(node, reader);
         if let Some(flow_node) = flow_node {
-            return flow_node
-                .flags
-                .get()
-                .any(FlowFlags::UnreachableStaticCondition | FlowFlags::UnreachableStructural);
+            return flow_node.flags().any(FlowFlags::UnreachableStaticCondition | FlowFlags::UnreachableStructural);
         }
         cur_node = node.parent.get();
     }

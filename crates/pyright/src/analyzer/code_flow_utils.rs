@@ -145,14 +145,13 @@ pub fn format_control_flow_graph(
 
 // analyzer/codeFlowUtils.ts:96
 fn get_antecedents(f: P<FlowNode>) -> Vec<P<FlowNode>> {
-    if f.flags
-        .get()
+    if f.flags()
         .any(FlowFlags::LoopLabel | FlowFlags::BranchLabel)
     {
         return FlowLabel::cast(f).unwrap().d().antecedents.borrow().clone();
     }
 
-    if f.flags.get().any(
+    if f.flags().any(
         FlowFlags::Assignment
             | FlowFlags::VariableAnnotation
             | FlowFlags::WildcardImport
@@ -292,7 +291,7 @@ impl ControlFlowGraphFormatter<'_> {
     fn render_flow_node(&self, flow_node: P<FlowNode>, circular: bool) -> String {
         let text = format!(
             "{}@{}{}",
-            get_header(flow_node.flags.get()),
+            get_header(flow_node.flags()),
             flow_node.id,
             self.get_node_text(flow_node).unwrap_or_default()
         );
@@ -542,26 +541,25 @@ fn get_header(flags: FlowFlags) -> &'static str {
 
 // analyzer/codeFlowUtils.ts:269
 fn get_parse_node(f: P<FlowNode>) -> Option<P<ParseNode>> {
-    if f.flags.get().any(FlowFlags::Assignment) {
+    if f.flags().any(FlowFlags::Assignment) {
         return Some(FlowAssignment::cast(f).unwrap().d().node);
     }
 
-    if f.flags.get().any(FlowFlags::WildcardImport) {
+    if f.flags().any(FlowFlags::WildcardImport) {
         return Some(FlowWildcardImport::cast(f).unwrap().d().node.node());
     }
 
-    if f.flags
-        .get()
+    if f.flags()
         .any(FlowFlags::TrueCondition | FlowFlags::FalseCondition)
     {
         return Some(FlowCondition::cast(f).unwrap().d().expression);
     }
 
-    if f.flags.get().any(FlowFlags::NarrowForPattern) {
+    if f.flags().any(FlowFlags::NarrowForPattern) {
         return Some(FlowNarrowForPattern::cast(f).unwrap().d().statement);
     }
 
-    if f.flags.get().any(FlowFlags::Call) {
+    if f.flags().any(FlowFlags::Call) {
         return Some(FlowCall::cast(f).unwrap().d().node.node());
     }
 

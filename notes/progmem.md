@@ -12,7 +12,7 @@ Shrink the program heap: parse trees, tokens and binder objects, which are never
 - `TokenizerOutput` is owned, no longer a `P`: the parser owns it while parsing, `ParseFileResults` and then `SourceFile.parse` (an `Rc`, cached only for an open file) drop it. Its `lines` are a `P`, kept by the source file. Its `scratch` holds the tokens; dropping it drops those no node kept.
 - Parse-node token fields are `TokenCell<T>` (`get`, `set`, `new`), which keep the token (`Token::keep`). `FormatStringNode.middle_tokens` keeps its tokens at creation.
 - `jsrt::region::Region`: bump allocation into mmap chunks, released whole to a per-thread pool, or protected under check mode. `jsrt::P::from_raw` makes a handle into it.
-- `FlowNode` is the header; a flow node is allocated as `FlowAlloc<D>`. `FlowNode::create(flags, id, details)` takes the details struct (`FlowPlain` for a bare node); `node.d()` returns `FlowNodeDetails`, an enum of `&'static Flow<Name>Details`.
+- `FlowNode` is the header; a flow node is allocated as `FlowAlloc<D>`. `FlowNode::create(flags, id, details)` takes the details struct (`FlowPlain` for a bare node); `node.d()` returns `FlowNodeDetails`, an enum of `&'static Flow<Name>Details`. `FlowNode.flags` is `flags()`: the header keeps the flags in three bytes beside the interface kind, and never writes them after `create`.
 - `Declaration` is the `DeclarationBase` header; a declaration is allocated as `DeclarationAlloc<D>`, its interface chosen by `type_`. `Declaration::create` (program heap) and `create_eval` (evaluator heap) take the details struct (`NoDeclarationDetails` for `TypeParam`, `Class` and `SpecialBuiltInClass`); `decl.d()` returns `DeclarationDetails`, an enum of `&'static <Name>DeclarationDetails`. `module_name` is `RefCell<Rc<str>>`, shared with `AnalyzerFileInfo.module_name`, which is `Rc<str>`. The function statement lists, parameter inference fields and doc strings are `jsrt::OptionRefCell`.
 - `Symbol._synthesized_type_info` and `_typing_symbol_alias` are `jsrt::OptionRefCell`: `borrow()`, `borrow_mut()`.
 - `Scope.not_local_bindings` is `RefCell<jsrt::LazyJsMap>`, `slots_names` a `jsrt::OptionRefCell`, `chained_module_level_scope_lookup` boxed.
@@ -27,6 +27,7 @@ Shrink the program heap: parse trees, tokens and binder objects, which are never
 - `crates/jsrt/src/region.rs` (new), `crates/jsrt/src/lib.rs`, `crates/jsrt/src/arena.rs` (`P::from_raw`).
 - `source_file.rs`, `parser.rs`: own the tokenizer output.
 - `binder.rs`, `code_flow_utils.rs` (tests), `oracle/flow.rs`: flow node creation and `d()`.
+- `analyzer_node_info.rs`, `binder.rs`, `code_flow_engine.rs`, `code_flow_utils.rs`, `type_evaluator.rs`, `oracle/flow.rs`: `flags.get()` to `flags()` on flow nodes.
 - `binder.rs`, `checker.rs`, `declaration_utils.rs`, `named_tuples.rs`, `typed_dicts.rs`, `type_evaluator.rs`, `source_file.rs`, `analyzer_file_info.rs`, `examples/oracle_bind.rs`: declaration creation and `module_name` as `Rc<str>`. `crates/jsrt/src/cell.rs`: `OptionRefCell: From<Option<T>>`.
 - `crates/jsrt/src/collections.rs`: `LazyJsMap::get_mut`.
 - `oracle/bind.rs`, `oracle/flow.rs`: read the cold node-info fields.

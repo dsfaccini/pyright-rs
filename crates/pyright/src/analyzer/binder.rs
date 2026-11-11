@@ -1650,8 +1650,7 @@ impl ParseTreeVisitor<bool> for Binder {
         if is_guaranteed_to_execute {
             if self
                 .cur_flow()
-                .flags
-                .get()
+                .flags()
                 .any(FlowFlags::UnreachableStructural | FlowFlags::UnreachableStaticCondition)
             {
                 // Check if any continue statements added back-edges to preForLabel.
@@ -3626,7 +3625,7 @@ impl Binder {
 
         // If there was only one antecedent and this is a simple
         // branch label, there's no need for a label to exist.
-        if antecedents_len == 1 && node.flags.get() == FlowFlags::BranchLabel {
+        if antecedents_len == 1 && node.flags() == FlowFlags::BranchLabel {
             return node.d().antecedents.borrow()[0];
         }
 
@@ -3773,8 +3772,7 @@ impl Binder {
         expression: ExpressionNode,
     ) -> P<FlowNode> {
         if antecedent
-            .flags
-            .get()
+            .flags()
             .any(FlowFlags::UnreachableStructural | FlowFlags::UnreachableStaticCondition)
         {
             return antecedent;
@@ -4227,8 +4225,7 @@ impl Binder {
     // analyzer/binder.ts:3719
     fn _is_code_unreachable(&self) -> bool {
         self.cur_flow()
-            .flags
-            .get()
+            .flags()
             .any(FlowFlags::UnreachableStaticCondition | FlowFlags::UnreachableStructural)
     }
 
@@ -4286,8 +4283,7 @@ impl Binder {
     fn _add_antecedent(&mut self, label: FlowLabel, antecedent: P<FlowNode>) {
         if !self
             .cur_flow()
-            .flags
-            .get()
+            .flags()
             .any(FlowFlags::UnreachableStructural | FlowFlags::UnreachableStaticCondition)
         {
             // Don't add the same antecedent twice.

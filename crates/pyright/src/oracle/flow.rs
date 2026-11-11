@@ -69,7 +69,7 @@ fn flow_node_value(flow_node: &FlowNode, numbering: &FlowNumbering, symbol_names
 
     let mut fields: Vec<(&'static str, Option<Value>)> = vec![(
         "flags",
-        Some(Value::number(flow_node.flags.get().0 as f64)),
+        Some(Value::number(flow_node.flags().0 as f64)),
     )];
 
     let label_fields = |label: &crate::analyzer::code_flow_types::FlowLabelDetails| {

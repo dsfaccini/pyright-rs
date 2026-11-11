@@ -8,6 +8,7 @@
 
 use jsrt::flag_ops;
 use jsrt::cell::{Cell, RefCell};
+use std::cell::UnsafeCell;
 use std::ops::Deref;
 use std::ptr;
 
@@ -75,11 +76,18 @@ pub fn get_unique_flow_node_id() -> u32 {
 #[repr(C)]
 #[derive(jsrt::Trace)]
 pub struct FlowNode {
-    pub flags: Cell<FlowFlags>,
-    pub id: u32,
+    /// `flags()`, little-endian: no flag is above bit 23. Never written after `create`.
+    flags: [u8; 3],
     kind: FlowKind,
+    pub id: u32,
+
+    /// Label antecedents are written through a `&FlowNode` (`d()`). Without an
+    /// `UnsafeCell` the compiler takes a `&FlowNode` as read-only memory and may
+    /// drop those writes.
+    #[trace(skip)]
+    _written_through_shared: UnsafeCell<()>,
 }
-const _: () = assert!(size_of::<FlowNode>() <= 12);
+const _: () = assert!(size_of::<FlowNode>() <= 8);
 
 /// The interface a flow node was built as, `d()`'s variant.
 #[repr(u8)]
@@ -191,8 +199,15 @@ pub enum FlowNodeDetails {
 
 impl FlowNode {
     pub fn create<D: FlowInterface>(flags: FlowFlags, id: u32, d: D) -> P<FlowNode> {
-        let node = FlowNode { flags: Cell::new(flags), id, kind: D::KIND };
+        let [b0, b1, b2, b3] = flags.0.to_le_bytes();
+        assert!(b3 == 0, "flow flags {flags:?} above bit 23");
+        let node = FlowNode { flags: [b0, b1, b2], kind: D::KIND, id, _written_through_shared: UnsafeCell::new(()) };
         P::new(FlowAlloc { node, d }).header(|alloc| &alloc.node)
+    }
+
+    pub fn flags(&self) -> FlowFlags {
+        let [b0, b1, b2] = self.flags;
+        FlowFlags(u32::from_le_bytes([b0, b1, b2, 0]))
     }
 
     /// # Safety

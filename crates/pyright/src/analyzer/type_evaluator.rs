@@ -31476,7 +31476,7 @@ impl TypeEvaluator {
 
             let flow_node = self.node_info.get_flow_node(node.0);
             if let Some(flow_node) =
-                flow_node.filter(|f| f.flags.get().any(analyzer::code_flow_types::FlowFlags::WildcardImport))
+                flow_node.filter(|f| f.flags().any(analyzer::code_flow_types::FlowFlags::WildcardImport))
             {
                 let wildcard_flow_node = analyzer::code_flow_types::FlowWildcardImport::cast(flow_node).unwrap();
                 for name in wildcard_flow_node.d().names.iter() {

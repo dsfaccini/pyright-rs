@@ -390,7 +390,7 @@ impl CodeFlowEngine {
                         .borrow_mut()
                         .insert(cur_flow_node.id);
 
-                    let flags = cur_flow_node.flags.get();
+                    let flags = cur_flow_node.flags();
 
                     if flags.any(FlowFlags::UnreachableStructural) {
                         return self.cache_reachability_result(Reachability::UnreachableStructural);
@@ -467,7 +467,7 @@ impl CodeFlowEngine {
                                     evaluator,
                                     condition_reference.0,
                                     conditional_flow_node.d().expression,
-                                    conditional_flow_node.flags.get().any(
+                                    conditional_flow_node.flags().any(
                                         FlowFlags::TrueCondition | FlowFlags::TrueNeverCondition,
                                     ),
                                     &engine.node_info,
@@ -704,7 +704,7 @@ impl CodeFlowEngine {
                     return starting_constraints.to_vec();
                 }
 
-                let flags = cur_flow_node.flags.get();
+                let flags = cur_flow_node.flags();
 
                 if flags.any(
                     FlowFlags::UnreachableStaticCondition
@@ -1882,7 +1882,7 @@ impl CodeFlowAnalyzer {
                 evaluator.check_for_cancellation();
 
                 loop {
-                    let flags = cur_flow_node.flags.get();
+                    let flags = cur_flow_node.flags();
 
                     // Have we already been here? If so, use the cached value.
                     let cached_entry = self.get_cache_entry(cur_flow_node);
@@ -2231,7 +2231,7 @@ impl CodeFlowAnalyzer {
                                             evaluator,
                                             reference,
                                             conditional_flow_node.d().expression,
-                                            conditional_flow_node.flags.get().any(
+                                            conditional_flow_node.flags().any(
                                                 FlowFlags::TrueCondition
                                                     | FlowFlags::TrueNeverCondition,
                                             ),
@@ -2312,7 +2312,7 @@ impl CodeFlowAnalyzer {
                                                         evaluator,
                                                         condition_reference.0,
                                                         conditional_flow_node.d().expression,
-                                                        conditional_flow_node.flags.get().any(
+                                                        conditional_flow_node.flags().any(
                                                             FlowFlags::TrueCondition
                                                                 | FlowFlags::TrueNeverCondition,
                                                         ),
