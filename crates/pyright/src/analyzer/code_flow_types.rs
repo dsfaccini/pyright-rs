@@ -8,7 +8,6 @@
 
 use jsrt::flag_ops;
 use jsrt::cell::{Cell, RefCell};
-use std::cell::UnsafeCell;
 use std::ops::Deref;
 
 use jsrt::{JsSet, P};
@@ -79,12 +78,6 @@ pub struct FlowNode {
     flags: [u8; 3],
     kind: FlowKind,
     pub id: u32,
-
-    /// Label antecedents are written through a `&FlowNode` (`d()`). Without an
-    /// `UnsafeCell` the compiler takes a `&FlowNode` as read-only memory and may
-    /// drop those writes.
-    #[trace(skip)]
-    _written_through_shared: UnsafeCell<()>,
 }
 const _: () = assert!(size_of::<FlowNode>() <= 8);
 
@@ -200,7 +193,7 @@ impl FlowNode {
     pub fn create<D: FlowInterface>(flags: FlowFlags, id: u32, d: D) -> P<FlowNode> {
         let [b0, b1, b2, b3] = flags.0.to_le_bytes();
         assert!(b3 == 0, "flow flags {flags:?} above bit 23");
-        let node = FlowNode { flags: [b0, b1, b2], kind: D::KIND, id, _written_through_shared: UnsafeCell::new(()) };
+        let node = FlowNode { flags: [b0, b1, b2], kind: D::KIND, id };
         P::new(FlowAlloc { node, d }).header(|alloc| &alloc.node)
     }
 

@@ -8,7 +8,7 @@
 //! nodes do (see `docs/porting.md`).
 
 use jsrt::flag_ops;
-use std::cell::{Cell, UnsafeCell};
+use std::cell::Cell;
 use std::ops::Deref;
 use std::ptr;
 use std::rc::Rc;
@@ -334,12 +334,6 @@ pub struct Token {
 
     /// The token has comments prior to it, after its interface fields (`TokenAlloc`).
     has_comments: bool,
-
-    /// `Token::keep` writes the slot before a scratch token through a shared
-    /// reference. Without an `UnsafeCell` the compiler takes a `&Token` as
-    /// read-only memory and may drop that write.
-    #[trace(skip)]
-    _written_through_shared: UnsafeCell<()>,
 }
 const _: () = assert!(size_of::<Token>() <= 16);
 
@@ -432,7 +426,6 @@ fn alloc_token<D: TokenInterface>(
         kind: D::KIND,
         scratch: !scratch.is_null(),
         has_comments: comments.is_some(),
-        _written_through_shared: UnsafeCell::new(()),
     };
     match comments {
         None => place_token(scratch, TokenAlloc { token, d, comments: () }),
@@ -671,7 +664,6 @@ impl Token {
             kind: scratch.kind,
             scratch: false,
             has_comments: scratch.has_comments,
-            _written_through_shared: UnsafeCell::new(()),
         };
         // SAFETY: the caller guarantees the kind, and that the buffers move.
         let d = unsafe { ptr::read(Token::details_unchecked::<D>(scratch)) };
