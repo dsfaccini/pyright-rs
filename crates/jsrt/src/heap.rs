@@ -1299,16 +1299,27 @@ const SWEEP_AHEAD: usize = 4;
 /// Calls `f` once for every slot below `limit` that overlaps a marked card.
 fn for_card_slots(cards: &[u8], slot: usize, limit: usize, mut f: impl FnMut(usize)) {
     let mut next = 0;
-    for (c, &card) in cards.iter().enumerate() {
-        if card == 0 {
+    // Most cards are clean: test them eight at a time.
+    for (chunk, eight) in cards.chunks(8).enumerate() {
+        let clean = match <[u8; 8]>::try_from(eight) {
+            Ok(eight) => u64::from_ne_bytes(eight) == 0,
+            Err(_) => eight.iter().all(|&card| card == 0),
+        };
+        if clean {
             continue;
         }
-        let first = ((c << CARD_SHIFT) / slot).max(next);
-        let last = ((((c + 1) << CARD_SHIFT) - 1) / slot + 1).min(limit);
-        for i in first..last {
-            f(i);
+        for (k, &card) in eight.iter().enumerate() {
+            if card == 0 {
+                continue;
+            }
+            let c = chunk * 8 + k;
+            let first = ((c << CARD_SHIFT) / slot).max(next);
+            let last = ((((c + 1) << CARD_SHIFT) - 1) / slot + 1).min(limit);
+            for i in first..last {
+                f(i);
+            }
+            next = next.max(last);
         }
-        next = next.max(last);
     }
 }
 
