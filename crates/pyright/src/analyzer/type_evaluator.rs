@@ -10720,7 +10720,7 @@ impl TypeEvaluator {
                         type_class_type: None,
                         replace_unsolved: Some(
                             analyzer::type_utils::ApplyTypeVarOptionsReplaceUnsolved {
-                                scope_ids: vec![alias_info.shared.type_var_scope_id.clone()],
+                                scope_ids: vec![alias_info.shared.type_var_scope_id.clone()].into(),
                                 tuple_class_type: self.get_tuple_class_type(),
                                 unsolved_exempt_type_vars: None,
                                 use_unknown: None,
@@ -10775,7 +10775,7 @@ impl TypeEvaluator {
                     type_class_type: None,
                     replace_unsolved: Some(
                         analyzer::type_utils::ApplyTypeVarOptionsReplaceUnsolved {
-                            scope_ids: vec![alias_info.shared.type_var_scope_id.clone()],
+                            scope_ids: vec![alias_info.shared.type_var_scope_id.clone()].into(),
                             tuple_class_type: self.get_tuple_class_type(),
                             unsolved_exempt_type_vars: None,
                             use_unknown: None,
@@ -11085,7 +11085,7 @@ impl TypeEvaluator {
                             type_class_type: None,
                             replace_unsolved: Some(
                                 analyzer::type_utils::ApplyTypeVarOptionsReplaceUnsolved {
-                                    scope_ids: vec![alias_info.shared.type_var_scope_id.clone()],
+                                    scope_ids: vec![alias_info.shared.type_var_scope_id.clone()].into(),
                                     tuple_class_type: self.get_tuple_class_type(),
                                     unsolved_exempt_type_vars: None,
                                     use_unknown: None,
@@ -14963,9 +14963,9 @@ impl TypeEvaluator {
                             type_class_type: None,
                             replace_unsolved: Some(
                                 analyzer::type_utils::ApplyTypeVarOptionsReplaceUnsolved {
-                                    scope_ids: analyzer::type_utils::get_type_var_scope_ids(
+                                    scope_ids: Rc::from(analyzer::type_utils::get_type_var_scope_ids(
                                         bound_to_type.0,
-                                    ),
+                                    )),
                                     tuple_class_type: self.get_tuple_class_type(),
                                     unsolved_exempt_type_vars: None,
                                     use_unknown: None,
@@ -19434,9 +19434,9 @@ impl TypeEvaluator {
                         type_class_type: None,
                         replace_unsolved: Some(
                             analyzer::type_utils::ApplyTypeVarOptionsReplaceUnsolved {
-                                scope_ids: analyzer::type_utils::get_type_var_scope_ids(
+                                scope_ids: Rc::from(analyzer::type_utils::get_type_var_scope_ids(
                                     return_type,
-                                ),
+                                )),
                                 use_unknown: Some(true),
                                 tuple_class_type: self.get_tuple_class_type(),
                                 unsolved_exempt_type_vars: None,
@@ -19838,7 +19838,7 @@ impl TypeEvaluator {
             Some(&ApplyTypeVarOptions {
                 type_class_type: None,
                 replace_unsolved: Some(analyzer::type_utils::ApplyTypeVarOptionsReplaceUnsolved {
-                    scope_ids: analyzer::type_utils::get_type_var_scope_ids(type_.0),
+                    scope_ids: Rc::from(analyzer::type_utils::get_type_var_scope_ids(type_.0)),
                     unsolved_exempt_type_vars: Some(
                         self.get_unknown_exempt_type_vars_for_return_type(type_, return_type),
                     ),
@@ -21175,7 +21175,7 @@ impl TypeEvaluator {
                 Some(&ApplyTypeVarOptions {
                     replace_unsolved: Some(
                         analyzer::type_utils::ApplyTypeVarOptionsReplaceUnsolved {
-                            scope_ids: analyzer::type_utils::get_type_var_scope_ids(type_var.0),
+                            scope_ids: Rc::from(analyzer::type_utils::get_type_var_scope_ids(type_var.0)),
                             tuple_class_type: self.get_tuple_class_type(),
                             unsolved_exempt_type_vars: None,
                             use_unknown: None,
@@ -24050,7 +24050,7 @@ impl TypeEvaluator {
                     type_class_type: None,
                     replace_unsolved: Some(
                         analyzer::type_utils::ApplyTypeVarOptionsReplaceUnsolved {
-                            scope_ids: Vec::new(),
+                            scope_ids: Rc::from(Vec::new()),
                             tuple_class_type: self.get_tuple_class_type(),
                             unsolved_exempt_type_vars: None,
                             use_unknown: None,
@@ -24564,7 +24564,7 @@ impl TypeEvaluator {
                                     type_class_type: None,
                                     replace_unsolved: Some(
                                         analyzer::type_utils::ApplyTypeVarOptionsReplaceUnsolved {
-                                            scope_ids: Vec::new(),
+                                            scope_ids: Rc::from(Vec::new()),
                                             tuple_class_type: self.get_tuple_class_type(),
                                             unsolved_exempt_type_vars: None,
                                             use_unknown: None,
@@ -30303,7 +30303,7 @@ impl TypeEvaluator {
                                             type_class_type: None,
                                             replace_unsolved: Some(
                                                 analyzer::type_utils::ApplyTypeVarOptionsReplaceUnsolved {
-                                                    scope_ids,
+                                                    scope_ids: Rc::from(scope_ids),
                                                     tuple_class_type: self.get_tuple_class_type(),
                                                     unsolved_exempt_type_vars: None,
                                                     use_unknown: None,
@@ -32904,7 +32904,7 @@ impl TypeEvaluator {
                 Some(&ApplyTypeVarOptions {
                     type_class_type: None,
                     replace_unsolved: Some(analyzer::type_utils::ApplyTypeVarOptionsReplaceUnsolved {
-                        scope_ids: analyzer::type_utils::get_type_var_scope_ids(class_type.0),
+                        scope_ids: Rc::from(analyzer::type_utils::get_type_var_scope_ids(class_type.0)),
                         tuple_class_type: self.get_tuple_class_type(),
                         unsolved_exempt_type_vars: None,
                         use_unknown: None,

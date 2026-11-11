@@ -2614,7 +2614,7 @@ pub fn specialize_with_default_type_args(type_: ClassType) -> ClassType {
         &solution,
         &ApplyTypeVarOptions {
             replace_unsolved: Some(ApplyTypeVarOptionsReplaceUnsolved {
-                scope_ids: vec![type_var_scope_id.unwrap()],
+                scope_ids: vec![type_var_scope_id.unwrap()].into(),
                 tuple_class_type: None,
                 unsolved_exempt_type_vars: None,
                 use_unknown: None,
@@ -5739,7 +5739,10 @@ impl TypeVarTransformer for ApplySolvedTypeVarsTransformer {
                 // it represents an instance of a type. If the replacement includes
                 // a generic class that has not been specialized, specialize it
                 // now with default type arguments.
-                let replace_unsolved = self._options.replace_unsolved.clone();
+                // The callback reads two fields of `replaceUnsolved`; copy just those.
+                let replace_unsolved = self._options.replace_unsolved.as_ref().map(|replace_unsolved| {
+                    (replace_unsolved.use_unknown.unwrap_or(false), replace_unsolved.tuple_class_type)
+                });
                 replacement = map_subtypes(
                     replacement,
                     &mut |subtype| {
@@ -5758,9 +5761,9 @@ impl TypeVarTransformer for ApplySolvedTypeVarsTransformer {
                             // `subtype.shared.typeParams` is always an array, so only the type
                             // arguments decide.
                             if ClassType(subtype).d().priv_.borrow().type_args.is_none() {
-                                if let Some(replace_unsolved) = &replace_unsolved {
-                                    return Some(if replace_unsolved.use_unknown.unwrap_or(false) {
-                                        specialize_with_unknown_type_args(ClassType(subtype), replace_unsolved.tuple_class_type).0
+                                if let Some((use_unknown, tuple_class_type)) = replace_unsolved {
+                                    return Some(if use_unknown {
+                                        specialize_with_unknown_type_args(ClassType(subtype), tuple_class_type).0
                                     } else {
                                         specialize_with_default_type_args(ClassType(subtype)).0
                                     });
@@ -6186,7 +6189,8 @@ impl UnificationTypeTransformer {
 // Inline object type at ApplyTypeVarOptions.replaceUnsolved.
 #[derive(Clone)]
 pub struct ApplyTypeVarOptionsReplaceUnsolved {
-    pub scope_ids: Vec<String>,
+    /// Shared: `applySolvedTypeVars` hands its options to the transformer it builds.
+    pub scope_ids: Rc<[String]>,
     pub tuple_class_type: Option<ClassType>,
     pub unsolved_exempt_type_vars: Option<Vec<TypeVarType>>,
     pub use_unknown: Option<bool>,

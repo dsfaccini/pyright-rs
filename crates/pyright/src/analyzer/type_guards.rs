@@ -2225,9 +2225,9 @@ pub(crate) fn narrow_type_for_instance(
                                                 Some(&ApplyTypeVarOptions {
                                                     replace_unsolved: Some(
                                                         ApplyTypeVarOptionsReplaceUnsolved {
-                                                            scope_ids: get_type_var_scope_ids(
+                                                            scope_ids: Rc::from(get_type_var_scope_ids(
                                                                 filter_type,
-                                                            ),
+                                                            )),
                                                             tuple_class_type: evaluator
                                                                 .get_tuple_class_type(),
                                                             unsolved_exempt_type_vars: None,

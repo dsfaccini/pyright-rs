@@ -1556,7 +1556,7 @@ pub(crate) fn get_converter_input_type(
                     input_constraints,
                     Some(&ApplyTypeVarOptions {
                         replace_unsolved: Some(ApplyTypeVarOptionsReplaceUnsolved {
-                            scope_ids: get_type_var_scope_ids(type_var.0),
+                            scope_ids: Rc::from(get_type_var_scope_ids(type_var.0)),
                             tuple_class_type: evaluator.get_tuple_class_type(),
                             unsolved_exempt_type_vars: None,
                             use_unknown: None,
