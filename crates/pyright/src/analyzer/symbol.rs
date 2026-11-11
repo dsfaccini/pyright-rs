@@ -484,13 +484,18 @@ impl SymbolTable {
     /// walk are visited too, and the callback may write to the table.
     pub fn for_each(&self, mut callback: impl FnMut(P<Symbol>, &str)) {
         let mut index = 0;
+        // The name is copied out so the callback can write to the table; one buffer serves
+        // every entry.
+        let mut name = String::new();
         loop {
-            let entry = {
+            let symbol = {
                 let map = self.0.borrow();
-                map.get_index(index).map(|(name, symbol)| (name.clone(), *symbol))
-            };
-            let Some((name, symbol)) = entry else {
-                break;
+                let Some((key, symbol)) = map.get_index(index) else {
+                    break;
+                };
+                name.clear();
+                name.push_str(key);
+                *symbol
             };
             callback(symbol, &name);
             index += 1;
