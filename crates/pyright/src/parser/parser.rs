@@ -1660,7 +1660,7 @@ impl Parser {
             };
 
             let name_node = NameNode::create(self._get_owner_key(), identifier_token);
-            if identifier_token.d().value == "_" {
+            if &*identifier_token.d().value == "_" {
                 self._add_syntax_error(LocMessage::star_star_wildcard_not_allowed(), &name_node);
             }
 
@@ -3339,7 +3339,7 @@ impl Parser {
 
                     if is_future_import {
                         // Add the future import by name.
-                        self._future_imports.insert(import_name.d().value.clone());
+                        self._future_imports.insert(import_name.d().value.to_string());
                     }
 
                     let next_token = self._peek_token(0);

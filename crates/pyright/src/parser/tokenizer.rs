@@ -3,6 +3,7 @@
 //! The tokenizer reads UTF-16 source text (`&[u16]`) like `charCodeAt`; every
 //! offset and length is a UTF-16 offset.
 
+use std::rc::Rc;
 use std::sync::OnceLock;
 
 use jsrt::number::{math_round, parse_bigint, parse_float, parse_int};
@@ -774,7 +775,7 @@ pub struct Tokenizer<'a> {
     _use_notebook_mode: bool,
 
     // Direct-mapped identifier intern cache: the UTF-16 text and its string.
-    _identifier_cache: Vec<Option<(Box<[u16]>, String)>>,
+    _identifier_cache: Vec<Option<(Box<[u16]>, Rc<str>)>>,
 }
 
 impl Default for Tokenizer<'_> {
@@ -1730,7 +1731,7 @@ impl<'a> Tokenizer<'a> {
     // Per-tokenize identifier intern cache. Direct-mapped, so collisions
     // simply replace the slot.
     // parser/tokenizer.ts:1397
-    fn _intern_identifier(&mut self, text: &[u16], start: i32, end: i32, length: i32) -> String {
+    fn _intern_identifier(&mut self, text: &[u16], start: i32, end: i32, length: i32) -> Rc<str> {
         let first_char = text[start as usize] as i32;
         let last_char = text[(end - 1) as usize] as i32;
         // Hash mixes length, first and last char.
@@ -1741,7 +1742,7 @@ impl<'a> Tokenizer<'a> {
         {
             return cached.clone();
         }
-        let value = detach_substring(text, start, end);
+        let value: Rc<str> = detach_substring(text, start, end).into();
         self._identifier_cache[hash] =
             Some((text[start as usize..end as usize].into(), value.clone()));
         value

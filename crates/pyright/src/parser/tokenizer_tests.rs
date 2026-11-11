@@ -1733,7 +1733,7 @@ fn octal_number() {
         IdentifierToken::cast(results.tokens.get_item_at(6))
             .unwrap()
             .d()
-            .value,
+            .value.as_ref(),
         "o9"
     );
 
@@ -1760,7 +1760,7 @@ fn octal_number() {
         IdentifierToken::cast(results.tokens.get_item_at(8))
             .unwrap()
             .d()
-            .value,
+            .value.as_ref(),
         "oO"
     );
 }
@@ -2507,12 +2507,12 @@ fn normalization() {
     let mut id_token = IdentifierToken::cast(results.tokens.get_item_at(0)).unwrap();
     assert_eq!(id_token.type_, TokenType::Identifier);
     assert_eq!(id_token.length, 1);
-    assert_eq!(id_token.d().value, "R");
+    assert_eq!(&*id_token.d().value, "R");
 
     id_token = IdentifierToken::cast(results.tokens.get_item_at(1)).unwrap();
     assert_eq!(id_token.type_, TokenType::Identifier);
     assert_eq!(id_token.length, 2);
-    assert_eq!(id_token.d().value, "R");
+    assert_eq!(id_token.d().value.as_ref(), "R");
 }
 
 #[test]

@@ -16,6 +16,7 @@ Shrink the program heap: parse trees, tokens and binder objects, which are never
 - `Declaration` is the `DeclarationBase` header; a declaration is allocated as `DeclarationAlloc<D>`, its interface chosen by `type_`. `Declaration::create` (program heap) and `create_eval` (evaluator heap) take the details struct (`NoDeclarationDetails` for `TypeParam`, `Class` and `SpecialBuiltInClass`); `decl.d()` returns `DeclarationDetails`, an enum of `&'static <Name>DeclarationDetails`. `module_name` is `RefCell<Rc<str>>`, shared with `AnalyzerFileInfo.module_name`, which is `Rc<str>`. The function statement lists, parameter inference fields and doc strings are `jsrt::OptionRefCell`.
 - `Symbol._synthesized_type_info` and `_typing_symbol_alias` are `jsrt::OptionRefCell`: `borrow()`, `borrow_mut()`.
 - `Scope.not_local_bindings` is `RefCell<jsrt::LazyJsMap>`, `slots_names` a `jsrt::OptionRefCell`, `chained_module_level_scope_lookup` boxed.
+- `IdentifierTokenDetails.value` is `Rc<str>`, shared through the tokenizer's intern cache; `IdentifierToken::create` takes `impl Into<Rc<str>>`.
 - `AnalyzerNodeInfo` keeps `flow_node` inline; the other fields live in `AnalyzerNodeInfoCold`. Read `info.cold().and_then(|c| c.scope.get())`, write `info.cold_mut().scope.set(..)`.
 
 ## Shared-file edits
