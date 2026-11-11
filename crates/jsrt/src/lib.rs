@@ -20,6 +20,7 @@ pub mod region;
 pub mod smol_toml;
 pub mod sort;
 pub mod string;
+pub mod switch;
 pub mod trace;
 pub mod vscode_uri;
 
@@ -32,3 +33,4 @@ pub use trace::Trace;
 pub use collections::{FxHashMap, FxHashSet, JsMap, JsSet, LazyJsMap, NonEmptyList, SmallJsSet};
 pub use number::{JsBigInt, NumberValue};
 pub use string::{JsStr, JsString, NormalizationForm};
+pub use switch::SwitchMode;

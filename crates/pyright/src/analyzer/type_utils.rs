@@ -2085,14 +2085,40 @@ pub fn get_class_member_iterator(
 ) -> impl Iterator<Item = ClassMember> {
     // A TypeScript generator: each `next()` runs the body up to its next `yield`, so the
     // MRO walk and its partial specializations happen only as far as the caller reads.
+    //
+    // pyright specializes each MRO class before it looks for the member there, and reads the
+    // specialized class only when it yields a member. `partiallySpecializeType` evaluates
+    // nothing, and a specialized class keeps its MRO class's details, so the port specializes
+    // an MRO class only when it yields a member from it (`PYRIGHT_RS_DEFER_MRO_SPECIALIZATION`).
+    let mode = jsrt::switch_mode!("PYRIGHT_RS_DEFER_MRO_SPECIALIZATION");
     let declared_types_only = flags.any(MemberAccessFlags::DeclaredTypesOnly);
     let mut skipped_undeclared_type = false;
     let mut started = false;
     let mut finished = false;
     let mut class_itr = None;
-    // The MRO class being searched, its specialized form and symbol table, whether its typed
-    // dict entries are skipped, and whether its instance members were looked at yet.
-    let mut current: Option<(P<Type>, ClassType, SymbolTable, bool, bool)> = None;
+    // The MRO class being searched, its specialized form (`None` until a member needs it when
+    // specialization is deferred) and symbol table, whether its typed dict entries are
+    // skipped, and whether its instance members were looked at yet.
+    let mut current: Option<(P<Type>, Option<ClassType>, SymbolTable, bool, bool)> = None;
+    // The specialized form of the MRO class being searched, built on first use.
+    let specialize = move |mro_class: P<Type>, specialized_mro_class: &mut Option<ClassType>| -> ClassType {
+        let eager = *specialized_mro_class;
+        let specialized = match eager {
+            Some(eager) if mode != jsrt::SwitchMode::Check => eager,
+            _ => ClassType(partially_specialize_type(mro_class, ClassType(class_type), None, None)),
+        };
+        if let Some(eager) = eager {
+            if mode == jsrt::SwitchMode::Check {
+                assert!(
+                    crate::analyzer::types::is_type_same(eager.0, specialized.0, &Default::default(), 0),
+                    "PYRIGHT_RS_DEFER_MRO_SPECIALIZATION=check: a deferred specialization differs"
+                );
+            }
+            return eager;
+        }
+        *specialized_mro_class = Some(specialized);
+        specialized
+    };
 
     let unknown_member = |class_type: P<Type>, symbol_type: P<Type>| ClassMember {
         symbol: Symbol::create_with_type(crate::analyzer::symbol::SymbolFlags::None, symbol_type, None),
@@ -2137,7 +2163,12 @@ pub fn get_class_member_iterator(
                     class_flags = class_flags | ClassIteratorFlags::SkipTypeBaseClass;
                 }
 
-                class_itr = Some(get_class_iterator(class_type, class_flags, skip_mro_class));
+                class_itr = Some(get_class_iterator(
+                    class_type,
+                    class_flags,
+                    skip_mro_class,
+                    mode != jsrt::SwitchMode::On,
+                ));
             } else if crate::analyzer::types::is_any_or_unknown(class_type) {
                 // The class derives from an unknown type, so all bets are off
                 // when trying to find a member. Return an Any or Unknown symbol.
@@ -2150,7 +2181,7 @@ pub fn get_class_member_iterator(
         }
 
         loop {
-            if let Some((mro_class, specialized_mro_class, member_fields, skip_td_entry, instance_done)) = current {
+            if let Some((mro_class, mut specialized_mro_class, member_fields, skip_td_entry, instance_done)) = current {
                 // Look at instance members first if requested.
                 if !instance_done {
                     current = Some((mro_class, specialized_mro_class, member_fields, skip_td_entry, true));
@@ -2162,6 +2193,8 @@ pub fn get_class_member_iterator(
                             if symbol.is_instance_member() && !skip_td_entry {
                                 let has_declared_type = symbol.has_typed_declarations();
                                 if !declared_types_only || has_declared_type {
+                                    let specialized_mro_class = specialize(mro_class, &mut specialized_mro_class);
+                                    current = Some((mro_class, Some(specialized_mro_class), member_fields, skip_td_entry, true));
                                     return Some(ClassMember {
                                         symbol,
                                         is_instance_member: true,
@@ -2195,6 +2228,7 @@ pub fn get_class_member_iterator(
                         if found_symbol.is_class_member() && !skip_td_entry {
                             let has_declared_type = found_symbol.has_typed_declarations();
                             if !declared_types_only || has_declared_type {
+                                let specialized_mro_class = specialize(mro_class, &mut specialized_mro_class);
                                 let mut is_instance_member = found_symbol.is_instance_member();
                                 let mut is_class_member = true;
 
@@ -2279,14 +2313,26 @@ pub fn get_class_member_iterator(
                 continue;
             }
 
-            if !crate::analyzer::types::is_instantiable_class(specialized_mro_class) {
-                continue;
+            // A specialized instantiable class is an instantiable class with the same details.
+            if let Some(specialized_mro_class) = specialized_mro_class {
+                let is_instantiable = crate::analyzer::types::is_instantiable_class(specialized_mro_class);
+                if mode == jsrt::SwitchMode::Check {
+                    assert!(
+                        is_instantiable
+                            && ClassType(specialized_mro_class).d().shared.get() == ClassType(mro_class).d().shared.get(),
+                        "PYRIGHT_RS_DEFER_MRO_SPECIALIZATION=check: a specialized MRO class changed its details"
+                    );
+                }
+                if !is_instantiable {
+                    continue;
+                }
             }
 
-            let specialized_mro_class = ClassType(specialized_mro_class);
-            let member_fields = ClassType::get_symbol_table(specialized_mro_class);
+            let specialized_mro_class = specialized_mro_class.map(ClassType);
+            let unspecialized_mro_class = ClassType(mro_class);
+            let member_fields = ClassType::get_symbol_table(specialized_mro_class.unwrap_or(unspecialized_mro_class));
             let skip_td_entry = flags.any(MemberAccessFlags::SkipTypedDictEntries)
-                && specialized_mro_class
+                && unspecialized_mro_class
                     .d()
                     .shared
                     .get()
@@ -2319,11 +2365,15 @@ pub fn is_member_read_only(class_type: ClassType, name: &str) -> bool {
 
 // analyzer/typeUtils.ts:1985
 /// TS defaults: flags = ClassIteratorFlags.Default.
+/// With `specialize` false, each MRO class comes without its specialized form (`None`), and
+/// the base-class skips test the MRO class, which has the same details
+/// (`PYRIGHT_RS_DEFER_MRO_SPECIALIZATION`).
 pub fn get_class_iterator(
     class_type: P<Type>,
     flags: ClassIteratorFlags,
     skip_mro_class: Option<ClassType>,
-) -> impl Iterator<Item = (P<Type>, P<Type>)> {
+    specialize: bool,
+) -> impl Iterator<Item = (P<Type>, Option<P<Type>>)> {
     // A TypeScript generator: each `next()` runs the body up to its next `yield`. The MRO is
     // read by index, as `for..of` reads a live array.
     let mut started = false;
@@ -2369,25 +2419,38 @@ pub fn get_class_iterator(
 
             // If mroClass is an ancestor of classType, partially specialize
             // it in the context of classType.
-            let specialized_mro_class = partially_specialize_type(mro_class, class_type, None, None);
+            let specialized_mro_class =
+                specialize.then(|| partially_specialize_type(mro_class, class_type, None, None));
+            let is_built_in = |name: Atom| {
+                let tested = specialized_mro_class.unwrap_or(mro_class);
+                let is_built_in = |tested: P<Type>| {
+                    crate::analyzer::types::is_instantiable_class(tested)
+                        && ClassType::is_built_in(ClassType(tested), Some(&[name]))
+                };
+                if specialized_mro_class.is_some()
+                    && jsrt::switch_mode!("PYRIGHT_RS_DEFER_MRO_SPECIALIZATION") == jsrt::SwitchMode::Check
+                {
+                    assert!(
+                        is_built_in(tested) == is_built_in(mro_class),
+                        "PYRIGHT_RS_DEFER_MRO_SPECIALIZATION=check: specialization changed a base-class skip"
+                    );
+                }
+                is_built_in(tested)
+            };
 
             // Should we ignore members on the 'object' base class?
             if flags.any(ClassIteratorFlags::SkipObjectBaseClass) {
-                if crate::analyzer::types::is_instantiable_class(specialized_mro_class) {
-                    if ClassType::is_built_in(ClassType(specialized_mro_class), Some(&[jsrt::atom!("object")])) {
-                        finished = true;
-                        return None;
-                    }
+                if is_built_in(jsrt::atom!("object")) {
+                    finished = true;
+                    return None;
                 }
             }
 
             // Should we ignore members on the 'type' base class?
             if flags.any(ClassIteratorFlags::SkipTypeBaseClass) {
-                if crate::analyzer::types::is_instantiable_class(specialized_mro_class) {
-                    if ClassType::is_built_in(ClassType(specialized_mro_class), Some(&[jsrt::atom!("type")])) {
-                        finished = true;
-                        return None;
-                    }
+                if is_built_in(jsrt::atom!("type")) {
+                    finished = true;
+                    return None;
                 }
             }
 
