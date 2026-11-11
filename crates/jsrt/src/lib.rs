@@ -20,6 +20,7 @@ pub mod smol_toml;
 pub mod sort;
 pub mod string;
 pub mod trace;
+mod vm;
 pub mod vscode_uri;
 
 pub use arena::P;

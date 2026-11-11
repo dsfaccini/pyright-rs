@@ -228,7 +228,7 @@ pub(crate) fn arena_chunks_resident() -> (usize, usize) {
         // SAFETY: only reads the chunk bounds; nothing allocates in the arena meanwhile.
         for (ptr, len) in unsafe { arena.iter_allocated_chunks_raw() } {
             used += len;
-            resident += heap::resident(ptr as usize, len);
+            resident += crate::vm::resident(ptr as usize, len);
         }
         (used, resident)
     })

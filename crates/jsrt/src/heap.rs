@@ -18,9 +18,9 @@ use std::time::Instant;
 
 use crate::collections::FxHashMap;
 use crate::trace::Trace;
+use crate::vm;
 
 mod census;
-pub(crate) use census::resident;
 pub use census::{census_at_exit, census_end_of_check};
 
 const BLOCK_SHIFT: u32 = 16;
@@ -28,8 +28,9 @@ const BLOCK: usize = 1 << BLOCK_SHIFT;
 /// Slot sizes up to this keep the reciprocal slot index exact (offset × slot < 2^32).
 pub(crate) const MAX_SLOT: usize = 1 << 14;
 const NONE: u32 = u32::MAX;
-const PROGRAM_RESERVE: usize = 64 << 30;
-const EVAL_RESERVE: usize = 256 << 30;
+/// Under Miri a range is an ordinary allocation (`vm.rs`), so it stays small.
+const PROGRAM_RESERVE: usize = if cfg!(miri) { 32 << 20 } else { 64 << 30 };
+const EVAL_RESERVE: usize = if cfg!(miri) { 128 << 20 } else { 256 << 30 };
 /// The smallest reservation tried when address space is limited.
 const MIN_RESERVE: usize = 256 << 20;
 /// Blocks committed (made readable and writable) at a time.
@@ -228,16 +229,18 @@ impl Range {
         let mut len = want.min(limit).next_multiple_of(BLOCK);
         loop {
             let meta_len = (len >> BLOCK_SHIFT) * size_of::<BlockMeta>();
-            if let Some(base) = map(len + BLOCK) {
-                if let Some(meta) = map(meta_len) {
-                    if let Some(cards) = map(len >> CARD_SHIFT) {
-                        let base = base.next_multiple_of(BLOCK);
+            if let Some(base) = vm::map(len + BLOCK, false) {
+                if let Some(meta) = vm::map(meta_len, false) {
+                    if let Some(cards) = vm::map(len >> CARD_SHIFT, false) {
+                        let base = (base as usize).next_multiple_of(BLOCK);
                         let blocks = Mutex::new(RangeBlocks { next: 0, committed: 0, warm: Vec::new(), free: Vec::new() });
-                        return Range { name, base, len, meta: meta as *mut BlockMeta, cards, blocks };
+                        return Range { name, base, len, meta: meta.cast::<BlockMeta>(), cards: cards as usize, blocks };
                     }
-                    unsafe { libc::munmap(meta as *mut libc::c_void, meta_len) };
+                    // SAFETY: mapped above and not used.
+                    unsafe { vm::unmap(meta, meta_len) };
                 }
-                unsafe { libc::munmap(base as *mut libc::c_void, len + BLOCK) };
+                // SAFETY: as above.
+                unsafe { vm::unmap(base, len + BLOCK) };
             }
             assert!(len > MIN_RESERVE, "collector: cannot reserve address space for the {name} heap");
             len /= 2;
@@ -271,9 +274,9 @@ impl Range {
         if block == blocks.committed {
             let count = COMMIT_BLOCKS.min((self.len >> BLOCK_SHIFT) - block);
             let committed = count > 0
-                && protect(self.block_base(block as u32), count << BLOCK_SHIFT)
-                && protect(self.meta as usize + block * size_of::<BlockMeta>(), count * size_of::<BlockMeta>())
-                && protect(self.cards + block * CARDS_PER_BLOCK, count * CARDS_PER_BLOCK);
+                && vm::commit(self.block_base(block as u32) as *mut u8, count << BLOCK_SHIFT)
+                && vm::commit(self.meta.wrapping_add(block).cast(), count * size_of::<BlockMeta>())
+                && vm::commit((self.cards + block * CARDS_PER_BLOCK) as *mut u8, count * CARDS_PER_BLOCK);
             if !committed {
                 drop(blocks);
                 panic!("collector: the {} heap reservation of {} MiB is full or cannot be committed", self.name, self.len >> 20);
@@ -294,41 +297,9 @@ impl Range {
         }
         drop(blocks);
         // SAFETY: the block is committed, owned by this thread, and holds no live object.
-        unsafe { libc::madvise(self.block_base(block) as *mut libc::c_void, BLOCK, libc::MADV_DONTNEED) };
+        unsafe { vm::discard(self.block_base(block) as *mut u8, BLOCK) };
         lock(&self.blocks).free.push(block);
     }
-}
-
-/// Reserves address space without committing it.
-fn map(len: usize) -> Option<usize> {
-    // SAFETY: an anonymous private mapping at an address the kernel picks.
-    let p = unsafe {
-        libc::mmap(
-            ptr::null_mut(),
-            len,
-            libc::PROT_NONE,
-            libc::MAP_PRIVATE | libc::MAP_ANONYMOUS | libc::MAP_NORESERVE,
-            -1,
-            0,
-        )
-    };
-    (p != libc::MAP_FAILED).then_some(p as usize)
-}
-
-/// Makes reserved pages readable and writable; they are backed on first touch.
-fn protect(addr: usize, len: usize) -> bool {
-    // SAFETY: `addr..addr + len` lies in a mapping `map` reserved.
-    unsafe { libc::mprotect(addr as *mut libc::c_void, len, libc::PROT_READ | libc::PROT_WRITE) == 0 }
-}
-
-/// The address-space limit (`RLIMIT_AS`), or `usize::MAX`.
-fn address_space_limit() -> usize {
-    let mut limit = libc::rlimit { rlim_cur: 0, rlim_max: 0 };
-    // SAFETY: `getrlimit` writes the struct it is given.
-    if unsafe { libc::getrlimit(libc::RLIMIT_AS, &mut limit) } != 0 || limit.rlim_cur == libc::RLIM_INFINITY {
-        return usize::MAX;
-    }
-    usize::try_from(limit.rlim_cur).unwrap_or(usize::MAX)
 }
 
 struct Ranges {
@@ -393,7 +364,7 @@ fn ranges() -> &'static Ranges {
     RANGES.get_or_init(|| {
         // Under an address-space limit, leave most of it to the program heap's bump
         // arena, the system allocator and the stack.
-        let limit = address_space_limit();
+        let limit = vm::address_space_limit();
         let ranges = Ranges {
             program: Range::reserve("program", PROGRAM_RESERVE, limit / 16),
             eval: Range::reserve("evaluator", EVAL_RESERVE, limit / 4),

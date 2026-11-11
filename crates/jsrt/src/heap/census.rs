@@ -10,6 +10,8 @@ use std::sync::atomic::{AtomicU8, Ordering::Relaxed};
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
+use crate::vm::resident;
+
 use super::{
     BLOCK, BLOCK_SHIFT, BlockMeta, CARD_SHIFT, Collection, GcMode, START, ThreadHeap, config, lock, malloc_bytes, ranges,
     rss_bytes, with_heap,
@@ -50,22 +52,6 @@ pub(super) fn on() -> bool {
 
 pub(super) fn set_phase(phase: u8) {
     PHASE.store(phase, Relaxed);
-}
-
-/// Resident bytes of the pages overlapping `[addr, addr + len)`, a mapped range.
-pub(crate) fn resident(addr: usize, len: usize) -> usize {
-    const PAGE: usize = 4096;
-    if len == 0 {
-        return 0;
-    }
-    let start = addr & !(PAGE - 1);
-    let end = (addr + len).next_multiple_of(PAGE);
-    let mut pages = vec![0u8; (end - start) / PAGE];
-    // SAFETY: the range is mapped; mincore only reports residency into `pages`.
-    if unsafe { libc::mincore(start as *mut libc::c_void, end - start, pages.as_mut_ptr()) } != 0 {
-        return 0;
-    }
-    pages.iter().filter(|&&page| page & 1 != 0).count() * PAGE
 }
 
 /// Resident bytes of file-backed mappings (the binary, libraries) and of the main stack.

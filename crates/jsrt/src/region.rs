@@ -6,7 +6,8 @@
 //! access through a stale pointer faults.
 
 use std::cell::{Cell, RefCell};
-use std::ptr;
+
+use crate::vm;
 
 const CHUNK: usize = 256 << 10;
 const POOL_MAX: usize = 64;
@@ -71,33 +72,19 @@ impl Drop for Region {
             if self.protect_on_drop {
                 // SAFETY: the chunk is a mapping of `CHUNK` bytes this region owns,
                 // and nothing may use its contents any more.
-                unsafe {
-                    libc::madvise(base as *mut libc::c_void, CHUNK, libc::MADV_DONTNEED);
-                    libc::mprotect(base as *mut libc::c_void, CHUNK, libc::PROT_NONE);
-                }
+                unsafe { vm::retire(base as *mut u8, CHUNK) };
             } else if POOL.with(|pool| pool.borrow().len()) < POOL_MAX {
                 POOL.with(|pool| pool.borrow_mut().push(base));
             } else {
                 // SAFETY: as above; the mapping goes back to the kernel.
-                unsafe { libc::munmap(base as *mut libc::c_void, CHUNK) };
+                unsafe { vm::unmap(base as *mut u8, CHUNK) };
             }
         }
     }
 }
 
 fn map_chunk() -> usize {
-    // SAFETY: an anonymous private mapping at an address the kernel picks.
-    let p = unsafe {
-        libc::mmap(
-            ptr::null_mut(),
-            CHUNK,
-            libc::PROT_READ | libc::PROT_WRITE,
-            libc::MAP_PRIVATE | libc::MAP_ANONYMOUS | libc::MAP_NORESERVE,
-            -1,
-            0,
-        )
-    };
-    assert!(p != libc::MAP_FAILED, "region: mmap of a {CHUNK}-byte chunk failed");
+    let p = vm::map(CHUNK, true).unwrap_or_else(|| panic!("region: mmap of a {CHUNK}-byte chunk failed"));
     p as usize
 }
 
