@@ -68,7 +68,7 @@ pub fn get_function_info_from_decorators(
     if is_in_class {
         // The "__new__" magic method is not an instance method.
         // It acts as a static method instead.
-        if node.d().name.get().d().value == "__new__" {
+        if node.d().name.get().d().value() == "__new__" {
             flags |= FunctionTypeFlags::ConstructorMethod;
         }
 
@@ -77,7 +77,7 @@ pub fn get_function_info_from_decorators(
         let implicit_class_methods = ["__init_subclass__", "__class_getitem__"];
         if implicit_class_methods
             .iter()
-            .any(|name| node.d().name.get().d().value == *name)
+            .any(|name| node.d().name.get().d().value() == *name)
         {
             flags |= FunctionTypeFlags::ClassMethod;
         }
@@ -297,7 +297,7 @@ pub fn apply_function_decorator(
                 .get();
 
             if is_property(base_type) {
-                let member_name = member_access_node.d().member.get().d().value.clone();
+                let member_name = member_access_node.d().member.get().d().value().to_string();
                 if member_name == "setter" {
                     if is_function(input_function_type) {
                         validate_property_method(
@@ -804,7 +804,7 @@ pub fn add_overloads_to_function_type(
     }
     let symbol_with_scope = evaluator.look_up_symbol_recursive(
         node.0,
-        &node.d().name.get().d().value,
+        node.d().name.get().d().value(),
         /* honorCodeFlow */ false,
         false,
     );
@@ -964,7 +964,7 @@ pub fn get_deprecated_message_from_call(node: CallNode) -> String {
         let string_list_node = StringListNode(args[0].d().value_expr.get());
         let mut message = JsString::from("");
         for s in string_list_node.d().strings.borrow().iter() {
-            let value = match &s.get().d {
+            let value = match s.d() {
                 ParseNodeDetails::String(d) => &d.value,
                 ParseNodeDetails::FormatString(d) => &d.value,
                 _ => unreachable!("a string list holds string nodes"),

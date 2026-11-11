@@ -461,11 +461,11 @@ pub fn is_alias_factory_callee(call_target: ExpressionNode, allow_member_access:
     // are only matched when `allowMemberAccess` is set, because callers that *drop* declarations must stay
     // strict to avoid discarding unrelated `x._alias(...)` user code.
     if let Some(name) = NameNode::cast(call_target) {
-        return name.d().value == "_alias";
+        return name.d().value() == "_alias";
     }
 
     if allow_member_access && let Some(member_access) = MemberAccessNode::cast(call_target) {
-        return member_access.d().member.get().d().value == "_alias";
+        return member_access.d().member.get().d().value() == "_alias";
     }
 
     false

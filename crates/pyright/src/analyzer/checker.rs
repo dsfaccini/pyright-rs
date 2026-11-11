@@ -237,7 +237,7 @@ impl ParseTreeVisitor<bool> for Checker {
             if analyzer::parse_tree_utils::is_unannotated_function(node) {
                 self._evaluator.add_information(
                     &LocMessage::unannotated_function_skipped()
-                        .format(&[("name", &node.d().name.get().d().value)]),
+                        .format(&[("name", node.d().name.get().d().value())]),
                     node.d().name.get().0,
                     None,
                 );
@@ -272,7 +272,7 @@ impl ParseTreeVisitor<bool> for Checker {
                     if param.d().category.get() == parser::parse_nodes::ParamCategory::Simple
                         && index as u32 >= param_details.position_only_param_count
                     {
-                        keyword_names.insert(param_name.d().value.clone());
+                        keyword_names.insert(param_name.d().value().to_string());
                     }
 
                     // Determine whether this is a P.args parameter.
@@ -280,7 +280,7 @@ impl ParseTreeVisitor<bool> for Checker {
                         let annotation_expr = param.d().annotation.get().or(param.d().annotation_comment.get());
                         if let Some(annotation_expr) = annotation_expr {
                             if let Some(member_access) = MemberAccessNode::cast(annotation_expr) {
-                                if member_access.d().member.get().d().value == "args" {
+                                if member_access.d().member.get().d().value() == "args" {
                                     let base_type = self._evaluator.get_type(member_access.d().left_expr.get());
                                     if base_type.is_some_and(analyzer::types::is_param_spec) {
                                         saw_param_spec_args = true;
@@ -298,7 +298,7 @@ impl ParseTreeVisitor<bool> for Checker {
                         self._evaluator.add_diagnostic(
                             DiagnosticRule::reportGeneralTypeIssues,
                             &LocMessage::named_param_after_param_spec_args()
-                                .format(&[("name", &param_name.d().value)]),
+                                .format(&[("name", param_name.d().value())]),
                             param_name.0,
                             None,
                         );
@@ -307,7 +307,7 @@ impl ParseTreeVisitor<bool> for Checker {
 
                 // Allow unknown and missing param types if the param is named '_'.
                 if let Some(param_name) = param.d().name.get() {
-                    let param_name_value = param_name.d().value.clone();
+                    let param_name_value = param_name.d().value().to_string();
                     if param_name_value != "_" {
                         let parameters = function_type.d().shared.get().parameters.get();
                         let param_index = parameters
@@ -447,7 +447,7 @@ impl ParseTreeVisitor<bool> for Checker {
                     let param_node = params
                         .iter()
                         .find(|param| {
-                            param.d().name.get().is_some_and(|n| *n.d().value == **param_spec_name)
+                            param.d().name.get().is_some_and(|n| *n.d().value() == **param_spec_name)
                         })
                         .copied();
                     let annotation_node =
@@ -567,7 +567,7 @@ impl ParseTreeVisitor<bool> for Checker {
         if IS_PRINT_CODE_COMPLEXITY_ENABLED {
             println!(
                 "Code complexity of function {} is {}",
-                node.d().name.get().d().value,
+                node.d().name.get().d().value(),
                 jsrt::number::number_to_string(code_complexity)
             );
         }
@@ -607,7 +607,7 @@ impl ParseTreeVisitor<bool> for Checker {
             if containing_class_node.is_none() && FunctionType::is_final(function_type) {
                 self._evaluator.add_diagnostic(
                     DiagnosticRule::reportGeneralTypeIssues,
-                    &LocMessage::final_non_method().format(&[("name", &node.d().name.get().d().value)]),
+                    &LocMessage::final_non_method().format(&[("name", node.d().name.get().d().value())]),
                     node.d().name.get().0,
                     None,
                 );
@@ -617,7 +617,7 @@ impl ParseTreeVisitor<bool> for Checker {
         // If we're at the module level within a stub file, report a diagnostic
         // if there is a '__getattr__' function defined when in strict mode.
         // This signifies an incomplete stub file that obscures type errors.
-        if self._file_info.is_stub_file && node.d().name.get().d().value == "__getattr__" {
+        if self._file_info.is_stub_file && node.d().name.get().d().value() == "__getattr__" {
             let scope = analyzer::scope_utils::get_scope_for_node(node.0, self._node_info.reader());
             if scope.is_some_and(|scope| scope.type_ == ScopeType::Module) {
                 self._evaluator.add_diagnostic(
@@ -684,7 +684,7 @@ impl ParseTreeVisitor<bool> for Checker {
                         self._evaluator.add_diagnostic(
                             DiagnosticRule::reportUnknownLambdaType,
                             &LocMessage::param_type_unknown()
-                                .format(&[("paramName", &param_name.d().value)]),
+                                .format(&[("paramName", param_name.d().value())]),
                             param_name.0,
                             None,
                         );
@@ -692,7 +692,7 @@ impl ParseTreeVisitor<bool> for Checker {
                         self._evaluator.add_diagnostic(
                             DiagnosticRule::reportUnknownLambdaType,
                             &LocMessage::param_type_partially_unknown()
-                                .format(&[("paramName", &param_name.d().value)]),
+                                .format(&[("paramName", param_name.d().value())]),
                             param_name.0,
                             None,
                         );
@@ -749,7 +749,7 @@ impl ParseTreeVisitor<bool> for Checker {
             if node.parent.get().is_some_and(|parent| parent.node_type == ParseNodeType::StatementList) {
                 let left_expr = node.d().left_expr.get();
                 let is_reveal_type_call =
-                    NameNode::cast(left_expr).is_some_and(|name| name.d().value == "reveal_type");
+                    NameNode::cast(left_expr).is_some_and(|name| name.d().value() == "reveal_type");
                 let return_type = self._evaluator.get_type(node.0);
 
                 if !is_reveal_type_call {
@@ -1657,7 +1657,7 @@ impl ParseTreeVisitor<bool> for Checker {
         let module = node.d().module.get();
         if module.d().leading_dots.get() == 0
             && module.d().name_parts.borrow().len() == 1
-            && module.d().name_parts.borrow()[0].d().value == "__future__"
+            && module.d().name_parts.borrow()[0].d().value() == "__future__"
         {
             if !analyzer::parse_tree_utils::is_valid_location_for_future_import(node) {
                 self._evaluator.add_diagnostic(
@@ -1743,7 +1743,7 @@ impl ParseTreeVisitor<bool> for Checker {
         if let Some(parent) = node.parent.get().and_then(ImportFromNode::cast) {
             let module = parent.d().module.get();
             if module.d().leading_dots.get() == 0 && module.d().name_parts.borrow().len() == 1 {
-                let name_part = module.d().name_parts.borrow()[0].d().value.clone();
+                let name_part = module.d().name_parts.borrow()[0].d().value().to_string();
                 if name_part == "typing" || name_part == "typing_extensions" {
                     is_import_from_typing = true;
                 }
@@ -1785,7 +1785,7 @@ impl ParseTreeVisitor<bool> for Checker {
             .and_then(|p| p.parent.get())
             .and_then(|p| p.parent.get());
         let mut found_duplicate = false;
-        let name = node.d().name.get().d().value.clone();
+        let name = node.d().name.get().d().value().to_string();
 
         while let Some(cur) = cur_node {
             let type_var_scope_node = analyzer::parse_tree_utils::get_type_var_scope_node(cur);
@@ -1987,7 +1987,7 @@ impl Checker {
 
             if self._is_multipart_import_unused(node) {
                 let multipart_name =
-                    name_parts.iter().map(|np| np.d().value.clone()).collect::<Vec<_>>().join(".");
+                    name_parts.iter().map(|np| np.d().value().to_string()).collect::<Vec<_>>().join(".");
                 let mut text_range = common::text_range::TextRange {
                     start: name_parts[0].start.get(),
                     length: name_parts[0].length.get(),
@@ -2034,7 +2034,7 @@ impl Checker {
         // multi-name import path until we get to the second-to-the-last
         // part.
         for name_part in name_parts.iter().take(name_parts.len() - 1).skip(1) {
-            let symbol = analyzer::types::ModuleType::get_field(analyzer::types::ModuleType(module_type), &name_part.d().value);
+            let symbol = analyzer::types::ModuleType::get_field(analyzer::types::ModuleType(module_type), name_part.d().value());
             let Some(symbol) = symbol else {
                 return false;
             };
@@ -2048,7 +2048,7 @@ impl Checker {
         }
 
         // Look up the last part of the import to get its symbol ID.
-        let last_part_name = name_parts[name_parts.len() - 1].d().value.clone();
+        let last_part_name = name_parts[name_parts.len() - 1].d().value().to_string();
         let symbol = analyzer::types::ModuleType::get_field(analyzer::types::ModuleType(module_type), &last_part_name);
 
         let Some(symbol) = symbol else {
@@ -2195,7 +2195,7 @@ impl Checker {
 
     // analyzer/checker.ts:1924
     pub(crate) fn _report_unnecessary_condition_expression(&mut self, expression: ExpressionNode) {
-        if let D::BinaryOperation(d) = &expression.get().d {
+        if let D::BinaryOperation(d) = expression.d() {
             if d.operator.get() == parser::tokenizer_types::OperatorType::And
                 || d.operator.get() == parser::tokenizer_types::OperatorType::Or
             {
@@ -2204,7 +2204,7 @@ impl Checker {
             }
 
             return;
-        } else if let D::UnaryOperation(d) = &expression.get().d {
+        } else if let D::UnaryOperation(d) = expression.d() {
             if d.operator.get() == parser::tokenizer_types::OperatorType::Not {
                 self._report_unnecessary_condition_expression(d.expr.get());
             }
@@ -2289,7 +2289,7 @@ impl Checker {
             || node.node_type == ParseNodeType::Set
             || node.node_type == ParseNodeType::Dictionary
         {
-            let items: Vec<P<ParseNode>> = match &node.get().d {
+            let items: Vec<P<ParseNode>> = match node.d() {
                 D::List(d) => d.items.borrow().clone(),
                 D::Set(d) => d.items.borrow().clone(),
                 D::Dictionary(d) => d.items.borrow().clone(),
@@ -2309,10 +2309,10 @@ impl Checker {
             && self._file_info.ipython_mode == analyzer::source_file::IPythonMode::CellDocs
         {
             if let Some(parent) = node.parent.get() {
-                if let D::StatementList(parent_d) = &parent.get().d {
+                if let D::StatementList(parent_d) = parent.d() {
                     if parent_d.statements.borrow().last() == Some(&node) {
                         if let Some(grandparent) = parent.parent.get() {
-                            if let D::Module(grandparent_d) = &grandparent.get().d {
+                            if let D::Module(grandparent_d) = grandparent.d() {
                                 if grandparent_d.statements.borrow().last() == Some(&parent) {
                                     // Exclude an expression at the end of a notebook cell, as that is treated as
                                     // the cell's value.
@@ -2340,7 +2340,7 @@ impl Checker {
         // Look up the symbol to see if it's a type parameter.
         let symbol_with_scope =
             self._evaluator
-                .look_up_symbol_recursive(node.0, &node.d().value, false, false);
+                .look_up_symbol_recursive(node.0, node.d().value(), false, false);
         let Some(symbol_with_scope) = symbol_with_scope else {
             return;
         };
@@ -2350,7 +2350,7 @@ impl Checker {
 
         self._evaluator.add_diagnostic(
             DiagnosticRule::reportGeneralTypeIssues,
-            &LocMessage::nonlocal_type_param().format(&[("name", &node.d().value)]),
+            &LocMessage::nonlocal_type_param().format(&[("name", node.d().value())]),
             node.0,
             None,
         );
@@ -2526,7 +2526,7 @@ impl Checker {
             || operator == parser::tokenizer_types::OperatorType::IsNot;
 
         // Check for chained comparisons.
-        if let D::BinaryOperation(right_d) = &right_expression.get().d {
+        if let D::BinaryOperation(right_d) = right_expression.d() {
             if !right_d.has_parens.get()
                 && analyzer::parse_tree_utils::operator_supports_chaining(right_d.operator.get())
             {
@@ -2887,7 +2887,7 @@ impl Checker {
 
         // Is this a constructor (an __init__ method) for a generic class?
         let mut constructor_class: Option<ClassType> = None;
-        if FunctionType::is_instance_method(type_) && node.d().name.get().d().value == "__init__" {
+        if FunctionType::is_instance_method(type_) && node.d().name.get().d().value() == "__init__" {
             let containing_class_node =
                 analyzer::parse_tree_utils::get_enclosing_class_or_function(node.0);
             if let Some(containing_class_node) = containing_class_node.and_then(ClassNode::cast) {
@@ -2918,7 +2918,7 @@ impl Checker {
                 let cur_param_name = || {
                     cur_param
                         .and_then(|cur_param| cur_param.d().name.get())
-                        .map(|name| name.d().value.clone())
+                        .map(|name| name.d().value().to_string())
                 };
 
                 // Does this name refer to a TypeVar that is scoped to this function?
@@ -3111,7 +3111,7 @@ impl Checker {
 
                 self._evaluator.add_diagnostic(
                     DiagnosticRule::reportInvalidTypeVarUse,
-                    &(LocMessage::type_var_used_only_once().format(&[("name", &usage.nodes[0].d().value)])
+                    &(LocMessage::type_var_used_only_once().format(&[("name", usage.nodes[0].d().value())])
                         + &diag.get_string(
                             common::diagnostic::DEFAULT_MAX_DIAGNOSTIC_DEPTH,
                             common::diagnostic::DEFAULT_MAX_DIAGNOSTIC_LINE_COUNT,
@@ -3141,7 +3141,7 @@ impl Checker {
                             .any(|subtype| {
                                 analyzer::types::is_type_var(*subtype)
                                     && *TypeVarType(*subtype).d().shared.get().name.borrow()
-                                        == usage.nodes[0].d().value
+                                        == usage.nodes[0].d().value()
                             })
                     {
                         is_used_in_return_type = false;
@@ -3165,7 +3165,7 @@ impl Checker {
                 self._evaluator.add_diagnostic(
                     DiagnosticRule::reportInvalidTypeVarUse,
                     &(LocMessage::type_var_possibly_unsolvable().format(&[
-                        ("name", &usage.nodes[0].d().value),
+                        ("name", usage.nodes[0].d().value()),
                         ("param", usage.param_with_ellipsis.as_deref().unwrap_or("")),
                     ]) + &diag.get_string(
                         common::diagnostic::DEFAULT_MAX_DIAGNOSTIC_DEPTH,
@@ -3191,7 +3191,7 @@ impl Checker {
                 self._evaluator.add_diagnostic(
                     DiagnosticRule::reportInvalidTypeVarUse,
                     &(LocMessage::type_var_possibly_unsolvable().format(&[
-                        ("name", &usage.nodes[0].d().value),
+                        ("name", usage.nodes[0].d().value()),
                         ("param", usage.param_with_ellipsis.as_deref().unwrap_or("")),
                     ]) + &diag.get_string(
                         common::diagnostic::DEFAULT_MAX_DIAGNOSTIC_DEPTH,
@@ -3264,7 +3264,7 @@ impl Checker {
             self._evaluator.add_diagnostic(
                 DiagnosticRule::reportInconsistentOverload,
                 &LocMessage::overload_static_method_inconsistent()
-                    .format(&[("name", &node.d().name.get().d().value)]),
+                    .format(&[("name", node.d().name.get().d().value())]),
                 first_overload_name_node().0,
                 None,
             );
@@ -3274,7 +3274,7 @@ impl Checker {
             self._evaluator.add_diagnostic(
                 DiagnosticRule::reportInconsistentOverload,
                 &LocMessage::overload_class_method_inconsistent()
-                    .format(&[("name", &node.d().name.get().d().value)]),
+                    .format(&[("name", node.d().name.get().d().value())]),
                 first_overload_name_node().0,
                 None,
             );
@@ -3301,7 +3301,7 @@ impl Checker {
                 self._evaluator.add_diagnostic(
                     DiagnosticRule::reportOverlappingOverload,
                     &LocMessage::overlapping_overload().format(&[
-                        ("name", &node.d().name.get().d().value),
+                        ("name", node.d().name.get().d().value()),
                         ("obscured", &jsrt::number::number_to_string((prev_overloads.len() + 1) as f64)),
                         ("obscuredBy", &jsrt::number::number_to_string((i + 1) as f64)),
                     ]),
@@ -3331,7 +3331,7 @@ impl Checker {
                         self._evaluator.add_diagnostic(
                             DiagnosticRule::reportOverlappingOverload,
                             &LocMessage::overload_return_type_mismatch().format(&[
-                                ("name", &node.d().name.get().d().value),
+                                ("name", node.d().name.get().d().value()),
                                 ("newIndex", &jsrt::number::number_to_string((prev_overloads.len() + 1) as f64)),
                                 ("prevIndex", &jsrt::number::number_to_string((i + 1) as f64)),
                             ]),
@@ -3526,7 +3526,7 @@ impl Checker {
 
         // `statement.d.firstToken`: every statement node but `Error` has one.
         let first_token_of = |statement: StatementNode| -> P<parser::tokenizer_types::Token> {
-            match &statement.get().d {
+            match statement.d() {
                 D::If(d) => d.first_token.get(),
                 D::While(d) => d.first_token.get(),
                 D::For(d) => d.first_token.get(),
@@ -3667,14 +3667,14 @@ impl Checker {
                             let d = AugmentedAssignmentNode(substatement).d();
                             is_valid = d.operator.get() == parser::tokenizer_types::OperatorType::AddEqual
                                 && NameNode::cast(d.left_expr.get())
-                                    .is_some_and(|left_expr| left_expr.d().value == "__all__");
+                                    .is_some_and(|left_expr| left_expr.d().value() == "__all__");
                         }
 
                         ParseNodeType::Call => {
                             // Exempt __all__ manipulations.
                             is_valid = MemberAccessNode::cast(CallNode(substatement).d().left_expr.get())
                                 .and_then(|left_expr| NameNode::cast(left_expr.d().left_expr.get()))
-                                .is_some_and(|left_expr| left_expr.d().value == "__all__");
+                                .is_some_and(|left_expr| left_expr.d().value() == "__all__");
                         }
 
                         _ => {}
@@ -3885,7 +3885,7 @@ impl Checker {
             let params = param_list.d().params.borrow().clone();
             for param in params.iter() {
                 let symbol = type_param_scope
-                    .and_then(|type_param_scope| type_param_scope.symbol_table.get(&param.d().name.get().d().value));
+                    .and_then(|type_param_scope| type_param_scope.symbol_table.get(param.d().name.get().d().value()));
                 let Some(symbol) = symbol else {
                     // This can happen if the code is unreachable.
                     return;
@@ -4000,7 +4000,7 @@ impl Checker {
             self._evaluator.add_diagnostic(
                 DiagnosticRule::reportNoOverloadImplementation,
                 &LocMessage::overload_without_implementation()
-                    .format(&[("name", &primary_decl_name.d().value)]),
+                    .format(&[("name", primary_decl_name.d().value())]),
                 primary_decl_name.0,
                 None,
             );
@@ -4387,7 +4387,7 @@ impl Checker {
             if let Some(diag) = diag {
                 let primary_decl_node: Option<P<ParseNode>> = match primary_decl.type_ {
                     analyzer::declaration::DeclarationType::Function
-                    | analyzer::declaration::DeclarationType::Class => match &primary_decl.node.get().get().d {
+                    | analyzer::declaration::DeclarationType::Class => match primary_decl.node.get().d() {
                         D::Function(d) => Some(d.name.get().0),
                         D::Class(d) => Some(d.name.get().0),
                         _ => None,
@@ -4400,7 +4400,7 @@ impl Checker {
                         }
                     }
                     analyzer::declaration::DeclarationType::Param
-                    | analyzer::declaration::DeclarationType::TypeParam => match &primary_decl.node.get().get().d {
+                    | analyzer::declaration::DeclarationType::TypeParam => match primary_decl.node.get().d() {
                         D::Parameter(d) => d.name.get().map(|name| name.0),
                         D::TypeParameter(d) => Some(d.name.get().0),
                         _ => None,
@@ -4635,7 +4635,7 @@ impl Checker {
                         // For statements of the form "import x as x", don't mark "x" as unaccessed
                         // because it's assumed to be re-exported.
                         // See https://typing.readthedocs.io/en/latest/source/stubs.html#imports.
-                        if alias.d().value != *decl.module_name.borrow() {
+                        if alias.d().value() != decl.module_name().as_str() {
                             name_node = Some(alias);
                         }
                     } else {
@@ -4645,11 +4645,11 @@ impl Checker {
                             name_node = Some(name_parts[0]);
                             self._evaluator.add_diagnostic(
                                 DiagnosticRule::reportUnusedImport,
-                                &LocMessage::unaccessed_import().format(&[("name", &name_parts[0].d().value)]),
+                                &LocMessage::unaccessed_import().format(&[("name", name_parts[0].d().value())]),
                                 name_parts[0].0,
                                 None,
                             );
-                            message = Some(LocMessage::unaccessed_import().format(&[("name", &name_parts[0].d().value)]));
+                            message = Some(LocMessage::unaccessed_import().format(&[("name", name_parts[0].d().value())]));
                         }
                     }
                 } else if let Some(import_from_as) = ImportFromAsNode::cast(decl_node) {
@@ -4661,12 +4661,12 @@ impl Checker {
                         .d()
                         .alias
                         .get()
-                        .is_some_and(|alias| alias.d().value == import_from_as.d().name.get().d().value);
+                        .is_some_and(|alias| alias.d().value() == import_from_as.d().name.get().d().value());
 
                     // If this is a __future__ import, it's OK for the import symbol to be unaccessed.
                     let is_future = {
                         let name_parts = import_from.d().module.get().d().name_parts.borrow();
-                        name_parts.len() == 1 && name_parts[0].d().value == "__future__"
+                        name_parts.len() == 1 && name_parts[0].d().value() == "__future__"
                     };
 
                     if !is_reexport && !is_future {
@@ -4675,7 +4675,7 @@ impl Checker {
                 }
 
                 if let Some(name_node) = name_node {
-                    message = Some(LocMessage::unaccessed_import().format(&[("name", &name_node.d().value)]));
+                    message = Some(LocMessage::unaccessed_import().format(&[("name", name_node.d().value())]));
                 }
             }
 
@@ -4699,7 +4699,7 @@ impl Checker {
 
                     // Don't emit a diagnostic if the name starts with an underscore.
                     // This indicates that the variable is unused.
-                    if decl_name_node.d().value.starts_with('_') {
+                    if decl_name_node.d().value().starts_with('_') {
                         level = common::config_options::DiagnosticLevel::None;
                     }
                 } else if let Some(param_node) = parser::parse_nodes::ParameterNode::cast(decl.node.get()) {
@@ -4712,7 +4712,7 @@ impl Checker {
 
                 if let Some(name_node) = name_node {
                     rule = Some(DiagnosticRule::reportUnusedVariable);
-                    message = Some(LocMessage::unaccessed_variable().format(&[("name", &name_node.d().value)]));
+                    message = Some(LocMessage::unaccessed_variable().format(&[("name", name_node.d().value())]));
                 }
             }
 
@@ -4739,7 +4739,7 @@ impl Checker {
                 let class_name_node = class_node.d().name.get();
                 name_node = Some(class_name_node);
                 rule = Some(DiagnosticRule::reportUnusedClass);
-                message = Some(LocMessage::unaccessed_class().format(&[("name", &class_name_node.d().value)]));
+                message = Some(LocMessage::unaccessed_class().format(&[("name", class_name_node.d().value())]));
             }
 
             analyzer::declaration::DeclarationType::Function => {
@@ -4765,7 +4765,7 @@ impl Checker {
                 let function_name_node = function_node.d().name.get();
                 name_node = Some(function_name_node);
                 rule = Some(DiagnosticRule::reportUnusedFunction);
-                message = Some(LocMessage::unaccessed_function().format(&[("name", &function_name_node.d().value)]));
+                message = Some(LocMessage::unaccessed_function().format(&[("name", function_name_node.d().value())]));
             }
 
             analyzer::declaration::DeclarationType::TypeParam => {
@@ -4790,7 +4790,7 @@ impl Checker {
         };
         if let Some(name_node) = name_node {
             self._file_info.diagnostic_sink.add_unused_code_with_text_range(
-                LocMessage::unaccessed_symbol().format(&[("name", &name_node.d().value)]),
+                LocMessage::unaccessed_symbol().format(&[("name", name_node.d().value())]),
                 common::text_range::TextRange {
                     start: name_node.start.get(),
                     length: name_node.length.get(),
@@ -4814,13 +4814,13 @@ impl Checker {
         let Some(left_expr) = left_expr else {
             return;
         };
-        if (left_expr.d().value != "isinstance" && left_expr.d().value != "issubclass")
+        if (left_expr.d().value() != "isinstance" && left_expr.d().value() != "issubclass")
             || node.d().args.borrow().len() != 2
         {
             return;
         }
 
-        let call_name = left_expr.d().value.clone();
+        let call_name = left_expr.d().value().to_string();
         let is_instance_check = call_name == "isinstance";
         let args = node.d().args.borrow().clone();
 
@@ -5228,7 +5228,7 @@ impl Checker {
         info: &MemberAccessDeprecationInfo,
     ) {
         let mut error_message: Option<String> = None;
-        let name = node.d().value.as_str();
+        let name = node.d().value();
 
         if info.access_type == "property" {
             if info.access_method == "get" {
@@ -5301,7 +5301,7 @@ impl Checker {
                     if let Some(containing_class) = containing_class {
                         return LocMessage::deprecated_method().format(&[
                             ("name", if shared.name.is_empty() { "<anonymous>" } else { &shared.name }),
-                            ("className", &containing_class.d().name.get().d().value),
+                            ("className", containing_class.d().name.get().d().value()),
                         ]);
                     }
                 }
@@ -5349,7 +5349,7 @@ impl Checker {
                 let shared = overload.d().shared.get();
                 let overload_deprecated_message = shared.cold().deprecated_message.clone();
                 if overload_deprecated_message.is_some() {
-                    if node.d().value == shared.name {
+                    if node.d().value() == shared.name {
                         *deprecated_message = overload_deprecated_message;
                         *error_message = Some(get_deprecated_message_for_function(overload));
                     } else if analyzer::types::is_instantiable_class(type_)
@@ -5362,7 +5362,7 @@ impl Checker {
                         );
                     } else if analyzer::types::is_class_instance(type_) && shared.name == "__call__" {
                         *deprecated_message = overload_deprecated_message;
-                        *error_message = Some(LocMessage::deprecated_function().format(&[("name", &node.d().value)]));
+                        *error_message = Some(LocMessage::deprecated_function().format(&[("name", node.d().value())]));
                     }
                 }
             }
@@ -5378,7 +5378,7 @@ impl Checker {
                     let class_deprecated_message = shared.deprecated_message.borrow().clone();
                     if !class_subtype.d().priv_.borrow().include_subclasses.unwrap_or(false)
                         && class_deprecated_message.is_some()
-                        && node.d().value == shared.name
+                        && node.d().value() == shared.name
                     {
                         deprecated_message = class_deprecated_message;
                         error_message = Some(LocMessage::deprecated_class().format(&[("name", &shared.name)]));
@@ -5400,7 +5400,7 @@ impl Checker {
                     let shared = function_subtype.d().shared.get();
                     let function_deprecated_message = shared.cold().deprecated_message.clone();
                     if function_deprecated_message.is_some()
-                        && (shared.name.is_empty() || shared.name == "__call__" || node.d().value == shared.name)
+                        && (shared.name.is_empty() || shared.name == "__call__" || node.d().value() == shared.name)
                     {
                         deprecated_message = function_deprecated_message;
                         error_message = Some(get_deprecated_message_for_function(function_subtype));
@@ -5426,7 +5426,7 @@ impl Checker {
                             let impl_function = FunctionType(impl_);
                             let shared = impl_function.d().shared.get();
                             let impl_deprecated_message = shared.cold().deprecated_message.clone();
-                            if impl_deprecated_message.is_some() && (shared.name.is_empty() || node.d().value == shared.name) {
+                            if impl_deprecated_message.is_some() && (shared.name.is_empty() || node.d().value() == shared.name) {
                                 deprecated_message = impl_deprecated_message;
                                 error_message = Some(get_deprecated_message_for_function(impl_function));
                             }
@@ -5442,7 +5442,7 @@ impl Checker {
         }
 
         if self._file_info.diagnostic_rule_set.deprecate_typing_aliases {
-            let name = node.d().value.as_str();
+            let name = node.d().value();
             let deprecated_form = analyzer::deprecated_symbols::DEPRECATED_ALIASES
                 .with(|aliases| aliases.get(name).cloned())
                 .or_else(|| analyzer::deprecated_symbols::DEPRECATED_SPECIAL_FORMS.with(|forms| forms.get(name).cloned()));
@@ -5525,7 +5525,7 @@ impl Checker {
                     if self._evaluator.is_node_reachable(node.0, None) {
                         self._evaluator.add_diagnostic(
                             DiagnosticRule::reportUnboundVariable,
-                            &LocMessage::symbol_is_unbound().format(&[("name", &node.d().value)]),
+                            &LocMessage::symbol_is_unbound().format(&[("name", node.d().value())]),
                             node.0,
                             None,
                         );
@@ -5533,7 +5533,7 @@ impl Checker {
                 } else if analyzer::types::is_possibly_unbound(type_) {
                     self._evaluator.add_diagnostic(
                         DiagnosticRule::reportPossiblyUnboundVariable,
-                        &LocMessage::symbol_is_possibly_unbound().format(&[("name", &node.d().value)]),
+                        &LocMessage::symbol_is_possibly_unbound().format(&[("name", node.d().value())]),
                         node.0,
                         None,
                     );
@@ -5560,7 +5560,7 @@ impl Checker {
             }
         }
 
-        let name_value = node.d().value.clone();
+        let name_value = node.d().value().to_string();
         let is_private_name = analyzer::symbol_name_utils::is_private_name(&name_value);
         let is_protected_name = analyzer::symbol_name_utils::is_protected_name(&name_value);
 
@@ -6472,7 +6472,7 @@ impl Checker {
                 .params
                 .borrow()
                 .iter()
-                .find(|node| node.d().name.get().map(|name| name.d().value.clone()).as_deref() == param.name.as_deref())
+                .find(|node| node.d().name.get().map(|name| name.d().value().to_string()).as_deref() == param.name.as_deref())
                 .copied();
             let annotation_node =
                 param_node.and_then(|param_node| param_node.d().annotation.get().or(param_node.d().annotation_comment.get()));
@@ -6675,7 +6675,7 @@ impl Checker {
                     Some(class_node) => class_node.d().name.get(),
                     None => FunctionNode::cast(containing_class).unwrap().d().name.get(),
                 };
-                if containing_name.d().value == "__init__" {
+                if containing_name.d().value() == "__init__" {
                     return true;
                 }
 
@@ -8316,7 +8316,7 @@ impl Checker {
         self._evaluator.add_diagnostic(
             DiagnosticRule::reportImplicitOverride,
             &LocMessage::override_decorator_missing().format(&[
-                ("name", &func_name.d().value),
+                ("name", func_name.d().value()),
                 (
                     "className",
                     &self._evaluator.print_type(
@@ -8393,7 +8393,7 @@ impl Checker {
         let func_name = func_node.d().name.get();
         self._evaluator.add_diagnostic(
             DiagnosticRule::reportGeneralTypeIssues,
-            &LocMessage::overridden_method_not_found().format(&[("name", &func_name.d().value)]),
+            &LocMessage::overridden_method_not_found().format(&[("name", func_name.d().value())]),
             func_name.0,
             None,
         );
@@ -9247,7 +9247,7 @@ impl Checker {
         };
 
         let class_type = class_type_info.class_type;
-        let method_name = node.d().name.get().d().value.clone();
+        let method_name = node.d().name.get().d().value().to_string();
         let is_metaclass = analyzer::type_utils::is_instantiable_metaclass(class_type.0);
 
         let super_check_methods = ["__init__", "__init_subclass__", "__enter__", "__exit__"];
@@ -9282,7 +9282,7 @@ impl Checker {
                     );
                 }
                 Some(param_name_node) => {
-                    let param_name = param_name_node.d().value.as_str();
+                    let param_name = param_name_node.d().value();
                     if !cls_names.contains(&param_name) && !(is_metaclass && cls_names_metaclass.contains(&param_name)) {
                         self._evaluator.add_diagnostic(
                             DiagnosticRule::reportSelfClsParameterName,
@@ -9304,7 +9304,7 @@ impl Checker {
             };
 
             // Static methods should not have "self" or "cls" parameters.
-            let param_name = param_name_node.d().value.as_str();
+            let param_name = param_name_node.d().value();
             if param_name == "self" || param_name == "cls" {
                 self._evaluator.add_diagnostic(
                     DiagnosticRule::reportSelfClsParameterName,
@@ -9319,7 +9319,7 @@ impl Checker {
         if FunctionType::is_class_method(function_type) {
             let mut param_name = String::new();
             if let Some(param_name_node) = params.first().and_then(|param| param.d().name.get()) {
-                param_name = param_name_node.d().value.clone();
+                param_name = param_name_node.d().value().to_string();
             }
 
             // Class methods should have a "cls" parameter.
@@ -9350,7 +9350,7 @@ impl Checker {
 
             if let Some(first_param) = params.first() {
                 if let Some(param_name_node) = first_param.d().name.get() {
-                    param_name = param_name_node.d().value.clone();
+                    param_name = param_name_node.d().value().to_string();
                 }
 
                 if first_param.d().category.get() != parser::parse_nodes::ParamCategory::Simple {
@@ -9421,13 +9421,13 @@ impl Checker {
                 if left_expr.node_type == ParseNodeType::MemberAccess {
                     let left_expr = MemberAccessNode(left_expr);
                     // Is it accessing the method by the same name?
-                    if left_expr.d().member.get().d().value == method_name {
+                    if left_expr.d().member.get().d().value() == method_name {
                         let member_base_expr = left_expr.d().left_expr.get();
 
                         // Is it a "super" call?
                         if member_base_expr.node_type == ParseNodeType::Call
                             && CallNode(member_base_expr).d().left_expr.get().node_type == ParseNodeType::Name
-                            && NameNode(CallNode(member_base_expr).d().left_expr.get()).d().value == "super"
+                            && NameNode(CallNode(member_base_expr).d().left_expr.get()).d().value() == "super"
                         {
                             found_call_of_member = true;
                         } else {
@@ -9830,16 +9830,16 @@ impl Checker {
                     // Ignore duplicates if they're aliased.
                     if import_from_as.d().alias.get().is_none() {
                         let name = import_from_as.d().name.get();
-                        let prev_import = symbol_map.get(&name.d().value).copied();
+                        let prev_import = symbol_map.get(name.d().value()).copied();
                         if prev_import.is_some() {
                             self._evaluator.add_diagnostic(
                                 DiagnosticRule::reportDuplicateImport,
-                                &LocMessage::duplicate_import().format(&[("importName", &name.d().value)]),
+                                &LocMessage::duplicate_import().format(&[("importName", name.d().value())]),
                                 name.0,
                                 None,
                             );
                         } else {
-                            symbol_map.insert(name.d().value.clone(), import_from_as);
+                            symbol_map.insert(name.d().value().to_string(), import_from_as);
                         }
                     }
                 }

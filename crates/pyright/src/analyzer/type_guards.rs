@@ -523,7 +523,7 @@ pub fn get_type_narrowing_callback(
                                 type_: narrow_type_for_discriminated_literal_field_comparison(
                                     ev.get(),
                                     type_,
-                                    &member_name.d().value,
+                                    &member_name.d().value(),
                                     right_class,
                                     adj_is_positive_test,
                                 ),
@@ -562,7 +562,7 @@ pub fn get_type_narrowing_callback(
                             type_: narrow_type_for_discriminated_literal_field_comparison(
                                 ev.get(),
                                 type_,
-                                &member_name.d().value,
+                                &member_name.d().value(),
                                 right_class,
                                 adj_is_positive_test,
                             ),
@@ -589,7 +589,7 @@ pub fn get_type_narrowing_callback(
                         type_: narrow_type_for_discriminated_field_none_comparison(
                             ev.get(),
                             type_,
-                            &member_name.d().value,
+                            &member_name.d().value(),
                             adj_is_positive_test,
                         ),
                         is_incomplete: false,
@@ -1109,7 +1109,7 @@ pub(crate) fn get_decls_for_local_var(
     let scope = scope
         .filter(|scope| scope.type_ == ScopeType::Function || scope.type_ == ScopeType::Module)?;
 
-    let symbol = scope.look_up_symbol(&name.d().value)?;
+    let symbol = scope.look_up_symbol(name.d().value())?;
 
     let decls = symbol.get_declarations();
     if require_unique && decls.len() > 1 {
@@ -4364,13 +4364,13 @@ pub(crate) fn is_name_same_scope(
 
     let ref_symbol = evaluator.look_up_symbol_recursive(
         reference.0,
-        &reference.d().value,
+        &reference.d().value(),
         /* honorCodeFlow */ false,
         false,
     );
     let expr_symbol = evaluator.look_up_symbol_recursive(
         expression.0,
-        &expression.d().value,
+        &expression.d().value(),
         /* honorCodeFlow */ false,
         false,
     );

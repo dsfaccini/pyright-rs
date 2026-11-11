@@ -38,7 +38,7 @@ fn flow_references(flow_node: &FlowNode) -> Vec<P<FlowNode>> {
     if let Some(antecedent) = flow_node.antecedent() {
         refs.push(antecedent);
     }
-    match &flow_node.d {
+    match flow_node.d() {
         FlowNodeDetails::Label(d) => refs.extend(d.antecedents.borrow().iter().copied()),
         FlowNodeDetails::BranchLabel(d) => {
             refs.extend(d.label.antecedents.borrow().iter().copied());
@@ -69,7 +69,7 @@ fn flow_node_value(flow_node: &FlowNode, numbering: &FlowNumbering, symbol_names
 
     let mut fields: Vec<(&'static str, Option<Value>)> = vec![(
         "flags",
-        Some(Value::number(flow_node.flags.get().0 as f64)),
+        Some(Value::number(flow_node.flags().0 as f64)),
     )];
 
     let label_fields = |label: &crate::analyzer::code_flow_types::FlowLabelDetails| {
@@ -90,7 +90,7 @@ fn flow_node_value(flow_node: &FlowNode, numbering: &FlowNumbering, symbol_names
         ]
     };
 
-    match &flow_node.d {
+    match flow_node.d() {
         FlowNodeDetails::Plain => {}
         FlowNodeDetails::Label(d) => fields.extend(label_fields(d)),
         FlowNodeDetails::BranchLabel(d) => {
@@ -175,7 +175,7 @@ pub fn dump_flow(
         let Some(info) = reader.get(*node) else {
             continue;
         };
-        let after_flow_node = info.after_flow_node.get();
+        let after_flow_node = info.cold().and_then(|c| c.after_flow_node.get());
         let flow_node = info.flow_node.get();
         if let Some(after) = after_flow_node {
             numbering.visit(after);

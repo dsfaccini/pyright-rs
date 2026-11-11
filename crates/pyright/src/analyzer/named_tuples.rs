@@ -5,7 +5,6 @@
 use crate::analyzer::analyzer_node_info::AnalyzerNodeInfoAccessor;
 use std::rc::Rc;
 use crate::analyzer::declaration::Declaration;
-use crate::analyzer::declaration::DeclarationDetails;
 use crate::analyzer::declaration::DeclarationType;
 use crate::analyzer::declaration::VariableDeclarationDetails;
 use crate::analyzer::parse_tree_utils::get_class_full_name;
@@ -80,7 +79,7 @@ pub fn create_named_tuple_type(
     let join_string_values = |string_list: StringListNode| {
         let mut joined = JsString::from("");
         for s in string_list.d().strings.borrow().iter() {
-            let value = match &s.get().d {
+            let value = match s.d() {
                 ParseNodeDetails::String(d) => &d.value,
                 ParseNodeDetails::FormatString(d) => &d.value,
                 _ => unreachable!("a string list holds string nodes"),
@@ -90,7 +89,7 @@ pub fn create_named_tuple_type(
         joined
     };
     let has_name =
-        |name: Option<NameNode>, value: &str| name.is_some_and(|name| name.d().value == value);
+        |name: Option<NameNode>, value: &str| name.is_some_and(|name| name.d().value() == value);
 
     let file_info = node_info.get_file_info(error_node);
     let mut class_name = "namedtuple".to_string();
@@ -352,10 +351,10 @@ pub fn create_named_tuple_type(
                             ),
                             file_info.module_name.clone(),
                             false,
-                            DeclarationDetails::Variable(VariableDeclarationDetails {
+                            VariableDeclarationDetails {
                                 is_runtime_type_expression: Cell::new(Some(true)),
                                 ..Default::default()
-                            }),
+                            },
                         );
                         new_symbol.add_declaration(declaration);
                         class_fields.set(&entry_name, new_symbol);
@@ -528,10 +527,10 @@ pub fn create_named_tuple_type(
                             ),
                             file_info.module_name.clone(),
                             false,
-                            DeclarationDetails::Variable(VariableDeclarationDetails {
+                            VariableDeclarationDetails {
                                 type_annotation_node: Cell::new(entry_type_node),
                                 ..Default::default()
-                            }),
+                            },
                         );
                         new_symbol.add_declaration(declaration);
                     }

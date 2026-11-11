@@ -452,7 +452,7 @@ fn get_dotted_name_test() {
             get_dotted_name(node).map(|names| {
                 names
                     .iter()
-                    .map(|n| n.d().value.as_str())
+                    .map(|n| n.d().value())
                     .collect::<Vec<_>>()
                     .join(".")
             })
@@ -482,7 +482,7 @@ fn get_first_name_of_dotted_name_test() {
         let get_dotted_name_string = |marker: &str| {
             let node = get_node_for_range(&state, marker);
             get_first_name_of_dotted_name(node)
-                .map(|n| n.d().value.clone())
+                .map(|n| n.d().value().to_string())
                 .unwrap_or_default()
         };
 
@@ -735,7 +735,7 @@ fn find_name_r(code: &str) {
     let node = find_node_by_offset(state.parse_tree(), range.pos, None);
     let node = node.unwrap();
     assert_eq!(node.node_type, ParseNodeType::Name);
-    assert_eq!(NameNode(node).d().value, "r");
+    assert_eq!(NameNode(node).d().value(), "r");
 }
 
 #[test]

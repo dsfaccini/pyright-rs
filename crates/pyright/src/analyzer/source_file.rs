@@ -95,7 +95,7 @@ pub struct WriteableData {
     pub parsed_file_contents: Option<Rc<str>>,
     pub parsed_file_contents_hash: Option<StringFingerprint>,
     pub tokenizer_lines: Option<&'static TextRangeCollection<TextRange>>,
-    pub tokenizer_output: Option<P<TokenizerOutput>>,
+    pub tokenizer_output: Option<Rc<TokenizerOutput>>,
     pub line_count: Option<i32>,
     pub is_binding_in_progress: bool,
     pub is_checking_in_progress: bool,
@@ -610,10 +610,13 @@ impl SourceFile {
         let ParseFileResults { text, content_hash: parsed_content_hash, parser_output, tokenizer_output } =
             parse_file_results;
         let parser_output = P::new(parser_output);
+        // Dropped at the end of this function unless the file is open, as in
+        // pyright: the tokens no parse node holds are freed with it.
+        let tokenizer_output = Rc::new(tokenizer_output);
         {
             let mut data = self.data_mut();
             data.parser_output = Some(parser_output);
-            data.tokenizer_lines = Some(&tokenizer_output.get().lines);
+            data.tokenizer_lines = Some(tokenizer_output.lines.get());
             data.parsed_file_contents = Some(Rc::from(file_contents.as_str()));
             data.parsed_file_contents_hash = Some(parsed_content_hash);
             data.type_ignore_lines = tokenizer_output.type_ignore_lines.clone();
@@ -623,7 +626,7 @@ impl SourceFile {
 
             // Cache the tokenizer output only if this file is open.
             if data.client_document_contents.is_some() {
-                data.tokenizer_output = Some(tokenizer_output);
+                data.tokenizer_output = Some(tokenizer_output.clone());
             }
         }
 
@@ -645,7 +648,7 @@ impl SourceFile {
             add_task_list_diagnostics(
                 config_options.task_list_tokens.as_deref(),
                 &text,
-                tokenizer_output,
+                &tokenizer_output,
                 &mut task_list_diagnostics,
             );
             self.data_mut().task_list_diagnostics = task_list_diagnostics;
@@ -1071,7 +1074,7 @@ impl SourceFile {
             defined_constants: config_options.define_constant.clone(),
             file_id: self.file_id.clone(),
             file_uri: self.uri,
-            module_name: self.get_module_name(),
+            module_name: Rc::new(self.get_module_name()),
             is_stub_file: self.is_stub_file,
             is_typing_stub_file: self.is_typing_stub_file,
             is_typing_extensions_stub_file: self.is_typing_extensions_stub_file,
@@ -1214,7 +1217,7 @@ impl SourceFile {
 fn add_task_list_diagnostics(
     task_list_tokens: Option<&[TaskListToken]>,
     file_contents: &[u16],
-    tokenizer_output: P<TokenizerOutput>,
+    tokenizer_output: &TokenizerOutput,
     diag_list: &mut Vec<P<Diagnostic>>,
 ) {
     let Some(task_list_tokens) = task_list_tokens.filter(|t| !t.is_empty()) else {
@@ -1227,7 +1230,7 @@ fn add_task_list_diagnostics(
         let token = tokenizer_output.tokens.get_item_at(i);
 
         // If there are no comments, skip this token.
-        let Some(comments) = token.comments.filter(|c| !c.is_empty()) else {
+        let Some(comments) = token.comments().filter(|c| !c.is_empty()) else {
             continue;
         };
 

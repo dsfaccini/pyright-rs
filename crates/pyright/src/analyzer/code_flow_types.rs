@@ -8,7 +8,9 @@
 
 use jsrt::flag_ops;
 use jsrt::cell::{Cell, RefCell};
+use std::cell::UnsafeCell;
 use std::ops::Deref;
+use std::ptr;
 
 use jsrt::{JsSet, P};
 
@@ -68,44 +70,179 @@ pub fn get_unique_flow_node_id() -> u32 {
 }
 
 // analyzer/codeFlowTypes.ts:65
+/// The `FlowNode` fields. A flow node is allocated as this header followed by the
+/// fields of the interface the binder built it as (`FlowAlloc`), so it takes the
+/// size of its own interface; `d()` returns them.
+#[repr(C)]
 #[derive(jsrt::Trace)]
 pub struct FlowNode {
-    pub flags: Cell<FlowFlags>,
+    /// `flags()`, little-endian: no flag is above bit 23. Never written after `create`.
+    flags: [u8; 3],
+    kind: FlowKind,
     pub id: u32,
-    pub d: FlowNodeDetails,
+
+    /// Label antecedents are written through a `&FlowNode` (`d()`). Without an
+    /// `UnsafeCell` the compiler takes a `&FlowNode` as read-only memory and may
+    /// drop those writes.
+    #[trace(skip)]
+    _written_through_shared: UnsafeCell<()>,
+}
+const _: () = assert!(size_of::<FlowNode>() <= 8);
+
+/// The interface a flow node was built as, `d()`'s variant.
+#[repr(u8)]
+#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(jsrt::Trace)]
+pub enum FlowKind {
+    Plain,
+    Label,
+    BranchLabel,
+    Assignment,
+    VariableAnnotation,
+    WildcardImport,
+    Condition,
+    NarrowForPattern,
+    ExhaustedMatch,
+    Call,
+    PreFinallyGate,
+    PostFinally,
+    PostContextManagerLabel,
 }
 
-/// The interface the binder built the node as. `Plain` is a bare `FlowNode`
-/// (start and unreachable nodes).
+/// A flow node as allocated: the header, then the fields of its interface.
+#[repr(C)]
 #[derive(jsrt::Trace)]
+struct FlowAlloc<D> {
+    node: FlowNode,
+    d: D,
+}
+
+/// The fields one flow node interface adds to `FlowNode`.
+pub trait FlowInterface: jsrt::Trace + 'static {
+    const KIND: FlowKind;
+}
+
+/// The fields of a bare `FlowNode` (start and unreachable nodes): none.
+#[derive(jsrt::Trace)]
+pub struct FlowPlain;
+
+impl FlowInterface for FlowPlain {
+    const KIND: FlowKind = FlowKind::Plain;
+}
+
+impl FlowInterface for FlowLabelDetails {
+    const KIND: FlowKind = FlowKind::Label;
+}
+
+impl FlowInterface for FlowBranchLabelDetails {
+    const KIND: FlowKind = FlowKind::BranchLabel;
+}
+
+impl FlowInterface for FlowAssignmentDetails {
+    const KIND: FlowKind = FlowKind::Assignment;
+}
+
+impl FlowInterface for FlowVariableAnnotationDetails {
+    const KIND: FlowKind = FlowKind::VariableAnnotation;
+}
+
+impl FlowInterface for FlowWildcardImportDetails {
+    const KIND: FlowKind = FlowKind::WildcardImport;
+}
+
+impl FlowInterface for FlowConditionDetails {
+    const KIND: FlowKind = FlowKind::Condition;
+}
+
+impl FlowInterface for FlowNarrowForPatternDetails {
+    const KIND: FlowKind = FlowKind::NarrowForPattern;
+}
+
+impl FlowInterface for FlowExhaustedMatchDetails {
+    const KIND: FlowKind = FlowKind::ExhaustedMatch;
+}
+
+impl FlowInterface for FlowCallDetails {
+    const KIND: FlowKind = FlowKind::Call;
+}
+
+impl FlowInterface for FlowPreFinallyGateDetails {
+    const KIND: FlowKind = FlowKind::PreFinallyGate;
+}
+
+impl FlowInterface for FlowPostFinallyDetails {
+    const KIND: FlowKind = FlowKind::PostFinally;
+}
+
+impl FlowInterface for FlowPostContextManagerLabelDetails {
+    const KIND: FlowKind = FlowKind::PostContextManagerLabel;
+}
+
+/// The interface the binder built the node as: `node.d()`. `Plain` is a bare
+/// `FlowNode` (start and unreachable nodes).
+#[derive(Clone, Copy)]
 pub enum FlowNodeDetails {
     Plain,
-    Label(FlowLabelDetails),
-    BranchLabel(FlowBranchLabelDetails),
-    Assignment(FlowAssignmentDetails),
-    VariableAnnotation(FlowVariableAnnotationDetails),
-    WildcardImport(FlowWildcardImportDetails),
-    Condition(FlowConditionDetails),
-    NarrowForPattern(FlowNarrowForPatternDetails),
-    ExhaustedMatch(FlowExhaustedMatchDetails),
-    Call(FlowCallDetails),
-    PreFinallyGate(FlowPreFinallyGateDetails),
-    PostFinally(FlowPostFinallyDetails),
-    PostContextManagerLabel(FlowPostContextManagerLabelDetails),
+    Label(&'static FlowLabelDetails),
+    BranchLabel(&'static FlowBranchLabelDetails),
+    Assignment(&'static FlowAssignmentDetails),
+    VariableAnnotation(&'static FlowVariableAnnotationDetails),
+    WildcardImport(&'static FlowWildcardImportDetails),
+    Condition(&'static FlowConditionDetails),
+    NarrowForPattern(&'static FlowNarrowForPatternDetails),
+    ExhaustedMatch(&'static FlowExhaustedMatchDetails),
+    Call(&'static FlowCallDetails),
+    PreFinallyGate(&'static FlowPreFinallyGateDetails),
+    PostFinally(&'static FlowPostFinallyDetails),
+    PostContextManagerLabel(&'static FlowPostContextManagerLabelDetails),
 }
 
 impl FlowNode {
-    pub fn create(flags: FlowFlags, id: u32, d: FlowNodeDetails) -> P<FlowNode> {
-        P::new(FlowNode {
-            flags: Cell::new(flags),
-            id,
-            d,
-        })
+    pub fn create<D: FlowInterface>(flags: FlowFlags, id: u32, d: D) -> P<FlowNode> {
+        let [b0, b1, b2, b3] = flags.0.to_le_bytes();
+        assert!(b3 == 0, "flow flags {flags:?} above bit 23");
+        let node = FlowNode { flags: [b0, b1, b2], kind: D::KIND, id, _written_through_shared: UnsafeCell::new(()) };
+        P::new(FlowAlloc { node, d }).header(|alloc| &alloc.node)
+    }
+
+    pub fn flags(&self) -> FlowFlags {
+        let [b0, b1, b2] = self.flags;
+        FlowFlags(u32::from_le_bytes([b0, b1, b2, 0]))
+    }
+
+    /// # Safety
+    /// `self.kind` is `D::KIND`.
+    unsafe fn details_unchecked<D: FlowInterface>(&self) -> &'static D {
+        // SAFETY: `create` makes every header the first field of a `#[repr(C)]`
+        // `FlowAlloc` whose fields match `kind`, on the program heap, which is never freed.
+        unsafe { &(*ptr::from_ref(self).cast::<FlowAlloc<D>>()).d }
+    }
+
+    /// The fields of the interface the binder built the node as.
+    pub fn d(&self) -> FlowNodeDetails {
+        // SAFETY: each arm reads the interface of its kind.
+        unsafe {
+            match self.kind {
+                FlowKind::Plain => FlowNodeDetails::Plain,
+                FlowKind::Label => FlowNodeDetails::Label(self.details_unchecked()),
+                FlowKind::BranchLabel => FlowNodeDetails::BranchLabel(self.details_unchecked()),
+                FlowKind::Assignment => FlowNodeDetails::Assignment(self.details_unchecked()),
+                FlowKind::VariableAnnotation => FlowNodeDetails::VariableAnnotation(self.details_unchecked()),
+                FlowKind::WildcardImport => FlowNodeDetails::WildcardImport(self.details_unchecked()),
+                FlowKind::Condition => FlowNodeDetails::Condition(self.details_unchecked()),
+                FlowKind::NarrowForPattern => FlowNodeDetails::NarrowForPattern(self.details_unchecked()),
+                FlowKind::ExhaustedMatch => FlowNodeDetails::ExhaustedMatch(self.details_unchecked()),
+                FlowKind::Call => FlowNodeDetails::Call(self.details_unchecked()),
+                FlowKind::PreFinallyGate => FlowNodeDetails::PreFinallyGate(self.details_unchecked()),
+                FlowKind::PostFinally => FlowNodeDetails::PostFinally(self.details_unchecked()),
+                FlowKind::PostContextManagerLabel => FlowNodeDetails::PostContextManagerLabel(self.details_unchecked()),
+            }
+        }
     }
 
     /// The `antecedent` field of the interfaces that have one.
     pub fn antecedent(&self) -> Option<P<FlowNode>> {
-        match &self.d {
+        match self.d() {
             FlowNodeDetails::Assignment(d) => Some(d.antecedent),
             FlowNodeDetails::VariableAnnotation(d) => Some(d.antecedent),
             FlowNodeDetails::WildcardImport(d) => Some(d.antecedent),
@@ -130,7 +267,7 @@ macro_rules! flow_handle {
 
         impl $handle {
             pub fn cast(node: P<FlowNode>) -> Option<$handle> {
-                match &node.get().d {
+                match node.get().d() {
                     $(FlowNodeDetails::$variant(_))|+ => Some($handle(node)),
                     _ => None,
                 }
@@ -180,7 +317,7 @@ flow_handle!(
 
 impl FlowLabel {
     pub fn d(&self) -> &'static FlowLabelDetails {
-        match &self.0.get().d {
+        match self.0.get().d() {
             FlowNodeDetails::Label(d) => d,
             FlowNodeDetails::BranchLabel(d) => &d.label,
             FlowNodeDetails::PostContextManagerLabel(d) => &d.label,
@@ -214,7 +351,7 @@ flow_handle!(FlowBranchLabel, FlowBranchLabelDetails, BranchLabel);
 
 impl FlowBranchLabel {
     pub fn d(&self) -> &'static FlowBranchLabelDetails {
-        match &self.0.get().d {
+        match self.0.get().d() {
             FlowNodeDetails::BranchLabel(d) => d,
             _ => unreachable!(),
         }
@@ -231,7 +368,7 @@ macro_rules! simple_flow_handle {
 
         impl $handle {
             pub fn d(&self) -> &'static $details {
-                match &self.0.get().d {
+                match self.0.get().d() {
                     FlowNodeDetails::$variant(d) => d,
                     _ => unreachable!(),
                 }
@@ -377,7 +514,7 @@ flow_handle!(
 
 impl FlowPostContextManagerLabel {
     pub fn d(&self) -> &'static FlowPostContextManagerLabelDetails {
-        match &self.0.get().d {
+        match self.0.get().d() {
             FlowNodeDetails::PostContextManagerLabel(d) => d,
             _ => unreachable!(),
         }
@@ -394,7 +531,7 @@ pub fn is_code_flow_supported_for_reference(reference: ExpressionNode) -> bool {
         return true;
     }
 
-    if let D::MemberAccess(d) = &reference.get().d {
+    if let D::MemberAccess(d) = reference.d() {
         return is_code_flow_supported_for_reference(d.left_expr.get());
     }
 
@@ -402,7 +539,7 @@ pub fn is_code_flow_supported_for_reference(reference: ExpressionNode) -> bool {
         return true;
     }
 
-    if let D::Index(d) = &reference.get().d {
+    if let D::Index(d) = reference.d() {
         // Allow index expressions that have a single subscript that is a
         // literal integer or string value.
         let items = d.items.borrow().clone();
@@ -415,21 +552,21 @@ pub fn is_code_flow_supported_for_reference(reference: ExpressionNode) -> bool {
         }
 
         let subscript_node = items[0].d().value_expr.get();
-        let is_integer_index = match &subscript_node.get().d {
+        let is_integer_index = match subscript_node.d() {
             D::Number(n) => !n.is_imaginary.get() && n.is_integer.get(),
             _ => false,
         };
-        let is_negative_integer_index = match &subscript_node.get().d {
+        let is_negative_integer_index = match subscript_node.d() {
             D::UnaryOperation(u) => {
                 u.operator.get() == OperatorType::Subtract
-                    && match &u.expr.get().get().d {
+                    && match u.expr.get().d() {
                         D::Number(n) => !n.is_imaginary.get() && n.is_integer.get(),
                         _ => false,
                     }
             }
             _ => false,
         };
-        let is_string_index = match &subscript_node.get().d {
+        let is_string_index = match subscript_node.d() {
             D::StringList(s) => {
                 let strings = s.strings.borrow();
                 strings.len() == 1 && strings[0].node_type == ParseNodeType::String
@@ -450,16 +587,16 @@ pub fn is_code_flow_supported_for_reference(reference: ExpressionNode) -> bool {
 // analyzer/codeFlowTypes.ts:223
 pub fn create_key_for_reference(reference: CodeFlowReferenceExpressionNode) -> String {
     let key;
-    match &reference.get().d {
+    match reference.d() {
         D::Name(d) => {
-            key = d.value.clone();
+            key = d.value().to_string();
         }
         D::AssignmentExpression(d) => {
-            key = d.name.get().d().value.clone();
+            key = d.name.get().d().value().to_string();
         }
         D::MemberAccess(d) => {
             let left_key = create_key_for_reference(d.left_expr.get());
-            key = format!("{}.{}", left_key, d.member.get().d().value);
+            key = format!("{}.{}", left_key, d.member.get().d().value());
         }
         D::Index(d) => {
             let left_key = create_key_for_reference(d.left_expr.get());
@@ -467,7 +604,7 @@ pub fn create_key_for_reference(reference: CodeFlowReferenceExpressionNode) -> S
             assert(items.len() == 1, None);
             let expr = items[0].d().value_expr.get();
             drop(items);
-            match &expr.get().d {
+            match expr.d() {
                 D::Number(n) => {
                     key = format!("{}[{}]", left_key, n.value.to_js_string());
                 }
@@ -477,7 +614,7 @@ pub fn create_key_for_reference(reference: CodeFlowReferenceExpressionNode) -> S
                         strings.len() == 1 && strings[0].node_type == ParseNodeType::String,
                         None,
                     );
-                    let D::String(s) = &strings[0].get().d else {
+                    let D::String(s) = strings[0].d() else {
                         unreachable!()
                     };
                     key = format!("{}[\"{}\"]", left_key, s.value.to_string_lossy());
@@ -486,7 +623,7 @@ pub fn create_key_for_reference(reference: CodeFlowReferenceExpressionNode) -> S
                     if u.operator.get() == OperatorType::Subtract
                         && u.expr.get().node_type == ParseNodeType::Number =>
                 {
-                    let D::Number(n) = &u.expr.get().get().d else {
+                    let D::Number(n) = u.expr.get().d() else {
                         unreachable!()
                     };
                     key = format!("{}[-{}]", left_key, n.value.to_js_string());
@@ -508,7 +645,7 @@ pub fn create_key_for_reference(reference: CodeFlowReferenceExpressionNode) -> S
 pub fn create_keys_for_reference_subexpressions(
     reference: CodeFlowReferenceExpressionNode,
 ) -> Vec<String> {
-    match &reference.get().d {
+    match reference.d() {
         D::Name(_) => vec![create_key_for_reference(reference)],
         D::AssignmentExpression(d) => vec![create_key_for_reference(d.name.get().node())],
         D::MemberAccess(d) => {

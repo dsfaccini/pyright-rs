@@ -3,6 +3,7 @@
 //! The tokenizer reads UTF-16 source text (`&[u16]`) like `charCodeAt`; every
 //! offset and length is a UTF-16 offset.
 
+use std::rc::Rc;
 use std::sync::OnceLock;
 
 use jsrt::number::{math_round, parse_bigint, parse_float, parse_int};
@@ -14,6 +15,7 @@ use super::characters::{
     is_surrogate_char,
 };
 use super::tokenizer_types::{
+    TokenScratch,
     Comment, CommentType, DedentToken, FStringEndToken, FStringMiddleToken, FStringStartToken,
     IdentifierToken, IndentToken, KeywordToken, KeywordType, NewLineToken, NewLineType,
     NumberToken, OperatorFlags, OperatorToken, OperatorType, StringToken, StringTokenFlags, Token,
@@ -641,7 +643,8 @@ pub struct TokenizerOutput {
     pub tokens: TextRangeCollection<P<Token>>,
 
     // List of ranges that comprise the lines.
-    pub lines: TextRangeCollection<TextRange>,
+    /// On the program heap: the source file keeps the lines after the output drops.
+    pub lines: P<TextRangeCollection<TextRange>>,
 
     // Map of all line numbers that end in a "type: ignore" comment.
     pub type_ignore_lines: JsMap<i32, IgnoreComment>,
@@ -665,6 +668,10 @@ pub struct TokenizerOutput {
     // Does the code mostly use single or double quote
     // characters for string literals?
     pub predominant_single_quote_character: String,
+
+    /// Where the tokens live; dropping the output frees those no parse node keeps.
+    #[trace(skip)]
+    pub scratch: Option<TokenScratch>,
 }
 
 // parser/tokenizer.ts:605
@@ -768,7 +775,7 @@ pub struct Tokenizer<'a> {
     _use_notebook_mode: bool,
 
     // Direct-mapped identifier intern cache: the UTF-16 text and its string.
-    _identifier_cache: Vec<Option<(Box<[u16]>, String)>>,
+    _identifier_cache: Vec<Option<(Box<[u16]>, Rc<str>)>>,
 }
 
 impl Default for Tokenizer<'_> {
@@ -816,6 +823,8 @@ impl<'a> Tokenizer<'a> {
         initial_paren_depth: i32,
         use_notebook_mode: bool,
     ) -> TokenizerOutput {
+        let scratch = TokenScratch::new();
+        let _entered = scratch.as_ref().map(TokenScratch::enter);
         let text_length = text.len() as i32;
         let start = match start {
             None => 0,
@@ -955,7 +964,7 @@ impl<'a> Tokenizer<'a> {
 
         TokenizerOutput {
             tokens: TextRangeCollection::new(std::mem::take(&mut self._tokens)),
-            lines: TextRangeCollection::new(std::mem::take(&mut self._line_ranges)),
+            lines: P::new(TextRangeCollection::new(std::mem::take(&mut self._line_ranges))),
             type_ignore_lines: self._type_ignore_lines.clone(),
             type_ignore_all: self._type_ignore_all.clone(),
             pyright_ignore_lines: self._pyright_ignore_lines.clone(),
@@ -969,6 +978,7 @@ impl<'a> Tokenizer<'a> {
             } else {
                 "\"".to_string()
             },
+            scratch,
         }
     }
 
@@ -1721,7 +1731,7 @@ impl<'a> Tokenizer<'a> {
     // Per-tokenize identifier intern cache. Direct-mapped, so collisions
     // simply replace the slot.
     // parser/tokenizer.ts:1397
-    fn _intern_identifier(&mut self, text: &[u16], start: i32, end: i32, length: i32) -> String {
+    fn _intern_identifier(&mut self, text: &[u16], start: i32, end: i32, length: i32) -> Rc<str> {
         let first_char = text[start as usize] as i32;
         let last_char = text[(end - 1) as usize] as i32;
         // Hash mixes length, first and last char.
@@ -1732,7 +1742,7 @@ impl<'a> Tokenizer<'a> {
         {
             return cached.clone();
         }
-        let value = detach_substring(text, start, end);
+        let value: Rc<str> = detach_substring(text, start, end).into();
         self._identifier_cache[hash] =
             Some((text[start as usize..end as usize].into(), value.clone()));
         value

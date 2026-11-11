@@ -354,7 +354,7 @@ fn parser_string_annotation_side_data_preserves_recursive_associations_and_struc
     let nested_name = NameNode::cast(nested_annotation)
         .expect("Expected the nested quoted annotation to parse as a name");
 
-    assert_eq!(nested_name.d().value, "Data");
+    assert_eq!(nested_name.d().value(), "Data");
     assert_eq!(outer_annotation.parent.get(), Some(outer_string_list));
     assert_eq!(nested_annotation.parent.get(), Some(nested_string_list));
     assert_eq!(outer_string_list.a, parser_output.parse_tree.a);
@@ -651,4 +651,25 @@ fn lazy_import_wildcard_import_rejected_at_3_15() {
         errors[0].message,
         LocMessage::lazy_import_wildcard_illegal()
     );
+}
+
+/// A parse node's tokens outlive the tokenizer output, which frees the rest of
+/// its tokens, and the next parse, which reuses the freed memory.
+#[test]
+fn node_tokens_outlive_the_tokenizer_output() {
+    let results = parse_text("first = 1\ndef second(third): pass\n", new_sink(), ParseOptions::new());
+    let tree = results.parser_output.parse_tree;
+    drop(results);
+    drop(parse_text(&"other = more\n".repeat(20_000), new_sink(), ParseOptions::new()));
+
+    let mut names = vec![];
+    let mut stack = vec![tree.0];
+    while let Some(node) = stack.pop() {
+        if let Some(name) = crate::parser::parse_nodes::NameNode::cast(node) {
+            names.push(name.d().value());
+        }
+        stack.extend(get_child_nodes(node, None).into_iter().flatten());
+    }
+    names.sort();
+    assert_eq!(names, ["first", "second", "third"]);
 }

@@ -445,7 +445,7 @@ impl Harness {
                 defined_constants: JsMap::default(),
                 file_id: String::new(),
                 file_uri,
-                module_name,
+                module_name: Rc::new(module_name),
                 is_stub_file,
                 is_typing_stub_file: is_stub_file
                     && (path_ends_with("stdlib/typing.pyi") || file_name == "typing_extensions.pyi"),

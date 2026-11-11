@@ -34,9 +34,23 @@ pub struct DunderAllInfo {
 pub type OwnerStringAnnotations = FxHashMap<StringListNode, ExpressionNode>;
 
 // analyzer/analyzerNodeInfo.ts:40
+/// `flowNode` stays inline: the binder sets it on most nodes, and on nine of ten
+/// it is the only field set. The other fields live in `AnalyzerNodeInfoCold`,
+/// allocated on the first write to any of them.
 #[derive(Default)]
 #[derive(jsrt::Trace)]
 pub struct AnalyzerNodeInfo {
+    // Control flow information for this node.
+    pub flow_node: Cell<Option<P<FlowNode>>>,
+
+    cold: Cell<Option<P<AnalyzerNodeInfoCold>>>,
+}
+const _: () = assert!(size_of::<AnalyzerNodeInfo>() <= 16);
+
+/// The fields of `AnalyzerNodeInfo` that few nodes set.
+#[derive(Default)]
+#[derive(jsrt::Trace)]
+pub struct AnalyzerNodeInfoCold {
     //---------------------------------------------------------------
     // Set as part of import resolution
 
@@ -55,9 +69,6 @@ pub struct AnalyzerNodeInfo {
     /// Set by the binder only: a program handle.
     #[trace(program)]
     pub declaration: Cell<Option<P<Declaration>>>,
-
-    // Control flow information for this node.
-    pub flow_node: Cell<Option<P<FlowNode>>>,
 
     // Control flow information at the end of this node.
     pub after_flow_node: Cell<Option<P<FlowNode>>>,
@@ -79,6 +90,23 @@ pub struct AnalyzerNodeInfo {
     // String annotations discovered after parsing, keyed by analyzer owner.
     pub string_annotations:
         RefCell<Option<FxHashMap<P<AnalyzerFileInfo>, OwnerStringAnnotations>>>,
+}
+
+impl AnalyzerNodeInfo {
+    /// The rarely set fields, or `None` when none was written.
+    pub fn cold(&self) -> Option<P<AnalyzerNodeInfoCold>> {
+        self.cold.get()
+    }
+
+    /// The rarely set fields, allocated on the first call.
+    pub fn cold_mut(&self) -> P<AnalyzerNodeInfoCold> {
+        if let Some(cold) = self.cold.get() {
+            return cold;
+        }
+        let cold = P::new(AnalyzerNodeInfoCold::default());
+        self.cold.set(Some(cold));
+        cold
+    }
 }
 
 // analyzer/analyzerNodeInfo.ts:82
@@ -787,49 +815,49 @@ pub fn create_analyzer_node_info_accessor(
 pub fn get_import_info(node: impl Into<P<ParseNode>>, reader: &dyn AnalyzerNodeInfoReader) -> Option<P<ImportResult>> {
     let node = node.into();
     let info = reader.get(node);
-    info.and_then(|info| info.import_info.get())
+    info.and_then(|info| info.cold()).and_then(|cold| cold.import_info.get())
 }
 
 // analyzer/analyzerNodeInfo.ts:552
 pub fn set_import_info(node: impl Into<P<ParseNode>>, import_info: P<ImportResult>, writer: &dyn AnalyzerNodeInfoWriter) {
     let node = node.into();
     let info = writer.get_or_create(node);
-    info.import_info.set(Some(import_info));
+    info.cold_mut().import_info.set(Some(import_info));
 }
 
 // analyzer/analyzerNodeInfo.ts:557
 pub fn get_scope(node: impl Into<P<ParseNode>>, reader: &dyn AnalyzerNodeInfoReader) -> Option<P<Scope>> {
     let node = node.into();
     let info = reader.get(node);
-    info.and_then(|info| info.scope.get())
+    info.and_then(|info| info.cold()).and_then(|cold| cold.scope.get())
 }
 
 // analyzer/analyzerNodeInfo.ts:562
 pub fn set_scope(node: impl Into<P<ParseNode>>, scope: P<Scope>, writer: &dyn AnalyzerNodeInfoWriter) {
     let node = node.into();
     let info = writer.get_or_create(node);
-    info.scope.set(Some(scope));
+    info.cold_mut().scope.set(Some(scope));
 }
 
 // analyzer/analyzerNodeInfo.ts:567
 pub fn get_declaration(node: impl Into<P<ParseNode>>, reader: &dyn AnalyzerNodeInfoReader) -> Option<P<Declaration>> {
     let node = node.into();
     let info = reader.get(node);
-    info.and_then(|info| info.declaration.get())
+    info.and_then(|info| info.cold()).and_then(|cold| cold.declaration.get())
 }
 
 // analyzer/analyzerNodeInfo.ts:572
 pub fn set_declaration(node: impl Into<P<ParseNode>>, decl: P<Declaration>, writer: &dyn AnalyzerNodeInfoWriter) {
     let node = node.into();
     let info = writer.get_or_create(node);
-    info.declaration.set(Some(decl));
+    info.cold_mut().declaration.set(Some(decl));
 }
 
 // analyzer/analyzerNodeInfo.ts:577
 pub fn get_static_condition_value(node: impl Into<P<ParseNode>>, reader: &dyn AnalyzerNodeInfoReader) -> Option<bool> {
     let node = node.into();
     let info = reader.get(node);
-    info.and_then(|info| info.static_condition_value.get())
+    info.and_then(|info| info.cold()).and_then(|cold| cold.static_condition_value.get())
 }
 
 // analyzer/analyzerNodeInfo.ts:582
@@ -840,7 +868,7 @@ pub fn set_static_condition_value(
 ) {
     let node = node.into();
     let info = writer.get_or_create(node);
-    info.static_condition_value.set(value);
+    info.cold_mut().static_condition_value.set(value);
 }
 
 // analyzer/analyzerNodeInfo.ts:587
@@ -861,14 +889,14 @@ pub fn set_flow_node(node: impl Into<P<ParseNode>>, flow_node: P<FlowNode>, writ
 pub fn get_after_flow_node(node: impl Into<P<ParseNode>>, reader: &dyn AnalyzerNodeInfoReader) -> Option<P<FlowNode>> {
     let node = node.into();
     let info = reader.get(node);
-    info.and_then(|info| info.after_flow_node.get())
+    info.and_then(|info| info.cold()).and_then(|cold| cold.after_flow_node.get())
 }
 
 // analyzer/analyzerNodeInfo.ts:602
 pub fn set_after_flow_node(node: impl Into<P<ParseNode>>, flow_node: P<FlowNode>, writer: &dyn AnalyzerNodeInfoWriter) {
     let node = node.into();
     let info = writer.get_or_create(node);
-    info.after_flow_node.set(Some(flow_node));
+    info.cold_mut().after_flow_node.set(Some(flow_node));
 }
 
 // analyzer/analyzerNodeInfo.ts:607
@@ -894,7 +922,8 @@ pub fn get_string_annotation(
 
     let file_info = reader.get_file_info(node.node())?;
     let root_info = reader.get(root.node())?;
-    let string_annotations = root_info.string_annotations.borrow();
+    let cold = root_info.cold()?;
+    let string_annotations = cold.string_annotations.borrow();
     string_annotations
         .as_ref()
         .and_then(|annotations| annotations.get(&file_info))
@@ -915,7 +944,8 @@ pub fn set_string_annotation(
         panic!("String annotations require a bound parse tree");
     };
 
-    let mut string_annotations = root_info.string_annotations.borrow_mut();
+    let cold = root_info.cold_mut();
+    let mut string_annotations = cold.string_annotations.borrow_mut();
     let owner_annotations = string_annotations
         .get_or_insert_with(FxHashMap::default)
         .entry(file_info)
@@ -954,7 +984,7 @@ pub fn get_code_flow_expressions(
 ) -> Option<P<RefCell<JsSet<String>>>> {
     let node = node.into();
     let info = reader.get(node);
-    info.and_then(|info| info.code_flow_expressions.get())
+    info.and_then(|info| info.cold()).and_then(|cold| cold.code_flow_expressions.get())
 }
 
 // analyzer/analyzerNodeInfo.ts:677
@@ -965,14 +995,14 @@ pub fn set_code_flow_expressions(
 ) {
     let node = node.into();
     let info = writer.get_or_create(node);
-    info.code_flow_expressions.set(Some(expressions));
+    info.cold_mut().code_flow_expressions.set(Some(expressions));
 }
 
 // analyzer/analyzerNodeInfo.ts:686
 pub fn get_code_flow_complexity(node: impl Into<P<ParseNode>>, reader: &dyn AnalyzerNodeInfoReader) -> f64 {
     let node = node.into();
     let info = reader.get(node);
-    info.and_then(|info| info.code_flow_complexity.get())
+    info.and_then(|info| info.cold()).and_then(|cold| cold.code_flow_complexity.get())
         .unwrap_or(0.0)
 }
 
@@ -980,14 +1010,14 @@ pub fn get_code_flow_complexity(node: impl Into<P<ParseNode>>, reader: &dyn Anal
 pub fn set_code_flow_complexity(node: impl Into<P<ParseNode>>, complexity: f64, writer: &dyn AnalyzerNodeInfoWriter) {
     let node = node.into();
     let info = writer.get_or_create(node);
-    info.code_flow_complexity.set(Some(complexity));
+    info.cold_mut().code_flow_complexity.set(Some(complexity));
 }
 
 // analyzer/analyzerNodeInfo.ts:696
 pub fn get_dunder_all_info(node: impl Into<P<ParseNode>>, reader: &dyn AnalyzerNodeInfoReader) -> Option<P<DunderAllInfo>> {
     let node = node.into();
     let info = reader.get(node);
-    info.and_then(|info| info.dunder_all_info.get())
+    info.and_then(|info| info.cold()).and_then(|cold| cold.dunder_all_info.get())
 }
 
 // analyzer/analyzerNodeInfo.ts:701
@@ -998,7 +1028,7 @@ pub fn set_dunder_all_info(
 ) {
     let node = node.into();
     let info = writer.get_or_create(node);
-    info.dunder_all_info.set(names);
+    info.cold_mut().dunder_all_info.set(names);
 }
 
 // analyzer/analyzerNodeInfo.ts:706
@@ -1011,10 +1041,7 @@ pub fn is_code_unreachable(node: impl Into<P<ParseNode>>, reader: &dyn AnalyzerN
     while let Some(node) = cur_node {
         let flow_node = get_flow_node(node, reader);
         if let Some(flow_node) = flow_node {
-            return flow_node
-                .flags
-                .get()
-                .any(FlowFlags::UnreachableStaticCondition | FlowFlags::UnreachableStructural);
+            return flow_node.flags().any(FlowFlags::UnreachableStaticCondition | FlowFlags::UnreachableStructural);
         }
         cur_node = node.parent.get();
     }
@@ -1068,7 +1095,7 @@ mod tests {
             defined_constants: JsMap::default(),
             file_id: String::new(),
             file_uri: Uri::empty(),
-            module_name: String::new(),
+            module_name: Rc::default(),
             is_stub_file: false,
             is_typing_stub_file: false,
             is_typing_extensions_stub_file: false,
@@ -1082,7 +1109,7 @@ mod tests {
 
     fn create_store(root: ModuleNode, complexity: f64) -> P<AnalyzerNodeInfoStore> {
         let store = AnalyzerNodeInfoStore::new();
-        store.get_or_create(root.node()).code_flow_complexity.set(Some(complexity));
+        store.get_or_create(root.node()).cold_mut().code_flow_complexity.set(Some(complexity));
         store
     }
 
@@ -1093,7 +1120,7 @@ mod tests {
     }
 
     fn complexity(info: Option<P<AnalyzerNodeInfo>>) -> Option<f64> {
-        info.and_then(|info| info.code_flow_complexity.get())
+        info.and_then(|info| info.cold()).and_then(|cold| cold.code_flow_complexity.get())
     }
 
     #[test]
@@ -1102,8 +1129,8 @@ mod tests {
         let second_root = parse_module("second = 2");
         let store = AnalyzerNodeInfoStore::new();
 
-        store.get_or_create(first_root.node()).code_flow_complexity.set(Some(1.0));
-        store.get_or_create(second_root.node()).code_flow_complexity.set(Some(2.0));
+        store.get_or_create(first_root.node()).cold_mut().code_flow_complexity.set(Some(1.0));
+        store.get_or_create(second_root.node()).cold_mut().code_flow_complexity.set(Some(2.0));
 
         assert_eq!(complexity((*store).get(first_root.node())), Some(1.0));
         assert_eq!(complexity((*store).get(second_root.node())), Some(2.0));
@@ -1179,6 +1206,7 @@ mod tests {
         let first_store = create_store_with_file_info(first_root, first_file_info);
         first_store
             .get_or_create(first_root.node())
+            .cold_mut()
             .code_flow_complexity
             .set(Some(1.0));
         context.register_store(first_root, first_store);

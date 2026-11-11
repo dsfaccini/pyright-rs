@@ -6,7 +6,7 @@
 
 use jsrt::cell::{Cell, RefCell};
 
-use jsrt::{JsMap, JsSet, P};
+use jsrt::{JsMap, JsSet, OptionRefCell, P};
 
 use super::analyzer_file_info::{AnalyzerFileInfo, ImportLookupKey};
 use super::analyzer_node_info::{AnalyzerNodeInfoAccessor, DunderAllInfo};
@@ -15,14 +15,15 @@ use super::code_flow_types::{
     CodeFlowReferenceExpressionNode, FlowAssignmentDetails, FlowBranchLabel,
     FlowBranchLabelDetails, FlowCallDetails, FlowConditionDetails, FlowExhaustedMatchDetails,
     FlowFlags, FlowLabel, FlowLabelDetails, FlowNarrowForPatternDetails, FlowNode,
-    FlowNodeDetails, FlowPostContextManagerLabel, FlowPostContextManagerLabelDetails,
+    FlowPlain, FlowPostContextManagerLabel, FlowPostContextManagerLabelDetails,
     FlowPostFinallyDetails, FlowPreFinallyGate, FlowPreFinallyGateDetails,
     FlowVariableAnnotationDetails, FlowWildcardImportDetails, WILDCARD_IMPORT_REFERENCE_KEY,
     create_key_for_reference, get_unique_flow_node_id,
     is_code_flow_supported_for_reference,
 };
 use super::declaration::{
-    AliasDeclarationDetails, Declaration, DeclarationDetails, DeclarationType,
+    NoDeclarationDetails,
+    AliasDeclarationDetails, Declaration, DeclarationType,
     FunctionDeclarationDetails, IntrinsicDeclarationDetails, IntrinsicType,
     ModuleLoaderActions, ModuleLoaderActionsLike, ParamDeclarationDetails,
     TypeAliasDeclarationDetails, VariableDeclarationDetails, create_implicit_import_map,
@@ -112,7 +113,7 @@ fn string_value(node: StringNode) -> String {
 /// `stringList.d.strings[0].d.value`: a `StringNode` or `FormatStringNode`.
 fn first_string_value(node: StringListNode) -> String {
     let first = node.d().strings.borrow()[0];
-    match &first.get().d {
+    match first.d() {
         D::String(d) => d.value.to_string_lossy(),
         D::FormatString(d) => d.value.to_string_lossy(),
         _ => unreachable!(),
@@ -122,7 +123,7 @@ fn first_string_value(node: StringListNode) -> String {
 /// `node.nodeType === StringList && node.d.strings.length === 1 &&
 /// node.d.strings[0].nodeType === String`: the one string node.
 fn single_string_node(node: P<ParseNode>) -> Option<StringNode> {
-    let D::StringList(d) = &node.get().d else {
+    let D::StringList(d) = node.d() else {
         return None;
     };
     let strings = d.strings.borrow();
@@ -135,8 +136,8 @@ fn single_string_node(node: P<ParseNode>) -> Option<StringNode> {
 
 /// `node.d.value` of a `NameNode` held as a `P<ParseNode>`.
 fn name_value(node: P<ParseNode>) -> Option<&'static str> {
-    match &node.get().d {
-        D::Name(d) => Some(d.value.as_str()),
+    match node.d() {
+        D::Name(d) => Some(d.value()),
         _ => None,
     }
 }
@@ -144,8 +145,8 @@ fn name_value(node: P<ParseNode>) -> Option<&'static str> {
 /// `(expr is Name && expr.value === name) || (expr is TypeAnnotation &&
 /// expr.valueExpr is Name && expr.valueExpr.value === name)`.
 fn is_name_or_annotated_name(expr: ExpressionNode, name: &str) -> bool {
-    match &expr.get().d {
-        D::Name(d) => d.value == name,
+    match expr.d() {
+        D::Name(d) => d.value() == name,
         D::TypeAnnotation(d) => name_value(d.value_expr.get()) == Some(name),
         _ => false,
     }
@@ -153,7 +154,7 @@ fn is_name_or_annotated_name(expr: ExpressionNode, name: &str) -> bool {
 
 // analyzer/binder.ts:167
 fn is_static_class_assignment_target(target: ExpressionNode) -> bool {
-    match &target.get().d {
+    match target.d() {
         D::Name(_) => true,
 
         D::TypeAnnotation(d) => is_static_class_assignment_target(d.value_expr.get()),
@@ -181,15 +182,15 @@ fn get_called_built_in_name(
     expression: ExpressionNode,
     visited_symbols: &mut Vec<P<Symbol>>,
 ) -> Option<String> {
-    if let D::Name(name) = &expression.get().d {
-        let symbol_with_scope = scope.look_up_symbol_recursive(&name.value, None)?;
+    if let D::Name(name) = expression.d() {
+        let symbol_with_scope = scope.look_up_symbol_recursive(name.value(), None)?;
         if visited_symbols.contains(&symbol_with_scope.symbol) {
             return None;
         }
         visited_symbols.push(symbol_with_scope.symbol);
 
         if symbol_with_scope.scope.type_ == ScopeType::Builtin {
-            return Some(name.value.clone());
+            return Some(name.value().to_string());
         }
 
         let declarations = symbol_with_scope.symbol.get_declarations();
@@ -206,7 +207,7 @@ fn get_called_built_in_name(
             }
 
             if let Some(alias) = declaration.alias() {
-                if *declaration.module_name.borrow() == "builtins" {
+                if declaration.module_name().as_str() == "builtins" {
                     if let Some(symbol_name) = alias.symbol_name.borrow().as_ref() {
                         if !symbol_name.is_empty() {
                             return Some(symbol_name.clone());
@@ -215,7 +216,7 @@ fn get_called_built_in_name(
                 }
             }
         }
-    } else if let D::MemberAccess(member_access) = &expression.get().d {
+    } else if let D::MemberAccess(member_access) = expression.d() {
         if let Some(left_name) = name_value(member_access.left_expr.get()) {
             let symbol_with_scope = scope.look_up_symbol_recursive(left_name, None);
             let declarations = symbol_with_scope
@@ -224,10 +225,10 @@ fn get_called_built_in_name(
             let declaration = declarations.last().copied();
             if let Some(declaration) = declaration {
                 if let Some(alias) = declaration.alias() {
-                    if *declaration.module_name.borrow() == "builtins"
+                    if declaration.module_name().as_str() == "builtins"
                         && alias.symbol_name.borrow().as_ref().is_none_or(|s| s.is_empty())
                     {
-                        return Some(member_access.member.get().d().value.clone());
+                        return Some(member_access.member.get().d().value().to_string());
                     }
                 }
             }
@@ -260,14 +261,14 @@ thread_local! {
     static UNREACHABLE_STATIC_CONDITION_FLOW_NODE: P<FlowNode> = FlowNode::create(
         FlowFlags::UnreachableStaticCondition,
         get_unique_flow_node_id(),
-        FlowNodeDetails::Plain,
+        FlowPlain,
     );
 
     // analyzer/binder.ts:341
     static UNREACHABLE_STRUCTURAL_FLOW_NODE: P<FlowNode> = FlowNode::create(
         FlowFlags::UnreachableStructural,
         get_unique_flow_node_id(),
-        FlowNodeDetails::Plain,
+        FlowPlain,
     );
 }
 
@@ -649,7 +650,7 @@ impl ParseTreeVisitor<bool> for Binder {
                         let implicit_import = import_result
                             .filtered_implicit_imports
                             .as_ref()
-                            .and_then(|imports| imports.get(&import_as.d().name.get().d().value));
+                            .and_then(|imports| imports.get(import_as.d().name.get().d().value()));
                         implicit_import.is_some_and(|i| i.py_typed_info.is_some())
                     }) {
                         report_stub_missing = false;
@@ -690,7 +691,7 @@ impl ParseTreeVisitor<bool> for Binder {
             self._convert_range(&node.d().name.get()),
             self._file_info.module_name.clone(),
             self._is_in_except_suite,
-            DeclarationDetails::Class,
+            NoDeclarationDetails,
         );
 
         let symbol = self._bind_name_to_scope(self.cur_scope(), node.d().name.get(), None);
@@ -787,13 +788,13 @@ impl ParseTreeVisitor<bool> for Binder {
             self._convert_range(&node.d().name.get()),
             self._file_info.module_name.clone(),
             self._is_in_except_suite,
-            DeclarationDetails::Function(FunctionDeclarationDetails {
+            FunctionDeclarationDetails {
                 is_method: Cell::new(containing_class_node.is_some()),
                 is_generator: Cell::new(false),
-                return_statements: RefCell::new(None),
-                yield_statements: RefCell::new(None),
-                raise_statements: RefCell::new(None),
-            }),
+                return_statements: OptionRefCell::new(),
+                yield_statements: OptionRefCell::new(),
+                raise_statements: OptionRefCell::new(),
+            },
         );
 
         if let Some(symbol) = symbol {
@@ -873,10 +874,10 @@ impl ParseTreeVisitor<bool> for Binder {
                                     this._convert_range(&param_node),
                                     this._file_info.module_name.clone(),
                                     this._is_in_except_suite,
-                                    DeclarationDetails::Param(ParamDeclarationDetails {
-                                        inferred_name: RefCell::new(None),
-                                        inferred_type_nodes: RefCell::new(None),
-                                    }),
+                                    ParamDeclarationDetails {
+                                        inferred_name: OptionRefCell::new(),
+                                        inferred_type_nodes: OptionRefCell::new(),
+                                    },
                                 );
 
                                 symbol.add_declaration(param_declaration);
@@ -971,10 +972,10 @@ impl ParseTreeVisitor<bool> for Binder {
                                     this._convert_range(&param_node),
                                     this._file_info.module_name.clone(),
                                     this._is_in_except_suite,
-                                    DeclarationDetails::Param(ParamDeclarationDetails {
-                                        inferred_name: RefCell::new(None),
-                                        inferred_type_nodes: RefCell::new(None),
-                                    }),
+                                    ParamDeclarationDetails {
+                                        inferred_name: OptionRefCell::new(),
+                                        inferred_type_nodes: OptionRefCell::new(),
+                                    },
                                 );
 
                                 symbol.add_declaration(param_declaration);
@@ -1044,7 +1045,7 @@ impl ParseTreeVisitor<bool> for Binder {
         {
             let left = left_member_access.unwrap();
             let mut emit_dunder_all_warning = true;
-            let member_name = left.d().member.get().d().value.clone();
+            let member_name = left.d().member.get().d().value().to_string();
             let args = node.d().args.borrow().clone();
 
             // Is this a call to "__all__.extend()"?
@@ -1069,7 +1070,7 @@ impl ParseTreeVisitor<bool> for Binder {
                     }
                 } else if let Some(member_access) = MemberAccessNode::cast(arg_expr).filter(|m| {
                     m.d().left_expr.get().node_type == ParseNodeType::Name
-                        && m.d().member.get().d().value == "__all__"
+                        && m.d().member.get().d().value() == "__all__"
                 }) {
                     // Is this a call to "__all__.extend(<mod>.__all__)"?
                     let names_to_add = self._get_dunder_all_names_from_import(
@@ -1144,7 +1145,7 @@ impl ParseTreeVisitor<bool> for Binder {
 
         for param in &params {
             let name = param.d().name.get();
-            let symbol = type_param_scope.add_symbol(&name.d().value, SymbolFlags::None);
+            let symbol = type_param_scope.add_symbol(name.d().value(), SymbolFlags::None);
             let param_declaration = Declaration::create(
                 DeclarationType::TypeParam,
                 param.node(),
@@ -1152,20 +1153,20 @@ impl ParseTreeVisitor<bool> for Binder {
                 self._convert_range(&node),
                 self._file_info.module_name.clone(),
                 self._is_in_except_suite,
-                DeclarationDetails::TypeParam,
+                NoDeclarationDetails,
             );
 
             symbol.add_declaration(param_declaration);
             self._node_info.set_declaration(name, param_declaration);
 
-            if type_params_seen.contains(&name.d().value) {
+            if type_params_seen.contains(name.d().value()) {
                 self._add_syntax_error(
                     LocMessage::type_parameter_existing_type_parameter()
-                        .format(&[("name", &name.d().value)]),
+                        .format(&[("name", name.d().value())]),
                     &name.text_range(),
                 );
             } else {
-                type_params_seen.insert(name.d().value.clone());
+                type_params_seen.insert(name.d().value().to_string());
             }
         }
 
@@ -1199,9 +1200,9 @@ impl ParseTreeVisitor<bool> for Binder {
             self._convert_range(&node.d().name.get()),
             self._file_info.module_name.clone(),
             self._is_in_except_suite,
-            DeclarationDetails::TypeAlias(TypeAliasDeclarationDetails {
-                doc_string: RefCell::new(self._get_variable_doc_string(node.d().expr.get())),
-            }),
+            TypeAliasDeclarationDetails {
+                doc_string: self._get_variable_doc_string(node.d().expr.get()).into(),
+            },
         );
 
         let symbol = self._bind_name_to_scope(self.cur_scope(), node.d().name.get(), None);
@@ -1309,7 +1310,7 @@ impl ParseTreeVisitor<bool> for Binder {
                 self._dunder_all_names = Some(Vec::new());
                 let mut emit_dunder_all_warning = false;
 
-                let items = match &expr.get().d {
+                let items = match expr.d() {
                     D::List(d) => Some(d.items.borrow().clone()),
                     D::Tuple(d) => Some(d.items.borrow().clone()),
                     _ => None,
@@ -1349,12 +1350,12 @@ impl ParseTreeVisitor<bool> for Binder {
                 let mut entries: Vec<StringListNode> = Vec::new();
                 let mut is_expression_understood = true;
 
-                match &expr.get().d {
+                match expr.d() {
                     D::StringList(_) => {
                         entries.push(StringListNode(expr));
                     }
                     D::List(_) | D::Tuple(_) => {
-                        let items = match &expr.get().d {
+                        let items = match expr.d() {
                             D::List(d) => d.items.borrow().clone(),
                             D::Tuple(d) => d.items.borrow().clone(),
                             _ => unreachable!(),
@@ -1370,7 +1371,7 @@ impl ParseTreeVisitor<bool> for Binder {
                     D::Dictionary(d) => {
                         let items = d.items.borrow().clone();
                         for dictionary_entry_node in items {
-                            let key_expr = match &dictionary_entry_node.get().d {
+                            let key_expr = match dictionary_entry_node.d() {
                                 D::DictionaryKeyEntry(entry) => Some(entry.key_expr.get()),
                                 _ => None,
                             };
@@ -1431,11 +1432,11 @@ impl ParseTreeVisitor<bool> for Binder {
                 let name = node.d().name.get();
                 let mut cur_scope = self._current_scope;
                 while let Some(scope) = cur_scope.filter(|scope| *scope != container_scope) {
-                    let local_symbol = scope.look_up_symbol(&name.d().value);
+                    let local_symbol = scope.look_up_symbol(name.d().value());
                     if local_symbol.is_some() {
                         self._add_syntax_error(
                             LocMessage::assignment_expr_comprehension()
-                                .format(&[("name", &name.d().value)]),
+                                .format(&[("name", name.d().value())]),
                             &name.text_range(),
                         );
                         break;
@@ -1502,7 +1503,7 @@ impl ParseTreeVisitor<bool> for Binder {
                 emit_dunder_all_warning = false;
             } else if let Some(member_access) = MemberAccessNode::cast(expr).filter(|m| {
                 m.d().left_expr.get().node_type == ParseNodeType::Name
-                    && m.d().member.get().d().value == "__all__"
+                    && m.d().member.get().d().value() == "__all__"
             }) {
                 // Is this using the form "__all__ += <mod>.__all__"?
                 let names_to_add = self._get_dunder_all_names_from_import(
@@ -1649,8 +1650,7 @@ impl ParseTreeVisitor<bool> for Binder {
         if is_guaranteed_to_execute {
             if self
                 .cur_flow()
-                .flags
-                .get()
+                .flags()
                 .any(FlowFlags::UnreachableStructural | FlowFlags::UnreachableStaticCondition)
             {
                 // Check if any continue statements added back-edges to preForLabel.
@@ -1923,11 +1923,11 @@ impl ParseTreeVisitor<bool> for Binder {
 
             if let Some(symbol) = symbol {
                 let details = VariableDeclarationDetails::default();
-                details.is_constant.set(Some(is_constant_name(&name.d().value)));
+                details.is_constant.set(Some(is_constant_name(name.d().value())));
                 details.inferred_type_source.set(Some(node.node()));
                 details
                     .is_explicit_binding
-                    .set(Some(self.cur_scope().get_binding_type(&name.d().value).is_some()));
+                    .set(Some(self.cur_scope().get_binding_type(name.d().value()).is_some()));
                 let declaration = Declaration::create(
                     DeclarationType::Variable,
                     name.node(),
@@ -1935,7 +1935,7 @@ impl ParseTreeVisitor<bool> for Binder {
                     self._convert_range(&name),
                     self._file_info.module_name.clone(),
                     self._is_in_except_suite,
-                    DeclarationDetails::Variable(details),
+                    details,
                 );
                 symbol.add_declaration(declaration);
             }
@@ -2037,9 +2037,9 @@ impl ParseTreeVisitor<bool> for Binder {
         let pre_finally_gate = FlowPreFinallyGate(FlowNode::create(
             FlowFlags::PreFinallyGate,
             self._get_unique_flow_node_id(),
-            FlowNodeDetails::PreFinallyGate(FlowPreFinallyGateDetails {
+            FlowPreFinallyGateDetails {
                 antecedent: pre_finally_return_or_raise_label.node(),
-            }),
+            },
         ));
 
         let affected = self._track_code_flow_expressions(|this| {
@@ -2114,11 +2114,11 @@ impl ParseTreeVisitor<bool> for Binder {
             let post_finally_node = FlowNode::create(
                 FlowFlags::PostFinally,
                 self._get_unique_flow_node_id(),
-                FlowNodeDetails::PostFinally(FlowPostFinallyDetails {
+                FlowPostFinallyDetails {
                     finally_node: finally_suite,
                     antecedent: self.cur_flow(),
                     pre_finally_gate,
-                }),
+                },
             );
             self._current_flow_node = Some(if is_after_else_and_excepts_reachable {
                 post_finally_node
@@ -2170,7 +2170,7 @@ impl ParseTreeVisitor<bool> for Binder {
 
         let targets = node.d().targets.borrow().clone();
         for name in targets {
-            let name_value = name.d().value.as_str();
+            let name_value = name.d().value();
 
             // Is the binding inconsistent?
             if self.cur_scope().get_binding_type(name_value) == Some(NameBindingType::Nonlocal) {
@@ -2210,7 +2210,7 @@ impl ParseTreeVisitor<bool> for Binder {
         } else {
             let targets = node.d().targets.borrow().clone();
             for name in targets {
-                let name_value = name.d().value.as_str();
+                let name_value = name.d().value();
 
                 // Is the binding inconsistent?
                 if self.cur_scope().get_binding_type(name_value) == Some(NameBindingType::Global) {
@@ -2249,13 +2249,13 @@ impl ParseTreeVisitor<bool> for Binder {
         let module = node.d().module.get();
         let name_parts = module.d().name_parts.borrow().clone();
         if !name_parts.is_empty() {
-            let first_name_part_value = name_parts[0].d().value.clone();
+            let first_name_part_value = name_parts[0].d().value().to_string();
 
             let symbol_name: String;
             let symbol_name_node: NameNode;
             if let Some(alias) = node.d().alias.get() {
                 // The symbol name is defined by the alias.
-                symbol_name = alias.d().value.clone();
+                symbol_name = alias.d().value().to_string();
                 symbol_name_node = alias;
             } else {
                 // There was no alias, so we need to use the first element of
@@ -2269,7 +2269,7 @@ impl ParseTreeVisitor<bool> for Binder {
                 let scope_type = self.cur_scope().type_;
                 if (scope_type == ScopeType::Module || scope_type == ScopeType::Builtin)
                     && node.d().alias.get().is_none_or(|alias| {
-                        name_parts.len() != 1 || name_parts[0].d().value != alias.d().value
+                        name_parts.len() != 1 || name_parts[0].d().value() != alias.d().value()
                     })
                 {
                     if self._file_info.is_stub_file || self._file_info.is_in_py_typed_package {
@@ -2305,7 +2305,7 @@ impl ParseTreeVisitor<bool> for Binder {
                     .d()
                     .alias
                     .get()
-                    .map(|alias| alias.d().value.clone())
+                    .map(|alias| alias.d().value().to_string())
                     .unwrap_or_else(|| first_name_part_value.clone());
                 if first_name_part_value == "typing" || first_name_part_value == "typing_extensions" {
                     self._typing_import_aliases.push(alias_value);
@@ -2351,7 +2351,7 @@ impl ParseTreeVisitor<bool> for Binder {
         let mut is_dataclasses_import = false;
 
         if name_parts.len() == 1 {
-            let first_name_part_value = name_parts[0].d().value.as_str();
+            let first_name_part_value = name_parts[0].d().value();
             if first_name_part_value == "typing" || first_name_part_value == "typing_extensions" {
                 is_typing_import = true;
             }
@@ -2388,7 +2388,7 @@ impl ParseTreeVisitor<bool> for Binder {
                         // imported symbol, skip this.
                         let is_immediately_replaced = wildcard_names
                             .iter()
-                            .any(|name| *name == name_parts[0].d().value);
+                            .any(|name| *name == name_parts[0].d().value());
 
                         if !is_immediately_replaced {
                             self._add_implicit_from_import(node, Some(import_info));
@@ -2428,7 +2428,7 @@ impl ParseTreeVisitor<bool> for Binder {
                                         get_empty_range(), // Range is unknown for wildcard name import.
                                         self._file_info.module_name.clone(),
                                         self._is_in_except_suite,
-                                        DeclarationDetails::Alias(details),
+                                        details,
                                     );
                                     local_symbol.add_declaration(alias_decl);
                                     names.push(name.clone());
@@ -2447,7 +2447,7 @@ impl ParseTreeVisitor<bool> for Binder {
                                             get_empty_range(),
                                             self._file_info.module_name.clone(),
                                             self._is_in_except_suite,
-                                            DeclarationDetails::Alias(AliasDeclarationDetails::new(false, true)),
+                                            AliasDeclarationDetails::new(false, true),
                                         );
 
                                         let details = AliasDeclarationDetails::new(false, true);
@@ -2460,7 +2460,7 @@ impl ParseTreeVisitor<bool> for Binder {
                                             get_empty_range(),
                                             self._file_info.module_name.clone(),
                                             self._is_in_except_suite,
-                                            DeclarationDetails::Alias(details),
+                                            details,
                                         );
 
                                         local_symbol.add_declaration(alias_decl);
@@ -2497,7 +2497,7 @@ impl ParseTreeVisitor<bool> for Binder {
 
             let imports = node.d().imports.borrow().clone();
             for import_symbol_node in imports {
-                let imported_name = import_symbol_node.d().name.get().d().value.clone();
+                let imported_name = import_symbol_node.d().name.get().d().value().to_string();
                 let name_node = import_symbol_node
                     .d()
                     .alias
@@ -2518,7 +2518,7 @@ impl ParseTreeVisitor<bool> for Binder {
                                 .d()
                                 .alias
                                 .get()
-                                .is_none_or(|alias| alias.d().value != import_symbol_node.d().name.get().d().value)
+                                .is_none_or(|alias| alias.d().value() != import_symbol_node.d().name.get().d().value())
                             {
                                 if self._file_info.is_stub_file || self._file_info.is_in_py_typed_package {
                                     // PEP 484 indicates that imported symbols should not be
@@ -2526,7 +2526,7 @@ impl ParseTreeVisitor<bool> for Binder {
                                     // they are imported using the "as" form using a redundant form.
                                     // Py.typed packages follow the same rule as PEP 484.
                                     self._potential_hidden_symbols
-                                        .insert(name_node.d().value.clone(), symbol);
+                                        .insert(name_node.d().value().to_string(), symbol);
                                 }
                             }
                         }
@@ -2556,9 +2556,9 @@ impl ParseTreeVisitor<bool> for Binder {
                             import_symbol_node.node(),
                             implicit_import.uri,
                             get_empty_range(),
-                            self._format_module_name(module),
+                            self._format_module_name(module).into(),
                             self._is_in_except_suite,
-                            DeclarationDetails::Alias(fallback_details),
+                            fallback_details,
                         ));
 
                         // Handle the case where this is an __init__.py file and the imported
@@ -2588,9 +2588,9 @@ impl ParseTreeVisitor<bool> for Binder {
                         import_symbol_node.node(),
                         resolved_path,
                         self._convert_range(&name_node),
-                        self._format_module_name(module),
+                        self._format_module_name(module).into(),
                         self._is_in_except_suite,
-                        DeclarationDetails::Alias(details),
+                        details,
                     );
 
                     symbol.add_declaration(alias_decl);
@@ -2599,15 +2599,15 @@ impl ParseTreeVisitor<bool> for Binder {
                     if is_typing_import {
                         if typing_symbols_of_interest
                             .iter()
-                            .any(|s| *s == import_symbol_node.d().name.get().d().value)
+                            .any(|s| *s == import_symbol_node.d().name.get().d().value())
                         {
                             self._typing_symbol_aliases.insert(
-                                name_node.d().value.clone(),
-                                import_symbol_node.d().name.get().d().value.clone(),
+                                name_node.d().value().to_string(),
+                                import_symbol_node.d().name.get().d().value().to_string(),
                             );
 
                             if is_typing_import {
-                                symbol.set_typing_symbol_alias(&name_node.d().value);
+                                symbol.set_typing_symbol_alias(name_node.d().value());
                             }
                         }
                     }
@@ -2615,11 +2615,11 @@ impl ParseTreeVisitor<bool> for Binder {
                     if is_dataclasses_import {
                         if dataclasses_symbols_of_interest
                             .iter()
-                            .any(|s| *s == import_symbol_node.d().name.get().d().value)
+                            .any(|s| *s == import_symbol_node.d().name.get().d().value())
                         {
                             self._dataclasses_symbol_aliases.insert(
-                                name_node.d().value.clone(),
-                                import_symbol_node.d().name.get().d().value.clone(),
+                                name_node.d().value().to_string(),
+                                import_symbol_node.d().name.get().d().value().to_string(),
                             );
                         }
                     }
@@ -2823,7 +2823,7 @@ impl ParseTreeVisitor<bool> for Binder {
         // The first iterable is executed outside of the comprehension scope.
         let for_if_nodes = node.d().for_if_nodes.borrow().clone();
         if let Some(first) = for_if_nodes.first() {
-            if let D::ComprehensionFor(d) = &first.get().d {
+            if let D::ComprehensionFor(d) = first.d() {
                 self.walk(d.iterable_expr.get());
             }
         }
@@ -2844,7 +2844,7 @@ impl ParseTreeVisitor<bool> for Binder {
                 // expressions and create the control flow graph.
                 for compr in &for_if_nodes {
                     let mut added_symbols: JsMap<String, P<Symbol>> = JsMap::default();
-                    if let D::ComprehensionFor(d) = &compr.get().d {
+                    if let D::ComprehensionFor(d) = compr.d() {
                         this._bind_possible_tuple_named_target(d.target_expr.get(), Some(&mut added_symbols));
                         this._add_inferred_type_assignment_for_variable(d.target_expr.get(), *compr, false);
 
@@ -2873,7 +2873,7 @@ impl ParseTreeVisitor<bool> for Binder {
                 }
 
                 for (i, compr) in for_if_nodes.iter().enumerate() {
-                    match &compr.get().d {
+                    match compr.d() {
                         D::ComprehensionFor(d) => {
                             // We already walked the first iterable expression above,
                             // so skip it here.
@@ -2916,7 +2916,7 @@ impl ParseTreeVisitor<bool> for Binder {
 
         // We also support narrowing of individual tuple entries found within a
         // match subject expression, so add those here as well.
-        if let D::Tuple(tuple) = &node.d().expr.get().get().d {
+        if let D::Tuple(tuple) = node.d().expr.get().d() {
             let items = tuple.items.borrow().clone();
             for item_expr in items {
                 if self._is_narrowing_expression(item_expr, &mut expression_list, NarrowExprOptions::default()) {
@@ -3024,11 +3024,11 @@ impl ParseTreeVisitor<bool> for Binder {
 
             if let Some(symbol) = symbol {
                 let details = VariableDeclarationDetails::default();
-                details.is_constant.set(Some(is_constant_name(&target.d().value)));
+                details.is_constant.set(Some(is_constant_name(target.d().value())));
                 details.inferred_type_source.set(Some(node.node()));
                 details
                     .is_explicit_binding
-                    .set(Some(self.cur_scope().get_binding_type(&target.d().value).is_some()));
+                    .set(Some(self.cur_scope().get_binding_type(target.d().value()).is_some()));
                 let declaration = Declaration::create(
                     DeclarationType::Variable,
                     target.node(),
@@ -3036,7 +3036,7 @@ impl ParseTreeVisitor<bool> for Binder {
                     self._convert_range(&target),
                     self._file_info.module_name.clone(),
                     self._is_in_except_suite,
-                    DeclarationDetails::Variable(details),
+                    details,
                 );
                 symbol.add_declaration(declaration);
             }
@@ -3056,7 +3056,7 @@ impl ParseTreeVisitor<bool> for Binder {
 
     // analyzer/binder.ts:2661
     fn visit_pattern_mapping_expand_entry(&mut self, node: PatternMappingExpandEntryNode) -> bool {
-        if node.d().target.get().d().value != "_" {
+        if node.d().target.get().d().value() != "_" {
             self._add_pattern_capture_target(node.d().target.get());
         }
 
@@ -3072,14 +3072,14 @@ impl Binder {
     // This is a syntactic check, not a semantic one, so it's very fast.
     // Guards against starred expressions ([*empty_list]) and comprehensions ([v for v in []]).
     fn _is_non_empty_list_or_tuple_literal(&self, expr: ExpressionNode) -> bool {
-        if let D::List(d) = &expr.get().d {
+        if let D::List(d) = expr.d() {
             let items = d.items.borrow();
             return items.len() > 0
                 && items.iter().all(|item| {
                     item.node_type != ParseNodeType::Unpack && item.node_type != ParseNodeType::Comprehension
                 });
         }
-        if let D::Tuple(d) = &expr.get().d {
+        if let D::Tuple(d) = expr.d() {
             let items = d.items.borrow();
             return items.len() > 0 && items.iter().all(|item| item.node_type != ParseNodeType::Unpack);
         }
@@ -3111,7 +3111,7 @@ impl Binder {
                 .name_parts
                 .borrow()
                 .iter()
-                .map(|part| part.d().value.as_str())
+                .map(|part| part.d().value())
                 .collect::<Vec<_>>()
                 .join(".")
     }
@@ -3174,7 +3174,7 @@ impl Binder {
                 self._convert_range(slot_name_node),
                 self._file_info.module_name.clone(),
                 self._is_in_except_suite,
-                DeclarationDetails::Variable(details),
+                details,
             );
             symbol.unwrap().add_declaration(declaration);
         }
@@ -3196,12 +3196,12 @@ impl Binder {
         let mut prev_prev_node: Option<P<ParseNode>> = None;
 
         while let Some(cur) = cur_node {
-            if let D::Comprehension(d) = &cur.get().d {
+            if let D::Comprehension(d) = cur.d() {
                 let for_if_nodes = d.for_if_nodes.borrow();
                 if ignore_outermost_iterable && for_if_nodes.len() > 0 {
                     let outermost_compr = for_if_nodes[0];
                     if prev_node == Some(outermost_compr) {
-                        if let D::ComprehensionFor(f) = &outermost_compr.get().d {
+                        if let D::ComprehensionFor(f) = outermost_compr.d() {
                             if prev_prev_node == Some(f.iterable_expr.get()) {
                                 return false;
                             }
@@ -3235,11 +3235,11 @@ impl Binder {
 
         if let Some(symbol) = symbol {
             let details = VariableDeclarationDetails::default();
-            details.is_constant.set(Some(is_constant_name(&target.d().value)));
+            details.is_constant.set(Some(is_constant_name(target.d().value())));
             details.inferred_type_source.set(target.parent.get());
             details
                 .is_explicit_binding
-                .set(Some(self.cur_scope().get_binding_type(&target.d().value).is_some()));
+                .set(Some(self.cur_scope().get_binding_type(target.d().value()).is_some()));
             let declaration = Declaration::create(
                 DeclarationType::Variable,
                 target.node(),
@@ -3247,7 +3247,7 @@ impl Binder {
                 self._convert_range(&target),
                 self._file_info.module_name.clone(),
                 self._is_in_except_suite,
-                DeclarationDetails::Variable(details),
+                details,
             );
             symbol.add_declaration(declaration);
         }
@@ -3301,7 +3301,7 @@ impl Binder {
     // analyzer/binder.ts:2865
     fn _add_implicit_from_import(&mut self, node: ImportFromNode, import_info: Option<P<ImportResult>>) {
         let first_name_part = node.d().module.get().d().name_parts.borrow()[0];
-        let symbol_name = first_name_part.d().value.clone();
+        let symbol_name = first_name_part.d().value().to_string();
         let symbol = self._bind_name_value_to_scope(self.cur_scope(), &symbol_name, None);
         if let Some(symbol) = symbol {
             self._create_alias_declaration_for_multipart_import_name(
@@ -3324,13 +3324,13 @@ impl Binder {
         import_info: Option<P<ImportResult>>,
         symbol: P<Symbol>,
     ) {
-        let module = match &node.get().d {
+        let module = match node.d() {
             D::ImportAs(d) => d.module.get(),
             D::ImportFrom(d) => d.module.get(),
             _ => unreachable!(),
         };
         let name_parts = module.d().name_parts.borrow().clone();
-        let first_name_part_value = name_parts[0].d().value.clone();
+        let first_name_part_value = name_parts[0].d().value().to_string();
 
         self._node_info.set_flow_node(node, self.cur_flow());
 
@@ -3365,9 +3365,9 @@ impl Binder {
         let is_lazy = if node.node_type == ParseNodeType::ImportAs {
             node.parent
                 .get()
-                .is_some_and(|parent| matches!(&parent.get().d, D::Import(d) if d.is_lazy.get() == Some(true)))
+                .is_some_and(|parent| matches!(parent.d(), D::Import(d) if d.is_lazy.get() == Some(true)))
         } else {
-            matches!(&node.get().d, D::ImportFrom(d) if d.is_lazy.get() == Some(true))
+            matches!(node.d(), D::ImportFrom(d) if d.is_lazy.get() == Some(true))
         };
 
         if let Some(existing_decl) = existing_decl {
@@ -3391,9 +3391,10 @@ impl Binder {
                     self._format_module_name(module)
                 } else {
                     ".".repeat(module.d().leading_dots.get() as usize) + &first_name_part_value
-                },
+                }
+                .into(),
                 self._is_in_except_suite,
-                DeclarationDetails::Alias(details),
+                details,
             );
         } else {
             // If we couldn't resolve the import, create a dummy declaration with a
@@ -3412,9 +3413,9 @@ impl Binder {
                 node,
                 uri_of_last_submodule,
                 get_empty_range(),
-                import_info.map(|info| info.import_name.clone()).unwrap_or_default(),
+                import_info.map(|info| info.import_name.clone()).unwrap_or_default().into(),
                 self._is_in_except_suite,
-                DeclarationDetails::Alias(details),
+                details,
             );
         }
         let new_alias = new_decl.alias().unwrap();
@@ -3443,7 +3444,7 @@ impl Binder {
             let mut cur_loader_actions: &'static dyn ModuleLoaderActionsLike = new_decl.get();
 
             for i in 1..name_parts.len() {
-                let name_part_value = name_parts[i].d().value.clone();
+                let name_part_value = name_parts[i].d().value().to_string();
 
                 // Is there an existing loader action for this name?
                 let mut loader_actions = cur_loader_actions
@@ -3551,7 +3552,7 @@ impl Binder {
 
     // analyzer/binder.ts:3081
     fn _create_start_flow_node(&mut self) -> P<FlowNode> {
-        FlowNode::create(FlowFlags::Start, self._get_unique_flow_node_id(), FlowNodeDetails::Plain)
+        FlowNode::create(FlowFlags::Start, self._get_unique_flow_node_id(), FlowPlain)
     }
 
     // analyzer/binder.ts:3089
@@ -3559,10 +3560,10 @@ impl Binder {
         FlowBranchLabel(FlowNode::create(
             FlowFlags::BranchLabel,
             self._get_unique_flow_node_id(),
-            FlowNodeDetails::BranchLabel(FlowBranchLabelDetails {
+            FlowBranchLabelDetails {
                 label: FlowLabelDetails::new(),
                 pre_branch_antecedent,
-            }),
+            },
         ))
     }
 
@@ -3575,11 +3576,11 @@ impl Binder {
         let flow_node = FlowNode::create(
             FlowFlags::NarrowForPattern,
             self._get_unique_flow_node_id(),
-            FlowNodeDetails::NarrowForPattern(FlowNarrowForPatternDetails {
+            FlowNarrowForPatternDetails {
                 subject_expression,
                 statement,
                 antecedent: self.cur_flow(),
-            }),
+            },
         );
 
         self._current_flow_node = Some(flow_node);
@@ -3595,12 +3596,12 @@ impl Binder {
         FlowPostContextManagerLabel(FlowNode::create(
             FlowFlags::PostContextManager | FlowFlags::BranchLabel,
             self._get_unique_flow_node_id(),
-            FlowNodeDetails::PostContextManagerLabel(FlowPostContextManagerLabelDetails {
+            FlowPostContextManagerLabelDetails {
                 label: FlowLabelDetails::new(),
                 expressions,
                 is_async,
                 block_if_swallows_exceptions,
-            }),
+            },
         ))
     }
 
@@ -3609,7 +3610,7 @@ impl Binder {
         FlowLabel(FlowNode::create(
             FlowFlags::LoopLabel,
             self._get_unique_flow_node_id(),
-            FlowNodeDetails::Label(FlowLabelDetails::new()),
+            FlowLabelDetails::new(),
         ))
     }
 
@@ -3624,7 +3625,7 @@ impl Binder {
 
         // If there was only one antecedent and this is a simple
         // branch label, there's no need for a label to exist.
-        if antecedents_len == 1 && node.flags.get() == FlowFlags::BranchLabel {
+        if antecedents_len == 1 && node.flags() == FlowFlags::BranchLabel {
             return node.d().antecedents.borrow()[0];
         }
 
@@ -3643,11 +3644,11 @@ impl Binder {
     fn _bind_never_condition(&mut self, node: ExpressionNode, target: FlowLabel, is_positive_test: bool) {
         let mut expression_list: Vec<CodeFlowReferenceExpressionNode> = Vec::new();
 
-        let unary_not = match &node.get().d {
+        let unary_not = match node.d() {
             D::UnaryOperation(d) if d.operator.get() == OperatorType::Not => Some(d.expr.get()),
             _ => None,
         };
-        let and_or = match &node.get().d {
+        let and_or = match node.d() {
             D::BinaryOperation(d)
                 if d.operator.get() == OperatorType::And || d.operator.get() == OperatorType::Or =>
             {
@@ -3771,8 +3772,7 @@ impl Binder {
         expression: ExpressionNode,
     ) -> P<FlowNode> {
         if antecedent
-            .flags
-            .get()
+            .flags()
             .any(FlowFlags::UnreachableStructural | FlowFlags::UnreachableStaticCondition)
         {
             return antecedent;
@@ -3819,11 +3819,11 @@ impl Binder {
         let conditional_flow_node = FlowNode::create(
             flags,
             self._get_unique_flow_node_id(),
-            FlowNodeDetails::Condition(FlowConditionDetails {
+            FlowConditionDetails {
                 reference: filtered_expr_list.first().map(|expr| NameNode(*expr)),
                 expression,
                 antecedent,
-            }),
+            },
         );
 
         self._add_except_targets(conditional_flow_node);
@@ -3834,7 +3834,7 @@ impl Binder {
     // analyzer/binder.ts:3315
     // Indicates whether the expression is a NOT, AND or OR expression.
     fn _is_logical_expression(&self, expression: ExpressionNode) -> bool {
-        match &expression.get().d {
+        match expression.d() {
             D::UnaryOperation(d) => d.operator.get() == OperatorType::Not,
 
             D::BinaryOperation(d) => {
@@ -3866,7 +3866,7 @@ impl Binder {
             ..options
         };
 
-        match &expression.get().d {
+        match expression.d() {
             D::Name(_) | D::MemberAccess(_) | D::Index(_) => {
                 if options.filter_for_never_narrowing == Some(true) {
                     // Never narrowing doesn't support member access or index
@@ -3890,7 +3890,7 @@ impl Binder {
                         // If the expression is a member access expression, add its
                         // leftExpression to the expression list because that expression
                         // can be narrowed based on the attribute type.
-                        if let D::MemberAccess(d) = &expression.get().d {
+                        if let D::MemberAccess(d) = expression.d() {
                             if options.allow_discriminated_narrowing == Some(true) {
                                 if is_code_flow_supported_for_reference(d.left_expr.get()) {
                                     expression_list.push(d.left_expr.get());
@@ -3901,7 +3901,7 @@ impl Binder {
                         // If the expression is an index expression with a supported
                         // subscript, add its baseExpression to the expression list because
                         // that expression can be narrowed.
-                        if let D::Index(d) = &expression.get().d {
+                        if let D::Index(d) = expression.d() {
                             let items = d.items.borrow();
                             if items.len() == 1
                                 && !d.trailing_comma.get()
@@ -3936,13 +3936,13 @@ impl Binder {
                 if is_or_is_not_operator || equals_or_not_equals_operator {
                     // Look for "X is None", "X is not None", "X == None", "X != None".
                     // These are commonly-used patterns used in control flow.
-                    if matches!(&right_expr.get().d, D::Constant(c) if c.const_type.get() == KeywordType::None) {
+                    if matches!(right_expr.d(), D::Constant(c) if c.const_type.get() == KeywordType::None) {
                         return self._is_narrowing_expression(left_expr, expression_list, complex(Some(true)));
                     }
 
                     // Look for "type(X) is Y" or "type(X) is not Y".
                     if is_or_is_not_operator {
-                        if let D::Call(call) = &left_expr.get().d {
+                        if let D::Call(call) = left_expr.d() {
                             let args = call.args.borrow().clone();
                             if name_value(call.left_expr.get()) == Some("type")
                                 && args.len() == 1
@@ -3967,7 +3967,7 @@ impl Binder {
                 }
 
                 // Look for len(X) < <literal>, len(X) <= <literal>, len(X) > <literal>, len(X) >= <literal>.
-                if matches!(&right_expr.get().d, D::Number(n) if n.is_integer.get()) {
+                if matches!(right_expr.d(), D::Number(n) if n.is_integer.get()) {
                     if operator == OperatorType::LessThan
                         || operator == OperatorType::LessThanOrEqual
                         || operator == OperatorType::GreaterThan
@@ -4049,7 +4049,7 @@ impl Binder {
 
     // analyzer/binder.ts:3559
     fn _create_assignment_target_flow_nodes(&mut self, target: ExpressionNode, walk_targets: bool, unbound: bool) {
-        match &target.get().d {
+        match target.d() {
             D::Name(_) | D::MemberAccess(_) => {
                 self._create_flow_assignment(target, unbound);
                 if walk_targets {
@@ -4108,10 +4108,10 @@ impl Binder {
             let flow_node = FlowNode::create(
                 FlowFlags::Call,
                 self._get_unique_flow_node_id(),
-                FlowNodeDetails::Call(FlowCallDetails {
+                FlowCallDetails {
                     node,
                     antecedent: self.cur_flow(),
-                }),
+                },
             );
 
             self._current_flow_node = Some(flow_node);
@@ -4124,9 +4124,9 @@ impl Binder {
             let flow_node = FlowNode::create(
                 FlowFlags::VariableAnnotation,
                 self._get_unique_flow_node_id(),
-                FlowNodeDetails::VariableAnnotation(FlowVariableAnnotationDetails {
+                FlowVariableAnnotationDetails {
                     antecedent: self.cur_flow(),
-                }),
+                },
             );
 
             self._current_flow_node = Some(flow_node);
@@ -4157,11 +4157,11 @@ impl Binder {
             let flow_node = FlowNode::create(
                 flags,
                 id,
-                FlowNodeDetails::Assignment(FlowAssignmentDetails {
+                FlowAssignmentDetails {
                     node,
                     antecedent: self.cur_flow(),
                     target_symbol_id,
-                }),
+                },
             );
 
             // Assume that an assignment to a member access expression
@@ -4189,11 +4189,11 @@ impl Binder {
             let flow_node = FlowNode::create(
                 FlowFlags::WildcardImport,
                 self._get_unique_flow_node_id(),
-                FlowNodeDetails::WildcardImport(FlowWildcardImportDetails {
+                FlowWildcardImportDetails {
                     node,
                     names,
                     antecedent: self.cur_flow(),
-                }),
+                },
             );
 
             self._add_except_targets(flow_node);
@@ -4209,11 +4209,11 @@ impl Binder {
             let flow_node = FlowNode::create(
                 FlowFlags::ExhaustedMatch,
                 self._get_unique_flow_node_id(),
-                FlowNodeDetails::ExhaustedMatch(FlowExhaustedMatchDetails {
+                FlowExhaustedMatchDetails {
                     node,
                     antecedent: self.cur_flow(),
                     subject_expression: node.d().expr.get(),
-                }),
+                },
             );
 
             self._current_flow_node = Some(flow_node);
@@ -4225,8 +4225,7 @@ impl Binder {
     // analyzer/binder.ts:3719
     fn _is_code_unreachable(&self) -> bool {
         self.cur_flow()
-            .flags
-            .get()
+            .flags()
             .any(FlowFlags::UnreachableStaticCondition | FlowFlags::UnreachableStructural)
     }
 
@@ -4284,8 +4283,7 @@ impl Binder {
     fn _add_antecedent(&mut self, label: FlowLabel, antecedent: P<FlowNode>) {
         if !self
             .cur_flow()
-            .flags
-            .get()
+            .flags()
             .any(FlowFlags::UnreachableStructural | FlowFlags::UnreachableStaticCondition)
         {
             // Don't add the same antecedent twice.
@@ -4303,7 +4301,7 @@ impl Binder {
         node: NameNode,
         added_symbols: Option<&mut JsMap<String, P<Symbol>>>,
     ) -> Option<P<Symbol>> {
-        self._bind_name_value_to_scope(scope, &node.d().value, added_symbols)
+        self._bind_name_value_to_scope(scope, node.d().value(), added_symbols)
     }
 
     // analyzer/binder.ts:3782
@@ -4375,7 +4373,7 @@ impl Binder {
             self.cur_scope().has_potentially_dynamic_symbol_table.set(true);
         }
 
-        match &target.get().d {
+        match target.d() {
             D::Name(_) => {
                 self._bind_name_to_scope(self.cur_scope(), NameNode(target), added_symbols);
             }
@@ -4423,10 +4421,10 @@ impl Binder {
             get_empty_range(),
             self._file_info.module_name.clone(),
             self._is_in_except_suite,
-            DeclarationDetails::Intrinsic(IntrinsicDeclarationDetails {
+            IntrinsicDeclarationDetails {
                 name: name_value.to_string(),
                 intrinsic_type: type_,
-            }),
+            },
         ));
         symbol.set_is_ignored_for_protocol_match();
     }
@@ -4559,24 +4557,24 @@ impl Binder {
         source: P<ParseNode>,
         is_possible_type_alias: bool,
     ) {
-        match &target.get().d {
+        match target.d() {
             D::Name(name_details) => {
                 let name = NameNode(target);
-                let symbol_with_scope = self.cur_scope().look_up_symbol_recursive(&name_details.value, None);
+                let symbol_with_scope = self.cur_scope().look_up_symbol_recursive(name_details.value(), None);
                 if let Some(symbol_with_scope) = symbol_with_scope {
                     let details = VariableDeclarationDetails::default();
-                    details.is_constant.set(Some(is_constant_name(&name_details.value)));
+                    details.is_constant.set(Some(is_constant_name(name_details.value())));
                     details.inferred_type_source.set(Some(source));
                     details
                         .is_inference_allowed_in_py_typed
-                        .set(Some(self._is_inference_allowed_in_py_typed(&name_details.value)));
+                        .set(Some(self._is_inference_allowed_in_py_typed(name_details.value())));
                     details
                         .type_alias_name
                         .set(if is_possible_type_alias { Some(name) } else { None });
                     *details.doc_string.borrow_mut() = self._get_variable_doc_string(target);
                     details
                         .is_explicit_binding
-                        .set(Some(self.cur_scope().get_binding_type(&name_details.value).is_some()));
+                        .set(Some(self.cur_scope().get_binding_type(name_details.value()).is_some()));
                     let declaration = Declaration::create(
                         DeclarationType::Variable,
                         target,
@@ -4584,7 +4582,7 @@ impl Binder {
                         self._convert_range(&name),
                         self._file_info.module_name.clone(),
                         self._is_in_except_suite,
-                        DeclarationDetails::Variable(details),
+                        details,
                     );
                     symbol_with_scope.symbol.add_declaration(declaration);
                 }
@@ -4595,14 +4593,14 @@ impl Binder {
                 if let Some(member_access_info) = member_access_info {
                     let name = member_access.member.get();
 
-                    let mut symbol = member_access_info.class_scope.look_up_symbol(&name.d().value);
+                    let mut symbol = member_access_info.class_scope.look_up_symbol(name.d().value());
                     if symbol.is_none() {
                         let new_symbol = member_access_info
                             .class_scope
-                            .add_symbol(&name.d().value, SymbolFlags::InitiallyUnbound);
+                            .add_symbol(name.d().value(), SymbolFlags::InitiallyUnbound);
                         let honor_private_naming =
                             self._file_info.diagnostic_rule_set.report_private_usage != DiagnosticLevel::None;
-                        if is_private_or_protected_name(&name.d().value) && honor_private_naming {
+                        if is_private_or_protected_name(name.d().value()) && honor_private_naming {
                             new_symbol.set_is_private_member();
                         }
                         symbol = Some(new_symbol);
@@ -4627,7 +4625,7 @@ impl Binder {
                     }
 
                     let details = VariableDeclarationDetails::default();
-                    details.is_constant.set(Some(is_constant_name(&name.d().value)));
+                    details.is_constant.set(Some(is_constant_name(name.d().value())));
                     details.inferred_type_source.set(Some(source));
                     details.is_defined_by_member_access.set(Some(true));
                     *details.doc_string.borrow_mut() = self._get_variable_doc_string(target);
@@ -4638,7 +4636,7 @@ impl Binder {
                         self._convert_range(&name),
                         self._file_info.module_name.clone(),
                         self._is_in_except_suite,
-                        DeclarationDetails::Variable(details),
+                        details,
                     );
                     symbol.add_declaration(declaration);
                 }
@@ -4680,10 +4678,10 @@ impl Binder {
     fn _add_type_declaration_for_variable(&mut self, target: ExpressionNode, type_annotation: ExpressionNode) {
         let mut declaration_handled = false;
 
-        match &target.get().d {
+        match target.d() {
             D::Name(name_details) => {
                 let name = NameNode(target);
-                let symbol_with_scope = self.cur_scope().look_up_symbol_recursive(&name_details.value, None);
+                let symbol_with_scope = self.cur_scope().look_up_symbol_recursive(name_details.value(), None);
                 if let Some(symbol_with_scope) = symbol_with_scope {
                     let final_info = self._is_annotation_final(Some(type_annotation));
 
@@ -4724,14 +4722,14 @@ impl Binder {
                     }
 
                     let details = VariableDeclarationDetails::default();
-                    details.is_constant.set(Some(is_constant_name(&name_details.value)));
+                    details.is_constant.set(Some(is_constant_name(name_details.value())));
                     details.is_final.set(Some(final_info.is_final));
                     details.type_alias_name.set(Some(name));
                     details.type_annotation_node.set(type_annotation_node);
                     *details.doc_string.borrow_mut() = self._get_variable_doc_string(target);
                     details
                         .is_explicit_binding
-                        .set(Some(self.cur_scope().get_binding_type(&name_details.value).is_some()));
+                        .set(Some(self.cur_scope().get_binding_type(name_details.value()).is_some()));
                     let declaration = Declaration::create(
                         DeclarationType::Variable,
                         target,
@@ -4739,7 +4737,7 @@ impl Binder {
                         self._convert_range(&name),
                         self._file_info.module_name.clone(),
                         self._is_in_except_suite,
-                        DeclarationDetails::Variable(details),
+                        details,
                     );
                     symbol_with_scope.symbol.add_declaration(declaration);
 
@@ -4754,13 +4752,13 @@ impl Binder {
                     }
 
                     // Look for an 'InitVar' either by itself or wrapped in an 'Annotated'.
-                    if let D::Index(index) = &type_annotation.get().d {
+                    if let D::Index(index) = type_annotation.d() {
                         let items = index.items.borrow().clone();
                         if self._is_dataclasses_annotation(index.left_expr.get(), "InitVar") {
                             symbol_with_scope.symbol.set_is_init_var();
                         } else if self._is_typing_annotation(index.left_expr.get(), "Annotated") && items.len() > 0 {
                             let item0_expr = items[0].d().value_expr.get();
-                            if let D::Index(item0) = &item0_expr.get().d {
+                            if let D::Index(item0) = item0_expr.d() {
                                 if self._is_dataclasses_annotation(item0.left_expr.get(), "InitVar") {
                                     symbol_with_scope.symbol.set_is_init_var();
                                 }
@@ -4770,7 +4768,7 @@ impl Binder {
 
                     if self._is_dataclasses_annotation(type_annotation, "KW_ONLY") {
                         symbol_with_scope.symbol.set_is_data_class_keyword_only();
-                    } else if let D::Index(index) = &type_annotation.get().d {
+                    } else if let D::Index(index) = type_annotation.d() {
                         let items = index.items.borrow().clone();
                         if self._is_typing_annotation(index.left_expr.get(), "Annotated")
                             && items.len() > 0
@@ -4797,14 +4795,14 @@ impl Binder {
                 if let Some(member_access_info) = member_access_info {
                     let name = member_access.member.get();
 
-                    let mut symbol = member_access_info.class_scope.look_up_symbol(&name.d().value);
+                    let mut symbol = member_access_info.class_scope.look_up_symbol(name.d().value());
                     if symbol.is_none() {
                         let new_symbol = member_access_info
                             .class_scope
-                            .add_symbol(&name.d().value, SymbolFlags::InitiallyUnbound);
+                            .add_symbol(name.d().value(), SymbolFlags::InitiallyUnbound);
                         let honor_private_naming =
                             self._file_info.diagnostic_rule_set.report_private_usage != DiagnosticLevel::None;
-                        if is_private_or_protected_name(&name.d().value) && honor_private_naming {
+                        if is_private_or_protected_name(name.d().value()) && honor_private_naming {
                             new_symbol.set_is_private_member();
                         }
                         symbol = Some(new_symbol);
@@ -4819,7 +4817,7 @@ impl Binder {
 
                     let final_info = self._is_annotation_final(Some(type_annotation));
                     let details = VariableDeclarationDetails::default();
-                    details.is_constant.set(Some(is_constant_name(&name.d().value)));
+                    details.is_constant.set(Some(is_constant_name(name.d().value())));
                     details.is_defined_by_member_access.set(Some(true));
                     details.is_final.set(Some(final_info.is_final));
                     details
@@ -4837,7 +4835,7 @@ impl Binder {
                         self._convert_range(&name),
                         self._file_info.module_name.clone(),
                         self._is_in_except_suite,
-                        DeclarationDetails::Variable(details),
+                        details,
                     );
                     symbol.add_declaration(declaration);
 
@@ -4899,16 +4897,16 @@ impl Binder {
                 .unwrap_or(annotation_node);
         }
 
-        match &annotation_node.get().d {
+        match annotation_node.d() {
             D::Name(d) => {
-                let alias = symbol_aliases.get(&d.value);
+                let alias = symbol_aliases.get(d.value());
                 if alias.is_some_and(|alias| alias == name) {
                     return true;
                 }
             }
             D::MemberAccess(d) => {
                 if let Some(base_name) = name_value(d.left_expr.get()) {
-                    if d.member.get().d().value == name {
+                    if d.member.get().d().value() == name {
                         return import_aliases.iter().any(|alias| alias == base_name);
                     }
                 }
@@ -4925,7 +4923,7 @@ impl Binder {
 
         // A docstring can consist of multiple joined strings in a single expression.
         let strings = doc_node.d().strings.borrow().clone();
-        let value_of = |s: &P<ParseNode>| match &s.get().d {
+        let value_of = |s: &P<ParseNode>| match s.d() {
             D::String(d) => d.value.to_string_lossy(),
             D::FormatString(d) => d.value.to_string_lossy(),
             _ => unreachable!(),
@@ -4954,7 +4952,7 @@ impl Binder {
                 type_annotation = class_var_type_node;
             }
 
-            let index = match &type_annotation.get().d {
+            let index = match type_annotation.d() {
                 D::Index(d) => Some(d),
                 _ => None,
             };
@@ -5005,7 +5003,7 @@ impl Binder {
                     .unwrap_or(annotation);
             }
 
-            let index = match &annotation.get().d {
+            let index = match annotation.d() {
                 D::Index(d) => Some(d),
                 _ => None,
             };
@@ -5067,8 +5065,8 @@ impl Binder {
         }
         let first_param_name = params[0].d().name.get()?;
 
-        let class_name = class_node.d().name.get().d().value.clone();
-        let first_param_name = first_param_name.d().value.clone();
+        let class_name = class_node.d().name.get().d().value().to_string();
+        let first_param_name = first_param_name.d().value().to_string();
 
         if left_symbol_name == class_name {
             is_instance_member = false;
@@ -5081,7 +5079,7 @@ impl Binder {
             // refers to the class or the instance, we need to apply
             // some heuristics.
             let implicit_class_methods = ["__new__", "__init_subclass__", "__class_getitem__"];
-            if implicit_class_methods.contains(&method_node.d().name.get().d().value.as_str()) {
+            if implicit_class_methods.contains(&method_node.d().name.get().d().value()) {
                 // Several methods are special. They act as class methods even
                 // though they don't have a @classmethod decorator.
                 is_instance_member = false;
@@ -5094,12 +5092,12 @@ impl Binder {
                     let mut decorator_name: Option<String> = None;
 
                     let expr = decorator.d().expr.get();
-                    match &expr.get().d {
+                    match expr.d() {
                         D::Name(d) => {
-                            decorator_name = Some(d.value.clone());
+                            decorator_name = Some(d.value().to_string());
                         }
                         D::MemberAccess(d) if name_value(d.left_expr.get()) == Some("builtins") => {
-                            decorator_name = Some(d.member.get().d().value.clone());
+                            decorator_name = Some(d.member.get().d().value().to_string());
                         }
                         _ => {}
                     }
@@ -5197,7 +5195,7 @@ impl Binder {
             return false;
         }
 
-        let module_name = imported_module_alias_decl.module_name.borrow().clone();
+        let module_name = imported_module_alias_decl.module_name();
         let first_name_part = imported_module_alias_decl
             .alias()
             .unwrap()
@@ -5241,7 +5239,7 @@ impl Binder {
             }
 
             if let Some(module_name) = module_name {
-                if *declaration.module_name.borrow() != module_name {
+                if *declaration.module_name() != *module_name {
                     continue;
                 }
             }
@@ -5275,9 +5273,9 @@ impl Binder {
             node.node(),
             cloned_loader_actions.uri.get(),
             get_empty_range(),
-            declaration.module_name.borrow().clone(),
+            declaration.module_name(),
             self._is_in_except_suite,
-            DeclarationDetails::Alias(details),
+            details,
         );
         let cloned_alias = cloned_declaration.alias().unwrap();
 
@@ -5421,7 +5419,7 @@ impl Binder {
             "TypeIs",
         ];
 
-        let assigned_name = assigned_name_node.d().value.as_str();
+        let assigned_name = assigned_name_node.d().value();
 
         if !special_types.contains(&assigned_name) {
             return false;
@@ -5434,7 +5432,7 @@ impl Binder {
             self._convert_range(&annotation_node),
             self._file_info.module_name.clone(),
             self._is_in_except_suite,
-            DeclarationDetails::SpecialBuiltInClass,
+            NoDeclarationDetails,
         );
 
         let symbol = self._bind_name_to_scope(self.cur_scope(), assigned_name_node, None);
@@ -5502,7 +5500,7 @@ impl Binder {
             function.is_generator.set(true);
         }
 
-        let expr = match &node.get().d {
+        let expr = match node.d() {
             D::Yield(d) => d.expr.get(),
             D::YieldFrom(d) => Some(d.expr.get()),
             _ => unreachable!(),

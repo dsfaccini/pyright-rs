@@ -64,7 +64,7 @@ fn complete_unescaped_string(
 /// The token's `flags` and `escapedValue`. Only `StringToken` and
 /// `FStringMiddleToken` reach `getUnescapedString`.
 fn flags_and_escaped_value(token: &Token) -> (StringTokenFlags, &JsString) {
-    match &token.d {
+    match token.d() {
         TokenDetails::String(d) => (d.flags, &d.escaped_value),
         TokenDetails::FStringMiddle(d) => (d.flags, &d.escaped_value),
         _ => unreachable!("getUnescapedString takes a StringToken or FStringMiddleToken"),

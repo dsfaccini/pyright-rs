@@ -6,7 +6,6 @@ use crate::analyzer::analyzer_node_info::AnalyzerNodeInfoAccessor;
 use std::rc::Rc;
 use crate::analyzer::constraint_tracker::ConstraintTracker;
 use crate::analyzer::declaration::Declaration;
-use crate::analyzer::declaration::DeclarationDetails;
 use crate::analyzer::declaration::DeclarationType;
 use crate::analyzer::declaration::VariableDeclarationDetails;
 use crate::analyzer::parse_tree_utils::get_class_full_name;
@@ -110,7 +109,7 @@ pub fn create_typed_dict_type(
             Some(string_list) if name_arg.arg_category() == ArgCategory::Simple => {
                 let mut joined = JsString::from("");
                 for s in string_list.d().strings.borrow().iter() {
-                    let value = match &s.get().d {
+                    let value = match s.d() {
                         ParseNodeDetails::String(d) => &d.value,
                         ParseNodeDetails::FormatString(d) => &d.value,
                         _ => unreachable!("a string list holds string nodes"),
@@ -198,7 +197,7 @@ pub fn create_typed_dict_type(
                     continue;
                 };
 
-                if entry_set.contains(&entry_name.d().value) {
+                if entry_set.contains(entry_name.d().value()) {
                     evaluator.add_diagnostic(
                         DiagnosticRule::reportGeneralTypeIssues,
                         &LocMessage::typed_dict_entry_unique(),
@@ -209,7 +208,7 @@ pub fn create_typed_dict_type(
                 }
 
                 // Record names in a map to detect duplicates.
-                entry_set.insert(entry_name.d().value.clone());
+                entry_set.insert(entry_name.d().value().to_string());
 
                 let new_symbol = Symbol::new(SymbolFlags::InstanceMember);
                 let details = VariableDeclarationDetails::default();
@@ -228,11 +227,11 @@ pub fn create_typed_dict_type(
                     ),
                     file_info.module_name.clone(),
                     false,
-                    DeclarationDetails::Variable(details),
+                    details,
                 );
                 new_symbol.add_declaration(declaration);
 
-                class_fields.set(&entry_name.d().value, new_symbol);
+                class_fields.set(entry_name.d().value(), new_symbol);
             }
         } else {
             evaluator.add_diagnostic(
@@ -250,7 +249,7 @@ pub fn create_typed_dict_type(
 
         for arg in args_to_consider {
             let arg_value_expression = arg.value_expression();
-            let arg_name_value = arg.name().map(|name| name.d().value.as_str());
+            let arg_name_value = arg.name().map(|name| name.d().value());
             if arg_name_value == Some("total") || arg_name_value == Some("closed") {
                 let arg_name_value = arg_name_value.unwrap();
                 let const_type = arg_value_expression
@@ -332,7 +331,7 @@ pub fn create_typed_dict_type(
         };
 
         if let Some(typed_dict_target) = NameNode::cast(typed_dict_target)
-            && typed_dict_target.d().value != class_name
+            && typed_dict_target.d().value() != class_name
         {
             evaluator.add_diagnostic(
                 DiagnosticRule::reportGeneralTypeIssues,
@@ -1518,7 +1517,7 @@ pub(crate) fn get_typed_dict_fields_from_dict_syntax(
 
         let mut joined = JsString::from("");
         for s in key_string_list.d().strings.borrow().iter() {
-            let value = match &s.get().d {
+            let value = match s.d() {
                 ParseNodeDetails::String(d) => &d.value,
                 ParseNodeDetails::FormatString(d) => &d.value,
                 _ => unreachable!("a string list holds string nodes"),
@@ -1566,7 +1565,7 @@ pub(crate) fn get_typed_dict_fields_from_dict_syntax(
             ),
             file_info.module_name.clone(),
             false,
-            DeclarationDetails::Variable(details),
+            details,
         );
         declaration.is_in_inlined_typed_dict.set(Some(true));
         new_symbol.add_declaration(declaration);

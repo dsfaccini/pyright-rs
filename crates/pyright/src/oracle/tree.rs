@@ -42,7 +42,7 @@ fn as_node(node: impl Into<P<ParseNode>>) -> P<ParseNode> {
 
 /// The `d` fields of a node, under their TypeScript names, in declaration order.
 fn fields(node: &ParseNode) -> Vec<(&'static str, Field<'_>)> {
-    match &node.d {
+    match node.d() {
         ParseNodeDetails::Module(d) => vec![(
             "statements",
             Field::Nodes(d.statements.borrow().iter().map(|&n| as_node(n)).collect()),
@@ -369,7 +369,7 @@ fn fields(node: &ParseNode) -> Vec<(&'static str, Field<'_>)> {
         ],
         ParseNodeDetails::Name(d) => vec![
             ("token", Field::Token(d.token.get().0)),
-            ("value", Field::Str(&d.value)),
+            ("value", Field::Str(d.value())),
         ],
         ParseNodeDetails::Constant(d) => vec![("constType", Field::Int(d.const_type.get() as i32))],
         ParseNodeDetails::Ellipsis(_) => vec![],

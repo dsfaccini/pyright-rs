@@ -411,13 +411,13 @@ pub(crate) fn apply_partial_transform_to_function(
             continue;
         };
 
-        let arg_name_value = &arg_name.d().value;
+        let arg_name_value = arg_name.d().value();
         let matching_param = param_list_details
             .params
             .iter()
             .copied()
             .find(|param_info| {
-                param_info.param.name.as_deref() == Some(arg_name_value.as_str())
+                param_info.param.name.as_deref() == Some(arg_name_value)
                     && param_info.kind != ParamKind::Positional
             });
 

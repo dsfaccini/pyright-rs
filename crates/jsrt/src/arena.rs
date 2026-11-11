@@ -135,6 +135,32 @@ impl<T: Trace + 'static> P<T> {
 }
 
 impl<T: 'static> P<T> {
+    /// The handle of the object's first field, for a `#[repr(C)]` type that
+    /// starts with a header: both handles hold the same address. Code that
+    /// knows the full type reads past the header (`parser/parse_nodes.rs`).
+    pub fn header<U: Trace>(self, first_field: fn(&'static T) -> &'static U) -> P<U>
+    where
+        T: Trace,
+    {
+        const { assert!(T::EVAL == U::EVAL, "P::header across heaps") };
+        let header = first_field(self.0);
+        assert!(ptr::addr_eq(header, self.0), "P::header of a field that is not first");
+        P(header, PhantomData)
+    }
+
+    /// A handle to an object outside the heaps, such as in a `jsrt::region::Region`.
+    ///
+    /// # Safety
+    /// `value` points at a live `T` that stays valid for as long as this handle,
+    /// or a copy of it, is used.
+    pub unsafe fn from_raw(value: *const T) -> P<T>
+    where
+        T: Trace,
+    {
+        const { assert!(!T::EVAL, "P::from_raw of an evaluator type") };
+        // SAFETY: the caller guarantees `value` is live while the handle is used.
+        P(unsafe { &*value }, PhantomData)
+    }
 
     /// The same object as a trait object: `p.to_dyn::<dyn Trait>(|x| x)`. An
     /// evaluator object needs a trait whose `P` the collector traces (`U::EVAL`).

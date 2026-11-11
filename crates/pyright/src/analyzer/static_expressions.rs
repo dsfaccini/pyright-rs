@@ -65,7 +65,7 @@ fn _evaluate_static_bool_or_bool_like_expression(
     sys_import_aliases: Option<&[String]>,
     evaluate_leaf_as_bool: fn(ExpressionNode) -> Option<bool>,
 ) -> Option<bool> {
-    if let D::AssignmentExpression(d) = &node.get().d {
+    if let D::AssignmentExpression(d) = node.d() {
         return _evaluate_static_bool_or_bool_like_expression(
             d.right_expr.get(),
             exec_env,
@@ -76,7 +76,7 @@ fn _evaluate_static_bool_or_bool_like_expression(
         );
     }
 
-    if let D::UnaryOperation(d) = &node.get().d {
+    if let D::UnaryOperation(d) = node.d() {
         if d.operator.get() == OperatorType::Not {
             let value = _evaluate_static_bool_or_bool_like_expression(
                 d.expr.get(),
@@ -92,7 +92,7 @@ fn _evaluate_static_bool_or_bool_like_expression(
                 return Some(!value);
             }
         }
-    } else if let D::BinaryOperation(d) = &node.get().d {
+    } else if let D::BinaryOperation(d) = node.d() {
         let operator = d.operator.get();
         let left_expr = d.left_expr.get();
         let right_expr = d.right_expr.get();
@@ -139,17 +139,17 @@ fn _evaluate_static_bool_or_bool_like_expression(
             );
         }
 
-        if let D::Index(left_index) = &left_expr.get().d
+        if let D::Index(left_index) = left_expr.d()
             && _is_sys_version_info_expression(left_index.left_expr.get(), sys_import_aliases)
             && left_index.items.borrow().len() == 1
             && !left_index.trailing_comma.get()
             && left_index.items.borrow()[0].d().name.get().is_none()
             && left_index.items.borrow()[0].d().arg_category.get() == ArgCategory::Simple
             && let D::Number(index_number) =
-                &left_index.items.borrow()[0].d().value_expr.get().get().d
+                left_index.items.borrow()[0].d().value_expr.get().d()
             && !index_number.is_imaginary.get()
             && index_number.value == NumberValue::Number(0.0)
-            && let D::Number(right_number) = &right_expr.get().d
+            && let D::Number(right_number) = right_expr.d()
             && right_number.is_integer.get()
             && let NumberValue::Number(right_value) = &right_number.value
         {
@@ -204,11 +204,11 @@ fn _evaluate_static_bool_or_bool_like_expression(
             if let Some(right_strings) = StringListNode::cast(right_expr) {
                 let mut constant_value: Option<&DefineConstantValue> = None;
 
-                if let D::Name(left_name) = &left_expr.get().d {
-                    constant_value = defined_constants.get(&left_name.value);
-                } else if let D::MemberAccess(left_member_access) = &left_expr.get().d {
+                if let D::Name(left_name) = left_expr.d() {
+                    constant_value = defined_constants.get(left_name.value());
+                } else if let D::MemberAccess(left_member_access) = left_expr.d() {
                     constant_value =
-                        defined_constants.get(&left_member_access.member.get().d().value);
+                        defined_constants.get(left_member_access.member.get().d().value());
                 }
 
                 if let Some(DefineConstantValue::String(constant_value)) = constant_value {
@@ -221,25 +221,25 @@ fn _evaluate_static_bool_or_bool_like_expression(
                 }
             }
         }
-    } else if let D::Name(d) = &node.get().d {
-        if d.value == "TYPE_CHECKING" {
+    } else if let D::Name(d) = node.d() {
+        if d.value() == "TYPE_CHECKING" {
             return Some(true);
         }
 
-        let constant = defined_constants.get(&d.value);
+        let constant = defined_constants.get(d.value());
         if let Some(constant) = constant {
             return Some(is_truthy(constant));
         }
-    } else if let D::MemberAccess(d) = &node.get().d {
+    } else if let D::MemberAccess(d) = node.d() {
         if let Some(typing_import_aliases) = typing_import_aliases
-            && d.member.get().d().value == "TYPE_CHECKING"
-            && let D::Name(left_name) = &d.left_expr.get().get().d
-            && typing_import_aliases.contains(&left_name.value)
+            && d.member.get().d().value() == "TYPE_CHECKING"
+            && let D::Name(left_name) = d.left_expr.get().d()
+            && typing_import_aliases.iter().any(|alias| alias == left_name.value())
         {
             return Some(true);
         }
 
-        let constant = defined_constants.get(&d.member.get().d().value);
+        let constant = defined_constants.get(d.member.get().d().value());
         if let Some(constant) = constant {
             return Some(is_truthy(constant));
         }
@@ -258,7 +258,7 @@ fn is_truthy(constant: &DefineConstantValue) -> bool {
 
 /// `s.d.value` of a `StringNode | FormatStringNode` in a `StringListNode`.
 fn string_node_value(node: P<ParseNode>) -> &'static JsString {
-    match &node.get().d {
+    match node.d() {
         D::String(d) => &d.value,
         D::FormatString(d) => &d.value,
         _ => unreachable!("a string list holds only string nodes"),
@@ -283,7 +283,7 @@ fn number_to_version_part(value: f64) -> i32 {
 
 // analyzer/staticExpressions.ts:225
 fn _evaluate_bool_constant(node: ExpressionNode) -> Option<bool> {
-    if let D::Constant(d) = &node.get().d {
+    if let D::Constant(d) = node.d() {
         if d.const_type.get() == KeywordType::True {
             return Some(true);
         }
@@ -297,7 +297,7 @@ fn _evaluate_bool_constant(node: ExpressionNode) -> Option<bool> {
 
 // analyzer/staticExpressions.ts:238
 fn _evaluate_bool_like_literal(node: ExpressionNode) -> Option<bool> {
-    match &node.get().d {
+    match node.d() {
         D::Constant(d) => {
             if d.const_type.get() == KeywordType::True {
                 return Some(true);
@@ -391,9 +391,9 @@ fn _evaluate_dict_truthiness(items: &[DictionaryEntryNode]) -> Option<bool> {
 fn _convert_tuple_to_version(node: TupleNode) -> Option<PythonVersion> {
     let items = node.d().items.borrow();
     if items.len() >= 2 {
-        if let D::Number(major_node) = &items[0].get().d
+        if let D::Number(major_node) = items[0].d()
             && !major_node.is_imaginary.get()
-            && let D::Number(minor_node) = &items[1].get().d
+            && let D::Number(minor_node) = items[1].d()
             && !minor_node.is_imaginary.get()
         {
             let (NumberValue::Number(major), NumberValue::Number(minor)) =
@@ -404,7 +404,7 @@ fn _convert_tuple_to_version(node: TupleNode) -> Option<PythonVersion> {
 
             let mut micro: Option<f64> = None;
             if items.len() >= 3
-                && let D::Number(micro_node) = &items[2].get().d
+                && let D::Number(micro_node) = items[2].d()
                 && !micro_node.is_imaginary.get()
                 && let NumberValue::Number(value) = &micro_node.value
             {
@@ -413,10 +413,10 @@ fn _convert_tuple_to_version(node: TupleNode) -> Option<PythonVersion> {
 
             let mut release_level: Option<PythonReleaseLevel> = None;
             if items.len() >= 4
-                && let D::StringList(release_level_node) = &items[3].get().d
+                && let D::StringList(release_level_node) = items[3].d()
                 && release_level_node.strings.borrow().len() == 1
                 && let D::String(release_level_string) =
-                    &release_level_node.strings.borrow()[0].get().d
+                    release_level_node.strings.borrow()[0].d()
             {
                 release_level =
                     PythonReleaseLevel::from_name(&release_level_string.value.to_string_lossy());
@@ -424,7 +424,7 @@ fn _convert_tuple_to_version(node: TupleNode) -> Option<PythonVersion> {
 
             let mut serial: Option<f64> = None;
             if items.len() >= 5
-                && let D::Number(serial_node) = &items[4].get().d
+                && let D::Number(serial_node) = items[4].d()
                 && !serial_node.is_imaginary.get()
                 && let NumberValue::Number(value) = &serial_node.value
             {
@@ -441,7 +441,7 @@ fn _convert_tuple_to_version(node: TupleNode) -> Option<PythonVersion> {
         }
     } else if items.len() == 1 {
         // `node.d.items[0] as NumberNode`: only a number node has a numeric `value`.
-        if let D::Number(major) = &items[0].get().d
+        if let D::Number(major) = items[0].d()
             && let NumberValue::Number(value) = &major.value
         {
             return Some(PythonVersion::create(
@@ -529,11 +529,11 @@ fn _is_sys_version_info_expression(
         }
     };
 
-    if let D::MemberAccess(d) = &node.get().d {
-        if let D::Name(left_name) = &d.left_expr.get().get().d
-            && d.member.get().d().value == "version_info"
+    if let D::MemberAccess(d) = node.d() {
+        if let D::Name(left_name) = d.left_expr.get().d()
+            && d.member.get().d().value() == "version_info"
         {
-            if sys_import_aliases.contains(&left_name.value) {
+            if sys_import_aliases.iter().any(|alias| alias == left_name.value()) {
                 return true;
             }
         }
@@ -556,11 +556,11 @@ fn _is_sys_platform_info_expression(
         }
     };
 
-    if let D::MemberAccess(d) = &node.get().d {
-        if let D::Name(left_name) = &d.left_expr.get().get().d
-            && d.member.get().d().value == "platform"
+    if let D::MemberAccess(d) = node.d() {
+        if let D::Name(left_name) = d.left_expr.get().d()
+            && d.member.get().d().value() == "platform"
         {
-            if sys_import_aliases.contains(&left_name.value) {
+            if sys_import_aliases.iter().any(|alias| alias == left_name.value()) {
                 return true;
             }
         }
@@ -571,10 +571,10 @@ fn _is_sys_platform_info_expression(
 
 // analyzer/staticExpressions.ts:452
 fn _is_os_name_info_expression(node: ExpressionNode) -> bool {
-    if let D::MemberAccess(d) = &node.get().d {
-        if let D::Name(left_name) = &d.left_expr.get().get().d
-            && left_name.value == "os"
-            && d.member.get().d().value == "name"
+    if let D::MemberAccess(d) = node.d() {
+        if let D::Name(left_name) = d.left_expr.get().d()
+            && left_name.value() == "os"
+            && d.member.get().d().value() == "name"
         {
             return true;
         }

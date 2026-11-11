@@ -31,7 +31,7 @@ pub fn get_child_nodes(
     get_string_annotation: Option<StringAnnotationProvider<'_>>,
 ) -> ParseNodeArray {
     let mut v: ParseNodeArray = vec![];
-    match &node.d {
+    match node.d() {
         ParseNodeDetails::Error(d) => {
             if let Some(decorators) = &d.decorators {
                 v.extend(all(decorators));

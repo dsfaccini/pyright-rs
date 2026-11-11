@@ -3,7 +3,7 @@
 use jsrt::cell::{Cell, Ref, RefCell};
 use std::rc::Rc;
 
-use jsrt::{JsMap, P};
+use jsrt::{JsMap, OptionRefCell, P};
 
 use jsrt::flag_ops;
 use super::declaration::{Declaration, DeclarationType};
@@ -138,12 +138,15 @@ pub struct Symbol {
     // Symbols that are completely synthesized (i.e. have no
     // corresponding declarations in the program) can have
     // a specified type.
-    pub _synthesized_type_info: Cell<Option<SynthesizedTypeInfo>>,
+    /// Allocated on the first write: few symbols are synthesized.
+    pub _synthesized_type_info: OptionRefCell<SynthesizedTypeInfo>,
 
     // Is this symbol an alias for a symbol originally imported from
     // the typing or typing_extensions module (e.g. "Final")?
-    pub _typing_symbol_alias: RefCell<Option<String>>,
+    /// Allocated on the first write: few symbols alias a typing name.
+    pub _typing_symbol_alias: OptionRefCell<String>,
 }
+const _: () = assert!(size_of::<Symbol>() <= 40);
 
 impl Symbol {
     // analyzer/symbol.ts:119
@@ -152,17 +155,15 @@ impl Symbol {
             _declarations: RefCell::new(None),
             _flags: Cell::new(flags),
             id: get_unique_symbol_id(),
-            _synthesized_type_info: Cell::new(None),
-            _typing_symbol_alias: RefCell::new(None),
+            _synthesized_type_info: OptionRefCell::new(),
+            _typing_symbol_alias: OptionRefCell::new(),
         })
     }
 
     // analyzer/symbol.ts:124
     pub fn create_with_type(flags: SymbolFlags, type_: P<Type>, node: Option<NameNode>) -> P<Symbol> {
         let new_symbol = Symbol::new(flags);
-        new_symbol
-            ._synthesized_type_info
-            .set(Some(SynthesizedTypeInfo { type_, node }));
+        *new_symbol._synthesized_type_info.borrow_mut() = Some(SynthesizedTypeInfo { type_, node });
         new_symbol
     }
 
@@ -413,7 +414,7 @@ impl Symbol {
     // analyzer/symbol.ts:303
     pub fn has_typed_declarations(&self) -> bool {
         // We'll treat an synthesized type as an implicit declaration.
-        if self._synthesized_type_info.get().is_some() {
+        if self._synthesized_type_info.borrow().is_some() {
             return true;
         }
 
@@ -433,7 +434,7 @@ impl Symbol {
 
     // analyzer/symbol.ts:316
     pub fn get_synthesized_type(&self) -> Option<SynthesizedTypeInfo> {
-        self._synthesized_type_info.get()
+        *self._synthesized_type_info.borrow()
     }
 }
 

@@ -102,7 +102,7 @@ pub struct ParseFileResults {
     pub text: JsString,
     pub content_hash: StringFingerprint,
     pub parser_output: ParserOutput,
-    pub tokenizer_output: P<TokenizerOutput>,
+    pub tokenizer_output: TokenizerOutput,
 }
 
 // parser/parser.ts:207
@@ -176,8 +176,7 @@ fn format1(
 // parser/parser.ts:238
 pub struct Parser {
     _file_contents: Option<JsString>,
-    _tokenizer_output: Option<P<TokenizerOutput>>,
-    _tokens: Option<&'static TextRangeCollection<P<Token>>>,
+    _tokenizer_output: Option<TokenizerOutput>,
     _token_count: i32,
     _token_index: i32,
     _are_errors_suppressed: bool,
@@ -215,7 +214,6 @@ impl Parser {
         Parser {
             _file_contents: None,
             _tokenizer_output: None,
-            _tokens: None,
             _token_count: 0,
             _token_index: 0,
             _are_errors_suppressed: false,
@@ -304,7 +302,7 @@ impl Parser {
 
         self._attach_parser_string_annotations();
 
-        let tokenizer_output = self._tokenizer_output.expect("tokenizer output");
+        let tokenizer_output = self._tokenizer_output.take().expect("tokenizer output");
         let content_hash = content_hash
             .unwrap_or_else(|| get_string_fingerprint(&file_contents.to_string_lossy()));
         ParseFileResults {
@@ -318,7 +316,7 @@ impl Parser {
                 contains_wildcard_import: self._contains_wildcard_import,
                 typing_symbol_aliases: std::mem::take(&mut self._typing_symbol_aliases),
                 has_type_annotations: self._has_type_annotations,
-                lines: &tokenizer_output.get().lines,
+                lines: tokenizer_output.lines.get(),
             },
             tokenizer_output,
         }
@@ -394,11 +392,7 @@ impl Parser {
         ParseExpressionTextResults {
             parse_tree,
             string_annotations: self._string_annotations.info,
-            lines: &self
-                ._tokenizer_output
-                .expect("tokenizer output")
-                .get()
-                .lines,
+            lines: self._tokenizer_output.as_ref().expect("tokenizer output").lines.get(),
             diagnostics: diag_sink.fetch_and_clear(),
         }
     }
@@ -437,16 +431,15 @@ impl Parser {
 
         // Tokenize the file contents.
         let mut tokenizer = Tokenizer::new();
-        let tokenizer_output = P::new(tokenizer.tokenize(
+        let tokenizer_output = tokenizer.tokenize(
             &file_contents,
             Some(text_offset),
             Some(text_length),
             initial_paren_depth,
             self._parse_options.use_notebook_mode,
-        ));
-        self._tokenizer_output = Some(tokenizer_output);
-        self._tokens = Some(&tokenizer_output.get().tokens);
+        );
         self._token_count = tokenizer_output.tokens.count();
+        self._tokenizer_output = Some(tokenizer_output);
         self._token_index = 0;
     }
 
@@ -568,7 +561,7 @@ impl Parser {
             self._parse_import_statement().0
         };
 
-        match &node.d {
+        match node.d() {
             ParseNodeDetails::Import(d) => {
                 d.is_lazy.set(Some(true));
                 d.lazy_token.set(Some(lazy_token));
@@ -996,7 +989,7 @@ impl Parser {
         global_name_map: &JsMap<String, NameNode>,
         local_name_map: &mut JsMap<String, NameNode>,
     ) {
-        let value = &name_node.d().value;
+        let value = name_node.d().value();
         if global_name_map.contains_key(value) || local_name_map.contains_key(value) {
             self._add_syntax_error(
                 format1(
@@ -1007,7 +1000,7 @@ impl Parser {
                 &name_node,
             );
         } else {
-            local_name_map.insert(value.clone(), name_node);
+            local_name_map.insert(value.to_string(), name_node);
         }
     }
 
@@ -1022,7 +1015,7 @@ impl Parser {
         global_name_map: &JsMap<String, NameNode>,
         local_name_map: &mut JsMap<String, NameNode>,
     ) {
-        match &node.d {
+        match node.d() {
             ParseNodeDetails::PatternSequence(d) => {
                 let entries = d.entries.borrow().clone();
                 for subpattern in entries {
@@ -1067,8 +1060,8 @@ impl Parser {
                 let mut combined_local_or_name_map: JsMap<String, NameNode> = JsMap::default();
                 for or_local_name_map in &or_local_name_maps {
                     for &node in or_local_name_map.values() {
-                        if !combined_local_or_name_map.contains_key(&node.d().value) {
-                            combined_local_or_name_map.insert(node.d().value.clone(), node);
+                        if !combined_local_or_name_map.contains_key(node.d().value()) {
+                            combined_local_or_name_map.insert(node.d().value().to_string(), node);
                             self._report_target_if_duplicate(node, global_name_map, local_name_map);
                         }
                     }
@@ -1116,7 +1109,7 @@ impl Parser {
 
     // parser/parser.ts:1008
     fn _get_pattern_target_names(&self, node: PatternAtomNode, name_set: &mut JsSet<String>) {
-        match &node.d {
+        match node.d() {
             ParseNodeDetails::PatternSequence(d) => {
                 for subpattern in d.entries.borrow().iter() {
                     self._get_pattern_target_names(subpattern.0, name_set);
@@ -1131,7 +1124,7 @@ impl Parser {
 
             ParseNodeDetails::PatternAs(d) => {
                 if let Some(target) = d.target.get() {
-                    name_set.insert(target.d().value.clone());
+                    name_set.insert(target.d().value().to_string());
                 }
                 for &subpattern in d.or_patterns.borrow().iter() {
                     self._get_pattern_target_names(subpattern, name_set);
@@ -1140,14 +1133,14 @@ impl Parser {
 
             ParseNodeDetails::PatternCapture(d) => {
                 if !d.is_wildcard.get() {
-                    name_set.insert(d.target.get().d().value.clone());
+                    name_set.insert(d.target.get().d().value().to_string());
                 }
             }
 
             ParseNodeDetails::PatternMapping(d) => {
                 for &map_entry in d.entries.borrow().iter() {
                     if let Some(expand) = PatternMappingExpandEntryNode::cast(map_entry) {
-                        name_set.insert(expand.d().target.get().d().value.clone());
+                        name_set.insert(expand.d().target.get().d().value().to_string());
                     } else {
                         let key_entry = PatternMappingKeyEntryNode::cast(map_entry).unwrap();
                         self._get_pattern_target_names(key_entry.d().key_pattern.get(), name_set);
@@ -1301,7 +1294,7 @@ impl Parser {
 
             let args = self._parse_class_pattern_arg_list();
 
-            let class_name_expr = match &pattern_capture_or_value.d {
+            let class_name_expr = match pattern_capture_or_value.d() {
                 ParseNodeDetails::PatternCapture(d) => d.target.get().0,
                 ParseNodeDetails::PatternValue(d) => d.expr.get().0,
                 _ => unreachable!(),
@@ -1667,7 +1660,7 @@ impl Parser {
             };
 
             let name_node = NameNode::create(self._get_owner_key(), identifier_token);
-            if identifier_token.d().value == "_" {
+            if &*identifier_token.d().value == "_" {
                 self._add_syntax_error(LocMessage::star_star_wildcard_not_allowed(), &name_node);
             }
 
@@ -1943,6 +1936,7 @@ impl Parser {
             if self._token_index > 0 {
                 let token = self
                     ._tokenizer_output
+                    .as_ref()
                     .unwrap()
                     .tokens
                     .get_item_at(self._token_index - 1);
@@ -2705,7 +2699,7 @@ impl Parser {
             let param = self._parse_parameter(allow_annotations);
 
             if let Some(param_name) = param.d().name.get() {
-                let name = param_name.d().value.clone();
+                let name = param_name.d().value().to_string();
                 if param_map.contains_key(&name) {
                     self._add_syntax_error(
                         format1(LocMessage::duplicate_param(), "name", &name),
@@ -3284,7 +3278,7 @@ impl Parser {
             let name_parts = mod_name.d().name_parts.borrow();
             mod_name.d().leading_dots.get() == 0
                 && name_parts.len() == 1
-                && name_parts[0].d().value == "__future__"
+                && name_parts[0].d().value() == "__future__"
         };
 
         let possible_input_token = self._peek_token(0);
@@ -3345,7 +3339,7 @@ impl Parser {
 
                     if is_future_import {
                         // Add the future import by name.
-                        self._future_imports.insert(import_name.d().value.clone());
+                        self._future_imports.insert(import_name.d().value.to_string());
                     }
 
                     let next_token = self._peek_token(0);
@@ -3390,7 +3384,7 @@ impl Parser {
                 .name_parts
                 .borrow()
                 .iter()
-                .map(|p| p.d().value.clone())
+                .map(|p| p.d().value().to_string())
                 .collect(),
             imported_symbols: Some(
                 import_from_node
@@ -3398,14 +3392,14 @@ impl Parser {
                     .imports
                     .borrow()
                     .iter()
-                    .map(|imp| imp.d().name.get().d().value.clone())
+                    .map(|imp| imp.d().name.get().d().value().to_string())
                     .collect(),
             ),
         });
 
         let mut is_typing_import = false;
         if module.d().name_parts.borrow().len() == 1 {
-            let first_name_part_value = &module.d().name_parts.borrow()[0].d().value;
+            let first_name_part_value = module.d().name_parts.borrow()[0].d().value();
             if first_name_part_value == "typing" || first_name_part_value == "typing_extensions" {
                 is_typing_import = true;
             }
@@ -3422,14 +3416,14 @@ impl Parser {
             } else {
                 let imports = import_from_node.d().imports.borrow().clone();
                 for imp in imports {
-                    let name_value = &imp.d().name.get().d().value;
-                    if typing_symbols_of_interest.iter().any(|s| s == name_value) {
+                    let name_value = imp.d().name.get().d().value();
+                    if typing_symbols_of_interest.contains(&name_value) {
                         // `imp.d.alias?.d.value || imp.d.name.d.value`: an empty alias falls back.
                         let key = match imp.d().alias.get() {
-                            Some(alias) if !alias.d().value.is_empty() => alias.d().value.clone(),
-                            _ => name_value.clone(),
+                            Some(alias) if !alias.d().value().is_empty() => alias.d().value().to_string(),
+                            _ => name_value.to_string(),
                         };
-                        self._typing_symbol_aliases.insert(key, name_value.clone());
+                        self._typing_symbol_aliases.insert(key, name_value.to_string());
                     }
                 }
             }
@@ -3480,7 +3474,7 @@ impl Parser {
                 .name_parts
                 .borrow()
                 .iter()
-                .map(|p| p.d().value.clone())
+                .map(|p| p.d().value().to_string())
                 .collect();
 
             if import_as_node.d().alias.get().is_some()
@@ -3508,12 +3502,12 @@ impl Parser {
             }
 
             if mod_name.d().name_parts.borrow().len() == 1 {
-                let first_name_part_value = mod_name.d().name_parts.borrow()[0].d().value.clone();
+                let first_name_part_value = mod_name.d().name_parts.borrow()[0].d().value().to_string();
                 if first_name_part_value == "typing" || first_name_part_value == "typing_extensions"
                 {
                     // `importAsNode.d.alias?.d.value || firstNamePartValue`: an empty alias falls back.
                     let alias = match import_as_node.d().alias.get() {
-                        Some(alias) if !alias.d().value.is_empty() => alias.d().value.clone(),
+                        Some(alias) if !alias.d().value().is_empty() => alias.d().value().to_string(),
                         _ => first_name_part_value,
                     };
                     self._typing_import_aliases.push(alias);
@@ -4514,15 +4508,15 @@ impl Parser {
     // parser/parser.ts:3803
     fn _is_typing_annotation(&self, type_annotation: ExpressionNode, name: &str) -> bool {
         if let Some(name_node) = NameNode::cast(type_annotation) {
-            let alias = self._typing_symbol_aliases.get(&name_node.d().value);
+            let alias = self._typing_symbol_aliases.get(name_node.d().value());
             if alias.map(String::as_str) == Some(name) {
                 return true;
             }
         } else if let Some(member_access) = MemberAccessNode::cast(type_annotation) {
             if let Some(left_name) = NameNode::cast(member_access.d().left_expr.get())
-                && member_access.d().member.get().d().value == name
+                && member_access.d().member.get().d().value() == name
             {
-                let base_name = &left_name.d().value;
+                let base_name = left_name.d().value();
                 return self
                     ._typing_import_aliases
                     .iter()
@@ -5117,7 +5111,7 @@ impl Parser {
         if next_token.type_ == TokenType::OpenParenthesis {
             let possible_tuple_node = self._parse_tuple_atom();
 
-            match &possible_tuple_node.d {
+            match possible_tuple_node.d() {
                 // Mark binary expressions as parenthesized so we don't attempt
                 // to use comparison chaining, which isn't appropriate when the
                 // expression is parenthesized. Unary and await expressions
@@ -5128,7 +5122,7 @@ impl Parser {
                 _ => {}
             }
 
-            match &possible_tuple_node.d {
+            match possible_tuple_node.d() {
                 ParseNodeDetails::StringList(d) => d.has_parens.set(true),
                 ParseNodeDetails::Comprehension(d) => d.has_parens.set(true),
                 ParseNodeDetails::AssignmentExpression(d) => d.has_parens.set(true),
@@ -5738,17 +5732,8 @@ impl Parser {
             self._report_conditional_error_for_star_tuple_element(right_expr, PYTHON_VERSION3_9);
 
             // Make a shallow copy of the dest expression but give it a new ID.
-            // The copy's `d` is a clone: it holds the same child handles, as the
-            // shared TypeScript `d` object does. Nothing writes to either `d` after this.
-            let dest_expr = P::new(ParseNode {
-                node_type: left_expr.node_type,
-                start: jsrt::cell::Cell::new(left_expr.start.get()),
-                length: jsrt::cell::Cell::new(left_expr.length.get()),
-                id: jsrt::cell::Cell::new(left_expr.id.get()),
-                parent: jsrt::cell::Cell::new(left_expr.parent.get()),
-                a: left_expr.a,
-                d: left_expr.d.clone(),
-            });
+            // Nothing writes to either node's details after this.
+            let dest_expr = left_expr.shallow_copy();
             dest_expr.id.set(get_next_node_id());
 
             return AugmentedAssignmentNode::create(
@@ -5930,7 +5915,7 @@ impl Parser {
         string_token: P<Token>,
         unescaped_result: Option<&string_token_utils::UnescapedString>,
     ) {
-        let flags = match &string_token.d {
+        let flags = match string_token.d() {
             TokenDetails::String(d) => d.flags,
             TokenDetails::FStringStart(d) => d.flags,
             _ => unreachable!("a StringToken or FStringStartToken"),
@@ -5991,7 +5976,7 @@ impl Parser {
             return None;
         }
 
-        let tokens = &self._tokenizer_output.unwrap().get().tokens;
+        let tokens = &self._tokenizer_output.as_ref().unwrap().tokens;
         let cur_token = tokens.get_item_at(self._token_index - 1);
         let next_token = tokens.get_item_at(self._token_index);
 
@@ -6627,7 +6612,7 @@ impl Parser {
 
     // parser/parser.ts:5533
     fn _get_next_token(&mut self) -> P<Token> {
-        let token = self._tokens.unwrap().get_item_at(self._token_index);
+        let token = self._tokenizer_output.as_ref().unwrap().tokens.get_item_at(self._token_index);
         if !self._at_eof() {
             self._token_index += 1;
         }
@@ -6646,14 +6631,14 @@ impl Parser {
     fn _peek_token(&self, count: i32) -> P<Token> {
         let target_index = self._token_index + count;
         if target_index < 0 {
-            return self._tokens.unwrap().get_item_at(0);
+            return self._tokenizer_output.as_ref().unwrap().tokens.get_item_at(0);
         }
 
         if target_index >= self._token_count {
-            return self._tokens.unwrap().get_item_at(self._token_count - 1);
+            return self._tokenizer_output.as_ref().unwrap().tokens.get_item_at(self._token_count - 1);
         }
 
-        self._tokens.unwrap().get_item_at(target_index)
+        self._tokenizer_output.as_ref().unwrap().tokens.get_item_at(target_index)
     }
 
     // parser/parser.ts:5561
@@ -6696,7 +6681,7 @@ impl Parser {
                 next_token.start,
                 next_token.length,
                 String::new(),
-                next_token.comments,
+                next_token.shared_comments(),
             ));
         }
 
@@ -6715,7 +6700,7 @@ impl Parser {
                     next_token.start,
                     next_token.length,
                     keyword_text,
-                    next_token.comments,
+                    next_token.shared_comments(),
                 ));
             }
         }
@@ -6808,7 +6793,7 @@ impl Parser {
                 convert_offsets_to_range(
                     range.start,
                     range.start + range.length,
-                    &self._tokenizer_output.unwrap().get().lines,
+                    &self._tokenizer_output.as_ref().unwrap().lines,
                 ),
             );
         }

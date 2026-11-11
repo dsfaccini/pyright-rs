@@ -72,7 +72,8 @@ pub struct AnalyzerFileInfo {
     pub defined_constants: JsMap<String, DefineConstantValue>,
     pub file_id: String,
     pub file_uri: Uri,
-    pub module_name: String,
+    /// Shared with every declaration of the file.
+    pub module_name: Rc<String>,
     pub is_stub_file: bool,
     pub is_typing_stub_file: bool,
     pub is_typing_extensions_stub_file: bool,
