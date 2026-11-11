@@ -130,13 +130,25 @@ impl SentinelLiteral {
 // analyzer/types.ts:108
 #[derive(Clone)]
 #[derive(jsrt::Trace)]
+/// 16 bytes: the string and big integer cases are shared behind an `Rc`, as their JS values are
+/// references, so a class type's details stay 72 bytes.
 pub enum LiteralValue {
     Number(f64),
-    Bigint(JsBigInt),
+    Bigint(Rc<JsBigInt>),
     Boolean(bool),
-    String(JsString),
+    String(Rc<JsString>),
     EnumLiteral(P<EnumLiteral>),
     SentinelLiteral(P<SentinelLiteral>),
+}
+
+impl LiteralValue {
+    pub fn string(value: impl Into<JsString>) -> LiteralValue {
+        LiteralValue::String(Rc::new(value.into()))
+    }
+
+    pub fn bigint(value: JsBigInt) -> LiteralValue {
+        LiteralValue::Bigint(Rc::new(value))
+    }
 }
 
 // analyzer/types.ts:110
@@ -243,7 +255,8 @@ struct TypeAlloc<D> {
     header: Type,
     d: D,
 }
-const _: () = assert!(size_of::<TypeAlloc<ClassTypeDetails>>() <= 112);
+const _: () = assert!(size_of::<TypeAlloc<ClassTypeDetails>>() <= 96);
+const _: () = assert!(size_of::<LiteralValue>() <= 16);
 const _: () = assert!(size_of::<TypeAlloc<FunctionTypeDetails>>() <= 104);
 
 /// The fields of a type literal, before `Type::alloc_eval` or `alloc_program` places the
@@ -4259,12 +4272,12 @@ impl UnionType {
                         literal_maps
                             .literal_str_map
                             .get_or_insert_with(Default::default)
-                            .insert(value.clone(), new_type);
+                            .insert((**value).clone(), new_type);
                     }
                 } else if is_int {
                     let key = match &literal_value {
                         LiteralValue::Number(value) => Some(NumberValue::Number(*value)),
-                        LiteralValue::Bigint(value) => Some(NumberValue::BigInt(value.clone())),
+                        LiteralValue::Bigint(value) => Some(NumberValue::BigInt((**value).clone())),
                         _ => None,
                     };
                     if let Some(key) = key {
@@ -4340,7 +4353,7 @@ impl UnionType {
                     && let Some(map) = &literal_maps.literal_str_map
                 {
                     return match &literal_value {
-                        LiteralValue::String(value) => map.contains_key(value),
+                        LiteralValue::String(value) => map.contains_key(&**value),
                         _ => false,
                     };
                 } else if ClassType::is_built_in(class_subtype, Some(&[jsrt::atom!("int")]))
@@ -4351,7 +4364,7 @@ impl UnionType {
                             map.contains_key(&NumberValue::Number(*value))
                         }
                         LiteralValue::Bigint(value) => {
-                            map.contains_key(&NumberValue::BigInt(value.clone()))
+                            map.contains_key(&NumberValue::BigInt((**value).clone()))
                         }
                         _ => false,
                     };
@@ -6040,7 +6053,7 @@ pub(crate) fn _add_type_if_unique(
             && let Some(map) = &literal_maps.literal_str_map
         {
             let has = match literal_value {
-                LiteralValue::String(value) => map.contains_key(value),
+                LiteralValue::String(value) => map.contains_key(&**value),
                 _ => false,
             };
             drop(union_priv);
@@ -6055,7 +6068,7 @@ pub(crate) fn _add_type_if_unique(
             let has = match literal_value {
                 LiteralValue::Number(value) => map.contains_key(&NumberValue::Number(*value)),
                 LiteralValue::Bigint(value) => {
-                    map.contains_key(&NumberValue::BigInt(value.clone()))
+                    map.contains_key(&NumberValue::BigInt((**value).clone()))
                 }
                 _ => false,
             };
@@ -6166,7 +6179,7 @@ pub(crate) fn _add_type_if_unique(
                     // literal, compared with `===`.
                     let negated = !match &literal_to_add {
                         LiteralValue::Number(value) => *value != 0.0 && !value.is_nan(),
-                        LiteralValue::Bigint(value) => *value != jsrt::JsBigInt::from(0),
+                        LiteralValue::Bigint(value) => **value != jsrt::JsBigInt::from(0),
                         LiteralValue::Boolean(value) => *value,
                         LiteralValue::String(value) => !value.is_empty(),
                         LiteralValue::EnumLiteral(_) | LiteralValue::SentinelLiteral(_) => true,

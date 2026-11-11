@@ -1161,7 +1161,7 @@ pub(crate) fn calc_literal_for_unary_op(
                 &mut |subtype| {
                     let negated = match literal_value_of(subtype) {
                         Some(LiteralValue::Number(value)) => LiteralValue::Number(-value),
-                        Some(LiteralValue::Bigint(value)) => LiteralValue::Bigint(-value),
+                        Some(LiteralValue::Bigint(value)) => LiteralValue::bigint(-(*value).clone()),
                         _ => unreachable!("an int literal holds a number or a bigint"),
                     };
                     Some(ClassType::clone_with_literal(ClassType(subtype), Some(negated)).0)
@@ -1176,7 +1176,7 @@ pub(crate) fn calc_literal_for_unary_op(
                 operand_type,
                 &mut |subtype| {
                     let big_val = match literal_value_of(subtype) {
-                        Some(LiteralValue::Bigint(value)) => value,
+                        Some(LiteralValue::Bigint(value)) => (*value).clone(),
                         Some(LiteralValue::Number(value)) => {
                             JsBigInt::from_f64(value).expect("BigInt(n) of an int literal value")
                         }
@@ -1189,7 +1189,7 @@ pub(crate) fn calc_literal_for_unary_op(
                         if new_value >= MIN_SAFE_INTEGER && new_value <= MAX_SAFE_INTEGER {
                             LiteralValue::Number(new_value.to_f64())
                         } else {
-                            LiteralValue::Bigint(new_value)
+                            LiteralValue::bigint(new_value)
                         };
                     Some(ClassType::clone_with_literal(ClassType(subtype), Some(new_value)).0)
                 },
@@ -1277,7 +1277,7 @@ pub(crate) fn calc_literal_for_binary_op(
                         Some(
                             ClassType::clone_with_literal(
                                 ClassType(left_subtype),
-                                Some(LiteralValue::String(left_value.concat(&right_value))),
+                                Some(LiteralValue::string(left_value.concat(&right_value))),
                             )
                             .0,
                         )
@@ -1313,7 +1313,7 @@ pub(crate) fn calc_literal_for_binary_op(
         // `BigInt(value)` of an int literal value; `None` where JS throws.
         let to_bigint = |value: Option<LiteralValue>| -> Option<JsBigInt> {
             match value {
-                Some(LiteralValue::Bigint(value)) => Some(value),
+                Some(LiteralValue::Bigint(value)) => Some((*value).clone()),
                 Some(LiteralValue::Number(value)) => JsBigInt::from_f64(value),
                 _ => unreachable!("an int literal holds a number or a bigint"),
             }
@@ -1431,7 +1431,7 @@ pub(crate) fn calc_literal_for_binary_op(
                             if new_value >= MIN_SAFE_INTEGER && new_value <= MAX_SAFE_INTEGER {
                                 LiteralValue::Number(new_value.to_f64())
                             } else {
-                                LiteralValue::Bigint(new_value)
+                                LiteralValue::bigint(new_value)
                             };
 
                         Some(

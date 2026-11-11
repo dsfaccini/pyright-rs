@@ -11,6 +11,7 @@ Shrink the live evaluator data that sets pydantic-ai's peak RSS: types, function
 - `FunctionDetailsShared.name`, `full_name` and `module_name` are atoms. `FunctionType::create` and its callers still take `&str`. Take `.to_string()` where a `String` is needed.
 - `FunctionParam.name` is `Option<Atom>`: `FunctionParam` is 40 bytes. `.as_deref()` still gives `Option<&str>`.
 - The type caches (`TypeEvaluator.type_cache`, `return_type_inference_type_cache`, `SpeculativeCache::Type`) are `TypeCacheMap`, a `jsrt::IdMap<StoredTypeCacheEntry>`: `get`, `insert` and `remove` take the node id by value. `StoredTypeCacheEntry::new(entry)` packs a `TypeCacheEntry` into 16 bytes, `.get()` unpacks it. `incomplete_gen_count` must stay below 2^31 (asserted).
+- `Type` is a header type (docs/porting.md, "memory"): a type is allocated as `TypeAlloc<D>`, the 24-byte header followed by the details of its category, so it takes the size of its own details (class 96 bytes, function 104, union 104, type variable 96, overloaded 64). Typed handles' `d()` read the details through the handle (`P::as_ptr`); `cast()` tests `category`. `types.rs` builds types through `Type::alloc_eval` and `alloc_program` from a `TypeInit`.
 - `TypeResult.class_type` lives in `TypeResultCold`: read `tr.cold().class_type`. `TypeResult` is 24 bytes.
 - `MemberAccessDeprecationInfo` and `MagicMethodDeprecationInfo` are held as `Rc` (`[modes]` "rc"): `TypeResultCold` is 112 bytes, down from 240.
 
@@ -50,6 +51,8 @@ Field counts on the same run (a temporary diagnostic, not committed):
 
 ## Attempts
 
+Peak RSS at the default trigger moves with the collection phase: a collection runs every 512 MiB of evaluator slots, and the buffers garbage owns are not counted, so the garbage left at the end of the check (where pydantic-ai peaks) varies by up to about 0.6 GiB. `PYRIGHT_RS_GC_MIN_MIB=64` collects every 64 MiB and tracks the live set more closely; both are listed from `main` baa992f on. The exact-size `Type` change cut the live type slots from 862 to 776 MiB, yet its default-trigger peak rose 0.04 GiB.
+
 | change | pydantic-ai instructions | pydantic-ai peak RSS | samples instructions | samples peak RSS |
 |---|---|---|---|---|
 | `main` d91164c | 245.01 G | 7.10 GiB | 9.31 G | 0.50 GiB |
@@ -64,4 +67,8 @@ Field counts on the same run (a temporary diagnostic, not committed):
 | `main` 96d0cc0 (memo merged) | 231.45 G | 5.74 GiB | 9.17 G | 0.47 GiB |
 | clones that clear props build them first (`clone_type_with_props`) | 230.64 G (−0.35%) | 5.72 GiB | 8.93 G (−2.6%) | 0.47 GiB |
 | `TypeResult.class_type` in the cold half (`TypeResult` 32 → 24 bytes) | 231.12 G (+0.21%) | 5.70 GiB | 8.93 G | 0.47 GiB |
+| `main` baa992f (sound merged); default trigger / `PYRIGHT_RS_GC_MIN_MIB=64` | 227.50 G | 5.76 / 5.25 GiB | 9.14 G | 0.47 GiB |
+| the props and `class_type` commits rebased | 227.17 G | 5.69 / 5.16 GiB | 8.89 G | 0.46 GiB |
+| `Type` exact-size: header plus the details of its category | 226.80 G (−0.16%) | 5.73 / 5.07 GiB | 8.88 G | 0.45 GiB |
+| `LiteralValue` 32 → 16 bytes: class types 104 → 96 bytes | 226.62 G (−0.08%) | 5.58 / 5.03 GiB | 8.87 G | 0.45 GiB |
 | dropped: `FunctionDetailsShared` 120 → 96 bytes (`type_params` an `Rc<Vec>`, `type_var_scope_id` a `Cell`) | 231.83 G (+0.16%) | 5.74 GiB | 9.15 G | 0.47 GiB |

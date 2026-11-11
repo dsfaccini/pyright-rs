@@ -113,9 +113,9 @@ impl SentinelLiteral {
 #[derive(Clone)]
 pub enum LiteralValue {
     Number(f64),
-    Bigint(JsBigInt),
+    Bigint(Rc<JsBigInt>),
     Boolean(bool),
-    String(JsString),
+    String(Rc<JsString>),
     EnumLiteral(P<EnumLiteral>),
     SentinelLiteral(P<SentinelLiteral>),
 }

@@ -2073,7 +2073,7 @@ impl TypeEvaluator {
         } else if node.d().is_integer.get() {
             let value = match &node.d().value {
                 jsrt::NumberValue::Number(value) => LiteralValue::Number(*value),
-                jsrt::NumberValue::BigInt(value) => LiteralValue::Bigint(value.clone()),
+                jsrt::NumberValue::BigInt(value) => LiteralValue::bigint(value.clone()),
             };
             type_result = P::new_eval(TypeResult::new(self.clone_builtin_object_with_literal(
                 node.node(),
@@ -2312,7 +2312,7 @@ impl TypeEvaluator {
                 ..TypeResult::new(self.clone_builtin_object_with_literal(
                     node.node(),
                     if is_bytes { "bytes" } else { "str" },
-                    &LiteralValue::String(JsString::from(units)),
+                    &LiteralValue::string(JsString::from(units)),
                 ))
             }));
         }
@@ -2517,7 +2517,7 @@ impl TypeEvaluator {
                 ..TypeResult::new(self.clone_builtin_object_with_literal(
                     node,
                     if is_bytes { "bytes" } else { "str" },
-                    &LiteralValue::String(string_node.d().value.clone()),
+                    &LiteralValue::string(string_node.d().value.clone()),
                 ))
             }));
         } else {
@@ -3160,7 +3160,7 @@ impl TypeEvaluator {
                         return Some(
                             ClassType::clone_with_literal(
                                 concrete_class,
-                                Some(LiteralValue::String(JsString::default())),
+                                Some(LiteralValue::string(JsString::default())),
                             )
                             .0,
                         );
@@ -10271,7 +10271,7 @@ impl TypeEvaluator {
             Some(str_class) if analyzer::types::is_instantiable_class(str_class) => {
                 ClassType::clone_with_literal(
                     ClassType::clone_as_instance(ClassType(str_class), true),
-                    Some(LiteralValue::String(member_name.into())),
+                    Some(LiteralValue::string(member_name)),
                 )
                 .0
             }
@@ -23446,7 +23446,7 @@ impl TypeEvaluator {
                                 key_types.push(TypeResultWithNode::new(
                                     ClassType::clone_with_literal(
                                         str_object,
-                                        Some(LiteralValue::String(name.into())),
+                                        Some(LiteralValue::string(name)),
                                     )
                                     .0,
                                     entry_node.0,
@@ -25596,7 +25596,7 @@ impl TypeEvaluator {
             match value {
                 jsrt::NumberValue::Number(n) => LiteralValue::Number(if negate { -*n } else { *n }),
                 jsrt::NumberValue::BigInt(n) => {
-                    LiteralValue::Bigint(if negate { -n.clone() } else { n.clone() })
+                    LiteralValue::bigint(if negate { -n.clone() } else { n.clone() })
                 }
             }
         };
@@ -25650,7 +25650,7 @@ impl TypeEvaluator {
                 for s in &strings {
                     units.extend_from_slice(s.d().value.units());
                 }
-                let value = LiteralValue::String(JsString::from(units));
+                let value = LiteralValue::string(JsString::from(units));
                 if is_bytes {
                     type_ = Some(
                         self.clone_builtin_class_with_literal(node.0, class_type, "bytes", &value),

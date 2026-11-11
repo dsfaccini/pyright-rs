@@ -872,7 +872,7 @@ pub fn get_type_of_enum_member(
             ClassType::clone_as_instance(
                 ClassType::clone_with_literal(
                     str_class,
-                    Some(LiteralValue::String((&value.item_name).into())),
+                    Some(LiteralValue::string(&value.item_name)),
                 ),
                 true,
             )

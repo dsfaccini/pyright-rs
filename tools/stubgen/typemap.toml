@@ -261,8 +261,11 @@ interface = "analyzer/codeFlowEngine.ts:CodeFlowAnalyzer"
 "analyzer/types.ts:FunctionDetailsShared.fullName" = "jsrt::Atom"
 "analyzer/types.ts:FunctionDetailsShared.moduleName" = "jsrt::Atom"
 # docs/porting.md "strings": a Python string literal's value can hold a lone surrogate, which
-# printLiteralValue keeps (`JSON.stringify` escapes it).
-"analyzer/types.ts:LiteralValue#3" = "jsrt::JsString"
+# printLiteralValue keeps (`JSON.stringify` escapes it). Strings and big integers are shared
+# behind an `Rc`, as JS values are references, so a literal value is 16 bytes and a class type's
+# details 72.
+"analyzer/types.ts:LiteralValue#1" = "std::rc::Rc<jsrt::JsBigInt>"
+"analyzer/types.ts:LiteralValue#3" = "std::rc::Rc<jsrt::JsString>"
 "analyzer/typePrinterUtils.ts:printStringLiteral.value" = "&[u16]"
 "analyzer/typePrinterUtils.ts:printBytesLiteral.value" = "&[u16]"
 # Copied into every parameter list a function clone or specialization builds, and into each
