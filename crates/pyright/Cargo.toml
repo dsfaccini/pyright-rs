@@ -5,6 +5,7 @@ edition = "2024"
 
 [dependencies]
 jsrt = { version = "0.1.0", path = "../jsrt" }
+mimalloc = "0.1.52"
 regex = "1.13.1"
 serde_json = { version = "1.0.154", features = ["preserve_order"] }
 
