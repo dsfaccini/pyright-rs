@@ -569,7 +569,7 @@ impl Binder {
             self._node_info.set_dunder_all_info(
                 node,
                 Some(P::new(DunderAllInfo {
-                    names: dunder_all_names.clone(),
+                    names: dunder_all_names.as_slice().into(),
                     string_nodes: self._dunder_all_string_nodes.clone(),
                     uses_unsupported_dunder_all_form: self._uses_unsupported_dunder_all_form,
                 })),
@@ -3286,13 +3286,13 @@ impl Binder {
         let resolved_uri = resolved_uri?;
 
         let lookup_info = (self._file_info.import_lookup)(ImportLookupKey::Uri(resolved_uri), None);
-        if let Some(names) = lookup_info.as_ref().and_then(|info| info.dunder_all_names.clone()) {
-            return Some(names);
+        if let Some(names) = lookup_info.as_ref().and_then(|info| info.dunder_all_names.as_deref()) {
+            return Some(names.to_vec());
         }
 
         if let Some(fallback) = fallback.filter(|fallback| !fallback.uri.get().is_empty()) {
             let lookup_info = (self._file_info.import_lookup)(ImportLookupKey::Uri(fallback.uri.get()), None);
-            return lookup_info.and_then(|info| info.dunder_all_names);
+            return lookup_info.and_then(|info| info.dunder_all_names).map(|names| names.to_vec());
         }
 
         None

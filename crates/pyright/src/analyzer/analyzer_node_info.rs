@@ -25,7 +25,7 @@ use crate::parser::string_annotation_info::StringAnnotationInfo;
 // analyzer/analyzerNodeInfo.ts:34
 #[derive(jsrt::Trace)]
 pub struct DunderAllInfo {
-    pub names: Vec<String>,
+    pub names: std::rc::Rc<[String]>,
     pub string_nodes: Vec<StringNode>,
     pub uses_unsupported_dunder_all_form: bool,
 }

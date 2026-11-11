@@ -300,7 +300,7 @@ pub fn get_wildcard_import_names(lookup_info: &ImportLookupResult) -> Vec<String
     // If a dunder all symbol is defined, it takes precedence.
     if let Some(dunder_all_names) = &lookup_info.dunder_all_names {
         if !lookup_info.uses_unsupported_dunder_all_form {
-            return dunder_all_names.clone();
+            return dunder_all_names.to_vec();
         }
 
         names_to_import.extend(dunder_all_names.iter().cloned());
