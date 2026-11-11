@@ -177,7 +177,7 @@ pub fn validate_binary_operation(
 
             // Assume that a bool is returned even if the type is unknown.
             if !is_never(result_type) {
-                type_ = Some(evaluator.get_built_in_object(error_node, "bool", None));
+                type_ = Some(evaluator.get_built_in_object(error_node, jsrt::atom!("bool"), None));
             }
         } else {
             type_ = Some(evaluator.map_subtypes_expand_type_vars(
@@ -199,7 +199,7 @@ pub fn validate_binary_operation(
                                 ));
                             }
                             // The other boolean operators always return a bool value.
-                            Some(evaluator.get_built_in_object(error_node, "bool", None))
+                            Some(evaluator.get_built_in_object(error_node, jsrt::atom!("bool"), None))
                         },
                         0,
                     ))
@@ -305,7 +305,7 @@ pub fn get_type_of_binary_operation(
         if let Some(inference_context) = inference_context {
             let expected_type = inference_context.expected_type.get();
             if is_class_instance(expected_type)
-                && ClassType::is_built_in(ClassType(expected_type), Some(&["list"]))
+                && ClassType::is_built_in(ClassType(expected_type), Some(&[jsrt::atom!("list")]))
                 && ClassType(expected_type)
                     .d()
                     .priv_
@@ -873,7 +873,7 @@ pub fn get_type_of_unary_operation(
         // __not__ always returns a boolean.
         if operator == OperatorType::Not {
             // `getBuiltInObject` always returns a type, so the TS `if (!type)` fallback never runs.
-            type_ = Some(evaluator.get_built_in_object(node.0, "bool", None));
+            type_ = Some(evaluator.get_built_in_object(node.0, jsrt::atom!("bool"), None));
         }
 
         if type_.is_none() {
@@ -1463,7 +1463,7 @@ pub(crate) fn custom_metaclass_supports_method(type_: P<Type>, method_name: &str
         return false;
     };
 
-    if ClassType::is_built_in(ClassType(metaclass), Some(&["type"])) {
+    if ClassType::is_built_in(ClassType(metaclass), Some(&[jsrt::atom!("type")])) {
         return false;
     }
 
@@ -1486,7 +1486,7 @@ pub(crate) fn custom_metaclass_supports_method(type_: P<Type>, method_name: &str
     if is_instantiable_class(member_info.class_type)
         && ClassType::is_built_in(
             ClassType(member_info.class_type),
-            Some(&["type"]),
+            Some(&[jsrt::atom!("type")]),
         )
     {
         return false;
@@ -1515,7 +1515,7 @@ pub(crate) fn is_expression_local_variable(
 
     let symbol_with_scope = evaluator.look_up_symbol_recursive(
         node,
-        name_node.d().value(),
+        name_node.d().value_atom(),
         /* honorCodeFlow */ false,
         false,
     );
@@ -1593,7 +1593,7 @@ pub(crate) fn validate_containment_operation(
                                 0,
                             ) {
                                 return_type_result = Some(P::new_eval(TypeResult::new(
-                                    evaluator.get_built_in_object(error_node, "bool", None),
+                                    evaluator.get_built_in_object(error_node, jsrt::atom!("bool"), None),
                                 )));
                             }
                         }
@@ -1617,7 +1617,7 @@ pub(crate) fn validate_containment_operation(
 
                     Some(match return_type_result {
                         Some(result) => result.type_.get(),
-                        None => evaluator.get_built_in_object(error_node, "bool", None),
+                        None => evaluator.get_built_in_object(error_node, jsrt::atom!("bool"), None),
                     })
                 },
                 0,

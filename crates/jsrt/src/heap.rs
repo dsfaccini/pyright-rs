@@ -12,7 +12,7 @@ use std::cell::{Cell, UnsafeCell};
 use std::collections::HashMap;
 use std::panic::{AssertUnwindSafe, catch_unwind, resume_unwind};
 use std::ptr;
-use std::sync::atomic::{AtomicBool, AtomicPtr, AtomicU32, AtomicU64, AtomicUsize, Ordering::Relaxed, Ordering::SeqCst};
+use std::sync::atomic::{AtomicBool, AtomicPtr, AtomicU32, AtomicU64, AtomicUsize, Ordering::Acquire, Ordering::Relaxed, Ordering::Release, Ordering::SeqCst};
 use std::sync::{Mutex, MutexGuard, OnceLock, PoisonError};
 use std::time::Instant;
 
@@ -312,7 +312,7 @@ struct Ranges {
 static RANGES: OnceLock<Ranges> = OnceLock::new();
 
 /// Where the write barrier marks cards. The lengths stay 0, so the barrier marks
-/// nothing, unless collection is generational.
+/// nothing, until a generational collection ends (`start_barrier`).
 struct Barrier {
     eval_base: AtomicUsize,
     eval_len: AtomicUsize,
@@ -342,8 +342,9 @@ static BARRIER: Barrier = Barrier {
 /// because no heap object's cell sits in a buffer (`Trace::CELL_OUT_OF_LINE`).
 #[inline(always)]
 pub fn remember(addr: usize) {
+    let len = BARRIER.eval_len.load(Acquire);
     let offset = addr.wrapping_sub(BARRIER.eval_base.load(Relaxed));
-    if offset < BARRIER.eval_len.load(Relaxed) {
+    if offset < len {
         // SAFETY: the cell is in a live object, so its block is committed, owned by
         // this thread and has bitmaps; the card table covers the committed blocks.
         unsafe {
@@ -355,8 +356,9 @@ pub fn remember(addr: usize) {
         }
         return;
     }
+    let len = BARRIER.program_len.load(Acquire);
     let offset = addr.wrapping_sub(BARRIER.program_base.load(Relaxed));
-    if offset < BARRIER.program_len.load(Relaxed) {
+    if offset < len {
         // SAFETY: as above.
         unsafe { *BARRIER.program_cards.load(Relaxed).add(offset >> CARD_SHIFT) = 1 };
     }
@@ -367,21 +369,24 @@ fn ranges() -> &'static Ranges {
         // Under an address-space limit, leave most of it to the program heap's bump
         // arena, the system allocator and the stack.
         let limit = vm::address_space_limit();
-        let ranges = Ranges {
+        Ranges {
             program: Range::reserve("program", PROGRAM_RESERVE, limit / 16),
             eval: Range::reserve("evaluator", EVAL_RESERVE, limit / 4),
-        };
-        if config().generational && config().mode != GcMode::Off {
-            BARRIER.eval_base.store(ranges.eval.base.addr(), Relaxed);
-            BARRIER.eval_cards.store(ranges.eval.cards, Relaxed);
-            BARRIER.eval_meta.store(ranges.eval.meta, Relaxed);
-            BARRIER.eval_len.store(ranges.eval.len, Relaxed);
-            BARRIER.program_base.store(ranges.program.base.addr(), Relaxed);
-            BARRIER.program_cards.store(ranges.program.cards, Relaxed);
-            BARRIER.program_len.store(ranges.program.len, Relaxed);
         }
-        ranges
     })
+}
+
+/// Turns the write barrier on, at the end of a generational collection: before
+/// the first one no object is old, so no write needs a card. A thread that sees
+/// a range's length sees the rest of it.
+fn start_barrier(ranges: &Ranges) {
+    BARRIER.eval_base.store(ranges.eval.base.addr(), Relaxed);
+    BARRIER.eval_cards.store(ranges.eval.cards, Relaxed);
+    BARRIER.eval_meta.store(ranges.eval.meta, Relaxed);
+    BARRIER.eval_len.store(ranges.eval.len, Release);
+    BARRIER.program_base.store(ranges.program.base.addr(), Relaxed);
+    BARRIER.program_cards.store(ranges.program.cards, Relaxed);
+    BARRIER.program_len.store(ranges.program.len, Release);
 }
 
 // ---------------------------------------------------------------------------
@@ -395,7 +400,8 @@ struct TypeInfo {
     recip: u32,
     count: u32,
     drop: unsafe fn(*mut u8),
-    prefetch_owned: unsafe fn(*mut u8),
+    /// Drops the objects of one bitmap word: `sweep_erased`.
+    sweep: unsafe fn(*mut u8, usize, u64),
     trace: TraceFn,
 }
 
@@ -421,17 +427,48 @@ unsafe fn drop_erased<T>(object: *mut u8) {
     unsafe { ptr::drop_in_place(object.cast::<T>()) }
 }
 
-unsafe fn prefetch_owned_erased<T: Trace>(object: *mut u8) {
-    unsafe { (*object.cast::<T>()).prefetch_owned() }
-}
-
 unsafe fn trace_erased<T: Trace>(object: *mut u8, t: &mut Tracer) {
     unsafe { (*object.cast::<T>()).trace(t) }
 }
 
+/// The slot of a `T` in a typed block.
+const fn slot_of<T>() -> usize {
+    let size = if size_of::<T>() < 8 { 8 } else { size_of::<T>() };
+    size.next_multiple_of(align_of::<T>())
+}
+
+/// Drops the objects `dead` names in bitmap word `w` of the block at `base`, in
+/// slot order, prefetching the buffers of the dead object `SWEEP_AHEAD` after each.
+/// One function per type, so the drop and the prefetch inline into the loop.
+unsafe fn sweep_erased<T: Trace>(base: *mut u8, w: usize, mut dead: u64) {
+    if !std::mem::needs_drop::<T>() {
+        return;
+    }
+    let at = |bits: u64| base.wrapping_add((w * 64 + bits.trailing_zeros() as usize) * slot_of::<T>()).cast::<T>();
+    let mut ahead = dead;
+    for _ in 0..SWEEP_AHEAD {
+        if ahead != 0 {
+            // SAFETY: a live object of this type, dropped below.
+            unsafe { (*at(ahead)).prefetch_owned() };
+            ahead &= ahead - 1;
+        }
+    }
+    while dead != 0 {
+        let object = at(dead);
+        dead &= dead - 1;
+        if ahead != 0 {
+            // SAFETY: as above.
+            unsafe { (*at(ahead)).prefetch_owned() };
+            ahead &= ahead - 1;
+        }
+        // SAFETY: an unreachable object of this type, dropped once.
+        unsafe { ptr::drop_in_place(object) };
+    }
+}
+
 fn register<T: Trace + 'static>() -> u32 {
     let name = std::any::type_name::<T>();
-    let slot = size_of::<T>().max(8).next_multiple_of(align_of::<T>());
+    let slot = slot_of::<T>();
     assert!(slot <= MAX_SLOT, "collector: {name} is {slot} bytes; slots go up to {MAX_SLOT}");
     let info = TypeInfo {
         name,
@@ -440,7 +477,7 @@ fn register<T: Trace + 'static>() -> u32 {
         recip: (1u64 << 32).div_ceil(slot as u64) as u32,
         count: (BLOCK / slot) as u32,
         drop: drop_erased::<T>,
-        prefetch_owned: prefetch_owned_erased::<T>,
+        sweep: sweep_erased::<T>,
         trace: trace_erased::<T>,
     };
     let mut registry = lock(&REGISTRY);
@@ -744,6 +781,8 @@ pub struct Tracer {
     check: bool,
     program_only: u32,
     owner: u32,
+    /// `owner`, or `NONE` in check mode, where every handle takes `mark_eval`.
+    fast_owner: u32,
     eval_base: *mut u8,
     eval_len: usize,
     meta: *mut BlockMeta,
@@ -758,16 +797,29 @@ impl Tracer {
         self.check
     }
 
-    /// Marks the object at `addr` when it is on the evaluator heap.
-    #[inline]
+    /// Marks the object at `addr` when it is on the evaluator heap. Most handles a
+    /// collection follows point to an object already marked, so that test is
+    /// inlined into every trace function; the rest go through `mark_eval`.
+    #[inline(always)]
     pub fn mark(&mut self, addr: usize) {
         let offset = addr.wrapping_sub(self.eval_base.addr());
         if offset < self.eval_len {
+            // SAFETY: the metadata table covers the range.
+            let meta = unsafe { &*self.meta.add(offset >> BLOCK_SHIFT) };
+            if meta.owner == self.fast_owner {
+                let i = meta.index(offset & (BLOCK - 1));
+                // SAFETY: this thread owns the block, so `i` is one of its slots and its
+                // bitmaps are allocated; a parallel mark sets mark bits atomically.
+                let mark = unsafe { AtomicU64::from_ptr(meta.bits.add(meta.words as usize + i / 64)) }.load(Relaxed);
+                if mark & (1 << (i % 64)) != 0 {
+                    return;
+                }
+            }
             self.mark_eval(offset);
         }
     }
 
-    #[inline]
+    #[inline(never)]
     fn mark_eval(&mut self, offset: usize) {
         if self.check {
             assert!(self.program_only == 0, "collector check: a #[trace(program)] field holds an evaluator handle");
@@ -1041,6 +1093,7 @@ impl Helpers {
                     check: job.check,
                 program_only: 0,
                 owner: job.owner,
+                fast_owner: if job.check { NONE } else { job.owner },
                 eval_base: job.eval_base,
                 eval_len: job.eval_len,
                 meta: job.meta,
@@ -1243,6 +1296,7 @@ impl ThreadHeap {
             check,
             program_only: 0,
             owner: self.owner,
+            fast_owner: if check { NONE } else { self.owner },
             eval_base: ranges.eval.base,
             eval_len: ranges.eval.len,
             meta: ranges.eval.meta,
@@ -1297,6 +1351,7 @@ impl ThreadHeap {
         self.sticky_marks = generational;
         if generational {
             self.clear_cards();
+            start_barrier(ranges);
         }
         if census {
             census::set_phase(census::MUTATOR);
@@ -1583,31 +1638,23 @@ impl ThreadHeap {
                 for w in 0..words {
                     unsafe {
                         let marked = *meta.bits.add(words + w);
-                        let mut dead = *meta.bits.add(w) & !marked;
-                        // Prefetch the buffers of the dead object `SWEEP_AHEAD` after the one dropped.
-                        let mut ahead = dead;
-                        for _ in 0..SWEEP_AHEAD {
-                            if ahead != 0 {
-                                (class.info.prefetch_owned)(base.wrapping_add((w * 64 + ahead.trailing_zeros() as usize) * slot));
-                                ahead &= ahead - 1;
-                            }
-                        }
-                        while dead != 0 {
-                            let j = dead.trailing_zeros() as usize;
-                            dead &= dead - 1;
-                            if ahead != 0 {
-                                (class.info.prefetch_owned)(base.wrapping_add((w * 64 + ahead.trailing_zeros() as usize) * slot));
-                                ahead &= ahead - 1;
-                            }
-                            let i = w * 64 + j;
-                            let object = base.wrapping_add(i * slot);
-                            (class.info.drop)(object);
-                            if check {
+                        let dead = *meta.bits.add(w) & !marked;
+                        if check {
+                            // Check mode drops and poisons one object at a time, so a drop
+                            // that reaches an object dropped before it panics.
+                            let mut left = dead;
+                            while left != 0 {
+                                let j = left.trailing_zeros() as usize;
+                                left &= left - 1;
+                                let object = base.wrapping_add((w * 64 + j) * slot);
+                                (class.info.drop)(object);
                                 ptr::write_bytes(object, POISON, slot);
                                 *meta.bits.add(2 * words + w) |= 1 << j;
                             }
-                            freed += 1;
+                        } else {
+                            (class.info.sweep)(base, w, dead);
                         }
+                        freed += dead.count_ones() as usize;
                         *meta.bits.add(w) = marked;
                         // Generational: a survivor stays marked, which makes it old.
                         *meta.bits.add(words + w) = if sticky { marked } else { 0 };
@@ -1974,16 +2021,9 @@ mod tests {
         Collection { check, log: 0, threads: 4, minor, generational: true }
     }
 
-    /// Turns the write barrier on, as generational collection does at start.
+    /// Turns the write barrier on, as the first generational collection does.
     fn enable_barrier() {
-        let ranges = ranges();
-        BARRIER.eval_base.store(ranges.eval.base.addr(), Relaxed);
-        BARRIER.eval_cards.store(ranges.eval.cards, Relaxed);
-        BARRIER.eval_meta.store(ranges.eval.meta, Relaxed);
-        BARRIER.eval_len.store(ranges.eval.len, Relaxed);
-        BARRIER.program_base.store(ranges.program.base.addr(), Relaxed);
-        BARRIER.program_cards.store(ranges.program.cards, Relaxed);
-        BARRIER.program_len.store(ranges.program.len, Relaxed);
+        start_barrier(ranges());
     }
 
     /// A minor collection frees young garbage, keeps young objects that an old one

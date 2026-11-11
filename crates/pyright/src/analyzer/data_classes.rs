@@ -151,7 +151,7 @@ pub(crate) fn is_data_class_keyword_only_separator(
         }),
     );
     is_class_instance(annotated_type)
-        && ClassType::is_built_in(ClassType(annotated_type), Some(&["KW_ONLY"]))
+        && ClassType::is_built_in(ClassType(annotated_type), Some(&[jsrt::atom!("KW_ONLY")]))
 }
 
 // analyzer/dataClasses.ts:120
@@ -219,9 +219,9 @@ pub fn synthesize_data_class_slots(evaluator: &TypeEvaluator, class_type: ClassT
             && !symbol.is_class_var()
             && !symbol.is_init_var()
             && !is_keyword_only_separator
-            && !inherited_slots_names.contains(&name)
+            && !inherited_slots_names.contains(name.as_str())
         {
-            local_slots_names.push(name);
+            local_slots_names.push(name.to_string());
         }
     }
     // The TypeScript `finally` block.
@@ -600,7 +600,7 @@ pub fn synthesize_data_class_methods(
                             if is_class_instance(value_type)
                                 && ClassType::is_built_in(
                                     ClassType(value_type),
-                                    Some(&["str"]),
+                                    Some(&[jsrt::atom!("str")]),
                                 )
                                 && is_literal_type(ClassType(value_type))
                             {
@@ -1102,8 +1102,8 @@ pub fn synthesize_data_class_methods(
 
     // Synthesize the __match_args__ class variable if it doesn't exist
     // and match_args behavior is not explicitly disabled.
-    let str_type = evaluator.get_built_in_type(node.0, "str");
-    let tuple_class_type = evaluator.get_built_in_type(node.0, "tuple");
+    let str_type = evaluator.get_built_in_type(node.0, jsrt::atom!("str"));
+    let tuple_class_type = evaluator.get_built_in_type(node.0, jsrt::atom!("tuple"));
     if is_instantiable_class(tuple_class_type)
         && is_instantiable_class(str_type)
         && !symbol_table.has("__match_args__")
@@ -1169,7 +1169,7 @@ pub fn synthesize_data_class_methods(
             .shared
             .get()
             .declared_return_type
-            .set(Some(evaluator.get_built_in_object(node.0, "bool", None)));
+            .set(Some(evaluator.get_built_in_object(node.0, jsrt::atom!("bool"), None)));
         // If a method of this name already exists, don't override it.
         if symbol_table.get(operator).is_none() {
             symbol_table.set(
@@ -1183,7 +1183,7 @@ pub fn synthesize_data_class_methods(
     if !ClassType::is_data_class_skip_generate_eq(class_type) {
         synthesize_comparison_method(
             "__eq__",
-            evaluator.get_built_in_object(node.0, "object", None),
+            evaluator.get_built_in_object(node.0, jsrt::atom!("object"), None),
         );
     }
 
@@ -1217,7 +1217,7 @@ pub fn synthesize_data_class_methods(
             .shared
             .get()
             .declared_return_type
-            .set(Some(evaluator.get_built_in_object(node.0, "int", None)));
+            .set(Some(evaluator.get_built_in_object(node.0, jsrt::atom!("int"), None)));
         symbol_table.set(
             "__hash__",
             Symbol::create_with_type(
@@ -1237,10 +1237,10 @@ pub fn synthesize_data_class_methods(
         );
     }
 
-    let mut dict_type = evaluator.get_built_in_type(node.0, "dict");
+    let mut dict_type = evaluator.get_built_in_type(node.0, jsrt::atom!("dict"));
     if is_instantiable_class(dict_type) {
         let type_args = [
-            evaluator.get_built_in_object(node.0, "str", None),
+            evaluator.get_built_in_object(node.0, jsrt::atom!("str"), None),
             AnyType::create(false).0,
         ];
         dict_type = ClassType::clone_as_instance(
@@ -1314,7 +1314,7 @@ pub fn synthesize_data_class_methods(
             .unwrap_or_else(|| UnknownType::create(false).0);
 
         if is_instantiable_class(iterable_type) {
-            let type_args = [evaluator.get_built_in_object(node.0, "str", None)];
+            let type_args = [evaluator.get_built_in_object(node.0, jsrt::atom!("str"), None)];
             iterable_type = ClassType::clone_as_instance(
                 ClassType::specialize(
                     ClassType(iterable_type),
@@ -1488,9 +1488,9 @@ pub(crate) fn get_converter_input_type(
     // will be used to check compatibility of the provided converter.
     let type_var = TypeVarType::create_instance("__converterInput", TypeVarKind::TypeVar);
     let scope_id = get_scope_id_for_node(converter_node.0, node_info.reader());
-    type_var.d().priv_.borrow_mut().scope_id = Some(scope_id.into());
+    type_var.d().priv_.borrow_mut().scope_id = Some(scope_id);
     let target_function = FunctionType::create_synthesized_instance("", FunctionTypeFlags::None);
-    let type_var_scope_id = type_var.d().priv_.borrow().scope_id.as_deref().map(str::to_string);
+    let type_var_scope_id = type_var.d().priv_.borrow().scope_id;
     *target_function
         .d()
         .shared
@@ -1679,7 +1679,7 @@ pub(crate) fn get_descriptor_for_converter_field(
     node_info: &AnalyzerNodeInfoAccessor,
 ) -> P<Symbol> {
     let file_info = node_info.get_file_info(dataclass_node);
-    let type_metaclass = evaluator.get_built_in_type(dataclass_node, "type");
+    let type_metaclass = evaluator.get_built_in_type(dataclass_node, jsrt::atom!("type"));
     let descriptor_name = format!("__converterDescriptor_{field_name}");
 
     let descriptor_class = ClassType::create_instantiable(
@@ -1704,7 +1704,7 @@ pub(crate) fn get_descriptor_for_converter_field(
         .shared
         .get()
         .type_var_scope_id
-        .borrow_mut() = Some(scope_id.clone());
+        .borrow_mut() = Some(scope_id);
 
     // Make the descriptor generic, copying the type parameters from the dataclass.
     let dataclass_type_params: Vec<TypeVarType> =
@@ -1714,8 +1714,8 @@ pub(crate) fn get_descriptor_for_converter_field(
         .map(|type_parm| {
             let type_param = TypeVarType::clone_for_scope_id(
                 *type_parm,
-                scope_id.clone(),
-                Some(descriptor_class.d().shared.get().name.clone()),
+                scope_id,
+                Some(descriptor_class.d().shared.get().name.to_string()),
                 Some(TypeVarScopeType::Class),
             );
             type_param.d().priv_.borrow_mut().computed_variance = Some(Variance::Covariant);
@@ -1739,7 +1739,7 @@ pub(crate) fn get_descriptor_for_converter_field(
     let get_type = apply_solved_type_vars(get_type, &solution, &ApplyTypeVarOptions::default());
     let set_type = apply_solved_type_vars(set_type, &solution, &ApplyTypeVarOptions::default());
 
-    let object_type = evaluator.get_built_in_type(dataclass_node, "object");
+    let object_type = evaluator.get_built_in_type(dataclass_node, jsrt::atom!("object"));
     Rc::make_mut(&mut *descriptor_class
         .d()
         .shared
@@ -1969,7 +1969,7 @@ pub(crate) fn is_dataclass_field_constructor(
             call_name = Some(overloads[0].d().shared.get().full_name.clone());
         }
     } else if is_instantiable_class(type_) {
-        call_name = Some(ClassType(type_).d().shared.get().full_name.clone());
+        call_name = Some(ClassType(type_).d().shared.get().full_name.to_string());
     }
 
     let Some(call_name) = call_name.filter(|call_name| !call_name.is_empty()) else {
@@ -2115,7 +2115,7 @@ pub fn validate_data_class_transform_decorator(
                     .type_
                     .get();
                 let tuple_type_args = if !is_class_instance(value_type)
-                    || !ClassType::is_built_in(ClassType(value_type), Some(&["tuple"]))
+                    || !ClassType::is_built_in(ClassType(value_type), Some(&[jsrt::atom!("tuple")]))
                 {
                     None
                 } else {
@@ -2150,7 +2150,7 @@ pub fn validate_data_class_transform_decorator(
                                 .shared
                                 .get()
                                 .full_name
-                                .clone(),
+                                .to_string(),
                         );
                     } else if is_function(tuple_arg.type_) {
                         behaviors.field_descriptor_names.borrow_mut().push(

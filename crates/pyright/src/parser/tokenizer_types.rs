@@ -11,11 +11,10 @@ use jsrt::flag_ops;
 use std::cell::Cell;
 use std::ops::Deref;
 use std::ptr;
-use std::rc::Rc;
 
 use jsrt::region::Region;
 
-use jsrt::{JsStr, JsString, NormalizationForm, P};
+use jsrt::{Atom, JsStr, JsString, NormalizationForm, P};
 
 use jsrt::NumberValue;
 
@@ -1109,9 +1108,8 @@ impl OperatorToken {
 // parser/tokenizerTypes.ts:580
 #[derive(jsrt::Trace)]
 pub struct IdentifierTokenDetails {
-    /// Shared by the tokens of one name in a file, as the tokenizer's intern
-    /// cache shares the JavaScript string.
-    pub value: Rc<str>,
+    /// Interned (`docs/porting.md`, "strings").
+    pub value: Atom,
 }
 token_handle!(IdentifierToken, Identifier, IdentifierTokenDetails);
 
@@ -1120,7 +1118,7 @@ impl IdentifierToken {
     pub fn create(
         start: i32,
         length: i32,
-        value: impl Into<Rc<str>>,
+        value: impl Into<Atom>,
         comments: Option<Vec<Comment>>,
     ) -> IdentifierToken {
         IdentifierToken::create_with_shared_comments(start, length, value, alloc_comments(comments))
@@ -1130,13 +1128,13 @@ impl IdentifierToken {
     pub fn create_with_shared_comments(
         start: i32,
         length: i32,
-        value: impl Into<Rc<str>>,
+        value: impl Into<Atom>,
         comments: Option<Comments>,
     ) -> IdentifierToken {
-        let value: Rc<str> = value.into();
+        let value: Atom = value.into();
         // Perform "NFKC normalization", as per the Python lexical spec.
         let normalized_value = if value.bytes().any(|b| b > 0x7f) {
-            value.to_string().js_normalize(NormalizationForm::Nfkc).into()
+            Atom::new(&value.js_normalize(NormalizationForm::Nfkc))
         } else {
             value
         };

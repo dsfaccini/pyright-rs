@@ -10,7 +10,7 @@ use jsrt::flag_ops;
 use jsrt::cell::{Cell, RefCell};
 use std::ops::Deref;
 
-use jsrt::{JsSet, P};
+use jsrt::{Atom, JsSet, P};
 
 use crate::common::debug::{assert, fail};
 use crate::parser::parse_nodes::{
@@ -301,7 +301,7 @@ pub struct FlowLabelDetails {
     // through the loop or in branch paths to determine their types.
     // If an expression is not within this map, branch or loop analysis
     // can be skipped and determined from the first antecedent only.
-    pub affected_expressions: Cell<Option<P<RefCell<JsSet<String>>>>>,
+    pub affected_expressions: Cell<Option<P<RefCell<JsSet<Atom>>>>>,
 }
 
 // FlowLabel represents a junction with multiple possible
@@ -584,28 +584,47 @@ pub fn is_code_flow_supported_for_reference(reference: ExpressionNode) -> bool {
 }
 
 // analyzer/codeFlowTypes.ts:223
-pub fn create_key_for_reference(reference: CodeFlowReferenceExpressionNode) -> String {
-    let key;
+/// The key is interned (`docs/porting.md`, "strings"). A name's key is its text, so it
+/// is the name's atom.
+pub fn create_key_for_reference(reference: CodeFlowReferenceExpressionNode) -> Atom {
+    if let D::Name(d) = reference.d() {
+        return d.value_atom();
+    }
+    thread_local! {
+        static KEY: std::cell::RefCell<String> = const { std::cell::RefCell::new(String::new()) };
+    }
+    KEY.with_borrow_mut(|key| {
+        key.clear();
+        write_key_for_reference(reference, key);
+        Atom::new(key)
+    })
+}
+
+/// The text of `createKeyForReference`, appended to `key`.
+fn write_key_for_reference(reference: CodeFlowReferenceExpressionNode, key: &mut String) {
     match reference.d() {
         D::Name(d) => {
-            key = d.value().to_string();
+            key.push_str(d.value());
         }
         D::AssignmentExpression(d) => {
-            key = d.name.get().d().value().to_string();
+            key.push_str(d.name.get().d().value());
         }
         D::MemberAccess(d) => {
-            let left_key = create_key_for_reference(d.left_expr.get());
-            key = format!("{}.{}", left_key, d.member.get().d().value());
+            write_key_for_reference(d.left_expr.get(), key);
+            key.push('.');
+            key.push_str(d.member.get().d().value());
         }
         D::Index(d) => {
-            let left_key = create_key_for_reference(d.left_expr.get());
+            write_key_for_reference(d.left_expr.get(), key);
             let items = d.items.borrow();
             assert(items.len() == 1, None);
             let expr = items[0].d().value_expr.get();
             drop(items);
             match expr.d() {
                 D::Number(n) => {
-                    key = format!("{}[{}]", left_key, n.value.to_js_string());
+                    key.push('[');
+                    key.push_str(&n.value.to_js_string());
+                    key.push(']');
                 }
                 D::StringList(val_expr) => {
                     let strings = val_expr.strings.borrow();
@@ -616,7 +635,9 @@ pub fn create_key_for_reference(reference: CodeFlowReferenceExpressionNode) -> S
                     let D::String(s) = strings[0].d() else {
                         unreachable!()
                     };
-                    key = format!("{}[\"{}\"]", left_key, s.value.to_string_lossy());
+                    key.push_str("[\"");
+                    key.push_str(&s.value.to_string_lossy());
+                    key.push_str("\"]");
                 }
                 D::UnaryOperation(u)
                     if u.operator.get() == OperatorType::Subtract
@@ -625,7 +646,9 @@ pub fn create_key_for_reference(reference: CodeFlowReferenceExpressionNode) -> S
                     let D::Number(n) = u.expr.get().d() else {
                         unreachable!()
                     };
-                    key = format!("{}[-{}]", left_key, n.value.to_js_string());
+                    key.push_str("[-");
+                    key.push_str(&n.value.to_js_string());
+                    key.push(']');
                 }
                 _ => {
                     fail(Some("createKeyForReference received unexpected index type"));
@@ -636,14 +659,12 @@ pub fn create_key_for_reference(reference: CodeFlowReferenceExpressionNode) -> S
             fail(Some("createKeyForReference received unexpected expression type"));
         }
     }
-
-    key
 }
 
 // analyzer/codeFlowTypes.ts:258
 pub fn create_keys_for_reference_subexpressions(
     reference: CodeFlowReferenceExpressionNode,
-) -> Vec<String> {
+) -> Vec<Atom> {
     match reference.d() {
         D::Name(_) => vec![create_key_for_reference(reference)],
         D::AssignmentExpression(d) => vec![create_key_for_reference(d.name.get().node())],
@@ -664,3 +685,8 @@ pub fn create_keys_for_reference_subexpressions(
 // analyzer/codeFlowTypes.ts:285
 // A reference key that corresponds to a wildcard import.
 pub const WILDCARD_IMPORT_REFERENCE_KEY: &str = "*";
+
+/// `WILDCARD_IMPORT_REFERENCE_KEY` as an atom.
+pub fn wildcard_import_reference_key() -> Atom {
+    jsrt::atom!("*")
+}

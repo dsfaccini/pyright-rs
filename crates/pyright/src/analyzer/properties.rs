@@ -74,9 +74,9 @@ pub fn create_property(
     node_info: &AnalyzerNodeInfoAccessor,
 ) -> ClassType {
     let file_info = node_info.get_file_info(decorator_node.0);
-    let type_metaclass = evaluator.get_built_in_type(decorator_node.0, "type");
+    let type_metaclass = evaluator.get_built_in_type(decorator_node.0, jsrt::atom!("type"));
     let decorator_shared = decorator_type.d().shared.get();
-    let type_source_id = if ClassType::is_built_in(decorator_type, Some(&["property"]))
+    let type_source_id = if ClassType::is_built_in(decorator_type, Some(&[jsrt::atom!("property")]))
     {
         get_type_source_id(decorator_node.0)
     } else {
@@ -107,9 +107,9 @@ pub fn create_property(
     property_shared
         .declaration
         .set(decorator_shared.declaration.get());
-    let type_var_scope_id = decorator_shared.type_var_scope_id.borrow().clone();
+    let type_var_scope_id = *decorator_shared.type_var_scope_id.borrow();
     *property_shared.type_var_scope_id.borrow_mut() = type_var_scope_id;
-    let object_type = evaluator.get_built_in_type(decorator_node.0, "object");
+    let object_type = evaluator.get_built_in_type(decorator_node.0, jsrt::atom!("object"));
     Rc::make_mut(&mut *property_shared
         .base_classes
         .borrow_mut())
@@ -125,7 +125,7 @@ pub fn create_property(
     ClassType::get_symbol_table(decorator_type).for_each(|symbol, name| {
         let ignored_methods = ["__get__", "__set__", "__delete__"];
 
-        if !symbol.is_ignored_for_protocol_match() && !ignored_methods.contains(&name) {
+        if !symbol.is_ignored_for_protocol_match() && !ignored_methods.contains(&name.as_str()) {
             fields.set(name, symbol);
         }
     });
@@ -253,9 +253,9 @@ pub fn clone_property_with_setter(
     property_shared
         .declaration
         .set(class_shared.declaration.get());
-    let type_var_scope_id = class_shared.type_var_scope_id.borrow().clone();
+    let type_var_scope_id = *class_shared.type_var_scope_id.borrow();
     *property_shared.type_var_scope_id.borrow_mut() = type_var_scope_id;
-    let object_type = evaluator.get_built_in_type(error_node.0, "object");
+    let object_type = evaluator.get_built_in_type(error_node.0, jsrt::atom!("object"));
     Rc::make_mut(&mut *property_shared
         .base_classes
         .borrow_mut())
@@ -346,9 +346,9 @@ pub fn clone_property_with_deleter(
     property_shared
         .declaration
         .set(class_shared.declaration.get());
-    let type_var_scope_id = class_shared.type_var_scope_id.borrow().clone();
+    let type_var_scope_id = *class_shared.type_var_scope_id.borrow();
     *property_shared.type_var_scope_id.borrow_mut() = type_var_scope_id;
-    let object_type = evaluator.get_built_in_type(error_node.0, "object");
+    let object_type = evaluator.get_built_in_type(error_node.0, jsrt::atom!("object"));
     Rc::make_mut(&mut *property_shared
         .base_classes
         .borrow_mut())

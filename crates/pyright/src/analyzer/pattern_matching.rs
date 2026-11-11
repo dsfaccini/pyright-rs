@@ -368,7 +368,7 @@ pub(crate) fn narrow_type_based_on_sequence_pattern(
 
             // Can we narrow a tuple?
             if can_narrow_tuple && !negative_narrowed_dims.is_empty() {
-                let tuple_class_type = evaluator.get_built_in_type(pattern.0, "tuple");
+                let tuple_class_type = evaluator.get_built_in_type(pattern.0, jsrt::atom!("tuple"));
                 if is_instantiable_class(tuple_class_type) {
                     // Expand the tuple in the dimensions that were narrowed.
                     // Start with the fully-narrowed set of entries.
@@ -419,7 +419,7 @@ pub(crate) fn narrow_type_based_on_sequence_pattern(
             // Other sequences cannot be narrowed because we don't know if they
             // are immutable (covariant).
             if can_narrow_tuple {
-                let tuple_class_type = evaluator.get_built_in_type(pattern.0, "tuple");
+                let tuple_class_type = evaluator.get_built_in_type(pattern.0, jsrt::atom!("tuple"));
                 if is_instantiable_class(tuple_class_type) {
                     let tuple_type_args: Vec<TupleTypeArg> = narrowed_entry_types
                         .iter()
@@ -582,7 +582,7 @@ pub(crate) fn narrow_type_based_on_mapping_pattern(
     let type_ = transform_possible_recursive_type_alias(Some(type_), 0).unwrap();
     let pattern_entries = pattern.d().entries.borrow().clone();
     let str_class =
-        |class_type: ClassType| ClassType::is_built_in(class_type, Some(&["str"]));
+        |class_type: ClassType| ClassType::is_built_in(class_type, Some(&[jsrt::atom!("str")]));
 
     if !is_positive_test {
         // Handle the case where the pattern consists only of a "**x" entry.
@@ -724,7 +724,7 @@ pub(crate) fn narrow_type_based_on_mapping_pattern(
                 if let Some(key_entry) = PatternMappingKeyEntryNode::cast(*mapping_entry) {
                     let narrowed_key_type = narrow_type_based_on_pattern(
                         evaluator,
-                        evaluator.get_built_in_object(pattern.0, "str", None),
+                        evaluator.get_built_in_object(pattern.0, jsrt::atom!("str"), None),
                         key_entry.d().key_pattern.get(),
                         is_positive_test,
                         node_info,
@@ -887,7 +887,7 @@ pub(crate) fn get_positional_match_arg_names(
                 // Are all the args string literals?
                 if tuple_args.iter().all(|arg| {
                     is_class_instance(arg.type_)
-                        && ClassType::is_built_in(ClassType(arg.type_), Some(&["str"]))
+                        && ClassType::is_built_in(ClassType(arg.type_), Some(&[jsrt::atom!("str")]))
                         && is_literal_type(ClassType(arg.type_))
                 }) {
                     return tuple_args
@@ -919,7 +919,7 @@ pub(crate) fn narrow_type_based_on_literal_pattern(
         .type_
         .get();
     let bool_class =
-        |class_type: ClassType| ClassType::is_built_in(class_type, Some(&["bool"]));
+        |class_type: ClassType| ClassType::is_built_in(class_type, Some(&[jsrt::atom!("bool")]));
 
     if !is_positive_test {
         return evaluator.map_subtypes_expand_type_vars(
@@ -1075,8 +1075,8 @@ pub(crate) fn is_int_literal_pattern_equal_to_bool(
 ) -> bool {
     // Numeric literal patterns use equality, so 0 and 1 also match False and True.
     // The inverse isn't true because singleton bool patterns use identity.
-    if !ClassType::is_built_in(pattern_type, Some(&["int"]))
-        || !ClassType::is_built_in(subject_type, Some(&["bool"]))
+    if !ClassType::is_built_in(pattern_type, Some(&[jsrt::atom!("int")]))
+        || !ClassType::is_built_in(subject_type, Some(&[jsrt::atom!("bool")]))
     {
         return false;
     }
@@ -1193,7 +1193,7 @@ pub(crate) fn narrow_type_based_on_class_pattern(
     }
 
     let pattern_args = pattern.d().args.borrow().clone();
-    let is_built_in = |class_type: ClassType, name: &str| {
+    let is_built_in = |class_type: ClassType, name: jsrt::Atom| {
         ClassType::is_built_in(class_type, Some(&[name]))
     };
 
@@ -1264,7 +1264,7 @@ pub(crate) fn narrow_type_based_on_class_pattern(
                 // Handle Callable specially.
                 if !is_any_or_unknown(subject_subtype_expanded)
                     && is_instantiable_class(class_type.0)
-                    && is_built_in(class_type, "Callable")
+                    && is_built_in(class_type, jsrt::atom!("Callable"))
                 {
                     if evaluator.assign_type(
                         get_unknown_type_for_callable().0,
@@ -1287,7 +1287,7 @@ pub(crate) fn narrow_type_based_on_class_pattern(
                 // Handle NoneType specially.
                 if is_none_instance(subject_subtype_expanded)
                     && is_instantiable_class(class_type.0)
-                    && is_built_in(class_type, "NoneType")
+                    && is_built_in(class_type, jsrt::atom!("NoneType"))
                 {
                     return None;
                 }
@@ -1428,7 +1428,7 @@ pub(crate) fn narrow_type_based_on_class_pattern(
                     &mut |subject_subtype_expanded, _, _| {
                         if is_any_or_unknown(subject_subtype_expanded) {
                             if is_instantiable_class(expanded_subtype)
-                                && is_built_in(expanded_class, "Callable")
+                                && is_built_in(expanded_class, jsrt::atom!("Callable"))
                             {
                                 // Convert to an unknown callable type.
                                 let unknown_callable = FunctionType::create_synthesized_instance(
@@ -1485,14 +1485,14 @@ pub(crate) fn narrow_type_based_on_class_pattern(
                         // Handle NoneType specially.
                         if is_none_instance(subject_subtype_expanded)
                             && is_instantiable_class(expanded_subtype)
-                            && is_built_in(expanded_class, "NoneType")
+                            && is_built_in(expanded_class, jsrt::atom!("NoneType"))
                         {
                             return Some(subject_subtype_expanded);
                         }
 
                         // Handle Callable specially.
                         if is_instantiable_class(expanded_subtype)
-                            && is_built_in(expanded_class, "Callable")
+                            && is_built_in(expanded_class, jsrt::atom!("Callable"))
                         {
                             let callable_type = get_unknown_type_for_callable().0;
 
@@ -1794,7 +1794,7 @@ pub(crate) fn narrow_type_of_class_pattern_arg(
                         evaluator.get_type_of_bound_member(
                             Some(arg.0),
                             ClassType::clone_as_instance(match_class, true),
-                            arg_name,
+                            jsrt::Atom::new(arg_name),
                             &EvaluatorUsage {
                                 method: "get".to_string(),
                                 set_type: None,
@@ -2135,7 +2135,7 @@ pub(crate) fn get_sequence_pattern_info(
             is_unbounded_tuple,
         })
     };
-    let is_built_in = |class_type: ClassType, name: &str| {
+    let is_built_in = |class_type: ClassType, name: jsrt::Atom| {
         ClassType::is_built_in(class_type, Some(&[name]))
     };
     let is_indeterminate_entry = |t: &TupleTypeArg| {
@@ -2159,9 +2159,9 @@ pub(crate) fn get_sequence_pattern_info(
                     let mro_class = ClassType(mro_class);
 
                     // Strings, bytes, and bytearray are explicitly excluded.
-                    if is_built_in(mro_class, "str")
-                        || is_built_in(mro_class, "bytes")
-                        || is_built_in(mro_class, "bytearray")
+                    if is_built_in(mro_class, jsrt::atom!("str"))
+                        || is_built_in(mro_class, jsrt::atom!("bytes"))
+                        || is_built_in(mro_class, jsrt::atom!("bytearray"))
                     {
                         // This is definitely not a match.
                         sequence_info.push(new_info(
@@ -2176,7 +2176,7 @@ pub(crate) fn get_sequence_pattern_info(
                         return;
                     }
 
-                    if is_built_in(mro_class, "Sequence") {
+                    if is_built_in(mro_class, jsrt::atom!("Sequence")) {
                         mro_class_to_specialize = Some(mro_class);
                         break;
                     }
@@ -2801,7 +2801,7 @@ pub fn assign_type_to_pattern_targets(
                         if let Some(key_entry) = key_entry {
                             let key_type = narrow_type_based_on_pattern(
                                 evaluator,
-                                evaluator.get_built_in_object(pattern, "str", None),
+                                evaluator.get_built_in_object(pattern, jsrt::atom!("str"), None),
                                 key_entry.d().key_pattern.get(),
                                 true,
                                 node_info,
@@ -2814,7 +2814,7 @@ pub fn assign_type_to_pattern_targets(
                                     if is_class_instance(key_subtype)
                                         && ClassType::is_built_in(
                                             ClassType(key_subtype),
-                                            Some(&["str"]),
+                                            Some(&[jsrt::atom!("str")]),
                                         )
                                         && is_literal_type(ClassType(key_subtype))
                                     {
@@ -2853,7 +2853,7 @@ pub fn assign_type_to_pattern_targets(
                                 false,
                             );
                         } else if expand_entry.is_some() {
-                            key_types.push(evaluator.get_built_in_object(pattern, "str", None));
+                            key_types.push(evaluator.get_built_in_object(pattern, jsrt::atom!("str"), None));
                             value_types.push(evaluator.get_object_type());
                         }
                     } else if let Some(dict_type_args) = &mapping_subtype_info.dict_type_args {
@@ -2899,8 +2899,8 @@ pub fn assign_type_to_pattern_targets(
                         node_info,
                     );
                 } else if let Some(expand_entry) = expand_entry {
-                    let dict_class = evaluator.get_built_in_type(pattern, "dict");
-                    let str_type = evaluator.get_built_in_object(pattern, "str", None);
+                    let dict_class = evaluator.get_built_in_type(pattern, jsrt::atom!("dict"));
+                    let str_type = evaluator.get_built_in_object(pattern, jsrt::atom!("str"), None);
                     let dict_type =
                         if is_instantiable_class(dict_class) && is_class_instance(str_type) {
                             ClassType::clone_as_instance(
@@ -3029,7 +3029,7 @@ pub(crate) fn wrap_type_in_list(
     }
 
     let list_object_type =
-        convert_to_instance(evaluator.get_built_in_object(node, "list", None), true);
+        convert_to_instance(evaluator.get_built_in_object(node, jsrt::atom!("list"), None), true);
     if is_class_instance(list_object_type) {
         // If the type is a union that contains an Any or Unknown, eliminate the other
         // types before wrapping it in a list.
@@ -3174,7 +3174,7 @@ pub fn get_pattern_subtype_narrowing_callback(
     subject_expression: ExpressionNode,
 ) -> Option<PatternSubtypeNarrowingCallback> {
     let evaluator_handle: P<TypeEvaluator> = *evaluator.evaluator_interface.get().unwrap();
-    let is_built_in = |class_type: ClassType, name: &str| {
+    let is_built_in = |class_type: ClassType, name: jsrt::Atom| {
         ClassType::is_built_in(class_type, Some(&[name]))
     };
 
@@ -3199,7 +3199,7 @@ pub fn get_pattern_subtype_narrowing_callback(
                 let index_class = ClassType(index_type);
                 if ClassType::is_built_in(
                     index_class,
-                    Some(&["int", "str"]),
+                    Some(&[jsrt::atom!("int"), jsrt::atom!("str")]),
                 ) {
                     let unnarrowed_reference_type_result = evaluator.get_type_of_expression(
                         index_node.d().left_expr.get(),
@@ -3227,7 +3227,7 @@ pub fn get_pattern_subtype_narrowing_callback(
                                         .literal_value
                                         .is_some()
                                 {
-                                    if is_built_in(index_class, "str") {
+                                    if is_built_in(index_class, jsrt::atom!("str")) {
                                         types_to_combine.push(
                                             narrow_type_for_discriminated_dict_entry_comparison(
                                                 evaluator,
@@ -3298,7 +3298,7 @@ pub fn get_pattern_subtype_narrowing_callback(
                     narrowed_subject_type,
                     &mut |subtype, _, _| {
                         let tuple_type_args = if is_class_instance(subtype)
-                            && is_built_in(ClassType(subtype), "tuple")
+                            && is_built_in(ClassType(subtype), jsrt::atom!("tuple"))
                         {
                             ClassType(subtype)
                                 .d()

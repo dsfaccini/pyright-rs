@@ -92,7 +92,7 @@ pub fn is_enum_metaclass(class_type: ClassType) -> bool {
         is_class(mro_class)
             && ClassType::is_built_in(
                 ClassType(mro_class),
-                Some(&["EnumMeta", "EnumType"]),
+                Some(&[jsrt::atom!("EnumMeta"), jsrt::atom!("EnumType")]),
             )
     })
 }
@@ -118,7 +118,7 @@ pub fn is_enum_class_with_members(
         let name = symbol_table
             .borrow()
             .get_index(index)
-            .map(|(name, _)| name.clone());
+            .map(|(name, _)| *name);
         let Some(name) = name else {
             break;
         };
@@ -232,7 +232,7 @@ pub fn create_enum_type(
         _ => return None,
     };
 
-    let int_class_type = evaluator.get_built_in_type(error_node, "int");
+    let int_class_type = evaluator.get_built_in_type(error_node, jsrt::atom!("int"));
     if !is_instantiable_class(int_class_type) {
         return None;
     }
@@ -280,8 +280,8 @@ pub fn create_enum_type(
 
             let class_shared = class_type.d().shared.get();
             let enum_literal = EnumLiteral::new(
-                class_shared.full_name.clone(),
-                class_shared.name.clone(),
+                class_shared.full_name.to_string(),
+                class_shared.name.to_string(),
                 entry_name.to_string(),
                 value_type.0,
                 is_repr_enum,
@@ -368,8 +368,8 @@ pub fn create_enum_type(
 
             let class_shared = class_type.d().shared.get();
             let enum_literal = EnumLiteral::new(
-                class_shared.full_name.clone(),
-                class_shared.name.clone(),
+                class_shared.full_name.to_string(),
+                class_shared.name.to_string(),
                 entry_name.clone(),
                 value_type,
                 is_repr_enum,
@@ -417,8 +417,8 @@ pub fn create_enum_type(
             };
             let class_shared = class_type.d().shared.get();
             let enum_literal = EnumLiteral::new(
-                class_shared.full_name.clone(),
-                class_shared.name.clone(),
+                class_shared.full_name.to_string(),
+                class_shared.name.to_string(),
                 entry_name.clone(),
                 value_type,
                 is_repr_enum,
@@ -725,8 +725,8 @@ pub fn transform_type_for_enum_member(
 
         let member_class_shared = member_class_type.d().shared.get();
         let enum_literal = EnumLiteral::new(
-            member_class_shared.full_name.clone(),
-            member_class_shared.name.clone(),
+            member_class_shared.full_name.to_string(),
+            member_class_shared.name.to_string(),
             member_name.to_string(),
             value_type,
             is_repr_enum_class(class_type),
@@ -789,7 +789,7 @@ pub fn get_enum_declared_value_type(
         && is_class(declared_value_member.class_type)
         && !ClassType::is_built_in(
             ClassType(declared_value_member.class_type),
-            Some(&["Enum"]),
+            Some(&[jsrt::atom!("Enum")]),
         )
     {
         value_type = Some(evaluator.get_type_of_member(declared_value_member));
@@ -856,13 +856,13 @@ pub fn get_type_of_enum_member(
             && is_class(member_info.class_type)
             && !ClassType::is_built_in(
                 ClassType(member_info.class_type),
-                Some(&["Enum"]),
+                Some(&[jsrt::atom!("Enum")]),
             )
         {
             return None;
         }
 
-        let str_class = evaluator.get_built_in_type(error_node, "str");
+        let str_class = evaluator.get_built_in_type(error_node, jsrt::atom!("str"));
         if !is_instantiable_class(str_class) {
             return None;
         }
@@ -1024,7 +1024,7 @@ pub fn get_enum_auto_value_type(evaluator: &TypeEvaluator, node: ExpressionNode)
             let member_info = evaluator.get_type_of_bound_member(
                 Some(node),
                 ClassType::clone_as_instance(class_type_info.class_type, true),
-                "_generate_next_value_",
+                jsrt::atom!("_generate_next_value_"),
                 &EvaluatorUsage {
                     method: "get".to_string(),
                     set_type: None,
@@ -1047,7 +1047,7 @@ pub fn get_enum_auto_value_type(evaluator: &TypeEvaluator, node: ExpressionNode)
                 && is_class(member_class_type)
                 && !ClassType::is_built_in(
                     ClassType(member_class_type),
-                    Some(&["Enum"]),
+                    Some(&[jsrt::atom!("Enum")]),
                 )
                 && let Some(declared_return_type) = FunctionType(member_info.type_.get())
                     .d()
@@ -1061,7 +1061,7 @@ pub fn get_enum_auto_value_type(evaluator: &TypeEvaluator, node: ExpressionNode)
         }
     }
 
-    evaluator.get_built_in_object(node, "int", None)
+    evaluator.get_built_in_object(node, jsrt::atom!("int"), None)
 }
 
 // analyzer/enums.ts:757
@@ -1069,6 +1069,6 @@ pub(crate) fn is_repr_enum_class(enum_class: ClassType) -> bool {
     let mro = enum_class.d().shared.get().mro.borrow().clone();
     mro.iter().any(|&mro_class| {
         is_class(mro_class)
-            && ClassType::is_built_in(ClassType(mro_class), Some(&["ReprEnum"]))
+            && ClassType::is_built_in(ClassType(mro_class), Some(&[jsrt::atom!("ReprEnum")]))
     })
 }

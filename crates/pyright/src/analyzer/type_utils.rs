@@ -13,9 +13,9 @@ use crate::analyzer::constraint_solution::{ConstraintSolution, ConstraintSolutio
 use crate::analyzer::symbol::{Symbol, SymbolTable};
 use crate::analyzer::types::{
     ClassType, ClassTypeFlags, FunctionType, ModuleType, SignatureWithOffsets, TupleTypeArg, Type,
-    TypeCondition, TypeSameOptions, TypeVarType, Variance,
+    TypeCondition, TypeSameOptions, TypeVarScopeId, TypeVarType, Variance,
 };
-use jsrt::{JsMap, JsSet, P, SmallJsSet, flag_ops};
+use jsrt::{Atom, AtomKey, JsMap, JsSet, P, SmallJsSet, flag_ops};
 use jsrt::cell::{Cell, RefCell};
 use std::rc::Rc;
 
@@ -215,13 +215,13 @@ pub fn is_optional_type(type_: P<Type>) -> bool {
 // analyzer/typeUtils.ts:303
 pub fn is_none_instance(type_: P<Type>) -> bool {
     crate::analyzer::types::is_class_instance(type_)
-        && ClassType::is_built_in(ClassType(type_), Some(&["NoneType"]))
+        && ClassType::is_built_in(ClassType(type_), Some(&[jsrt::atom!("NoneType")]))
 }
 
 // analyzer/typeUtils.ts:307
 pub fn is_none_type_class(type_: P<Type>) -> bool {
     crate::analyzer::types::is_instantiable_class(type_)
-        && ClassType::is_built_in(ClassType(type_), Some(&["NoneType"]))
+        && ClassType::is_built_in(ClassType(type_), Some(&[jsrt::atom!("NoneType")]))
 }
 
 // analyzer/typeUtils.ts:313
@@ -696,9 +696,9 @@ pub(crate) fn compare_types(a: P<Type>, b: P<Type>, recursion_count: u32) -> i32
             }
 
             // Always sort NoneType at the end.
-            if ClassType::is_built_in(a_class, Some(&["NoneType"])) {
+            if ClassType::is_built_in(a_class, Some(&[jsrt::atom!("NoneType")])) {
                 return 1;
-            } else if ClassType::is_built_in(b_class, Some(&["NoneType"])) {
+            } else if ClassType::is_built_in(b_class, Some(&[jsrt::atom!("NoneType")])) {
                 return -1;
             }
 
@@ -930,7 +930,7 @@ pub fn get_full_name_of_type(type_: P<Type>) -> Option<String> {
             Some("typing.Any".to_string())
         }
 
-        crate::analyzer::types::TypeCategory::Class => Some(ClassType(type_).d().shared.get().full_name.clone()),
+        crate::analyzer::types::TypeCategory::Class => Some(ClassType(type_).d().shared.get().full_name.to_string()),
 
         crate::analyzer::types::TypeCategory::Function => Some(FunctionType(type_).d().shared.get().full_name.clone()),
 
@@ -1146,7 +1146,7 @@ pub fn transform_possible_recursive_type_alias(
 }
 
 // analyzer/typeUtils.ts:1069
-pub fn get_type_var_scope_id(type_: P<Type>) -> Option<String> {
+pub fn get_type_var_scope_id(type_: P<Type>) -> Option<TypeVarScopeId> {
     if crate::analyzer::types::is_class(type_) {
         return ClassType(type_).d().shared.get().type_var_scope_id.borrow().clone();
     }
@@ -1156,17 +1156,17 @@ pub fn get_type_var_scope_id(type_: P<Type>) -> Option<String> {
     }
 
     if crate::analyzer::types::is_type_var(type_) {
-        return TypeVarType(type_).d().priv_.borrow().scope_id.as_deref().map(str::to_string);
+        return TypeVarType(type_).d().priv_.borrow().scope_id;
     }
 
     None
 }
 
 // analyzer/typeUtils.ts:1087
-pub fn get_type_var_scope_ids(type_: P<Type>) -> Vec<String> {
+pub fn get_type_var_scope_ids(type_: P<Type>) -> Vec<TypeVarScopeId> {
     // This is similar to getTypeVarScopeId except that it includes
     // the secondary scope IDs for functions.
-    let mut scope_ids: Vec<String> = Vec::new();
+    let mut scope_ids: Vec<TypeVarScopeId> = Vec::new();
 
     let scope_id = get_type_var_scope_id(type_);
     if let Some(scope_id) = scope_id {
@@ -1251,7 +1251,7 @@ pub fn get_unknown_for_type_var(
 pub fn get_unknown_for_type_var_tuple(tuple_class_type: ClassType) -> P<Type> {
     crate::common::debug::assert(
         crate::analyzer::types::is_instantiable_class(tuple_class_type.0)
-            && ClassType::is_built_in(tuple_class_type, Some(&["tuple"])),
+            && ClassType::is_built_in(tuple_class_type, Some(&[jsrt::atom!("tuple")])),
         None,
     );
 
@@ -1394,7 +1394,7 @@ pub fn is_literal_like_type(type_: ClassType) -> bool {
         return true;
     }
 
-    if ClassType::is_built_in(type_, Some(&["LiteralString"])) {
+    if ClassType::is_built_in(type_, Some(&[jsrt::atom!("LiteralString")])) {
         return true;
     }
 
@@ -1498,7 +1498,7 @@ pub fn get_literal_type_class_name(type_: P<Type>) -> Option<String> {
     if crate::analyzer::types::is_class_instance(type_) {
         let class_type = ClassType(type_);
         if class_type.d().priv_.borrow().literal_value.is_some() && ClassType::is_built_in(class_type, None) {
-            return Some(class_type.d().shared.get().name.clone());
+            return Some(class_type.d().shared.get().name.to_string());
         }
         return None;
     }
@@ -1678,7 +1678,7 @@ pub fn is_stub_only_subscriptable(class_type: ClassType) -> bool {
 
 // analyzer/typeUtils.ts:1460
 pub fn is_tuple_class(type_: ClassType) -> bool {
-    ClassType::is_built_in(type_, Some(&["tuple"]))
+    ClassType::is_built_in(type_, Some(&[jsrt::atom!("tuple")]))
 }
 
 // analyzer/typeUtils.ts:1467
@@ -1829,7 +1829,7 @@ pub fn ensure_signatures_are_unique(
 
 // analyzer/typeUtils.ts:1582
 pub fn make_function_type_vars_bound(type_: P<Type>) -> P<Type> {
-    let mut scope_ids: Vec<String> = Vec::new();
+    let mut scope_ids: Vec<TypeVarScopeId> = Vec::new();
     do_for_each_signature(type_, &mut |signature, _| {
         let local_scope_id = get_type_var_scope_id(signature.0);
         if let Some(local_scope_id) = local_scope_id {
@@ -1843,7 +1843,7 @@ pub fn make_function_type_vars_bound(type_: P<Type>) -> P<Type> {
 }
 
 // analyzer/typeUtils.ts:1595
-pub fn make_type_vars_bound(type_: P<Type>, scope_ids: Option<&[String]>) -> P<Type> {
+pub fn make_type_vars_bound(type_: P<Type>, scope_ids: Option<&[TypeVarScopeId]>) -> P<Type> {
     if scope_ids.is_some_and(|scope_ids| scope_ids.is_empty()) {
         return type_;
     }
@@ -1853,7 +1853,7 @@ pub fn make_type_vars_bound(type_: P<Type>, scope_ids: Option<&[String]>) -> P<T
 }
 
 // analyzer/typeUtils.ts:1605
-pub fn make_type_vars_free(type_: P<Type>, scope_ids: &[String]) -> P<Type> {
+pub fn make_type_vars_free(type_: P<Type>, scope_ids: &[TypeVarScopeId]) -> P<Type> {
     if scope_ids.is_empty() {
         return type_;
     }
@@ -1900,7 +1900,7 @@ pub fn validate_type_var_default(
 // analyzer/typeUtils.ts:1646
 pub fn transform_expected_type(
     expected_type: P<Type>,
-    live_type_var_scopes: &[String],
+    live_type_var_scopes: &[TypeVarScopeId],
     usage_offset: Option<i32>,
 ) -> P<Type> {
     let mut transformer = UnificationTypeTransformer::new(live_type_var_scopes.to_vec(), usage_offset);
@@ -1930,7 +1930,7 @@ pub fn get_protocol_symbols_recursive(
     // a separate class at runtime. The typeshed stubs model it
     // this way, and we don't want it to be treated as a protocol
     // or abstract class.
-    if ClassType::is_built_in(class_type, Some(&["NamedTuple"])) {
+    if ClassType::is_built_in(class_type, Some(&[jsrt::atom!("NamedTuple")])) {
         return;
     }
 
@@ -2020,7 +2020,7 @@ pub fn get_container_depth(type_: P<Type>, recursion_count: u32) -> u32 {
 /// TS defaults: flags = MemberAccessFlags.Default.
 pub fn look_up_object_member(
     object_type: ClassType,
-    member_name: &str,
+    member_name: impl AtomKey,
     flags: MemberAccessFlags,
     skip_mro_class: Option<ClassType>,
 ) -> Option<ClassMember> {
@@ -2035,10 +2035,13 @@ pub fn look_up_object_member(
 /// TS defaults: flags = MemberAccessFlags.Default.
 pub fn look_up_class_member(
     class_type: ClassType,
-    member_name: &str,
+    member_name: impl AtomKey,
     flags: MemberAccessFlags,
     skip_mro_class: Option<ClassType>,
 ) -> Option<ClassMember> {
+    // Symbol tables are keyed by atom: text without one is in none of them.
+    let member_key = member_name.lookup();
+
     // Look in the metaclass first.
     let metaclass = class_type.d().shared.get().effective_metaclass.get();
 
@@ -2046,10 +2049,10 @@ pub fn look_up_class_member(
     // define any instance variables, and it's by far the most common metaclass.
     if let Some(metaclass) = metaclass {
         if crate::analyzer::types::is_class(metaclass)
-            && !ClassType::is_built_in(ClassType(metaclass), Some(&["type"]))
+            && !ClassType::is_built_in(ClassType(metaclass), Some(&[jsrt::atom!("type")]))
         {
             let mut meta_member_itr =
-                get_class_member_iterator(metaclass, member_name, MemberAccessFlags::SkipClassMembers, None);
+                get_class_member_iterator(metaclass, member_key, MemberAccessFlags::SkipClassMembers, None);
             let meta_member = meta_member_itr.next();
 
             // If the metaclass defines the member and we didn't hit an Unknown
@@ -2065,19 +2068,21 @@ pub fn look_up_class_member(
         }
     }
 
-    let mut member_itr = get_class_member_iterator(class_type.0, member_name, flags, skip_mro_class);
+    let mut member_itr = get_class_member_iterator(class_type.0, member_key, flags, skip_mro_class);
 
     member_itr.next()
 }
 
 // analyzer/typeUtils.ts:1804
 /// TS defaults: flags = MemberAccessFlags.Default.
+/// `member_key` is the member name's atom, `None` when the name has none: then no symbol
+/// table holds the name, and only Unknown classes in the MRO yield a member.
 pub fn get_class_member_iterator(
     class_type: P<Type>,
-    member_name: &str,
+    member_key: Option<Atom>,
     flags: MemberAccessFlags,
     skip_mro_class: Option<ClassType>,
-) -> impl Iterator<Item = ClassMember> + '_ {
+) -> impl Iterator<Item = ClassMember> {
     // A TypeScript generator: each `next()` runs the body up to its next `yield`, so the
     // MRO walk and its partial specializations happen only as far as the caller reads.
     let declared_types_only = flags.any(MemberAccessFlags::DeclaredTypesOnly);
@@ -2151,7 +2156,7 @@ pub fn get_class_member_iterator(
                     current = Some((mro_class, specialized_mro_class, member_fields, skip_td_entry, true));
 
                     if !flags.any(MemberAccessFlags::SkipInstanceMembers) {
-                        let symbol = member_fields.get(member_name);
+                        let symbol = member_key.and_then(|key| member_fields.get(key));
 
                         if let Some(symbol) = symbol {
                             if symbol.is_instance_member() && !skip_td_entry {
@@ -2168,7 +2173,8 @@ pub fn get_class_member_iterator(
                                         ),
                                         class_type: specialized_mro_class.0,
                                         unspecialized_class_type: mro_class,
-                                        is_read_only: is_member_read_only(specialized_mro_class, member_name),
+                                        // A symbol was found, so the key is an atom.
+                                        is_read_only: is_member_read_only(specialized_mro_class, member_key.map_or("", Atom::as_str)),
                                         is_type_declared: has_declared_type,
                                         skipped_undeclared_type,
                                     });
@@ -2183,7 +2189,7 @@ pub fn get_class_member_iterator(
                 // Next look at class members.
                 current = None;
                 if !flags.any(MemberAccessFlags::SkipClassMembers) {
-                    let mut symbol = member_fields.get(member_name);
+                    let mut symbol = member_key.and_then(|key| member_fields.get(key));
 
                     if let Some(found_symbol) = symbol {
                         if found_symbol.is_class_member() && !skip_td_entry {
@@ -2211,7 +2217,7 @@ pub fn get_class_member_iterator(
 
                                 // Handle the special case of a __call__ class member in a partial class.
                                 let partial_call_type = ClassType(class_type).d().priv_.borrow().cold().partial_call_type;
-                                if member_name == "__call__" {
+                                if member_key == Some(jsrt::atom!("__call__")) {
                                     if let Some(partial_call_type) = partial_call_type {
                                         let generic_class = if crate::analyzer::types::TypeBase::is_instance(class_type) {
                                             ClassType::clone_as_instantiable(ClassType(class_type), true)
@@ -2286,7 +2292,10 @@ pub fn get_class_member_iterator(
                     .get()
                     .typed_dict_entries
                     .get()
-                    .is_some_and(|entries| entries.known_items.borrow().contains_key(member_name));
+                    .is_some_and(|entries| {
+                        // Without an atom the name has no symbol here, and the test is moot.
+                        member_key.is_some_and(|key| entries.known_items.borrow().contains_key(key.as_str()))
+                    });
             current = Some((mro_class, specialized_mro_class, member_fields, skip_td_entry, false));
         }
     })
@@ -2365,7 +2374,7 @@ pub fn get_class_iterator(
             // Should we ignore members on the 'object' base class?
             if flags.any(ClassIteratorFlags::SkipObjectBaseClass) {
                 if crate::analyzer::types::is_instantiable_class(specialized_mro_class) {
-                    if ClassType::is_built_in(ClassType(specialized_mro_class), Some(&["object"])) {
+                    if ClassType::is_built_in(ClassType(specialized_mro_class), Some(&[jsrt::atom!("object")])) {
                         finished = true;
                         return None;
                     }
@@ -2375,7 +2384,7 @@ pub fn get_class_iterator(
             // Should we ignore members on the 'type' base class?
             if flags.any(ClassIteratorFlags::SkipTypeBaseClass) {
                 if crate::analyzer::types::is_instantiable_class(specialized_mro_class) {
-                    if ClassType::is_built_in(ClassType(specialized_mro_class), Some(&["type"])) {
+                    if ClassType::is_built_in(ClassType(specialized_mro_class), Some(&[jsrt::atom!("type")])) {
                         finished = true;
                         return None;
                     }
@@ -2417,7 +2426,7 @@ pub fn get_class_fields_recursive(class_type: ClassType) -> JsMap<String, ClassM
                                 symbol,
                                 ClassType::is_data_class(specialized_mro_class),
                             ),
-                            is_read_only: is_member_read_only(specialized_mro_class, name),
+                            is_read_only: is_member_read_only(specialized_mro_class, &name),
                             is_type_declared: true,
                             skipped_undeclared_type: false,
                         },
@@ -2438,11 +2447,11 @@ pub fn get_class_fields_recursive(class_type: ClassType) -> JsMap<String, ClassM
 pub fn add_type_vars_to_list_if_unique(
     list1: &mut Vec<TypeVarType>,
     list2: &[TypeVarType],
-    type_var_scope_id: Option<&str>,
+    type_var_scope_id: Option<TypeVarScopeId>,
 ) {
     for type2 in list2 {
         if let Some(type_var_scope_id) = type_var_scope_id {
-            if !type_var_scope_id.is_empty() && type2.d().priv_.borrow().scope_id.as_deref() != Some(type_var_scope_id) {
+            if !type_var_scope_id.is_empty() && type2.d().priv_.borrow().scope_id != Some(type_var_scope_id) {
                 continue;
             }
         }
@@ -2675,7 +2684,7 @@ pub fn specialize_for_base_class(src_type: ClassType, base_class: ClassType) -> 
 }
 
 // analyzer/typeUtils.ts:2247
-pub fn derives_from_stdlib_class(class_type: ClassType, class_name: &str) -> bool {
+pub fn derives_from_stdlib_class(class_type: ClassType, class_name: jsrt::Atom) -> bool {
     let mro = class_type.d().shared.get().mro.borrow().clone();
     mro.iter().any(|mro_class| {
         crate::analyzer::types::is_class(*mro_class)
@@ -2715,7 +2724,7 @@ pub fn synthesize_type_var_for_self_cls(class_type: ClassType, is_cls_param: boo
     let shared = self_type.d().shared.get();
     shared.is_synthesized.set(true);
     shared.is_synthesized_self.set(true);
-    self_type.d().priv_.borrow_mut().scope_id = Some(scope_id.as_str().into());
+    self_type.d().priv_.borrow_mut().scope_id = Some(scope_id);
     self_type.d().priv_.borrow_mut().scope_name = Some("".into());
     let name_with_scope = TypeVarType::make_name_with_scope(
         &shared.name.borrow(),
@@ -2768,10 +2777,10 @@ pub fn get_generator_yield_type(declared_return_type: P<Type>, is_async: bool) -
 
             if crate::analyzer::types::is_class_instance(subtype) {
                 let expected_classes = [
-                    ["AsyncIterable", "Iterable"],
-                    ["AsyncIterator", "Iterator"],
-                    ["AsyncGenerator", "Generator"],
-                    ["", "AwaitableGenerator"],
+                    [jsrt::atom!("AsyncIterable"), jsrt::atom!("Iterable")],
+                    [jsrt::atom!("AsyncIterator"), jsrt::atom!("Iterator")],
+                    [jsrt::atom!("AsyncGenerator"), jsrt::atom!("Generator")],
+                    [jsrt::atom!(""), jsrt::atom!("AwaitableGenerator")],
                 ];
 
                 if expected_classes.iter().any(|classes| {
@@ -2801,7 +2810,7 @@ pub fn is_instantiable_metaclass(type_: P<Type>) -> bool {
         let mro = ClassType(type_).d().shared.get().mro.borrow().clone();
         mro.iter().any(|mro_class| {
             crate::analyzer::types::is_class(*mro_class)
-                && ClassType::is_built_in(ClassType(*mro_class), Some(&["type"]))
+                && ClassType::is_built_in(ClassType(*mro_class), Some(&[jsrt::atom!("type")]))
         })
     }
 }
@@ -2812,7 +2821,7 @@ pub fn is_metaclass_instance(type_: P<Type>) -> bool {
         let mro = ClassType(type_).d().shared.get().mro.borrow().clone();
         mro.iter().any(|mro_class| {
             crate::analyzer::types::is_class(*mro_class)
-                && ClassType::is_built_in(ClassType(*mro_class), Some(&["type"]))
+                && ClassType::is_built_in(ClassType(*mro_class), Some(&[jsrt::atom!("type")]))
         })
     }
 }
@@ -2876,7 +2885,7 @@ pub fn convert_to_instance(type_: P<Type>, include_subclasses: bool) -> P<Type> 
                 crate::analyzer::types::TypeCategory::Class => {
                     let class_subtype = ClassType(subtype);
                     // Handle type[x] as a special case.
-                    if ClassType::is_built_in(class_subtype, Some(&["type"])) {
+                    if ClassType::is_built_in(class_subtype, Some(&[jsrt::atom!("type")])) {
                         let type_args = class_subtype.d().priv_.borrow().type_args.clone();
                         if crate::analyzer::types::TypeBase::is_instance(subtype) {
                             match type_args {
@@ -3622,9 +3631,9 @@ pub fn make_unpacked(type_: P<Type>) -> P<Type> {
 pub fn get_generator_type_args(return_type: P<Type>) -> Option<Vec<P<Type>>> {
     if crate::analyzer::types::is_class_instance(return_type) {
         let class_type = ClassType(return_type);
-        if ClassType::is_built_in(class_type, Some(&["Generator", "AsyncGenerator"])) {
+        if ClassType::is_built_in(class_type, Some(&[jsrt::atom!("Generator"), jsrt::atom!("AsyncGenerator")])) {
             return class_type.d().priv_.borrow().type_args.clone().map(|a| a.to_vec());
-        } else if ClassType::is_built_in(class_type, Some(&["AwaitableGenerator"])) {
+        } else if ClassType::is_built_in(class_type, Some(&[jsrt::atom!("AwaitableGenerator")])) {
             // AwaitableGenerator has four type arguments, and the first 3
             // correspond to the generator.
             return class_type
@@ -3972,7 +3981,7 @@ pub fn compute_mro_linearization(class_type: ClassType) -> bool {
             if crate::analyzer::types::is_instantiable_class(base_class) {
                 // Generic has some special-case logic (see description of __mro_entries__
                 // in PEP 560) that we need to account for here.
-                if ClassType::is_built_in(ClassType(base_class), Some(&["Generic"])) {
+                if ClassType::is_built_in(ClassType(base_class), Some(&[jsrt::atom!("Generic")])) {
                     // If the class is a Protocol or TypedDict, the generic is ignored for
                     // the purposes of computing the MRO.
                     if ClassType::is_protocol_class(class_type) || ClassType::is_typed_dict_class(class_type) {
@@ -4596,9 +4605,9 @@ pub(crate) fn transform_type_pair_recursive(
 // analyzer/typeUtils.ts:3687
 pub trait TypeVarTransformer {
     // analyzer/typeUtils.ts:3688
-    fn _pending_type_var_transformations(&self) -> &SmallJsSet<Rc<str>>;
+    fn _pending_type_var_transformations(&self) -> &SmallJsSet<TypeVarScopeId>;
 
-    fn _pending_type_var_transformations_mut(&mut self) -> &mut SmallJsSet<Rc<str>>;
+    fn _pending_type_var_transformations_mut(&mut self) -> &mut SmallJsSet<TypeVarScopeId>;
 
     // analyzer/typeUtils.ts:3689
     fn _pending_function_transformations(&self) -> &Vec<P<Type>>;
@@ -4606,7 +4615,7 @@ pub trait TypeVarTransformer {
     fn _pending_function_transformations_mut(&mut self) -> &mut Vec<P<Type>>;
 
     // analyzer/typeUtils.ts:3691
-    fn pending_type_var_transformations(&self) -> SmallJsSet<Rc<str>> {
+    fn pending_type_var_transformations(&self) -> SmallJsSet<TypeVarScopeId> {
         self._pending_type_var_transformations().clone()
     }
 
@@ -4681,7 +4690,7 @@ pub trait TypeVarTransformer {
             // type variables in the same scope recursively by setting it the scope in the
             // _pendingTypeVarTransformations set.
             let scope_id = type_var.d().priv_.borrow().scope_id.clone();
-            if !self._is_type_var_scope_pending(scope_id.as_deref()) {
+            if !self._is_type_var_scope_pending(scope_id) {
                 let mut param_spec_access: Option<crate::analyzer::types::ParamSpecAccess> = None;
 
                 // If this is a ParamSpec with a ".args" or ".kwargs" access, strip
@@ -4723,9 +4732,9 @@ pub trait TypeVarTransformer {
 
                 let scope_id = type_var.d().priv_.borrow().scope_id.clone();
                 if let Some(scope_id) = scope_id.filter(|id| !id.is_empty()) {
-                    self._pending_type_var_transformations_mut().insert(scope_id.clone());
+                    self._pending_type_var_transformations_mut().insert(scope_id);
                     replacement_type = self.apply(replacement_type, recursion_count);
-                    self._pending_type_var_transformations_mut().shift_remove(&*scope_id);
+                    self._pending_type_var_transformations_mut().shift_remove(&scope_id);
                 }
             }
 
@@ -4937,7 +4946,7 @@ pub trait TypeVarTransformer {
         // Handle the common case where the class has no type parameters.
         if type_params.is_empty()
             && !ClassType::is_special_built_in(class_type, None)
-            && !ClassType::is_built_in(class_type, Some(&["type"]))
+            && !ClassType::is_built_in(class_type, Some(&[jsrt::atom!("type")]))
         {
             return class_type.0;
         }
@@ -5315,26 +5324,26 @@ pub trait TypeVarTransformer {
     }
 
     // analyzer/typeUtils.ts:4256
-    fn _is_type_var_scope_pending(&mut self, type_var_scope_id: Option<&str>) -> bool {
+    fn _is_type_var_scope_pending(&mut self, type_var_scope_id: Option<TypeVarScopeId>) -> bool {
         type_var_scope_id.is_some_and(|scope_id| !scope_id.is_empty())
-            && self._pending_type_var_transformations().contains(type_var_scope_id.unwrap())
+            && self._pending_type_var_transformations().contains(&type_var_scope_id.unwrap())
     }
 }
 
 // analyzer/typeUtils.ts:4263
 pub struct TypeVarDefaultValidator {
-    pub(crate) _pending_type_var_transformations: SmallJsSet<Rc<str>>,
+    pub(crate) _pending_type_var_transformations: SmallJsSet<TypeVarScopeId>,
     pub(crate) _pending_function_transformations: Vec<P<Type>>,
     pub(crate) _live_type_params: Vec<TypeVarType>,
     pub(crate) _invalid_type_vars: JsSet<String>,
 }
 
 impl TypeVarTransformer for TypeVarDefaultValidator {
-    fn _pending_type_var_transformations(&self) -> &SmallJsSet<Rc<str>> {
+    fn _pending_type_var_transformations(&self) -> &SmallJsSet<TypeVarScopeId> {
         &self._pending_type_var_transformations
     }
 
-    fn _pending_type_var_transformations_mut(&mut self) -> &mut SmallJsSet<Rc<str>> {
+    fn _pending_type_var_transformations_mut(&mut self) -> &mut SmallJsSet<TypeVarScopeId> {
         &mut self._pending_type_var_transformations
     }
 
@@ -5383,18 +5392,18 @@ impl TypeVarDefaultValidator {
 
 // analyzer/typeUtils.ts:4278
 pub struct UniqueFunctionSignatureTransformer {
-    pub(crate) _pending_type_var_transformations: SmallJsSet<Rc<str>>,
+    pub(crate) _pending_type_var_transformations: SmallJsSet<TypeVarScopeId>,
     pub(crate) _pending_function_transformations: Vec<P<Type>>,
     pub(crate) _signature_tracker: P<UniqueSignatureTracker>,
     pub(crate) _expression_offset: i32,
 }
 
 impl TypeVarTransformer for UniqueFunctionSignatureTransformer {
-    fn _pending_type_var_transformations(&self) -> &SmallJsSet<Rc<str>> {
+    fn _pending_type_var_transformations(&self) -> &SmallJsSet<TypeVarScopeId> {
         &self._pending_type_var_transformations
     }
 
-    fn _pending_type_var_transformations_mut(&mut self) -> &mut SmallJsSet<Rc<str>> {
+    fn _pending_type_var_transformations_mut(&mut self) -> &mut SmallJsSet<TypeVarScopeId> {
         &mut self._pending_type_var_transformations
     }
 
@@ -5436,11 +5445,11 @@ impl TypeVarTransformer for UniqueFunctionSignatureTransformer {
             // `doForEachConstraintSet` and `transformTypeVar`, which this class does not override.
             struct Super<'a>(&'a mut UniqueFunctionSignatureTransformer);
             impl TypeVarTransformer for Super<'_> {
-                fn _pending_type_var_transformations(&self) -> &SmallJsSet<Rc<str>> {
+                fn _pending_type_var_transformations(&self) -> &SmallJsSet<TypeVarScopeId> {
                     self.0._pending_type_var_transformations()
                 }
 
-                fn _pending_type_var_transformations_mut(&mut self) -> &mut SmallJsSet<Rc<str>> {
+                fn _pending_type_var_transformations_mut(&mut self) -> &mut SmallJsSet<TypeVarScopeId> {
                     self.0._pending_type_var_transformations_mut()
                 }
 
@@ -5513,17 +5522,17 @@ impl UniqueFunctionSignatureTransformer {
 
 // analyzer/typeUtils.ts:4342
 pub struct BoundTypeVarTransform {
-    pub(crate) _pending_type_var_transformations: SmallJsSet<Rc<str>>,
+    pub(crate) _pending_type_var_transformations: SmallJsSet<TypeVarScopeId>,
     pub(crate) _pending_function_transformations: Vec<P<Type>>,
-    pub(crate) _scope_ids: Option<Vec<String>>,
+    pub(crate) _scope_ids: Option<Vec<TypeVarScopeId>>,
 }
 
 impl TypeVarTransformer for BoundTypeVarTransform {
-    fn _pending_type_var_transformations(&self) -> &SmallJsSet<Rc<str>> {
+    fn _pending_type_var_transformations(&self) -> &SmallJsSet<TypeVarScopeId> {
         &self._pending_type_var_transformations
     }
 
-    fn _pending_type_var_transformations_mut(&mut self) -> &mut SmallJsSet<Rc<str>> {
+    fn _pending_type_var_transformations_mut(&mut self) -> &mut SmallJsSet<TypeVarScopeId> {
         &mut self._pending_type_var_transformations
     }
 
@@ -5551,7 +5560,7 @@ impl TypeVarTransformer for BoundTypeVarTransform {
 
 impl BoundTypeVarTransform {
     // analyzer/typeUtils.ts:4343
-    pub fn new(_scope_ids: Option<Vec<String>>) -> Self {
+    pub fn new(_scope_ids: Option<Vec<TypeVarScopeId>>) -> Self {
         BoundTypeVarTransform {
             _pending_type_var_transformations: SmallJsSet::default(),
             _pending_function_transformations: Vec::new(),
@@ -5582,17 +5591,17 @@ impl BoundTypeVarTransform {
 
 // analyzer/typeUtils.ts:4375
 pub struct FreeTypeVarTransform {
-    pub(crate) _pending_type_var_transformations: SmallJsSet<Rc<str>>,
+    pub(crate) _pending_type_var_transformations: SmallJsSet<TypeVarScopeId>,
     pub(crate) _pending_function_transformations: Vec<P<Type>>,
-    pub(crate) _scope_ids: Vec<String>,
+    pub(crate) _scope_ids: Vec<TypeVarScopeId>,
 }
 
 impl TypeVarTransformer for FreeTypeVarTransform {
-    fn _pending_type_var_transformations(&self) -> &SmallJsSet<Rc<str>> {
+    fn _pending_type_var_transformations(&self) -> &SmallJsSet<TypeVarScopeId> {
         &self._pending_type_var_transformations
     }
 
-    fn _pending_type_var_transformations_mut(&mut self) -> &mut SmallJsSet<Rc<str>> {
+    fn _pending_type_var_transformations_mut(&mut self) -> &mut SmallJsSet<TypeVarScopeId> {
         &mut self._pending_type_var_transformations
     }
 
@@ -5623,7 +5632,7 @@ impl TypeVarTransformer for FreeTypeVarTransform {
 
 impl FreeTypeVarTransform {
     // analyzer/typeUtils.ts:4376
-    pub fn new(_scope_ids: Vec<String>) -> Self {
+    pub fn new(_scope_ids: Vec<TypeVarScopeId>) -> Self {
         FreeTypeVarTransform {
             _pending_type_var_transformations: SmallJsSet::default(),
             _pending_function_transformations: Vec::new(),
@@ -5644,7 +5653,7 @@ impl FreeTypeVarTransform {
 
 // analyzer/typeUtils.ts:4399
 pub struct ApplySolvedTypeVarsTransformer {
-    pub(crate) _pending_type_var_transformations: SmallJsSet<Rc<str>>,
+    pub(crate) _pending_type_var_transformations: SmallJsSet<TypeVarScopeId>,
     pub(crate) _pending_function_transformations: Vec<P<Type>>,
     pub(crate) _is_solving_default_type: bool,
     pub(crate) _active_constraint_set_index: Option<i32>,
@@ -5653,11 +5662,11 @@ pub struct ApplySolvedTypeVarsTransformer {
 }
 
 impl TypeVarTransformer for ApplySolvedTypeVarsTransformer {
-    fn _pending_type_var_transformations(&self) -> &SmallJsSet<Rc<str>> {
+    fn _pending_type_var_transformations(&self) -> &SmallJsSet<TypeVarScopeId> {
         &self._pending_type_var_transformations
     }
 
-    fn _pending_type_var_transformations_mut(&mut self) -> &mut SmallJsSet<Rc<str>> {
+    fn _pending_type_var_transformations_mut(&mut self) -> &mut SmallJsSet<TypeVarScopeId> {
         &mut self._pending_type_var_transformations
     }
 
@@ -6110,18 +6119,18 @@ impl ApplySolvedTypeVarsTransformer {
 
 // analyzer/typeUtils.ts:4728
 pub struct UnificationTypeTransformer {
-    pub(crate) _pending_type_var_transformations: SmallJsSet<Rc<str>>,
+    pub(crate) _pending_type_var_transformations: SmallJsSet<TypeVarScopeId>,
     pub(crate) _pending_function_transformations: Vec<P<Type>>,
-    pub(crate) _live_type_var_scopes: Vec<String>,
+    pub(crate) _live_type_var_scopes: Vec<TypeVarScopeId>,
     pub(crate) _usage_offset: Option<i32>,
 }
 
 impl TypeVarTransformer for UnificationTypeTransformer {
-    fn _pending_type_var_transformations(&self) -> &SmallJsSet<Rc<str>> {
+    fn _pending_type_var_transformations(&self) -> &SmallJsSet<TypeVarScopeId> {
         &self._pending_type_var_transformations
     }
 
-    fn _pending_type_var_transformations_mut(&mut self) -> &mut SmallJsSet<Rc<str>> {
+    fn _pending_type_var_transformations_mut(&mut self) -> &mut SmallJsSet<TypeVarScopeId> {
         &mut self._pending_type_var_transformations
     }
 
@@ -6149,7 +6158,7 @@ impl TypeVarTransformer for UnificationTypeTransformer {
 
 impl UnificationTypeTransformer {
     // analyzer/typeUtils.ts:4729
-    pub fn new(_live_type_var_scopes: Vec<String>, _usage_offset: Option<i32>) -> Self {
+    pub fn new(_live_type_var_scopes: Vec<TypeVarScopeId>, _usage_offset: Option<i32>) -> Self {
         UnificationTypeTransformer {
             _pending_type_var_transformations: SmallJsSet::default(),
             _pending_function_transformations: Vec::new(),
@@ -6168,7 +6177,7 @@ impl UnificationTypeTransformer {
             .free_type_var
             .and_then(|free_type_var| free_type_var.d().priv_.borrow().scope_id.clone());
         self._live_type_var_scopes.iter().any(|live_scope_id| {
-            scope_id.as_deref() == Some(live_scope_id.as_str()) || free_type_var_scope_id.as_deref() == Some(live_scope_id.as_str())
+            scope_id == Some(*live_scope_id) || free_type_var_scope_id == Some(*live_scope_id)
         })
     }
 }
@@ -6177,7 +6186,7 @@ impl UnificationTypeTransformer {
 #[derive(Clone)]
 pub struct ApplyTypeVarOptionsReplaceUnsolved {
     /// Shared: `applySolvedTypeVars` hands its options to the transformer it builds.
-    pub scope_ids: Rc<[String]>,
+    pub scope_ids: Rc<[TypeVarScopeId]>,
     pub tuple_class_type: Option<ClassType>,
     pub unsolved_exempt_type_vars: Option<Vec<TypeVarType>>,
     pub use_unknown: Option<bool>,

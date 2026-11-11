@@ -18,7 +18,7 @@ use crate::common::uri::uri::Uri;
 use crate::parser::parse_nodes::{
     ArgumentNode, ClassNode, ExpressionNode, NameNode, ParamCategory, TypeAnnotationNode,
 };
-use jsrt::{JsBigInt, JsMap, JsSet, NumberValue, P, flag_ops};
+use jsrt::{Atom, JsBigInt, JsMap, JsSet, NumberValue, P, flag_ops};
 use jsrt::cell::{Cell, RefCell, RefMut};
 use std::ops::Deref;
 use std::rc::Rc;
@@ -64,7 +64,7 @@ pub type UnionableType = P<Type>;
 // analyzer/types.ts:77: `Type`, the union of every member, is `P<Type>`: struct Type and enum TypeDetails.
 
 // analyzer/types.ts:81
-pub type TypeVarScopeId = String;
+pub type TypeVarScopeId = Atom;
 
 // analyzer/types.ts:82
 pub const UNIFICATION_SCOPE_ID: &str = "-";
@@ -168,7 +168,7 @@ pub struct TypeAliasSharedInfo {
     pub full_name: String,
     pub module_name: String,
     pub file_uri: Uri,
-    pub type_var_scope_id: String,
+    pub type_var_scope_id: TypeVarScopeId,
     pub is_type_alias_type: bool,
     pub type_params: RefCell<Option<Vec<TypeVarType>>>,
     pub computed_variance: Cell<Option<P<RefCell<Vec<Variance>>>>>,
@@ -785,7 +785,7 @@ impl ModuleType {
     }
 
     // analyzer/types.ts:521
-    pub fn get_field(module_type: ModuleType, name: &str) -> Option<P<Symbol>> {
+    pub fn get_field(module_type: ModuleType, name: impl jsrt::AtomKey) -> Option<P<Symbol>> {
         // Always look for the symbol in the module's fields before consulting
         // the loader fields. The loader runs before the module, so its values
         // will be overwritten by the module.
@@ -913,8 +913,8 @@ pub struct DataClassBehaviors {
 #[derive(jsrt::Trace)]
 #[trace(eval)]
 pub struct ClassDetailsShared {
-    pub name: String,
-    pub full_name: String,
+    pub name: Atom,
+    pub full_name: Atom,
     pub module_name: String,
     pub file_uri: Uri,
     pub flags: Cell<ClassTypeFlags>,
@@ -926,7 +926,7 @@ pub struct ClassDetailsShared {
     pub effective_metaclass: Cell<Option<P<Type>>>,
     pub fields: Cell<SymbolTable>,
     pub type_params: RefCell<Rc<Vec<TypeVarType>>>,
-    pub type_var_scope_id: RefCell<Option<String>>,
+    pub type_var_scope_id: RefCell<Option<TypeVarScopeId>>,
     pub doc_string: Option<String>,
     pub data_class_entries: RefCell<Option<Vec<P<DataClassEntry>>>>,
     pub data_class_behaviors: Cell<Option<P<DataClassBehaviors>>>,
@@ -984,7 +984,7 @@ pub struct ClassDetailsPriv {
 #[derive(Clone, Default)]
 #[derive(jsrt::Trace)]
 pub struct ClassDetailsPrivCold {
-    pub alias_name: Option<String>,
+    pub alias_name: Option<Atom>,
     pub typed_dict_narrowed_entries: Option<JsMap<String, TypedDictEntry>>,
     pub is_typed_dict_partial: Option<bool>,
     pub is_asymmetric_descriptor: Option<bool>,
@@ -1105,8 +1105,8 @@ impl ClassType {
             cached_requires_specialization: Cell::new(None),
             d: TypeDetails::Class(ClassTypeDetails {
                 shared: Cell::new(P::new_eval(ClassDetailsShared {
-                    name: name.to_string(),
-                    full_name: full_name.to_string(),
+                    name: Atom::new(name),
+                    full_name: Atom::new(full_name),
                     module_name: module_name.to_string(),
                     file_uri: *file_uri,
                     flags: Cell::new(flags),
@@ -1300,7 +1300,7 @@ impl ClassType {
     // analyzer/types.ts:1001
     pub fn clone_for_typing_alias(class_type: ClassType, alias_name: String) -> ClassType {
         let new_class_type = ClassType(TypeBase::clone_type(class_type.0));
-        new_class_type.d().priv_.borrow_mut().cold_mut().alias_name = Some(alias_name);
+        new_class_type.d().priv_.borrow_mut().cold_mut().alias_name = Some(Atom::new(&alias_name));
         new_class_type
     }
 
@@ -1498,7 +1498,7 @@ impl ClassType {
 
     // analyzer/types.ts:1167
     #[inline]
-    pub fn is_built_in(class_type: ClassType, class_name: Option<&[&str]>) -> bool {
+    pub fn is_built_in(class_type: ClassType, class_name: Option<&[Atom]>) -> bool {
         let shared = class_type.d().shared.get();
         if !shared.flags.get().any(ClassTypeFlags::BuiltIn) {
             return false;
@@ -1513,12 +1513,12 @@ impl ClassType {
 
     /// The name test of `is_built_in`. The alias name sits in the cold half, so
     /// it is read only when no name matches `name` or `fullName`.
-    fn is_built_in_named(class_type: ClassType, shared: &ClassDetailsShared, class_name: &[&str]) -> bool {
+    fn is_built_in_named(class_type: ClassType, shared: &ClassDetailsShared, class_name: &[Atom]) -> bool {
         if class_name.iter().any(|&name| name == shared.name || name == shared.full_name) {
             return true;
         }
         let priv_ = class_type.d().priv_.borrow();
-        let alias_name = priv_.cold().alias_name.as_deref();
+        let alias_name = priv_.cold().alias_name;
         alias_name.is_some_and(|alias_name| class_name.contains(&alias_name))
     }
 
@@ -1827,7 +1827,7 @@ impl ClassType {
 
         let shared = class_type.d().shared.get();
         shared.flags.get().any(ClassTypeFlags::DisjointBase)
-            || ClassType::is_built_in(class_type, Some(&["object"]))
+            || ClassType::is_built_in(class_type, Some(&[jsrt::atom!("object")]))
             || shared.has_non_empty_slots.get().unwrap_or(false)
     }
 
@@ -2141,13 +2141,13 @@ impl ClassType {
 
         // Special-case NamedTuple and Tuple classes because we rewrite the base classes
         // in these cases.
-        if ClassType::is_built_in(class_type, Some(&["NamedTuple"]))
-            && ClassType::is_built_in(type2, Some(&["NamedTuple"]))
+        if ClassType::is_built_in(class_type, Some(&[jsrt::atom!("NamedTuple")]))
+            && ClassType::is_built_in(type2, Some(&[jsrt::atom!("NamedTuple")]))
         {
             return true;
         }
-        if ClassType::is_built_in(class_type, Some(&["tuple"]))
-            && ClassType::is_built_in(type2, Some(&["tuple"]))
+        if ClassType::is_built_in(class_type, Some(&[jsrt::atom!("tuple")]))
+            && ClassType::is_built_in(type2, Some(&[jsrt::atom!("tuple")]))
         {
             return true;
         }
@@ -2235,7 +2235,7 @@ impl ClassType {
         // subclasses of object even though they are not explicitly declared
         // that way.
         if ClassType::is_built_in(subclass_type, None)
-            && ClassType::is_built_in(parent_class_type, Some(&["object"]))
+            && ClassType::is_built_in(parent_class_type, Some(&[jsrt::atom!("object")]))
         {
             if let Some(inheritance_chain) = inheritance_chain.as_deref_mut() {
                 inheritance_chain.push(parent_class_type.0);
@@ -2247,7 +2247,7 @@ impl ClassType {
         // class is type.
         let subclass_depth = TypeBase::get_instantiable_depth(subclass_type.0);
         if subclass_depth > 0 {
-            if ClassType::is_built_in(parent_class_type, Some(&["type"]))
+            if ClassType::is_built_in(parent_class_type, Some(&[jsrt::atom!("type")]))
                 && TypeBase::get_instantiable_depth(parent_class_type.0) < subclass_depth
             {
                 if let Some(inheritance_chain) = inheritance_chain.as_deref_mut() {
@@ -2260,8 +2260,8 @@ impl ClassType {
         // Handle the case where both source and dest are property objects. This
         // special case is needed because we synthesize a new class for each
         // property declaration.
-        if ClassType::is_built_in(subclass_type, Some(&["property"]))
-            && ClassType::is_built_in(parent_class_type, Some(&["property"]))
+        if ClassType::is_built_in(subclass_type, Some(&[jsrt::atom!("property")]))
+            && ClassType::is_built_in(parent_class_type, Some(&[jsrt::atom!("property")]))
         {
             if let Some(inheritance_chain) = inheritance_chain.as_deref_mut() {
                 inheritance_chain.push(subclass_type.0);
@@ -2420,7 +2420,7 @@ pub struct FunctionDetailsShared {
     pub parameters: Cell<P<RefCell<Vec<FunctionParam>>>>,
     pub declared_return_type: Cell<Option<P<Type>>>,
     pub declaration: Cell<Option<P<Declaration>>>,
-    pub type_var_scope_id: RefCell<Option<String>>,
+    pub type_var_scope_id: RefCell<Option<TypeVarScopeId>>,
     pub method_class: Cell<Option<ClassType>>,
     // Fields few objects set ([cold] in tools/stubgen/typemap.toml): read with `cold()`, write with `cold_mut()`.
     pub cold: RefCell<Option<Box<FunctionDetailsSharedCold>>>,
@@ -2510,7 +2510,7 @@ pub struct SignatureWithOffsets {
 #[derive(Clone, Default)]
 #[derive(jsrt::Trace)]
 pub struct FunctionDetailsPriv {
-    pub constructor_type_var_scope_id: Option<String>,
+    pub constructor_type_var_scope_id: Option<TypeVarScopeId>,
     pub specialized_types: Option<P<SpecializedFunctionTypes>>,
     pub call_site_return_type_cache: Option<Box<Vec<CallSiteInferenceTypeCacheEntry>>>,
     pub stripped_first_param_type: Option<P<Type>>,
@@ -2982,8 +2982,8 @@ impl FunctionType {
     // analyzer/types.ts:2057
     pub fn clone_with_new_type_var_scope_id(
         type_: FunctionType,
-        new_scope_id: Option<String>,
-        new_constructor_scope_id: Option<String>,
+        new_scope_id: Option<TypeVarScopeId>,
+        new_constructor_scope_id: Option<TypeVarScopeId>,
         type_params: Vec<TypeVarType>,
     ) -> FunctionType {
         let new_function = FunctionType(TypeBase::clone_type(type_.0));
@@ -4160,9 +4160,9 @@ impl UnionType {
                 .is_some_and(|props| props.condition.is_some());
             if let Some(literal_value) = literal_value.filter(|_| !has_condition) {
                 let is_instance = is_class_instance(new_type);
-                let is_str = ClassType::is_built_in(new_class, Some(&["str"]));
+                let is_str = ClassType::is_built_in(new_class, Some(&[jsrt::atom!("str")]));
                 let is_int =
-                    !is_str && ClassType::is_built_in(new_class, Some(&["int"]));
+                    !is_str && ClassType::is_built_in(new_class, Some(&[jsrt::atom!("int")]));
                 let is_enum = !is_str && !is_int && ClassType::is_enum_class(new_class);
 
                 let mut union_priv = union_type.d().priv_.borrow_mut();
@@ -4254,14 +4254,14 @@ impl UnionType {
                     &union_priv.literal_classes
                 };
 
-                if ClassType::is_built_in(class_subtype, Some(&["str"]))
+                if ClassType::is_built_in(class_subtype, Some(&[jsrt::atom!("str")]))
                     && let Some(map) = &literal_maps.literal_str_map
                 {
                     return match &literal_value {
                         LiteralValue::String(value) => map.contains_key(value),
                         _ => false,
                     };
-                } else if ClassType::is_built_in(class_subtype, Some(&["int"]))
+                } else if ClassType::is_built_in(class_subtype, Some(&[jsrt::atom!("int")]))
                     && let Some(map) = &literal_maps.literal_int_map
                 {
                     return match &literal_value {
@@ -4357,7 +4357,7 @@ pub enum Variance {
 #[derive(Clone)]
 pub struct RecursiveAliasInfo {
     pub name: String,
-    pub scope_id: String,
+    pub scope_id: TypeVarScopeId,
     pub is_pep695_syntax: bool,
     pub type_params: Option<Vec<TypeVarType>>,
 }
@@ -4422,10 +4422,10 @@ pub enum TypeVarScopeType {
 #[derive(Clone, Default)]
 #[derive(jsrt::Trace)]
 pub struct TypeVarDetailsPriv {
-    pub scope_id: Option<Rc<str>>,
+    pub scope_id: Option<TypeVarScopeId>,
     pub scope_name: Option<Rc<str>>,
     pub scope_type: Option<TypeVarScopeType>,
-    pub name_with_scope: Option<Rc<str>>,
+    pub name_with_scope: Option<Atom>,
     pub computed_variance: Option<Variance>,
     pub is_unification_var: Option<bool>,
     pub free_type_var: Option<TypeVarType>,
@@ -4634,7 +4634,7 @@ impl TypeVarType {
     // analyzer/types.ts:3011
     pub fn clone_for_scope_id(
         type_: TypeVarType,
-        scope_id: String,
+        scope_id: TypeVarScopeId,
         scope_name: Option<String>,
         scope_type: Option<TypeVarScopeType>,
     ) -> TypeVarType {
@@ -4749,20 +4749,17 @@ impl TypeVarType {
         // function like `foo(foo(1))`.
         let mut new_name_with_scope = type_.d().priv_.borrow().name_with_scope.clone();
         if let Some(usage_offset) = usage_offset.filter(|usage_offset| *usage_offset != 0) {
-            new_name_with_scope = Some(
-                format!(
-                    "{}-{}",
-                    new_name_with_scope.as_deref().unwrap_or("undefined"),
-                    usage_offset
-                )
-                .into(),
-            );
+            new_name_with_scope = Some(Atom::new(&format!(
+                "{}-{}",
+                new_name_with_scope.as_deref().unwrap_or("undefined"),
+                usage_offset
+            )));
         }
 
         let new_instance = TypeVarType(TypeBase::clone_type(type_.0));
         let mut priv_ = new_instance.d().priv_.borrow_mut();
         priv_.is_unification_var = Some(true);
-        priv_.scope_id = Some(UNIFICATION_SCOPE_ID.into());
+        priv_.scope_id = Some(jsrt::atom!("-")); // UNIFICATION_SCOPE_ID
         priv_.name_with_scope = new_name_with_scope;
         drop(priv_);
         new_instance
@@ -4779,20 +4776,30 @@ impl TypeVarType {
     }
 
     // analyzer/types.ts:3120
-    pub fn make_name_with_scope(name: &str, scope_id: &str, scope_name: &str) -> Rc<str> {
+    pub fn make_name_with_scope(name: &str, scope_id: &str, scope_name: &str) -> Atom {
         // We include the scopeName here even though it's normally already part
         // of the scopeId. There are cases where it can diverge, specifically
         // in scenarios involving higher-order functions that return generic
         // callable types. See adjustCallableReturnType for details.
-        Rc::from([name, ".", scope_id, ".", scope_name].concat())
+        // The text is built in one buffer per thread and interned.
+        thread_local! {
+            static NAME_WITH_SCOPE: std::cell::RefCell<String> = const { std::cell::RefCell::new(String::new()) };
+        }
+        NAME_WITH_SCOPE.with_borrow_mut(|text| {
+            text.clear();
+            for part in [name, ".", scope_id, ".", scope_name] {
+                text.push_str(part);
+            }
+            Atom::new(text)
+        })
     }
 
     // analyzer/types.ts:3134
-    pub fn make_bound_scope_id(scope_id: Option<&str>) -> Option<String> {
+    pub fn make_bound_scope_id(scope_id: Option<TypeVarScopeId>) -> Option<TypeVarScopeId> {
         let scope_id = scope_id.filter(|scope_id| !scope_id.is_empty())?;
 
         // Append an asterisk to denote a bound scope.
-        Some(format!("{scope_id}*"))
+        Some(TypeVarScopeId::new(&[&scope_id, "*"].concat()))
     }
 
     // analyzer/types.ts:3143
@@ -4815,7 +4822,7 @@ impl TypeVarType {
 
         let clone = TypeVarType::clone_for_scope_id(
             type_,
-            TypeVarType::make_bound_scope_id(Some(&scope_id)).unwrap_or_default(),
+            TypeVarType::make_bound_scope_id(Some(scope_id)).unwrap_or_default(),
             scope_name.as_deref().map(str::to_string),
             scope_type,
         );
@@ -4879,12 +4886,12 @@ impl TypeVarType {
     }
 
     // analyzer/types.ts:3204
-    pub fn get_name_with_scope(type_var_type: TypeVarType) -> Rc<str> {
+    pub fn get_name_with_scope(type_var_type: TypeVarType) -> Atom {
         // If there is no name with scope, fall back on the (unscoped) name.
-        let name_with_scope = type_var_type.d().priv_.borrow().name_with_scope.clone();
+        let name_with_scope = type_var_type.d().priv_.borrow().name_with_scope;
         match name_with_scope {
             Some(name_with_scope) if !name_with_scope.is_empty() => name_with_scope,
-            _ => Rc::from(type_var_type.d().shared.get().name.borrow().as_str()),
+            _ => Atom::new(&type_var_type.d().shared.get().name.borrow()),
         }
     }
 
@@ -5946,7 +5953,7 @@ pub(crate) fn _add_type_if_unique(
             &union_priv.literal_classes
         };
 
-        if ClassType::is_built_in(class_to_add, Some(&["str"]))
+        if ClassType::is_built_in(class_to_add, Some(&[jsrt::atom!("str")]))
             && let Some(literal_value) = &literal_value
             && let Some(map) = &literal_maps.literal_str_map
         {
@@ -5959,7 +5966,7 @@ pub(crate) fn _add_type_if_unique(
                 UnionType::add_type(union_type, type_to_add);
             }
             return;
-        } else if ClassType::is_built_in(class_to_add, Some(&["int"]))
+        } else if ClassType::is_built_in(class_to_add, Some(&[jsrt::atom!("int")]))
             && let Some(literal_value) = &literal_value
             && let Some(map) = &literal_maps.literal_int_map
         {
@@ -6065,9 +6072,9 @@ pub(crate) fn _add_type_if_unique(
 
             // If we're adding Literal[False] or Literal[True] to its
             // opposite, combine them into a non-literal 'bool' type.
-            if ClassType::is_built_in(class_type, Some(&["bool"]))
+            if ClassType::is_built_in(class_type, Some(&[jsrt::atom!("bool")]))
                 && !has_condition(type_)
-                && ClassType::is_built_in(class_to_add, Some(&["bool"]))
+                && ClassType::is_built_in(class_to_add, Some(&[jsrt::atom!("bool")]))
                 && !has_condition(type_to_add)
             {
                 let literal_to_add = class_to_add.d().priv_.borrow().literal_value.clone();
@@ -6212,9 +6219,9 @@ impl CalculateInheritedSlotsNamesDeferred {
             for base_class in base_classes.iter().copied() {
                 if is_instantiable_class(base_class) {
                     let base_class = ClassType(base_class);
-                    if !ClassType::is_built_in(base_class, Some(&["object"]))
-                        && !ClassType::is_built_in(base_class, Some(&["type"]))
-                        && !ClassType::is_built_in(base_class, Some(&["Generic"]))
+                    if !ClassType::is_built_in(base_class, Some(&[jsrt::atom!("object")]))
+                        && !ClassType::is_built_in(base_class, Some(&[jsrt::atom!("type")]))
+                        && !ClassType::is_built_in(base_class, Some(&[jsrt::atom!("Generic")]))
                     {
                         let inherited_slots_names = ClassType::get_inherited_slots_names(base_class);
                         if let Some(inherited_slots_names) = inherited_slots_names {

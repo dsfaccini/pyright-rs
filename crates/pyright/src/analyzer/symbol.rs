@@ -3,7 +3,7 @@
 use jsrt::cell::{Cell, Ref, RefCell};
 use std::rc::Rc;
 
-use jsrt::{JsMap, OptionRefCell, P};
+use jsrt::{Atom, AtomKey, JsMap, OptionRefCell, P};
 
 use jsrt::flag_ops;
 use super::declaration::{Declaration, DeclarationType};
@@ -443,33 +443,31 @@ impl Symbol {
 /// A shared `Map<string, Symbol>`: copies of the handle are the same map.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[derive(jsrt::Trace)]
-pub struct SymbolTable(P<RefCell<JsMap<String, P<Symbol>>>>);
+pub struct SymbolTable(P<RefCell<JsMap<Atom, P<Symbol>>>>);
 
+/// Symbol names are atoms (`docs/porting.md`, "strings"): a lookup by `&str` finds the
+/// text's atom first, and text no atom has is in no table.
 impl SymbolTable {
     /// `new Map<string, Symbol>()`.
     pub fn new() -> SymbolTable {
         SymbolTable(P::new(RefCell::new(JsMap::default())))
     }
 
-    pub fn get(&self, name: &str) -> Option<P<Symbol>> {
-        self.0.borrow().get(name).copied()
+    pub fn get(&self, name: impl AtomKey) -> Option<P<Symbol>> {
+        let name = name.lookup()?;
+        self.0.borrow().get(&name).copied()
     }
 
-    pub fn has(&self, name: &str) -> bool {
-        self.0.borrow().contains_key(name)
+    pub fn has(&self, name: impl AtomKey) -> bool {
+        name.lookup().is_some_and(|name| self.0.borrow().contains_key(&name))
     }
 
-    pub fn set(&self, name: &str, symbol: P<Symbol>) {
-        let mut map = self.0.borrow_mut();
-        if let Some(existing) = map.get_mut(name) {
-            *existing = symbol;
-        } else {
-            map.insert(name.to_string(), symbol);
-        }
+    pub fn set(&self, name: impl AtomKey, symbol: P<Symbol>) {
+        self.0.borrow_mut().insert(name.intern(), symbol);
     }
 
-    pub fn delete(&self, name: &str) -> bool {
-        self.0.borrow_mut().shift_remove(name).is_some()
+    pub fn delete(&self, name: impl AtomKey) -> bool {
+        name.lookup().is_some_and(|name| self.0.borrow_mut().shift_remove(&name).is_some())
     }
 
     pub fn size(&self) -> usize {
@@ -477,38 +475,29 @@ impl SymbolTable {
     }
 
     /// Read access for code that does not call back into the table.
-    pub fn borrow(&self) -> Ref<'_, JsMap<String, P<Symbol>>> {
+    pub fn borrow(&self) -> Ref<'_, JsMap<Atom, P<Symbol>>> {
         self.0.borrow()
     }
 
     /// `forEach`, as JavaScript iterates a `Map`: entries added during the
     /// walk are visited too, and the callback may write to the table.
-    pub fn for_each(&self, mut callback: impl FnMut(P<Symbol>, &str)) {
+    pub fn for_each(&self, mut callback: impl FnMut(P<Symbol>, Atom)) {
         let mut index = 0;
-        // The name is copied out so the callback can write to the table; one buffer serves
-        // every entry.
-        let mut name = String::new();
         loop {
-            let symbol = {
-                let map = self.0.borrow();
-                let Some((key, symbol)) = map.get_index(index) else {
-                    break;
-                };
-                name.clear();
-                name.push_str(key);
-                *symbol
+            let Some((name, symbol)) = self.0.borrow().get_index(index).map(|(name, symbol)| (*name, *symbol)) else {
+                break;
             };
-            callback(symbol, &name);
+            callback(symbol, name);
             index += 1;
         }
     }
 
     /// The entries in insertion order, copied out.
-    pub fn entries(&self) -> Vec<(String, P<Symbol>)> {
+    pub fn entries(&self) -> Vec<(Atom, P<Symbol>)> {
         self.0
             .borrow()
             .iter()
-            .map(|(name, symbol)| (name.clone(), *symbol))
+            .map(|(name, symbol)| (*name, *symbol))
             .collect()
     }
 }

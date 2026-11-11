@@ -43,7 +43,7 @@ use jsrt::number::number_to_string;
 
 // analyzer/constructorTransform.ts:42
 pub fn has_constructor_transform(class_type: ClassType) -> bool {
-    if class_type.d().shared.get().full_name == "functools.partial" {
+    if class_type.d().shared.get().full_name == jsrt::atom!("functools.partial") {
         return true;
     }
 
@@ -58,7 +58,7 @@ pub fn apply_constructor_transform(
     class_type: ClassType,
     result: &FunctionResult,
 ) -> Option<FunctionResult> {
-    if class_type.d().shared.get().full_name == "functools.partial" {
+    if class_type.d().shared.get().full_name == jsrt::atom!("functools.partial") {
         return apply_partial_transform(evaluator, error_node, arg_list, result);
     }
 
@@ -76,7 +76,7 @@ pub(crate) fn apply_partial_transform(
 ) -> Option<FunctionResult> {
     // We assume that the normal return result is a functools.partial class instance.
     if !is_class_instance(result.return_type)
-        || ClassType(result.return_type).d().shared.get().full_name != "functools.partial"
+        || ClassType(result.return_type).d().shared.get().full_name != jsrt::atom!("functools.partial")
     {
         return None;
     }
@@ -142,7 +142,7 @@ pub(crate) fn apply_partial_transform(
         let call_method_result = evaluator.get_type_of_bound_member(
             Some(error_node),
             ClassType(orig_function_type_concrete),
-            "__call__",
+            jsrt::atom!("__call__"),
             /* usage */
             &EvaluatorUsage {
                 method: "get".to_string(),
@@ -671,7 +671,7 @@ pub(crate) fn apply_partial_transform_to_function(
         },
     );
     new_shared.declaration.set(partial_shared.declaration.get());
-    let specialized_type_var_scope_id = specialized_shared.type_var_scope_id.borrow().clone();
+    let specialized_type_var_scope_id = *specialized_shared.type_var_scope_id.borrow();
     *new_shared.type_var_scope_id.borrow_mut() = specialized_type_var_scope_id;
 
     Some(FunctionResult {

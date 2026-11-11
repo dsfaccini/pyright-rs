@@ -10,6 +10,7 @@ Audit the unsafe code for undefined behavior with Miri, under Stacked Borrows an
 - Functions that read details take handles: `get_unescaped_string(P<Token>, ..)`, `has_type_for_declaration(P<Declaration>)`, `are_declarations_same(P<Declaration>, P<Declaration>, ..)`, and the oracle dumpers `token_line`, `write_token`, `declaration_value`, `flow_node_value`, `flow_references`, `tree::fields`.
 - `Token` and `FlowNode` have no `_written_through_shared` field.
 - `jsrt::heap::prefetch` takes a pointer. `Region::for_each_used` passes chunk pointers.
+- In the collector, the erased per-type functions take the object's pointer: `TypeInfo.drop` is `unsafe fn(*mut u8)`, `TypeInfo.sweep` (gc's `sweep_erased`) is `unsafe fn(*mut u8, usize, u64)` with the block's base pointer, `TraceFn` is `unsafe fn(*mut u8, &mut Tracer)`. `Tracer.eval_base` is a pointer; `start_barrier` stores the card table and metadata as `AtomicPtr`s.
 
 ## Shared-file edits
 

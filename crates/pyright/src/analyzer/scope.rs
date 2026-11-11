@@ -3,7 +3,7 @@
 use jsrt::cell::{Cell, RefCell};
 use std::rc::Rc;
 
-use jsrt::{LazyJsMap, OptionRefCell, P};
+use jsrt::{AtomKey, LazyJsMap, OptionRefCell, P};
 
 use super::declaration::DeclarationType;
 use super::symbol::{Symbol, SymbolFlags, SymbolTable};
@@ -214,16 +214,17 @@ impl Scope {
     }
 
     // analyzer/scope.ts:172
-    pub fn look_up_symbol(&self, name: &str) -> Option<P<Symbol>> {
+    pub fn look_up_symbol(&self, name: impl AtomKey) -> Option<P<Symbol>> {
         self.symbol_table.get(name)
     }
 
     // analyzer/scope.ts:176
     pub fn look_up_symbol_recursive(
         &self,
-        name: &str,
+        name: impl AtomKey,
         options: Option<LookupSymbolOptions>,
     ) -> Option<SymbolWithScope> {
+        let name = name.intern();
         let options = options.unwrap_or_default();
         let mut effective_scope = self.handle();
         let mut symbol = self.symbol_table.get(name);
@@ -268,7 +269,7 @@ impl Scope {
         let mut is_next_scope_beyond_execution_scope =
             options.is_beyond_execution_scope == Some(true) || self.is_independently_executable();
 
-        let not_local_binding = self.not_local_bindings.borrow().get(name).copied();
+        let not_local_binding = self.not_local_bindings.borrow().get(name.as_str()).copied();
         if not_local_binding == Some(NameBindingType::Global) {
             let global_scope_result = self.get_global_scope();
             if global_scope_result.scope != self.handle() {
@@ -284,7 +285,7 @@ impl Scope {
         if options.use_chained_module_level_scopes == Some(true) {
             if let Some(lookup) = &self.chained_module_level_scope_lookup {
                 let fallback_result = lookup(
-                    name,
+                    name.as_str(),
                     Some(ChainedModuleLevelLookupContext {
                         is_outside_caller_module: Some(options.is_outside_caller_module == Some(true)),
                         is_beyond_execution_scope: Some(is_next_scope_beyond_execution_scope),
@@ -337,7 +338,7 @@ impl Scope {
     }
 
     // analyzer/scope.ts:255
-    pub fn add_symbol(&self, name: &str, flags: SymbolFlags) -> P<Symbol> {
+    pub fn add_symbol(&self, name: impl AtomKey, flags: SymbolFlags) -> P<Symbol> {
         let symbol = Symbol::new(flags);
         self.symbol_table.set(name, symbol);
         symbol

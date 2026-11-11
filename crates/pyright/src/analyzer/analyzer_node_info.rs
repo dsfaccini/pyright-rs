@@ -9,7 +9,7 @@
 
 use jsrt::cell::{Cell, RefCell};
 
-use jsrt::{FxHashMap, FxHashSet, JsSet, P};
+use jsrt::{Atom, FxHashMap, FxHashSet, JsSet, P};
 
 use super::analyzer_file_info::AnalyzerFileInfo;
 use super::code_flow_types::{FlowFlags, FlowNode};
@@ -75,7 +75,7 @@ pub struct AnalyzerNodeInfoCold {
 
     // Set of expressions used within an execution scope (module,
     // function or lambda) that requires code flow analysis.
-    pub code_flow_expressions: Cell<Option<P<RefCell<JsSet<String>>>>>,
+    pub code_flow_expressions: Cell<Option<P<RefCell<JsSet<Atom>>>>>,
 
     // Number that represents the complexity of a function's code
     // flow graph.
@@ -745,12 +745,12 @@ impl AnalyzerNodeInfoAccessor {
     }
 
     // analyzer/analyzerNodeInfo.ts:494
-    pub fn get_code_flow_expressions(&self, node: impl Into<P<ParseNode>>) -> Option<P<RefCell<JsSet<String>>>> {
+    pub fn get_code_flow_expressions(&self, node: impl Into<P<ParseNode>>) -> Option<P<RefCell<JsSet<Atom>>>> {
         get_code_flow_expressions(node, self._reader)
     }
 
     // analyzer/analyzerNodeInfo.ts:498
-    pub fn set_code_flow_expressions(&self, node: impl Into<P<ParseNode>>, expressions: P<RefCell<JsSet<String>>>) {
+    pub fn set_code_flow_expressions(&self, node: impl Into<P<ParseNode>>, expressions: P<RefCell<JsSet<Atom>>>) {
         set_code_flow_expressions(node, expressions, self._get_writer());
     }
 
@@ -981,7 +981,7 @@ pub fn set_file_info(node: ModuleNode, file_info: P<AnalyzerFileInfo>, writer: &
 pub fn get_code_flow_expressions(
     node: impl Into<P<ParseNode>>,
     reader: &dyn AnalyzerNodeInfoReader,
-) -> Option<P<RefCell<JsSet<String>>>> {
+) -> Option<P<RefCell<JsSet<Atom>>>> {
     let node = node.into();
     let info = reader.get(node);
     info.and_then(|info| info.cold()).and_then(|cold| cold.code_flow_expressions.get())
@@ -990,7 +990,7 @@ pub fn get_code_flow_expressions(
 // analyzer/analyzerNodeInfo.ts:677
 pub fn set_code_flow_expressions(
     node: impl Into<P<ParseNode>>,
-    expressions: P<RefCell<JsSet<String>>>,
+    expressions: P<RefCell<JsSet<Atom>>>,
     writer: &dyn AnalyzerNodeInfoWriter,
 ) {
     let node = node.into();

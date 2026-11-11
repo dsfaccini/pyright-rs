@@ -5,6 +5,7 @@
 extern crate self as jsrt;
 
 pub mod arena;
+pub mod atom;
 pub mod array;
 pub mod cell;
 pub mod collections;
@@ -24,6 +25,7 @@ mod vm;
 pub mod vscode_uri;
 
 pub use arena::{Header, P};
+pub use atom::{Atom, AtomKey};
 pub use cell::OptionRefCell;
 pub use heap::{ClassSlot, GcMode, Tracer};
 pub use jsrt_derive::Trace;

@@ -43,7 +43,7 @@ use crate::analyzer::types::{ClassType, ModuleType, Type};
 use crate::common::diagnostic::DEFAULT_MAX_DIAGNOSTIC_DEPTH;
 use crate::common::diagnostic::DiagnosticAddendum;
 use crate::localization::localize::LocAddendum;
-use jsrt::JsMap;
+use jsrt::{Atom, JsMap};
 use jsrt::JsSet;
 use jsrt::P;
 use jsrt::cell::RefCell;
@@ -531,7 +531,7 @@ pub(crate) fn assign_to_protocol_internal(
     }
 
     let mut types_are_consistent = true;
-    let mut checked_symbol_set: JsSet<String> = JsSet::default();
+    let mut checked_symbol_set: JsSet<Atom> = JsSet::default();
     let mut assign_type_flags =
         flags & (AssignTypeFlags::OverloadOverlap | AssignTypeFlags::PartialOverloadOverlap);
 
@@ -564,7 +564,7 @@ pub(crate) fn assign_to_protocol_internal(
 
             if !dest_symbol.is_class_member()
                 || dest_symbol.is_ignored_for_protocol_match()
-                || checked_symbol_set.contains(name)
+                || checked_symbol_set.contains(&name)
             {
                 return;
             }
@@ -587,7 +587,7 @@ pub(crate) fn assign_to_protocol_internal(
 
             // Note that we've already checked this symbol. It doesn't need to
             // be checked again even if it is declared by a subclass.
-            checked_symbol_set.insert(name.to_string());
+            checked_symbol_set.insert(name);
 
             let Some(mut dest_member_type) = evaluator
                 .get_declared_type_of_symbol(dest_symbol, None)
@@ -628,7 +628,7 @@ pub(crate) fn assign_to_protocol_internal(
                 let Some(member_info) = src_member_info.clone() else {
                     if let Some(diag) = diag {
                         diag.add_message(
-                            LocAddendum::protocol_member_missing().format(&[("name", name)]),
+                            LocAddendum::protocol_member_missing().format(&[("name", &name)]),
                         );
                     }
                     types_are_consistent = false;
@@ -731,7 +731,7 @@ pub(crate) fn assign_to_protocol_internal(
                 let Some(module_symbol) = fields.get(name) else {
                     if let Some(diag) = diag {
                         diag.add_message(
-                            LocAddendum::protocol_member_missing().format(&[("name", name)]),
+                            LocAddendum::protocol_member_missing().format(&[("name", &name)]),
                         );
                     }
                     types_are_consistent = false;
@@ -850,7 +850,7 @@ pub(crate) fn assign_to_protocol_internal(
                     ) {
                         if let Some(sub_diag) = sub_diag {
                             sub_diag.add_message(
-                                LocAddendum::member_type_mismatch().format(&[("name", name)]),
+                                LocAddendum::member_type_mismatch().format(&[("name", &name)]),
                             );
                         }
                         types_are_consistent = false;
@@ -881,7 +881,7 @@ pub(crate) fn assign_to_protocol_internal(
                     }) {
                         if let Some(sub_diag) = sub_diag {
                             sub_diag.add_message(
-                                LocAddendum::member_type_mismatch().format(&[("name", name)]),
+                                LocAddendum::member_type_mismatch().format(&[("name", &name)]),
                             );
                         }
                         types_are_consistent = false;
@@ -912,7 +912,7 @@ pub(crate) fn assign_to_protocol_internal(
                             if let Some(sub_diag) = sub_diag {
                                 sub_diag.add_message(
                                     LocAddendum::member_is_writable_in_protocol()
-                                        .format(&[("name", name)]),
+                                        .format(&[("name", &name)]),
                                 );
                             }
                             types_are_consistent = false;
@@ -947,11 +947,11 @@ pub(crate) fn assign_to_protocol_internal(
                     if let Some(sub_diag) = sub_diag {
                         if is_invariant {
                             sub_diag.add_message(
-                                LocAddendum::member_is_invariant().format(&[("name", name)]),
+                                LocAddendum::member_is_invariant().format(&[("name", &name)]),
                             );
                         }
                         sub_diag.add_message(
-                            LocAddendum::member_type_mismatch().format(&[("name", name)]),
+                            LocAddendum::member_type_mismatch().format(&[("name", &name)]),
                         );
                     }
                     types_are_consistent = false;
@@ -964,7 +964,7 @@ pub(crate) fn assign_to_protocol_internal(
                 if let Some(sub_diag) = sub_diag {
                     sub_diag.add_message(
                         LocAddendum::member_is_not_read_only_in_protocol()
-                            .format(&[("name", name)]),
+                            .format(&[("name", &name)]),
                     );
                 }
                 types_are_consistent = false;
@@ -989,7 +989,7 @@ pub(crate) fn assign_to_protocol_internal(
                     if let Some(sub_diag) = sub_diag {
                         sub_diag.add_message(
                             LocAddendum::member_is_class_var_in_protocol()
-                                .format(&[("name", name)]),
+                                .format(&[("name", &name)]),
                         );
                     }
                     types_are_consistent = false;
@@ -998,7 +998,7 @@ pub(crate) fn assign_to_protocol_internal(
                         if let Some(sub_diag) = sub_diag {
                             sub_diag.add_message(
                                 LocAddendum::member_is_not_class_var_in_class()
-                                    .format(&[("name", name)]),
+                                    .format(&[("name", &name)]),
                             );
                         }
                         types_are_consistent = false;
@@ -1012,14 +1012,14 @@ pub(crate) fn assign_to_protocol_internal(
                         if let Some(sub_diag) = sub_diag {
                             sub_diag.add_message(
                                 LocAddendum::member_is_class_var_in_protocol()
-                                    .format(&[("name", name)]),
+                                    .format(&[("name", &name)]),
                             );
                         }
                     } else {
                         if let Some(sub_diag) = sub_diag {
                             sub_diag.add_message(
                                 LocAddendum::member_is_not_class_var_in_protocol()
-                                    .format(&[("name", name)]),
+                                    .format(&[("name", &name)]),
                             );
                         }
                     }
@@ -1051,7 +1051,7 @@ pub(crate) fn assign_to_protocol_internal(
                 if !is_dest_read_only && is_src_read_only {
                     if let Some(sub_diag) = sub_diag {
                         sub_diag.add_message(
-                            LocAddendum::member_is_writable_in_protocol().format(&[("name", name)]),
+                            LocAddendum::member_is_writable_in_protocol().format(&[("name", &name)]),
                         );
                     }
                     types_are_consistent = false;
