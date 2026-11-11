@@ -50,6 +50,7 @@ pyright allocates about 23 times what it keeps alive: 194 GB over a pydantic-ai 
 - Mark a field `#[trace(program)]` when its type allows an evaluator handle but it only ever holds program handles, such as a declaration only the binder sets. Check mode verifies it.
 - Use `jsrt::cell::{Cell, RefCell, OnceCell}`, not `std::cell`, for interior mutability: their writes run the generational collector's write barrier. A std cell that can hold an evaluator handle does not compile. A std cell is fine for state no heap object holds (thread-locals, CLI options, test harnesses).
 - Keep every cell that can hold an evaluator handle in its heap object's own bytes, or behind another `P`: never inside a `Vec`, `Box`, `Rc` or map that the object owns. The barrier finds the written object by the cell's address; `P::new_eval` and `P::new` do not compile for a type that breaks this (`Trace::CELL_OUT_OF_LINE`). `jsrt::OptionRefCell` boxes its storage and runs the barrier itself, so its value may hold handles but no cell.
+- A large map keyed by a `u32` id that the evaluator writes on most files is a `jsrt::IdMap` or a `jsrt::LoggedMap`, so a minor collection traces only the entries written since the last one. Change a `LoggedMap`'s values only through `write(key)`, for that key.
 - An object that lives for the whole run, such as a singleton type, goes on the program heap (`P::new`).
 - A thread-local that holds an evaluator handle registers a root with `jsrt::heap::add_root` in its initializer (`ENUM_EVAL_STACK`).
 - Never store a `&'static T` taken from `P::get` in a struct. Store the `P`.
@@ -84,6 +85,7 @@ A new switch reads its mode with `jsrt::switch_mode!`: `check` runs pyright's pa
 | `PYRIGHT_RS_GC_GENERATIONAL` | `0`, `1` (default) | generational collection: a minor collection traces young objects and the old ones written since the last collection |
 | `PYRIGHT_RS_GC_MAJOR_RATIO` | a number; default 1 | generational: a collection is major once the old objects grew by this share since the last major one |
 | `PYRIGHT_RS_GC_WARM_MIB` | a number; default 256 | MiB of released evaluator blocks kept resident for reuse |
+| `PYRIGHT_RS_GC_WRITE_LOGS` | `0`, `1` (default) | a minor collection traces only the `IdMap` pages and `LoggedMap` keys written since the last collection; `0` traces those maps in full (`docs/collector-design.md`, "write logs"); check mode verifies the minor mark |
 | `PYRIGHT_RS_GC_CENSUS` | `1` | prints a breakdown of the resident set after each mark, at the end of the check and at exit; changes no result; buffer bytes need the `pyright` crate's `count-malloc` feature (`docs/collector-design.md`, "census") |
 | `PYRIGHT_RS_NODE_INFO_STORE_CACHE` | `on` (default), `off`, `check` | `AnalyzerNodeInfoContextImpl::_store_for` reuses the store of its last lookup |
 | `PYRIGHT_RS_LOCALIZE_INDEX` | `on` (default), `off`, `check` | `get_raw_string` finds a message by its whole key in an index of the strings |

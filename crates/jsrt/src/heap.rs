@@ -63,6 +63,9 @@ struct Config {
     major_ratio: f64,
     /// Released blocks kept resident, per range (`PYRIGHT_RS_GC_WARM_MIB`).
     warm_blocks: usize,
+    /// `PYRIGHT_RS_GC_WRITE_LOGS`: a minor collection traces only the entries of a
+    /// logged container written since the last collection.
+    write_logs: bool,
 }
 
 static CONFIG: OnceLock<Config> = OnceLock::new();
@@ -115,7 +118,12 @@ fn config() -> &'static Config {
         let major_ratio: f64 = env_number("PYRIGHT_RS_GC_MAJOR_RATIO").unwrap_or(1.0);
         let warm_mib: usize = env_number("PYRIGHT_RS_GC_WARM_MIB").unwrap_or(256);
         let warm_blocks = (warm_mib << 20) >> BLOCK_SHIFT;
-        Config { mode, min_bytes: min_mib << 20, ratio, log, threads, generational, major_ratio, warm_blocks }
+        let write_logs = match std::env::var("PYRIGHT_RS_GC_WRITE_LOGS").as_deref() {
+            Ok("0") => false,
+            Err(_) | Ok("") | Ok("1") => true,
+            Ok(other) => panic!("PYRIGHT_RS_GC_WRITE_LOGS must be 0 or 1, not {other:?}"),
+        };
+        Config { mode, min_bytes: min_mib << 20, ratio, log, threads, generational, major_ratio, warm_blocks, write_logs }
     })
 }
 
@@ -807,6 +815,9 @@ pub struct Tracer {
     meta: *mut BlockMeta,
     /// The work of a parallel mark, or null while marking on one thread.
     shared: *const MarkShared,
+    /// A minor collection with write logs on: the epoch of the writes it must trace.
+    /// `NONE` traces every entry of a logged container.
+    young: u32,
 }
 
 impl Tracer {
@@ -814,6 +825,14 @@ impl Tracer {
     #[inline]
     pub fn checking(&self) -> bool {
         self.check
+    }
+
+    /// In a minor collection, the [`epoch`] whose writes a logged container must trace:
+    /// what it wrote in earlier epochs a collection already traced, so it holds only old
+    /// objects. `None`: trace everything (`docs/collector-design.md`, "write logs").
+    #[inline]
+    pub fn young_epoch(&self) -> Option<u32> {
+        (self.young != NONE).then_some(self.young)
     }
 
     /// Marks the object at `addr` when it is on the evaluator heap. Most handles a
@@ -1026,6 +1045,7 @@ struct MarkJob {
     shared: *const MarkShared,
     owner: u32,
     check: bool,
+    young: u32,
     eval_base: *mut u8,
     eval_len: usize,
     meta: *mut BlockMeta,
@@ -1117,6 +1137,7 @@ impl Helpers {
                 eval_len: job.eval_len,
                 meta: job.meta,
                 shared,
+                young: job.young,
             };
             // A trace function must not allocate: on a helper, an allocation would
             // land on the helper's own heap, so its heap counts as in use too.
@@ -1194,6 +1215,16 @@ pub fn collect(check: bool) {
 thread_local! {
     /// Bytes this thread allocated through [`CountingAlloc`] less the bytes it freed.
     static MALLOC_BYTES: Cell<isize> = const { Cell::new(0) };
+    /// Collections finished on this thread's heap.
+    static EPOCH: Cell<u32> = const { Cell::new(0) };
+}
+
+/// The collections finished on this thread's heap. A logged container records the
+/// epoch of its writes, so a minor collection traces only the entries written since
+/// the last collection ([`Tracer::young_epoch`]).
+#[inline]
+pub fn epoch() -> u32 {
+    EPOCH.with(Cell::get)
 }
 
 /// A global allocator that counts the bytes each thread holds in `A`, for the
@@ -1320,6 +1351,7 @@ impl ThreadHeap {
             eval_len: ranges.eval.len,
             meta: ranges.eval.meta,
             shared: ptr::null(),
+            young: if minor && config().write_logs { self.collections } else { NONE },
         };
 
         let census = census::on();
@@ -1431,6 +1463,7 @@ impl ThreadHeap {
             self.force_major = false;
         }
         self.since_gc = 0;
+        EPOCH.with(|epoch| epoch.set(self.collections));
     }
 
     /// The objects a collection traces from, besides the registered roots. Major:
@@ -1548,6 +1581,7 @@ impl ThreadHeap {
             shared: &shared,
             owner: t.owner,
             check: t.check,
+            young: t.young,
             eval_base: t.eval_base,
             eval_len: t.eval_len,
             meta: t.meta,
@@ -1566,7 +1600,9 @@ impl ThreadHeap {
         let minor = self.marks();
         self.clear_marks();
         let roots = self.root_objects(true, false);
+        let young = std::mem::replace(&mut t.young, NONE);
         self.mark_from(t, &roots, 1);
+        t.young = young;
         let full = self.marks();
         let mut k = 0;
         for class in self.eval.iter().flatten() {
@@ -2132,6 +2168,52 @@ mod tests {
         let message = message.downcast_ref::<String>().cloned().unwrap_or_default();
         assert!(message.contains("a write the barrier did not see"), "{message}");
         root.node.set(None);
+        with_heap(|heap| heap.collect(generational(false, true)));
+    }
+
+    #[derive(jsrt::Trace)]
+    struct Caches {
+        ids: crate::cell::RefCell<crate::IdMap<P<Node>>>,
+        logged: crate::cell::RefCell<crate::LoggedMap<FxHashMap<u32, P<Node>>>>,
+    }
+
+    /// A minor collection traces the `IdMap` pages and `LoggedMap` keys written since the
+    /// last collection, which keeps the young objects they hold; check mode's full mark
+    /// passes, and it panics on a write that bypassed the log.
+    #[test]
+    fn write_logs_trace_the_entries_written_since_the_last_collection() {
+        let _serial = serial();
+        enable_barrier();
+        let drops = Rc::new(());
+        let caches = P::new(Caches { ids: Default::default(), logged: Default::default() });
+        // More keys than eight times the log's minimum, so a few writes stay logged.
+        for i in 0..400 {
+            caches.ids.borrow_mut().insert(i * 32, node(None, &drops, i));
+            caches.logged.borrow_mut().write(i).insert(i, node(None, &drops, i));
+        }
+        with_heap(|heap| heap.collect(generational(false, true)));
+        assert_eq!(Rc::strong_count(&drops), 801);
+
+        // Young values: in a new page, in an old page, under a new key, replacing an old value.
+        caches.ids.borrow_mut().insert(400 * 32, node(None, &drops, 1000));
+        caches.ids.borrow_mut().insert(7 * 32, node(None, &drops, 1001));
+        caches.logged.borrow_mut().write(400).insert(400, node(None, &drops, 1002));
+        caches.logged.borrow_mut().write(9).insert(9, node(None, &drops, 1003));
+        node(None, &drops, 1004);
+        with_heap(|heap| heap.collect(generational(true, true)));
+        assert_eq!(Rc::strong_count(&drops), 805, "young garbage freed, logged young values kept");
+        assert_eq!(caches.ids.borrow().get(7 * 32).unwrap().id, 1001);
+        assert_eq!(caches.logged.borrow().get(&9).unwrap().id, 1003);
+
+        // A young value stored past the log, in a page last written before that collection.
+        caches.ids.borrow_mut().replace_unstamped(3 * 32, node(None, &drops, 1005));
+        caches.logged.borrow_mut().write(11).insert(11, node(None, &drops, 1006));
+        let unwound = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| with_heap(|heap| heap.collect(generational(true, true)))));
+        let message = unwound.expect_err("check mode missed a write past the log");
+        let message = message.downcast_ref::<String>().cloned().unwrap_or_default();
+        assert!(message.contains("a write the barrier did not see"), "{message}");
+        drop(caches.ids.replace(crate::IdMap::default()));
+        drop(caches.logged.replace(crate::LoggedMap::default()));
         with_heap(|heap| heap.collect(generational(false, true)));
     }
 

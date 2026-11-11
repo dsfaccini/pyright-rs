@@ -56,7 +56,7 @@ use crate::parser::parse_nodes::{
     StringListNode, StringNode, TypeAliasNode, TypeAnnotationNode, TypeParameterListNode,
     TypeParameterNode, UnpackNode, WithItemNode, YieldFromNode, YieldNode,
 };
-use jsrt::{Atom, AtomKey, FxHashMap, JsMap, JsSet, JsString, P};
+use jsrt::{Atom, AtomKey, FxHashMap, JsMap, JsSet, JsString, LoggedMap, P};
 use jsrt::cell::{Cell, OnceCell, RefCell};
 use std::rc::Rc;
 
@@ -401,7 +401,8 @@ pub struct TypeEvaluator {
     // analyzer/typeEvaluator.ts:674
     pub(crate) function_recursion_map: RefCell<JsMap<u32, Vec<FunctionRecursionInfo>>>,
     // analyzer/typeEvaluator.ts:675
-    pub(crate) code_flow_analyzer_cache: RefCell<JsMap<u32, Vec<CodeFlowAnalyzerCacheEntry>>>,
+    /// The large caches log their writes for minor collections (`LoggedMap`).
+    pub(crate) code_flow_analyzer_cache: RefCell<LoggedMap<JsMap<u32, Vec<CodeFlowAnalyzerCacheEntry>>>>,
     // analyzer/typeEvaluator.ts:676
     pub(crate) type_cache: Cell<P<RefCell<TypeCacheMap>>>,
     // analyzer/typeEvaluator.ts:677
@@ -410,9 +411,9 @@ pub struct TypeEvaluator {
     /// Keyed by symbol id, then by `effectiveTypeCacheKey`, the string
     /// `${usageNodeId ?? '.'}${useLastDecl ? '*' : ''}`, held as the pair it encodes. Nothing
     /// iterates either map.
-    pub(crate) effective_type_cache: RefCell<FxHashMap<u32, FxHashMap<(Option<u32>, bool), P<EffectiveTypeResult>>>>,
+    pub(crate) effective_type_cache: RefCell<LoggedMap<FxHashMap<u32, FxHashMap<(Option<u32>, bool), P<EffectiveTypeResult>>>>>,
     // analyzer/typeEvaluator.ts:679
-    pub(crate) expected_type_cache: RefCell<JsMap<u32, ExpectedTypeCacheEntry>>,
+    pub(crate) expected_type_cache: RefCell<LoggedMap<JsMap<u32, ExpectedTypeCacheEntry>>>,
     // analyzer/typeEvaluator.ts:680
     pub(crate) asymmetric_accessor_assignment_cache: RefCell<JsSet<u32>>,
     // analyzer/typeEvaluator.ts:681
@@ -548,7 +549,7 @@ pub fn create_type_evaluator(
     ));
     let speculative_type_tracker = P::new_eval(RefCell::new(SpeculativeTypeTracker {
         _speculative_context_stack: Vec::new(),
-        _speculative_type_cache: FxHashMap::default(),
+        _speculative_type_cache: LoggedMap::default(),
         _active_dependent_types: Vec::new(),
     }));
 
@@ -581,11 +582,11 @@ pub fn create_type_evaluator(
         suppressed_node_stack: RefCell::new(Vec::new()),
         assign_class_to_self_stack: RefCell::new(Vec::new()),
         function_recursion_map: RefCell::new(JsMap::default()),
-        code_flow_analyzer_cache: RefCell::new(JsMap::default()),
+        code_flow_analyzer_cache: RefCell::new(LoggedMap::default()),
         type_cache: Cell::new(P::new_eval(RefCell::new(TypeCacheMap::default()))),
         type_form_type_cache: Cell::new(P::new_eval(RefCell::new(JsMap::default()))),
-        effective_type_cache: RefCell::new(FxHashMap::default()),
-        expected_type_cache: RefCell::new(JsMap::default()),
+        effective_type_cache: RefCell::new(LoggedMap::default()),
+        expected_type_cache: RefCell::new(LoggedMap::default()),
         asymmetric_accessor_assignment_cache: RefCell::new(JsSet::default()),
         deferred_class_completions: RefCell::new(Vec::new()),
         cancellation_token: Cell::new(None),
@@ -672,11 +673,11 @@ impl TypeEvaluator {
     // analyzer/typeEvaluator.ts:751
     pub fn dispose_evaluator(&self) {
         *self.function_recursion_map.borrow_mut() = JsMap::default();
-        *self.code_flow_analyzer_cache.borrow_mut() = JsMap::default();
+        *self.code_flow_analyzer_cache.borrow_mut() = LoggedMap::default();
         self.type_cache.set(P::new_eval(RefCell::new(TypeCacheMap::default())));
         self.type_form_type_cache.set(P::new_eval(RefCell::new(JsMap::default())));
-        *self.effective_type_cache.borrow_mut() = FxHashMap::default();
-        *self.expected_type_cache.borrow_mut() = JsMap::default();
+        *self.effective_type_cache.borrow_mut() = LoggedMap::default();
+        *self.expected_type_cache.borrow_mut() = LoggedMap::default();
         *self.asymmetric_accessor_assignment_cache.borrow_mut() = JsSet::default();
     }
 
@@ -1225,6 +1226,7 @@ impl TypeEvaluator {
     // analyzer/typeEvaluator.ts:1149
     pub(crate) fn add_expected_type_cache_entry(&self, node: P<ParseNode>, expected_type: P<Type>) {
         let mut cache = self.expected_type_cache.borrow_mut();
+        let cache = cache.write(node.id.get());
         match cache.get_mut(&node.id.get()) {
             None => {
                 cache.insert(
@@ -32456,9 +32458,9 @@ impl TypeEvaluator {
             code_flow_analyzer: analyzer,
         };
         if entries.is_some() {
-            self.code_flow_analyzer_cache.borrow_mut().get_mut(&node_id).unwrap().push(entry);
+            self.code_flow_analyzer_cache.borrow_mut().write(node_id).get_mut(&node_id).unwrap().push(entry);
         } else {
-            self.code_flow_analyzer_cache.borrow_mut().insert(node_id, vec![entry]);
+            self.code_flow_analyzer_cache.borrow_mut().write(node_id).insert(node_id, vec![entry]);
         }
 
         analyzer
@@ -35360,6 +35362,7 @@ impl TypeEvaluator {
         let add_to_effective_type_cache = |result: P<EffectiveTypeResult>| {
             // Add the entry to the cache so we don't need to compute it next time.
             let mut effective_type_cache = self.effective_type_cache.borrow_mut();
+            let effective_type_cache = effective_type_cache.write(symbol.id);
             if !had_cache_entries {
                 effective_type_cache.insert(symbol.id, FxHashMap::default());
             }

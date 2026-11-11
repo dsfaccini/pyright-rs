@@ -85,7 +85,7 @@ use crate::parser::parse_nodes::RaiseNode;
 use crate::parser::parse_nodes::StatementListNode;
 use crate::parser::parse_nodes::StringListNode;
 use crate::parser::parse_nodes::StringNode;
-use jsrt::{Atom, FxHashMap, FxHashSet, JsMap, JsSet, P};
+use jsrt::{Atom, FxHashMap, FxHashSet, JsMap, JsSet, LoggedMap, P};
 use jsrt::cell::{Cell, OnceCell, RefCell};
 use std::rc::Rc;
 
@@ -212,7 +212,8 @@ pub struct CodeFlowEngine {
     // analyzer/codeFlowEngine.ts:208
     pub(crate) is_reachable_recursion_set: RefCell<JsSet<u32>>,
     // analyzer/codeFlowEngine.ts:209
-    pub(crate) reachability_cache: RefCell<FxHashMap<u32, P<ReachabilityCacheEntry>>>,
+    /// Logs its writes for minor collections (`LoggedMap`).
+    pub(crate) reachability_cache: RefCell<LoggedMap<FxHashMap<u32, P<ReachabilityCacheEntry>>>>,
     // analyzer/codeFlowEngine.ts:210
     pub(crate) call_is_no_return_cache: RefCell<JsMap<u32, bool>>,
     // analyzer/codeFlowEngine.ts:211
@@ -244,7 +245,7 @@ pub fn get_code_flow_engine(
         speculative_type_tracker,
         node_info,
         is_reachable_recursion_set: RefCell::new(JsSet::default()),
-        reachability_cache: RefCell::new(FxHashMap::default()),
+        reachability_cache: RefCell::new(LoggedMap::default()),
         call_is_no_return_cache: RefCell::new(JsMap::default()),
         is_exception_context_manager_cache: RefCell::new(JsMap::default()),
         flow_incomplete_generation: Cell::new(1),
@@ -313,6 +314,7 @@ impl CodeFlowEngine {
                         self.engine
                             .reachability_cache
                             .borrow_mut()
+                            .write(self.flow_node.id)
                             .insert(self.flow_node.id, cache_entry);
                         cache_entry
                     }

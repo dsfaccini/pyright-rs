@@ -87,6 +87,15 @@ On by default; `PYRIGHT_RS_GC_GENERATIONAL=0` turns it off, and every collection
 - Every collection ends with clean cards and every program object old.
 - Old garbage waits for a major collection; a young object that only old garbage reaches survives until then too.
 
+## write logs
+
+A write into an old object marks its card, and a minor collection traces every old object on a marked card in full. The evaluator's large caches sit in a few objects that nearly every file writes, so without logs each minor collection traces them whole: late in a pydantic-ai check, about 68 ms of serial marking per minor collection went to the type cache (3.7 M entries), `TypeEvaluator`'s expected-type, effective-type and code-flow-analyzer caches, and the speculative type cache.
+
+- `jsrt::heap::epoch()` counts the collections finished on the thread's heap. A minor collection sets `Tracer::young_epoch` to it; a major collection, check mode's full mark after a minor one and `PYRIGHT_RS_GC_WRITE_LOGS=0` leave it `None`, which traces everything.
+- `IdMap` records per page the epoch of its last insert. A minor collection traces only the pages of the current epoch.
+- `LoggedMap<M>` wraps a map keyed by a `u32` id (`JsMap` or `FxHashMap`). It derefs to the map for reads; `write(key)` logs the key and returns the map, to change the value of that key and no other. A minor collection traces the values of the logged keys, or nothing when the log is from an earlier epoch. A new map, and one whose writes since the last collection reach an eighth of its entries, is traced in full: past that, a lookup per key costs more than one pass. Logged: `TypeEvaluator.expected_type_cache`, `effective_type_cache` and `code_flow_analyzer_cache`, `SpeculativeTypeTracker._speculative_type_cache`, `CodeFlowEngine.reachability_cache`.
+- Why skipping is sound: the last collection traced every entry not written since (in full, as a logged entry, or as a page of its epoch), so those entries hold handles to objects it marked, which a minor collection keeps. A removal adds no handle. Check mode verifies it: a full mark from every root follows each minor mark, and the collection panics on an object the minor mark missed.
+
 ## sweep
 
 - A live, unmarked evaluator slot is dropped in place. `drop_in_place` frees the `Vec`, `String` and map buffers it owns, and releases its `Rc`s. Its live bit clears, so the allocation cursor hands the slot out again.
