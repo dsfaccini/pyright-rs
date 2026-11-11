@@ -984,6 +984,8 @@ struct HelperState {
 
 /// Threads that help mark, parked between collections.
 struct Helpers {
+    /// Held by the collection the helpers serve: `run` rewrites the whole state.
+    claim: Mutex<()>,
     state: Mutex<HelperState>,
     start: std::sync::Condvar,
     done: std::sync::Condvar,
@@ -991,6 +993,7 @@ struct Helpers {
 }
 
 static HELPERS: Helpers = Helpers {
+    claim: Mutex::new(()),
     state: Mutex::new(HelperState { generation: 0, wanted: 0, running: 0, job: None }),
     start: std::sync::Condvar::new(),
     done: std::sync::Condvar::new(),
@@ -999,6 +1002,7 @@ static HELPERS: Helpers = Helpers {
 
 impl Helpers {
     /// Runs `job` on `n` helper threads and `main` on this one; returns when all finish.
+    /// The caller holds `claim`.
     fn run(&'static self, n: usize, job: MarkJob, main: impl FnOnce()) {
         {
             let mut spawned = lock(&self.spawned);
@@ -1434,7 +1438,14 @@ impl ThreadHeap {
 
     /// Marks everything `roots` and the registered roots reach, on `threads` threads.
     fn mark_from(&self, t: &mut Tracer, roots: &[(usize, TraceFn)], threads: usize) {
-        if threads == 1 {
+        // The helpers serve one collection at a time; a thread that finds them taken marks alone.
+        let helpers = match HELPERS.claim.try_lock() {
+            _ if threads == 1 => None,
+            Ok(claim) => Some(claim),
+            Err(std::sync::TryLockError::Poisoned(claim)) => Some(claim.into_inner()),
+            Err(std::sync::TryLockError::WouldBlock) => None,
+        };
+        if helpers.is_none() {
             for chunk in roots.chunks(ROOT_CHUNK) {
                 for &(addr, trace) in chunk {
                     // SAFETY: a root entry pairs an object with the trace function of its type.
@@ -1927,6 +1938,40 @@ mod tests {
         assert_eq!(Rc::strong_count(&drops), 4);
         with_heap(|heap| heap.collect(Collection { check: false, log: 0, threads: 1, minor: false, generational: false }));
         assert_eq!(Rc::strong_count(&drops), 3);
+    }
+
+    /// Two threads collecting at once share the marking helpers: neither deadlocks,
+    /// and each keeps exactly its live objects.
+    #[test]
+    fn two_threads_collect_at_once() {
+        let _serial = serial();
+        let (tx, rx) = std::sync::mpsc::channel();
+        for k in 0..2 {
+            let tx = tx.clone();
+            std::thread::spawn(move || {
+                let result = std::panic::catch_unwind(|| {
+                    let drops = Rc::new(());
+                    let roots: Vec<_> = (0..4000).map(|i| P::new(Holder { node: Cell::new(Some(node(None, &drops, i))) })).collect();
+                    for round in 0..300 {
+                        for i in 0..2000 {
+                            node(None, &drops, i);
+                        }
+                        with_heap(|heap| heap.collect(Collection { check: false, log: 0, threads: 4, minor: false, generational: false }));
+                        let live = Rc::strong_count(&drops);
+                        if live != 1 + roots.len() {
+                            return format!("thread {k} round {round}: {live} live, want {}", 1 + roots.len());
+                        }
+                    }
+                    String::new()
+                });
+                let _ = tx.send(result.unwrap_or_else(|_| format!("thread {k} panicked")));
+            });
+        }
+        drop(tx);
+        for _ in 0..2 {
+            let failure = rx.recv_timeout(std::time::Duration::from_secs(60)).expect("collector: two collecting threads deadlocked");
+            assert!(failure.is_empty(), "{failure}");
+        }
     }
 
     fn generational(minor: bool, check: bool) -> Collection {

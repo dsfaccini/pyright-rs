@@ -65,7 +65,7 @@ pub unsafe trait Trace {
 - The collecting thread traces the registered roots first, since they are its thread-locals. Then every thread takes program blocks to scan from a shared counter, and traces from its own mark stack.
 - A thread whose stack holds at least two packets of 512 entries hands its oldest packet to a shared pool while some thread is idle. A thread with no work takes a packet; the mark ends when every thread is idle and the pool is empty.
 - Mark bits are set with an atomic `fetch_or`, so only one thread pushes an object. Tracing only reads objects: `RefCell` contents through `try_borrow_unguarded`, `Cell` through `get`, `Rc` without touching its counts. The mutator is stopped, so nothing writes while helpers read.
-- Helper threads are started on the first parallel mark and parked on a condition variable between collections. A panic on any thread (a borrowed `RefCell`, a check-mode assertion) stops the others and unwinds on the collecting thread, which clears the marks as for a serial mark.
+- Helper threads are started on the first parallel mark and parked on a condition variable between collections. They serve one collection at a time: a thread that collects while another thread's collection holds them marks alone. A panic on any thread (a borrowed `RefCell`, a check-mode assertion) stops the others and unwinds on the collecting thread, which clears the marks as for a serial mark.
 - The set of marked objects is reachability, so it does not depend on the thread count; the sweep visits blocks in the same order as before.
 
 ## write barrier
