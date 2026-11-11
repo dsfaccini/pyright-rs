@@ -1705,6 +1705,15 @@ impl ThreadHeap {
                     unsafe {
                         let marked = *meta.bits.add(words + w);
                         let dead = *meta.bits.add(w) & !marked;
+                        live += marked.count_ones() as usize;
+                        // Every marked slot is live, so with nothing dead the live bits
+                        // equal the mark bits, which survive a generational sweep.
+                        if dead == 0 {
+                            if !sticky {
+                                *meta.bits.add(words + w) = 0;
+                            }
+                            continue;
+                        }
                         if check {
                             // Check mode drops and poisons one object at a time, so a drop
                             // that reaches an object dropped before it panics.
@@ -1724,7 +1733,6 @@ impl ThreadHeap {
                         *meta.bits.add(w) = marked;
                         // Generational: a survivor stays marked, which makes it old.
                         *meta.bits.add(words + w) = if sticky { marked } else { 0 };
-                        live += marked.count_ones() as usize;
                     }
                 }
                 live_bytes += live * slot;
