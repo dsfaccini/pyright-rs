@@ -25,6 +25,8 @@ impl ParameterizedString {
     // localization/localize.ts:31
     /// `str.replace(new RegExp(`{${key}}`, 'g'), value.toString())` per key:
     /// `$&`, `$$`, `` $` `` and `$'` in a value are replacement patterns.
+    /// Reported upstream as https://github.com/microsoft/pyright/issues/12006;
+    /// follow its fix when the pin moves.
     /// Callers format numbers with JS `String(n)` before passing them.
     pub fn format(&self, params: &[(&str, &str)]) -> String {
         let mut str = self.format_string.clone();
