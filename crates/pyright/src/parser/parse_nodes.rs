@@ -16,7 +16,6 @@
 
 use jsrt::cell::{Cell, RefCell};
 use std::ops::Deref;
-use std::ptr;
 
 use jsrt::{JsString, P};
 
@@ -277,27 +276,27 @@ pub trait NodeDetails: jsrt::Trace + Clone + 'static {
 
 impl ParseNode {
     /// The details of a node of type `D::NODE_TYPE`.
-    fn details<D: NodeDetails>(&self) -> &'static D {
-        assert!(self.node_type == D::NODE_TYPE);
+    fn details<D: NodeDetails>(node: P<ParseNode>) -> &'static D {
+        assert!(node.node_type == D::NODE_TYPE);
         // SAFETY: checked above.
-        unsafe { self.details_unchecked() }
+        unsafe { ParseNode::details_unchecked(node) }
     }
 
     /// # Safety
-    /// `self.node_type` is `D::NODE_TYPE`.
-    unsafe fn details_unchecked<D: NodeDetails>(&self) -> &'static D {
+    /// `node.node_type` is `D::NODE_TYPE`.
+    unsafe fn details_unchecked<D: NodeDetails>(node: P<ParseNode>) -> &'static D {
         // SAFETY: `alloc_node` makes every header the first field of a `#[repr(C)]`
         // `NodeAlloc` whose details type matches `node_type`, on the program heap,
-        // which is never freed.
-        unsafe { &(*ptr::from_ref(self).cast::<NodeAlloc<D>>()).d }
+        // which is never freed. The handle's pointer covers the whole `NodeAlloc`.
+        unsafe { &(*node.as_ptr().cast::<NodeAlloc<D>>()).d }
     }
 
     /// `Object.assign({}, node)`: a new node with this node's fields, id included.
     /// The details are cloned: the copy holds the same child handles, as the shared
     /// TypeScript `d` object does.
-    pub fn shallow_copy(&self) -> P<ParseNode> {
-        let copy = self.clone_details_into_node();
-        copy.parent.set(self.parent.get());
+    pub fn shallow_copy(node: P<ParseNode>) -> P<ParseNode> {
+        let copy = ParseNode::clone_details_into_node(node);
+        copy.parent.set(node.parent.get());
         copy
     }
 }
@@ -358,7 +357,7 @@ macro_rules! node_handle {
             }
 
             pub fn d(&self) -> &'static $details {
-                self.0.get().details()
+                ParseNode::details(self.0)
             }
 
             pub fn node(self) -> P<ParseNode> {
@@ -407,24 +406,28 @@ macro_rules! parse_node_details {
             $($variant(&'static $details),)*
         }
 
-        impl ParseNode {
-            /// The details of this node, as the variant of its type.
-            pub fn d(&self) -> ParseNodeDetails {
+        /// `node.d()`: the details of the node, as the variant of its type.
+        impl jsrt::Header for ParseNode {
+            type Details = ParseNodeDetails;
+
+            fn details(node: P<ParseNode>) -> ParseNodeDetails {
                 // SAFETY: each arm reads the details type of its node type.
                 unsafe {
-                    match self.node_type {
-                        $(ParseNodeType::$variant => ParseNodeDetails::$variant(self.details_unchecked()),)*
+                    match node.node_type {
+                        $(ParseNodeType::$variant => ParseNodeDetails::$variant(ParseNode::details_unchecked(node)),)*
                     }
                 }
             }
+        }
 
-            fn clone_details_into_node(&self) -> P<ParseNode> {
-                let (start, length, id) = (self.start.get(), self.length.get(), self.id.get());
+        impl ParseNode {
+            fn clone_details_into_node(node: P<ParseNode>) -> P<ParseNode> {
+                let (start, length, id) = (node.start.get(), node.length.get(), node.id.get());
                 // SAFETY: each arm reads the details type of its node type.
                 unsafe {
-                    match self.node_type {
+                    match node.node_type {
                         $(ParseNodeType::$variant => {
-                            alloc_node(start, length, id, self.a, self.details_unchecked::<$details>().clone())
+                            alloc_node(start, length, id, node.a, ParseNode::details_unchecked::<$details>(node).clone())
                         })*
                     }
                 }

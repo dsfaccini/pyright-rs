@@ -16,7 +16,7 @@ fn strings_bytes_string_with_non_ascii() {
     assert_eq!(results.tokens.count(), 2 + IMPLICIT_TOKEN_COUNT);
 
     let string_token0 = StringToken::cast(results.tokens.get_item_at(0)).unwrap();
-    let unescaped_value_0 = get_unescaped_string(&string_token0, true);
+    let unescaped_value_0 = get_unescaped_string(string_token0.token(), true);
     assert_eq!(string_token0.type_, TokenType::String);
     assert_eq!(
         string_token0.d().flags,
@@ -26,7 +26,7 @@ fn strings_bytes_string_with_non_ascii() {
     assert_eq!(string_token0.length, 7);
 
     let string_token1 = StringToken::cast(results.tokens.get_item_at(1)).unwrap();
-    let unescaped_value_1 = get_unescaped_string(&string_token1, true);
+    let unescaped_value_1 = get_unescaped_string(string_token1.token(), true);
     assert_eq!(string_token1.type_, TokenType::String);
     assert_eq!(
         string_token1.d().flags,
@@ -42,7 +42,7 @@ fn strings_raw_strings_with_escapes() {
     assert_eq!(results.tokens.count(), 2 + IMPLICIT_TOKEN_COUNT);
 
     let string_token0 = StringToken::cast(results.tokens.get_item_at(0)).unwrap();
-    let unescaped_value_0 = get_unescaped_string(&string_token0, true);
+    let unescaped_value_0 = get_unescaped_string(string_token0.token(), true);
     assert_eq!(string_token0.type_, TokenType::String);
     assert_eq!(
         string_token0.d().flags,
@@ -53,7 +53,7 @@ fn strings_raw_strings_with_escapes() {
     assert_eq!(unescaped_value_0.value, "\\\"");
 
     let string_token1 = StringToken::cast(results.tokens.get_item_at(1)).unwrap();
-    let unescaped_value_1 = get_unescaped_string(&string_token1, true);
+    let unescaped_value_1 = get_unescaped_string(string_token1.token(), true);
     assert_eq!(string_token1.type_, TokenType::String);
     assert_eq!(
         string_token1.d().flags,
@@ -70,7 +70,7 @@ fn strings_special_escape_characters() {
     assert_eq!(results.tokens.count(), 1 + IMPLICIT_TOKEN_COUNT);
 
     let string_token = StringToken::cast(results.tokens.get_item_at(0)).unwrap();
-    let unescaped_value = get_unescaped_string(&string_token, true);
+    let unescaped_value = get_unescaped_string(string_token.token(), true);
     assert_eq!(string_token.type_, TokenType::String);
     assert_eq!(string_token.d().flags, StringTokenFlags::DoubleQuote);
     assert_eq!(string_token.length, 18);
@@ -90,7 +90,7 @@ fn strings_invalid_escape_characters() {
     assert_eq!(results.tokens.count(), 1 + IMPLICIT_TOKEN_COUNT);
 
     let string_token = StringToken::cast(results.tokens.get_item_at(0)).unwrap();
-    let unescaped_value = get_unescaped_string(&string_token, true);
+    let unescaped_value = get_unescaped_string(string_token.token(), true);
     assert_eq!(string_token.type_, TokenType::String);
     assert_eq!(string_token.d().flags, StringTokenFlags::DoubleQuote);
     assert_eq!(string_token.length, 8);
@@ -116,7 +116,7 @@ fn strings_good_hex_escapes() {
     assert_eq!(results.tokens.count(), 3 + IMPLICIT_TOKEN_COUNT);
 
     let string_token0 = StringToken::cast(results.tokens.get_item_at(0)).unwrap();
-    let unescaped_value_0 = get_unescaped_string(&string_token0, true);
+    let unescaped_value_0 = get_unescaped_string(string_token0.token(), true);
     assert_eq!(string_token0.type_, TokenType::String);
     assert_eq!(string_token0.d().flags, StringTokenFlags::DoubleQuote);
     assert_eq!(string_token0.length, 6);
@@ -124,7 +124,7 @@ fn strings_good_hex_escapes() {
     assert_eq!(unescaped_value_0.value, "M");
 
     let string_token1 = StringToken::cast(results.tokens.get_item_at(1)).unwrap();
-    let unescaped_value_1 = get_unescaped_string(&string_token1, true);
+    let unescaped_value_1 = get_unescaped_string(string_token1.token(), true);
     assert_eq!(string_token1.type_, TokenType::String);
     assert_eq!(string_token1.d().flags, StringTokenFlags::DoubleQuote);
     assert_eq!(string_token1.length, 8);
@@ -132,7 +132,7 @@ fn strings_good_hex_escapes() {
     assert_eq!(unescaped_value_1.value, "k");
 
     let string_token2 = StringToken::cast(results.tokens.get_item_at(2)).unwrap();
-    let unescaped_value_2 = get_unescaped_string(&string_token2, true);
+    let unescaped_value_2 = get_unescaped_string(string_token2.token(), true);
     assert_eq!(string_token2.type_, TokenType::String);
     assert_eq!(string_token2.d().flags, StringTokenFlags::DoubleQuote);
     assert_eq!(string_token2.length, 12);
@@ -146,7 +146,7 @@ fn strings_bad_hex_escapes() {
     assert_eq!(results.tokens.count(), 3 + IMPLICIT_TOKEN_COUNT);
 
     let string_token0 = StringToken::cast(results.tokens.get_item_at(0)).unwrap();
-    let unescaped_value_0 = get_unescaped_string(&string_token0, true);
+    let unescaped_value_0 = get_unescaped_string(string_token0.token(), true);
     assert_eq!(string_token0.type_, TokenType::String);
     assert_eq!(string_token0.d().flags, StringTokenFlags::DoubleQuote);
     assert_eq!(unescaped_value_0.unescape_errors.len(), 1);
@@ -154,7 +154,7 @@ fn strings_bad_hex_escapes() {
     assert_eq!(unescaped_value_0.value, "\\x4g");
 
     let string_token1 = StringToken::cast(results.tokens.get_item_at(1)).unwrap();
-    let unescaped_value_1 = get_unescaped_string(&string_token1, true);
+    let unescaped_value_1 = get_unescaped_string(string_token1.token(), true);
     assert_eq!(string_token1.type_, TokenType::String);
     assert_eq!(string_token1.d().flags, StringTokenFlags::DoubleQuote);
     assert_eq!(unescaped_value_1.unescape_errors.len(), 1);
@@ -162,7 +162,7 @@ fn strings_bad_hex_escapes() {
     assert_eq!(unescaped_value_1.value, "\\u006");
 
     let string_token2 = StringToken::cast(results.tokens.get_item_at(2)).unwrap();
-    let unescaped_value_2 = get_unescaped_string(&string_token2, true);
+    let unescaped_value_2 = get_unescaped_string(string_token2.token(), true);
     assert_eq!(string_token2.type_, TokenType::String);
     assert_eq!(string_token2.d().flags, StringTokenFlags::DoubleQuote);
     assert_eq!(unescaped_value_2.unescape_errors.len(), 1);
@@ -176,7 +176,7 @@ fn strings_good_name_escapes() {
     assert_eq!(results.tokens.count(), 2 + IMPLICIT_TOKEN_COUNT);
 
     let string_token0 = StringToken::cast(results.tokens.get_item_at(0)).unwrap();
-    let unescaped_value_0 = get_unescaped_string(&string_token0, true);
+    let unescaped_value_0 = get_unescaped_string(string_token0.token(), true);
     assert_eq!(string_token0.type_, TokenType::String);
     assert_eq!(
         string_token0.d().flags,
@@ -187,7 +187,7 @@ fn strings_good_name_escapes() {
     assert_eq!(unescaped_value_0.value, "-");
 
     let string_token1 = StringToken::cast(results.tokens.get_item_at(1)).unwrap();
-    let unescaped_value_1 = get_unescaped_string(&string_token1, true);
+    let unescaped_value_1 = get_unescaped_string(string_token1.token(), true);
     assert_eq!(string_token1.type_, TokenType::String);
     assert_eq!(
         string_token1.d().flags,
@@ -204,7 +204,7 @@ fn strings_bad_name_escapes() {
     assert_eq!(results.tokens.count(), 2 + IMPLICIT_TOKEN_COUNT);
 
     let string_token0 = StringToken::cast(results.tokens.get_item_at(0)).unwrap();
-    let unescaped_value_0 = get_unescaped_string(&string_token0, true);
+    let unescaped_value_0 = get_unescaped_string(string_token0.token(), true);
     assert_eq!(string_token0.type_, TokenType::String);
     assert_eq!(
         string_token0.d().flags,
@@ -216,7 +216,7 @@ fn strings_bad_name_escapes() {
     assert_eq!(unescaped_value_0.value, "\\N{caret");
 
     let string_token1 = StringToken::cast(results.tokens.get_item_at(1)).unwrap();
-    let unescaped_value_1 = get_unescaped_string(&string_token1, true);
+    let unescaped_value_1 = get_unescaped_string(string_token1.token(), true);
     assert_eq!(string_token1.type_, TokenType::String);
     assert_eq!(
         string_token1.d().flags,

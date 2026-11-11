@@ -1079,7 +1079,7 @@ pub(crate) fn get_type_narrowing_callback_for_aliased_condition(
     }
 
     let init_node = test_expr_decl[0]
-        .variable()
+        .d().variable()
         .and_then(|variable| variable.inferred_type_source.get());
 
     let init_node = init_node?;

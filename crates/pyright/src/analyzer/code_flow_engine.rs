@@ -411,7 +411,7 @@ impl CodeFlowEngine {
                             | FlowFlags::WildcardImport
                             | FlowFlags::ExhaustedMatch,
                     ) {
-                        cur_flow_node = cur_flow_node.antecedent().unwrap();
+                        cur_flow_node = cur_flow_node.d().antecedent().unwrap();
                         continue;
                     }
 
@@ -725,7 +725,7 @@ impl CodeFlowEngine {
                         | FlowFlags::PreFinallyGate
                         | FlowFlags::Call,
                 ) {
-                    cur_flow_node = cur_flow_node.antecedent().unwrap();
+                    cur_flow_node = cur_flow_node.d().antecedent().unwrap();
                     continue;
                 }
 
@@ -1202,7 +1202,7 @@ impl CodeFlowEngine {
             // then it is not a "no return" call. Also, don't infer a "no
             // return" type for abstract methods.
             if !declaration
-                .function()
+                .d().function()
                 .is_some_and(|function_decl| function_decl.is_generator.get())
                 && !FunctionType::is_abstract_method(function_type)
                 && !FunctionType::is_stub_definition(function_type)
@@ -1429,7 +1429,7 @@ impl CodeFlowEngine {
             .or_else(|| {
                 decls.iter().find(|decl| {
                     decl.type_ == DeclarationType::Alias
-                        && decl.alias().is_some_and(|alias| {
+                        && decl.d().alias().is_some_and(|alias| {
                             alias
                                 .symbol_name
                                 .borrow()

@@ -10,7 +10,6 @@ use jsrt::flag_ops;
 use jsrt::cell::{Cell, RefCell};
 use std::cell::UnsafeCell;
 use std::ops::Deref;
-use std::ptr;
 
 use jsrt::{JsSet, P};
 
@@ -211,38 +210,45 @@ impl FlowNode {
     }
 
     /// # Safety
-    /// `self.kind` is `D::KIND`.
-    unsafe fn details_unchecked<D: FlowInterface>(&self) -> &'static D {
+    /// `node.kind` is `D::KIND`.
+    unsafe fn details_unchecked<D: FlowInterface>(node: P<FlowNode>) -> &'static D {
         // SAFETY: `create` makes every header the first field of a `#[repr(C)]`
-        // `FlowAlloc` whose fields match `kind`, on the program heap, which is never freed.
-        unsafe { &(*ptr::from_ref(self).cast::<FlowAlloc<D>>()).d }
+        // `FlowAlloc` whose fields match `kind`, on the program heap, which is never
+        // freed. The handle's pointer covers the whole `FlowAlloc`.
+        unsafe { &(*node.as_ptr().cast::<FlowAlloc<D>>()).d }
     }
+}
 
-    /// The fields of the interface the binder built the node as.
-    pub fn d(&self) -> FlowNodeDetails {
+/// `node.d()`: the fields of the interface the binder built the node as.
+impl jsrt::Header for FlowNode {
+    type Details = FlowNodeDetails;
+
+    fn details(node: P<FlowNode>) -> FlowNodeDetails {
         // SAFETY: each arm reads the interface of its kind.
         unsafe {
-            match self.kind {
+            match node.kind {
                 FlowKind::Plain => FlowNodeDetails::Plain,
-                FlowKind::Label => FlowNodeDetails::Label(self.details_unchecked()),
-                FlowKind::BranchLabel => FlowNodeDetails::BranchLabel(self.details_unchecked()),
-                FlowKind::Assignment => FlowNodeDetails::Assignment(self.details_unchecked()),
-                FlowKind::VariableAnnotation => FlowNodeDetails::VariableAnnotation(self.details_unchecked()),
-                FlowKind::WildcardImport => FlowNodeDetails::WildcardImport(self.details_unchecked()),
-                FlowKind::Condition => FlowNodeDetails::Condition(self.details_unchecked()),
-                FlowKind::NarrowForPattern => FlowNodeDetails::NarrowForPattern(self.details_unchecked()),
-                FlowKind::ExhaustedMatch => FlowNodeDetails::ExhaustedMatch(self.details_unchecked()),
-                FlowKind::Call => FlowNodeDetails::Call(self.details_unchecked()),
-                FlowKind::PreFinallyGate => FlowNodeDetails::PreFinallyGate(self.details_unchecked()),
-                FlowKind::PostFinally => FlowNodeDetails::PostFinally(self.details_unchecked()),
-                FlowKind::PostContextManagerLabel => FlowNodeDetails::PostContextManagerLabel(self.details_unchecked()),
+                FlowKind::Label => FlowNodeDetails::Label(FlowNode::details_unchecked(node)),
+                FlowKind::BranchLabel => FlowNodeDetails::BranchLabel(FlowNode::details_unchecked(node)),
+                FlowKind::Assignment => FlowNodeDetails::Assignment(FlowNode::details_unchecked(node)),
+                FlowKind::VariableAnnotation => FlowNodeDetails::VariableAnnotation(FlowNode::details_unchecked(node)),
+                FlowKind::WildcardImport => FlowNodeDetails::WildcardImport(FlowNode::details_unchecked(node)),
+                FlowKind::Condition => FlowNodeDetails::Condition(FlowNode::details_unchecked(node)),
+                FlowKind::NarrowForPattern => FlowNodeDetails::NarrowForPattern(FlowNode::details_unchecked(node)),
+                FlowKind::ExhaustedMatch => FlowNodeDetails::ExhaustedMatch(FlowNode::details_unchecked(node)),
+                FlowKind::Call => FlowNodeDetails::Call(FlowNode::details_unchecked(node)),
+                FlowKind::PreFinallyGate => FlowNodeDetails::PreFinallyGate(FlowNode::details_unchecked(node)),
+                FlowKind::PostFinally => FlowNodeDetails::PostFinally(FlowNode::details_unchecked(node)),
+                FlowKind::PostContextManagerLabel => FlowNodeDetails::PostContextManagerLabel(FlowNode::details_unchecked(node)),
             }
         }
     }
+}
 
+impl FlowNodeDetails {
     /// The `antecedent` field of the interfaces that have one.
-    pub fn antecedent(&self) -> Option<P<FlowNode>> {
-        match self.d() {
+    pub fn antecedent(self) -> Option<P<FlowNode>> {
+        match self {
             FlowNodeDetails::Assignment(d) => Some(d.antecedent),
             FlowNodeDetails::VariableAnnotation(d) => Some(d.antecedent),
             FlowNodeDetails::WildcardImport(d) => Some(d.antecedent),
@@ -267,7 +273,7 @@ macro_rules! flow_handle {
 
         impl $handle {
             pub fn cast(node: P<FlowNode>) -> Option<$handle> {
-                match node.get().d() {
+                match node.d() {
                     $(FlowNodeDetails::$variant(_))|+ => Some($handle(node)),
                     _ => None,
                 }
@@ -317,7 +323,7 @@ flow_handle!(
 
 impl FlowLabel {
     pub fn d(&self) -> &'static FlowLabelDetails {
-        match self.0.get().d() {
+        match self.0.d() {
             FlowNodeDetails::Label(d) => d,
             FlowNodeDetails::BranchLabel(d) => &d.label,
             FlowNodeDetails::PostContextManagerLabel(d) => &d.label,
@@ -351,7 +357,7 @@ flow_handle!(FlowBranchLabel, FlowBranchLabelDetails, BranchLabel);
 
 impl FlowBranchLabel {
     pub fn d(&self) -> &'static FlowBranchLabelDetails {
-        match self.0.get().d() {
+        match self.0.d() {
             FlowNodeDetails::BranchLabel(d) => d,
             _ => unreachable!(),
         }
@@ -368,7 +374,7 @@ macro_rules! simple_flow_handle {
 
         impl $handle {
             pub fn d(&self) -> &'static $details {
-                match self.0.get().d() {
+                match self.0.d() {
                     FlowNodeDetails::$variant(d) => d,
                     _ => unreachable!(),
                 }
@@ -514,7 +520,7 @@ flow_handle!(
 
 impl FlowPostContextManagerLabel {
     pub fn d(&self) -> &'static FlowPostContextManagerLabelDetails {
-        match self.0.get().d() {
+        match self.0.d() {
             FlowNodeDetails::PostContextManagerLabel(d) => d,
             _ => unreachable!(),
         }

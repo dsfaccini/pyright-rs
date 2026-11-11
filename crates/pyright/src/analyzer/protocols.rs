@@ -811,13 +811,13 @@ pub(crate) fn assign_to_protocol_internal(
             let is_dest_final = dest_symbol.get_typed_declarations().iter().any(|decl| {
                 decl.type_ == DeclarationType::Variable
                     && decl
-                        .variable()
+                        .d().variable()
                         .is_some_and(|variable| variable.is_final.get().unwrap_or(false))
             });
             let is_src_final = src_symbol.get_typed_declarations().iter().any(|decl| {
                 decl.type_ == DeclarationType::Variable
                     && decl
-                        .variable()
+                        .d().variable()
                         .is_some_and(|variable| variable.is_final.get().unwrap_or(false))
             });
 
@@ -925,7 +925,7 @@ pub(crate) fn assign_to_protocol_internal(
                 let is_invariant = primary_decl.is_some_and(|primary_decl| {
                     primary_decl.type_ == DeclarationType::Variable
                         && !primary_decl
-                            .variable()
+                            .d().variable()
                             .is_some_and(|variable| variable.is_final.get().unwrap_or(false))
                 });
 
@@ -1035,8 +1035,8 @@ pub(crate) fn assign_to_protocol_internal(
                 && let Some(src_primary_decl) = src_primary_decl
                 && src_primary_decl.type_ == DeclarationType::Variable
             {
-                let dest_variable = dest_primary_decl.get().variable().unwrap();
-                let src_variable = src_primary_decl.get().variable().unwrap();
+                let dest_variable = dest_primary_decl.d().variable().unwrap();
+                let src_variable = src_primary_decl.d().variable().unwrap();
                 let is_dest_read_only = dest_variable.is_constant.get().unwrap_or(false)
                     || dest_variable.is_final.get().unwrap_or(false);
                 let mut is_src_read_only = src_variable.is_constant.get().unwrap_or(false);

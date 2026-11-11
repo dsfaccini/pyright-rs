@@ -249,7 +249,7 @@ impl Scope {
                 || decls.iter().any(|decl| {
                     decl.type_ != DeclarationType::Variable
                         || decl
-                            .variable()
+                            .d().variable()
                             .is_none_or(|v| v.is_defined_by_member_access.get() != Some(true))
                 })
             {

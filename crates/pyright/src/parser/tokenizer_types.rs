@@ -624,19 +624,20 @@ impl Token {
     }
 
     // Comments prior to the token.
-    pub fn comments(&self) -> Option<&'static [Comment]> {
-        self.shared_comments().map(|comments| comments.get().as_slice())
+    pub fn comments(token: P<Token>) -> Option<&'static [Comment]> {
+        Token::shared_comments(token).map(|comments| comments.get().as_slice())
     }
 
     /// The comment list itself, for a token that shares it.
-    pub fn shared_comments(&self) -> Option<Comments> {
-        if !self.has_comments {
+    pub fn shared_comments(token: P<Token>) -> Option<Comments> {
+        if !token.has_comments {
             return None;
         }
         // SAFETY: `alloc_token` allocates a token that has comments as a
-        // `TokenAlloc<D, Comments>` whose `D` matches `kind`.
-        Some(with_interface!(self.kind, D => unsafe {
-            (*ptr::from_ref(self).cast::<TokenAlloc<D, Comments>>()).comments
+        // `TokenAlloc<D, Comments>` whose `D` matches `kind`. The handle's pointer
+        // covers the whole `TokenAlloc`.
+        Some(with_interface!(token.kind, D => unsafe {
+            (*token.as_ptr().cast::<TokenAlloc<D, Comments>>()).comments
         }))
     }
 
@@ -648,71 +649,76 @@ impl Token {
             return token;
         }
         // SAFETY: a scratch token is the `alloc.token` of a `ScratchToken`, whose
-        // `kept` slot is the word before it.
-        let kept = unsafe { &*ptr::from_ref(token.get()).cast::<Cell<Option<P<Token>>>>().sub(1) };
+        // `kept` slot is the word before it. The handle's pointer covers the region's chunk.
+        let kept = unsafe { &*token.as_ptr().cast::<Cell<Option<P<Token>>>>().sub(1) };
         if let Some(copy) = kept.get() {
             return copy;
         }
         // SAFETY: each arm copies the interface of its kind. Once `kept` is set, the
         // scratch token is never dropped (`TokenScratch::drop`): its buffers move to the copy.
-        let copy = unsafe { with_interface!(token.kind, D => token.copy_out::<D>()) };
+        let copy = unsafe { with_interface!(token.kind, D => Token::copy_out::<D>(token)) };
         kept.set(Some(copy));
         copy
     }
 
     /// # Safety
-    /// `self.kind` is `D::KIND`, and `self` is never dropped afterwards.
-    unsafe fn copy_out<D: TokenInterface>(&self) -> P<Token> {
+    /// `scratch.kind` is `D::KIND`, and `scratch` is never dropped afterwards.
+    unsafe fn copy_out<D: TokenInterface>(scratch: P<Token>) -> P<Token> {
         let token = Token {
-            type_: self.type_,
-            start: self.start,
-            length: self.length,
-            kind: self.kind,
+            type_: scratch.type_,
+            start: scratch.start,
+            length: scratch.length,
+            kind: scratch.kind,
             scratch: false,
-            has_comments: self.has_comments,
+            has_comments: scratch.has_comments,
             _written_through_shared: UnsafeCell::new(()),
         };
         // SAFETY: the caller guarantees the kind, and that the buffers move.
-        let d = unsafe { ptr::read(self.details_unchecked::<D>()) };
-        match self.shared_comments() {
+        let d = unsafe { ptr::read(Token::details_unchecked::<D>(scratch)) };
+        match Token::shared_comments(scratch) {
             None => place_token(ptr::null(), TokenAlloc { token, d, comments: () }),
             Some(comments) => place_token(ptr::null(), TokenAlloc { token, d, comments }),
         }
     }
 
     /// The fields of interface `D`.
-    fn details<D: TokenInterface>(&self) -> &'static D {
-        assert!(self.kind == D::KIND);
+    fn details<D: TokenInterface>(token: P<Token>) -> &'static D {
+        assert!(token.kind == D::KIND);
         // SAFETY: checked above.
-        unsafe { self.details_unchecked() }
+        unsafe { Token::details_unchecked(token) }
     }
 
     /// # Safety
-    /// `self.kind` is `D::KIND`.
-    unsafe fn details_unchecked<D: TokenInterface>(&self) -> &'static D {
+    /// `token.kind` is `D::KIND`.
+    unsafe fn details_unchecked<D: TokenInterface>(token: P<Token>) -> &'static D {
         // SAFETY: `alloc_token` makes every header the first field of a `#[repr(C)]`
         // `TokenAlloc` whose fields match `kind`, on the program heap, which is never
-        // freed, or in a scratch region, which outlives every use of its tokens.
-        unsafe { &(*ptr::from_ref(self).cast::<TokenAlloc<D>>()).d }
+        // freed, or in a scratch region, which outlives every use of its tokens. The
+        // handle's pointer covers the whole `TokenAlloc`.
+        unsafe { &(*token.as_ptr().cast::<TokenAlloc<D>>()).d }
     }
+}
 
-    /// The fields of the specific token interface.
-    pub fn d(&self) -> TokenDetails {
+/// `token.d()`: the fields of the specific token interface.
+impl jsrt::Header for Token {
+    type Details = TokenDetails;
+
+    fn details(token: P<Token>) -> TokenDetails {
         // SAFETY: each arm reads the interface of its kind.
         unsafe {
-            match self.kind {
+            match token.kind {
                 TokenKind::None => TokenDetails::None,
-                TokenKind::Indent => TokenDetails::Indent(self.details_unchecked()),
-                TokenKind::Dedent => TokenDetails::Dedent(self.details_unchecked()),
-                TokenKind::NewLine => TokenDetails::NewLine(self.details_unchecked()),
-                TokenKind::Keyword => TokenDetails::Keyword(self.details_unchecked()),
-                TokenKind::String => TokenDetails::String(self.details_unchecked()),
-                TokenKind::FStringStart => TokenDetails::FStringStart(self.details_unchecked()),
-                TokenKind::FStringMiddle => TokenDetails::FStringMiddle(self.details_unchecked()),
-                TokenKind::FStringEnd => TokenDetails::FStringEnd(self.details_unchecked()),
-                TokenKind::Number => TokenDetails::Number(self.details_unchecked()),
-                TokenKind::Operator => TokenDetails::Operator(self.details_unchecked()),
-                TokenKind::Identifier => TokenDetails::Identifier(self.details_unchecked()),
+                TokenKind::Indent => TokenDetails::Indent(Token::details_unchecked(token)),
+                TokenKind::Dedent => TokenDetails::Dedent(Token::details_unchecked(token)),
+                TokenKind::NewLine => TokenDetails::NewLine(Token::details_unchecked(token)),
+                TokenKind::Keyword => TokenDetails::Keyword(Token::details_unchecked(token)),
+                TokenKind::String => TokenDetails::String(Token::details_unchecked(token)),
+                TokenKind::FStringStart => TokenDetails::FStringStart(Token::details_unchecked(token)),
+                TokenKind::FStringMiddle => TokenDetails::FStringMiddle(Token::details_unchecked(token)),
+                TokenKind::FStringEnd => TokenDetails::FStringEnd(Token::details_unchecked(token)),
+                TokenKind::Number => TokenDetails::Number(Token::details_unchecked(token)),
+                TokenKind::Operator => TokenDetails::Operator(Token::details_unchecked(token)),
+                TokenKind::Identifier => TokenDetails::Identifier(Token::details_unchecked(token)),
             }
         }
     }
@@ -755,7 +761,7 @@ macro_rules! token_handle {
             }
 
             pub fn d(&self) -> &'static $details {
-                self.0.get().details()
+                Token::details(self.0)
             }
 
             pub fn token(self) -> P<Token> {

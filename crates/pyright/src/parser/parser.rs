@@ -5733,7 +5733,7 @@ impl Parser {
 
             // Make a shallow copy of the dest expression but give it a new ID.
             // Nothing writes to either node's details after this.
-            let dest_expr = left_expr.shallow_copy();
+            let dest_expr = ParseNode::shallow_copy(left_expr);
             dest_expr.id.set(get_next_node_id());
 
             return AugmentedAssignmentNode::create(
@@ -5965,7 +5965,7 @@ impl Parser {
     // parser/parser.ts:5030
     fn _make_string_node(&mut self, string_token: StringToken) -> StringNode {
         let unescaped_result =
-            string_token_utils::get_unescaped_string(&string_token, /* elide_crlf */ true);
+            string_token_utils::get_unescaped_string(string_token.token(), /* elide_crlf */ true);
         self._report_string_token_errors(string_token.0, Some(&unescaped_result));
         StringNode::create(self._get_owner_key(), string_token, unescaped_result.value)
     }
@@ -6448,7 +6448,7 @@ impl Parser {
             } else {
                 let string_token = StringNode::cast(strings[0]).unwrap().d().token.get();
                 let string_value = string_token_utils::get_unescaped_string(
-                    &string_token,
+                    string_token.token(),
                     /* elide_crlf */ false,
                 );
                 let unescaped_string = string_value.value;
@@ -6681,7 +6681,7 @@ impl Parser {
                 next_token.start,
                 next_token.length,
                 String::new(),
-                next_token.shared_comments(),
+                Token::shared_comments(next_token),
             ));
         }
 
@@ -6700,7 +6700,7 @@ impl Parser {
                     next_token.start,
                     next_token.length,
                     keyword_text,
-                    next_token.shared_comments(),
+                    Token::shared_comments(next_token),
                 ));
             }
         }

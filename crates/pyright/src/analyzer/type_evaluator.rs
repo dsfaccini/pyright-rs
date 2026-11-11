@@ -5332,7 +5332,7 @@ impl TypeEvaluator {
         if let Some(var_decl) = var_decl {
             if var_decl.type_ == analyzer::declaration::DeclarationType::Variable {
                 let is_constant = var_decl
-                    .variable()
+                    .d().variable()
                     .is_some_and(|d| d.is_constant.get().unwrap_or(false));
                 if is_constant {
                     // A constant variable can be assigned only once. If this
@@ -5681,7 +5681,7 @@ impl TypeEvaluator {
                     && node.d().member.get().node() != typed_decls[0].node.get()
                 {
                     if typed_decls[0]
-                        .variable()
+                        .d().variable()
                         .is_some_and(|d| d.is_constant.get().unwrap_or(false))
                     {
                         self.add_diagnostic(
@@ -7568,7 +7568,7 @@ impl TypeEvaluator {
         // eligible because it could be modified by other modules.
         if !decls.iter().all(|decl| {
             decl.type_ != analyzer::declaration::DeclarationType::Variable
-                || decl.variable().unwrap().is_final.get().unwrap_or(false)
+                || decl.d().variable().unwrap().is_final.get().unwrap_or(false)
                 || self.get_scope_for_node(decl.node.get()).map(|scope| scope.type_)
                     != Some(analyzer::scope::ScopeType::Module)
         }) {
@@ -9394,7 +9394,7 @@ impl TypeEvaluator {
                             if enclosing_function_node.is_none_or(|enclosing_function_node| {
                                 enclosing_function_node.d().name.get().d().value() != "__init__"
                             }) || final_var_type_decl
-                                .variable()
+                                .d().variable()
                                 .and_then(|variable| variable.inferred_type_source.get())
                                 .is_some()
                                 || analyzer::types::is_instantiable_class(class_type.0)
@@ -16543,7 +16543,7 @@ impl TypeEvaluator {
             if !all_decls.iter().any(|decl| {
                 decl.type_ == analyzer::declaration::DeclarationType::Variable
                     && decl
-                        .variable()
+                        .d().variable()
                         .is_some_and(|v| v.inferred_type_source.get().is_some())
             }) {
                 return Some(AbstractSymbol {
@@ -29713,7 +29713,7 @@ impl TypeEvaluator {
             &self.node_info,
         );
         let mut function_flags = function_info.flags;
-        if function_decl.is_some_and(|decl| decl.function().is_some_and(|f| f.is_generator.get())) {
+        if function_decl.is_some_and(|decl| decl.d().function().is_some_and(|f| f.is_generator.get())) {
             function_flags |= FunctionTypeFlags::Generator;
         }
 
@@ -30630,7 +30630,7 @@ impl TypeEvaluator {
                 .push(FunctionRecursionInfo { caller_node });
 
             let function_decl = self.node_info.get_declaration(node.0);
-            let function_details = function_decl.and_then(|decl| decl.get().function());
+            let function_details = function_decl.and_then(|decl| decl.d().function());
 
             let function_never_returns = !self.is_after_node_reachable(node.0);
             let implicitly_returns_none = self.is_after_node_reachable(suite.0);
@@ -30868,7 +30868,7 @@ impl TypeEvaluator {
         let Some(function_decl) = function_decl else {
             return false;
         };
-        let Some(details) = function_decl.function() else {
+        let Some(details) = function_decl.d().function() else {
             return false;
         };
         if !details.is_method.get()
@@ -34145,7 +34145,7 @@ impl TypeEvaluator {
 
         match declaration.type_ {
             analyzer::declaration::DeclarationType::Intrinsic => {
-                let intrinsic_type = declaration.intrinsic().unwrap().intrinsic_type;
+                let intrinsic_type = declaration.d().intrinsic().unwrap().intrinsic_type;
                 if intrinsic_type == "Any" {
                     return declared(Some(analyzer::types::AnyType::create(false).0));
                 }
@@ -34296,7 +34296,7 @@ impl TypeEvaluator {
             )),
 
             analyzer::declaration::DeclarationType::Variable => {
-                let variable = declaration.variable().unwrap();
+                let variable = declaration.d().variable().unwrap();
                 let type_annotation_node = variable.type_annotation_node.get();
 
                 if let Some(type_annotation_node) = type_annotation_node {
@@ -34829,7 +34829,7 @@ impl TypeEvaluator {
                 }
             };
 
-            let alias = resolved_decl.alias().unwrap();
+            let alias = resolved_decl.d().alias().unwrap();
             let has_symbol_name = alias.symbol_name.borrow().as_ref().is_some_and(|name| !name.is_empty());
             let loader_actions = match alias.submodule_fallback.get() {
                 Some(submodule_fallback) if has_symbol_name => submodule_fallback,
@@ -34838,7 +34838,7 @@ impl TypeEvaluator {
             return Some(apply_loader_actions_to_module_type(
                 self,
                 module_type,
-                &*loader_actions,
+                &loader_actions,
                 &self.import_lookup,
             ));
         }
@@ -34872,7 +34872,7 @@ impl TypeEvaluator {
                 }
 
                 // Special-case constants, which are treated as unambiguous.
-                let variable = resolved_decl.variable().unwrap();
+                let variable = resolved_decl.d().variable().unwrap();
                 if self.is_final_variable_declaration(resolved_decl) || variable.is_constant.get().unwrap_or(false) {
                     is_unambiguous_type = true;
                 }
@@ -34921,7 +34921,7 @@ impl TypeEvaluator {
         }
 
         if resolved_decl.type_ == analyzer::declaration::DeclarationType::Variable {
-            let variable = resolved_decl.variable().unwrap();
+            let variable = resolved_decl.d().variable().unwrap();
             if let Some(inferred_type_source) = variable.inferred_type_source.get() {
                 let is_type_alias = self.is_explicit_type_alias_declaration(resolved_decl)
                     || self.is_possible_type_alias_or_typed_dict(resolved_decl);
@@ -34997,7 +34997,7 @@ impl TypeEvaluator {
             .iter().copied()
             .filter(|decl| {
                 decl.type_ != analyzer::declaration::DeclarationType::Variable
-                    || !decl.variable().unwrap().is_inference_allowed_in_py_typed.get().unwrap_or(false)
+                    || !decl.d().variable().unwrap().is_inference_allowed_in_py_typed.get().unwrap_or(false)
             })
             .collect();
 
@@ -35324,7 +35324,7 @@ impl TypeEvaluator {
             // a member access expression.
             if analyzer::symbol_utils::is_effectively_class_var(symbol, /* is_dataclass */ false)
                 && decl.type_ == analyzer::declaration::DeclarationType::Variable
-                && decl.variable().unwrap().is_defined_by_member_access.get().unwrap_or(false)
+                && decl.d().variable().unwrap().is_defined_by_member_access.get().unwrap_or(false)
             {
                 continue;
             }
@@ -35367,7 +35367,7 @@ impl TypeEvaluator {
             // resolution check so we can evaluate the full assignment statement.
             if is_type_alias && resolved_decl.type_ == analyzer::declaration::DeclarationType::Variable {
                 let assignment_node = resolved_decl
-                    .variable()
+                    .d().variable()
                     .unwrap()
                     .inferred_type_source
                     .get()
@@ -35430,7 +35430,7 @@ impl TypeEvaluator {
                     if decl.type_ == analyzer::declaration::DeclarationType::Variable {
                         let mut is_constant = false;
                         if decl.type_ == analyzer::declaration::DeclarationType::Variable {
-                            if decl.variable().unwrap().is_constant.get().unwrap_or(false)
+                            if decl.d().variable().unwrap().is_constant.get().unwrap_or(false)
                                 || self.is_final_variable_declaration(decl)
                             {
                                 is_constant = true;
@@ -41860,12 +41860,12 @@ impl TypeEvaluator {
     // analyzer/typeEvaluator.ts:30166
     pub fn is_final_variable_declaration(&self, decl: P<Declaration>) -> bool {
         decl.type_ == analyzer::declaration::DeclarationType::Variable
-            && decl.variable().unwrap().is_final.get().unwrap_or(false)
+            && decl.d().variable().unwrap().is_final.get().unwrap_or(false)
     }
 
     // analyzer/typeEvaluator.ts:30170
     pub fn is_explicit_type_alias_declaration(&self, decl: P<Declaration>) -> bool {
-        let type_annotation_node = decl.variable().and_then(|variable| variable.type_annotation_node.get());
+        let type_annotation_node = decl.d().variable().and_then(|variable| variable.type_annotation_node.get());
         let Some(type_annotation_node) = type_annotation_node.filter(|_| {
             decl.type_ == analyzer::declaration::DeclarationType::Variable
         }) else {
@@ -41893,7 +41893,7 @@ impl TypeEvaluator {
 
     // analyzer/typeEvaluator.ts:30187
     pub(crate) fn is_possible_type_alias_declaration(&self, decl: P<Declaration>) -> bool {
-        let Some(variable) = decl.variable().filter(|_| decl.type_ == analyzer::declaration::DeclarationType::Variable)
+        let Some(variable) = decl.d().variable().filter(|_| decl.type_ == analyzer::declaration::DeclarationType::Variable)
         else {
             return false;
         };

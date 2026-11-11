@@ -98,7 +98,7 @@ fn report_if_due() {
 ///
 /// A raw pointer, not a `&'static T`: it keeps the provenance of the whole object
 /// as allocated, so a header handle reaches the details behind its header
-/// ([`P::header`]), and a handle to a swept object is never a dangling
+/// ([`P::header`], [`Header`]), and a handle to a swept object is never a dangling
 /// reference (`docs/porting.md`, "unsafe code").
 pub struct P<T: ?Sized + 'static>(NonNull<T>);
 
@@ -142,7 +142,7 @@ impl<T: 'static> P<T> {
     /// The handle of the object's first field, for a `#[repr(C)]` type that
     /// starts with a header: both handles hold the same address, and the header
     /// handle keeps the provenance of the whole object, so code that knows the
-    /// full type reads past the header through it ([`P::as_ptr`]).
+    /// full type reads past the header through it ([`Header`]).
     pub fn header<U: Trace>(self, first_field: fn(&'static T) -> &'static U) -> P<U>
     where
         T: Trace,
@@ -188,7 +188,7 @@ impl<T: ?Sized + 'static> P<T> {
 
     /// The referenced value. Never store the returned reference in a struct:
     /// store the `P`, so the collector can see it. The reference covers `T`
-    /// only: read past a header through [`P::as_ptr`].
+    /// only: read a header's details through the handle ([`Header`]).
     #[inline]
     pub fn get(self) -> &'static T {
         heap::check_handle(self.addr());
@@ -212,6 +212,25 @@ impl<T: ?Sized + 'static> P<T> {
     #[inline]
     fn addr(self) -> usize {
         self.0.as_ptr().cast::<u8>().addr()
+    }
+}
+
+/// A `#[repr(C)]` header type allocated with details behind it, as the first
+/// field of a larger object ([`P::header`]): `ParseNode`, `Token`, `FlowNode`,
+/// `Declaration`. A `&` to the header covers the header's bytes only, so the
+/// details are read through the handle: `p.d()`.
+pub trait Header: Sized + 'static {
+    type Details;
+
+    /// The details of the object `header` starts.
+    fn details(header: P<Self>) -> Self::Details;
+}
+
+impl<T: Header> P<T> {
+    /// The details behind the header.
+    #[inline]
+    pub fn d(self) -> T::Details {
+        T::details(self)
     }
 }
 

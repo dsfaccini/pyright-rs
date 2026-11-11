@@ -2455,7 +2455,7 @@ pub(crate) fn is_required_typed_dict_variable(
             return false;
         }
         let Some(type_annotation_node) = decl
-            .variable()
+            .d().variable()
             .and_then(|variable| variable.type_annotation_node.get())
         else {
             return false;
@@ -2485,7 +2485,7 @@ pub(crate) fn is_not_required_typed_dict_variable(
             return false;
         }
         let Some(type_annotation_node) = decl
-            .variable()
+            .d().variable()
             .and_then(|variable| variable.type_annotation_node.get())
         else {
             return false;
@@ -2515,7 +2515,7 @@ pub(crate) fn is_read_only_typed_dict_variable(
             return false;
         }
         let Some(type_annotation_node) = decl
-            .variable()
+            .d().variable()
             .and_then(|variable| variable.type_annotation_node.get())
         else {
             return false;

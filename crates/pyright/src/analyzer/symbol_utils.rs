@@ -12,7 +12,7 @@ use jsrt::P;
 pub fn get_last_typed_declaration_for_symbol(symbol: P<Symbol>) -> Option<P<Declaration>> {
     // The last of `getTypedDeclarations()`: its filter only reads each declaration, so the
     // last declaration that passes it is found from the end, without the filtered array.
-    symbol.get_declarations().iter().rev().copied().find(|decl| has_type_for_declaration(decl))
+    symbol.get_declarations().iter().rev().copied().find(|decl| has_type_for_declaration(*decl))
 }
 
 // analyzer/symbolUtils.ts:25
