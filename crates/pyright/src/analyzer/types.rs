@@ -320,6 +320,24 @@ impl TypeBase {
 
     // analyzer/types.ts:266
     pub fn clone_type(type_: P<Type>) -> P<Type> {
+        // `{ ...type.props }`; a copy of an empty props object reads as none (`set_prop`).
+        let props = match type_.props.borrow().as_ref() {
+            Some(props) if !props.is_empty() => Some(props.clone()).into(),
+            _ => OptionRefCell::new(),
+        };
+        TypeBase::clone_type_with(type_, props)
+    }
+
+    /// `cloneType` followed by props writes: `edit` changes the copy of the props
+    /// before the clone holds them, so a clone whose props end up empty allocates none.
+    fn clone_type_with_props(type_: P<Type>, edit: impl FnOnce(&mut TypeBaseProps)) -> P<Type> {
+        let mut props = type_.props.borrow().as_ref().cloned().unwrap_or_default();
+        edit(&mut props);
+        TypeBase::clone_type_with(type_, if props.is_empty() { OptionRefCell::new() } else { Some(props).into() })
+    }
+
+    /// `cloneType` with `props` as the clone's.
+    fn clone_type_with(type_: P<Type>, props: OptionRefCell<TypeBaseProps>) -> P<Type> {
         // `{ ...type }` with copies of `props` and `priv`: `shared` stays shared.
         let d = match &type_.get().d {
             TypeDetails::Unbound(_) => TypeDetails::Unbound(UnboundTypeDetails {}),
@@ -357,11 +375,7 @@ impl TypeBase {
         P::new_eval(Type {
             category: type_.category,
             flags: type_.flags.clone(),
-            // `{ ...type.props }`; a copy of an empty props object reads as none (`set_prop`).
-            props: match type_.props.borrow().as_ref() {
-                Some(props) if !props.is_empty() => Some(props.clone()).into(),
-                _ => OptionRefCell::new(),
-            },
+            props,
             cached: OptionRefCell::new(),
             cached_requires_specialization: Cell::new(None),
             d,
@@ -379,38 +393,26 @@ impl TypeBase {
     pub fn clone_type_as_instance(type_: P<Type>, cache: bool) -> P<Type> {
         common::debug::assert(TypeBase::is_instantiable(type_), None);
 
-        let new_instance = TypeBase::clone_type(type_);
+        // The props writes below are applied to the clone's copy of the props.
+        let depth = type_.props.borrow().as_ref().and_then(|props| props.instantiable_depth);
+        let new_instance = TypeBase::clone_type_with_props(type_, |props| {
+            // Remove type form information from the type.
+            props.type_form = None;
 
-        // Remove type form information from the type.
-        let has_type_form = new_instance
-            .props
-            .borrow()
-            .as_ref()
-            .is_some_and(|props| props.type_form.is_some());
-        if has_type_form {
-            TypeBase::set_type_form(new_instance, None);
-        }
+            match depth {
+                None => {}
+                Some(depth) if depth <= 1 => props.instantiable_depth = None,
+                Some(depth) => props.instantiable_depth = Some(depth - 1),
+            }
+        });
 
-        let depth = new_instance
-            .props
-            .borrow()
-            .as_ref()
-            .and_then(|props| props.instantiable_depth);
-        match depth {
-            None => {
-                new_instance
-                    .flags
-                    .set(new_instance.flags.get() & !TypeFlags::Instantiable);
-                new_instance
-                    .flags
-                    .set(new_instance.flags.get() | TypeFlags::Instance);
-            }
-            Some(depth) if depth <= 1 => {
-                TypeBase::set_instantiable_depth(new_instance, None);
-            }
-            Some(depth) => {
-                TypeBase::set_instantiable_depth(new_instance, Some(depth - 1));
-            }
+        if depth.is_none() {
+            new_instance
+                .flags
+                .set(new_instance.flags.get() & !TypeFlags::Instantiable);
+            new_instance
+                .flags
+                .set(new_instance.flags.get() | TypeFlags::Instance);
         }
 
         // Should we cache it for next time?
@@ -427,49 +429,32 @@ impl TypeBase {
 
     // analyzer/types.ts:316
     pub fn clone_type_as_instantiable(type_: P<Type>, cache: bool) -> P<Type> {
-        let new_instance = TypeBase::clone_type(type_);
+        // The props writes below are applied to the clone's copy of the props.
+        let is_instance = TypeBase::is_instance(type_);
+        let old_depth = type_.props.borrow().as_ref().and_then(|props| props.instantiable_depth);
+        let new_instance = TypeBase::clone_type_with_props(type_, |props| {
+            if !is_instance {
+                props.instantiable_depth = Some(match old_depth {
+                    None => 1,
+                    Some(old_depth) => old_depth + 1,
+                });
+            }
 
-        if TypeBase::is_instance(type_) {
+            // Remove type alias information because the type will no longer match
+            // that of the type alias definition.
+            props.type_alias_info = None;
+
+            // Remove type form information from the type.
+            props.type_form = None;
+        });
+
+        if is_instance {
             new_instance
                 .flags
                 .set(new_instance.flags.get() & !TypeFlags::Instance);
             new_instance
                 .flags
                 .set(new_instance.flags.get() | TypeFlags::Instantiable);
-        } else {
-            let old_depth = type_
-                .props
-                .borrow()
-                .as_ref()
-                .and_then(|props| props.instantiable_depth);
-            TypeBase::set_instantiable_depth(
-                new_instance,
-                Some(match old_depth {
-                    None => 1,
-                    Some(old_depth) => old_depth + 1,
-                }),
-            );
-        }
-
-        // Remove type alias information because the type will no longer match
-        // that of the type alias definition.
-        let has_type_alias_info = new_instance
-            .props
-            .borrow()
-            .as_ref()
-            .is_some_and(|props| props.type_alias_info.is_some());
-        if has_type_alias_info {
-            TypeBase::set_type_alias_info(new_instance, None);
-        }
-
-        // Remove type form information from the type.
-        let has_type_form = new_instance
-            .props
-            .borrow()
-            .as_ref()
-            .is_some_and(|props| props.type_form.is_some());
-        if has_type_form {
-            TypeBase::set_type_form(new_instance, None);
         }
 
         // Should we cache it for next time?
@@ -495,11 +480,7 @@ impl TypeBase {
 
     // analyzer/types.ts:358
     pub fn clone_with_type_form(type_: P<Type>, type_form: Option<P<Type>>) -> P<Type> {
-        let type_clone = TypeBase::clone_type(type_);
-
-        TypeBase::set_type_form(type_clone, type_form);
-
-        type_clone
+        TypeBase::clone_type_with_props(type_, |props| props.type_form = type_form)
     }
 
     // analyzer/types.ts:366

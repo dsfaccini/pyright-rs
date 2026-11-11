@@ -5,6 +5,7 @@ Shrink the live evaluator data that sets pydantic-ai's peak RSS: types, function
 ## Signature changes
 
 - `TypeBase::set_special_form`, `set_instantiable_depth`, `set_type_alias_info`, `set_type_form` and `set_condition` write `None` without allocating `Type.props`, and `TypeBase::clone_type` leaves the clone's props unallocated when the source's are empty. Every read of `props` is `props?.<field>` in the TypeScript, so an empty props object and none read the same.
+- `TypeBase::clone_type_as_instance`, `clone_type_as_instantiable` and `clone_with_type_form` apply their props writes to the clone's copy before storing it (`clone_type_with_props`), so a clone whose props end up empty allocates none.
 - `FunctionDetailsSharedCold.doc_string` and `ClassDetailsShared.doc_string` are `Option<Rc<str>>`, shared by the copies `{ ...shared }` makes. `FunctionType::create`, `create_instance`, `create_instantiable`, `clone_with_doc_string` and `ClassType::create_instantiable` take `Option<Rc<str>>`.
 - The cold half of a handle struct (`TypeResult`, `FunctionDetailsShared`) is `jsrt::OptionRefCell<<Struct>Cold>`, one pointer: `cold()` returns `jsrt::cell::OptionRefOr`, which derefs to the cold struct. `TypeResult` is 32 bytes.
 - `FunctionDetailsShared.name`, `full_name` and `module_name` are atoms. `FunctionType::create` and its callers still take `&str`. Take `.to_string()` where a `String` is needed.
@@ -43,6 +44,7 @@ Field counts on the same run (a temporary diagnostic, not committed):
 - 7.54M live types: 4.91M classes, 1.30M functions, 0.91M unions, 0.32M type variables. 4.02M have `props` allocated, 2.78M of them empty (88 bytes each). 2.36M have `cached` allocated.
 - 892K `FunctionDetailsShared` from 61K declarations: 215K hold a doc string, 429 MiB of them, deep copies made by each `{ ...type.shared }` clone.
 - The type cache map at `main` d91164c: 3.71M entries, 7.34M buckets (264 MiB), node ids up to 13.3M. Keys fill 60% of the 16-id pages they touch, 59% at 32, 56% at 64, 51% at 256, 45% at 1024. 17 return-type inference caches over the run, 505 entries in all.
+- At 67ce98a: 570K live props boxes still empty, nearly all from `clone_type_as_instance` (copy the props, then clear `type_form`); `clone_type_as_instantiable` and `clone_with_type_form` next. No live `TypeResult` sets `class_type` or `is_asymmetric_accessor`; 373K set `is_required` and `is_not_required`, 93K `is_read_only`.
 - 539K `TypeResult` cold halves (240 bytes each): 438K for `overloadsUsedForCall` alone, 98K for `expectedTypeDiagAddendum`.
 
 ## Attempts
@@ -58,3 +60,6 @@ Field counts on the same run (a temporary diagnostic, not committed):
 | type caches as `jsrt::IdMap` pages of 16-byte entries, 256 slots a page | 240.40 G | 5.76 GiB | 9.24 G | 0.51 GiB |
 | the same, 64 slots a page | 240.37 G | 5.77 GiB | 9.24 G | 0.49 GiB |
 | the same, 32 slots a page (kept) | 240.38 G (−0.38%) | 5.76 GiB | 9.24 G (−0.4%) | 0.48 GiB |
+| `main` 96d0cc0 (memo merged) | 231.45 G | 5.74 GiB | 9.17 G | 0.47 GiB |
+| clones that clear props build them first (`clone_type_with_props`) | 230.64 G (−0.35%) | 5.72 GiB | 8.93 G (−2.6%) | 0.47 GiB |
+| dropped: `FunctionDetailsShared` 120 → 96 bytes (`type_params` an `Rc<Vec>`, `type_var_scope_id` a `Cell`) | 231.83 G (+0.16%) | 5.74 GiB | 9.15 G | 0.47 GiB |
