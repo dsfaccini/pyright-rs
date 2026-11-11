@@ -996,7 +996,7 @@ impl Parser {
         global_name_map: &JsMap<String, NameNode>,
         local_name_map: &mut JsMap<String, NameNode>,
     ) {
-        let value = &name_node.d().value;
+        let value = name_node.d().value();
         if global_name_map.contains_key(value) || local_name_map.contains_key(value) {
             self._add_syntax_error(
                 format1(
@@ -1007,7 +1007,7 @@ impl Parser {
                 &name_node,
             );
         } else {
-            local_name_map.insert(value.clone(), name_node);
+            local_name_map.insert(value.to_string(), name_node);
         }
     }
 
@@ -1067,8 +1067,8 @@ impl Parser {
                 let mut combined_local_or_name_map: JsMap<String, NameNode> = JsMap::default();
                 for or_local_name_map in &or_local_name_maps {
                     for &node in or_local_name_map.values() {
-                        if !combined_local_or_name_map.contains_key(&node.d().value) {
-                            combined_local_or_name_map.insert(node.d().value.clone(), node);
+                        if !combined_local_or_name_map.contains_key(node.d().value()) {
+                            combined_local_or_name_map.insert(node.d().value().to_string(), node);
                             self._report_target_if_duplicate(node, global_name_map, local_name_map);
                         }
                     }
@@ -1131,7 +1131,7 @@ impl Parser {
 
             ParseNodeDetails::PatternAs(d) => {
                 if let Some(target) = d.target.get() {
-                    name_set.insert(target.d().value.clone());
+                    name_set.insert(target.d().value().to_string());
                 }
                 for &subpattern in d.or_patterns.borrow().iter() {
                     self._get_pattern_target_names(subpattern, name_set);
@@ -1140,14 +1140,14 @@ impl Parser {
 
             ParseNodeDetails::PatternCapture(d) => {
                 if !d.is_wildcard.get() {
-                    name_set.insert(d.target.get().d().value.clone());
+                    name_set.insert(d.target.get().d().value().to_string());
                 }
             }
 
             ParseNodeDetails::PatternMapping(d) => {
                 for &map_entry in d.entries.borrow().iter() {
                     if let Some(expand) = PatternMappingExpandEntryNode::cast(map_entry) {
-                        name_set.insert(expand.d().target.get().d().value.clone());
+                        name_set.insert(expand.d().target.get().d().value().to_string());
                     } else {
                         let key_entry = PatternMappingKeyEntryNode::cast(map_entry).unwrap();
                         self._get_pattern_target_names(key_entry.d().key_pattern.get(), name_set);
@@ -2705,7 +2705,7 @@ impl Parser {
             let param = self._parse_parameter(allow_annotations);
 
             if let Some(param_name) = param.d().name.get() {
-                let name = param_name.d().value.clone();
+                let name = param_name.d().value().to_string();
                 if param_map.contains_key(&name) {
                     self._add_syntax_error(
                         format1(LocMessage::duplicate_param(), "name", &name),
@@ -3284,7 +3284,7 @@ impl Parser {
             let name_parts = mod_name.d().name_parts.borrow();
             mod_name.d().leading_dots.get() == 0
                 && name_parts.len() == 1
-                && name_parts[0].d().value == "__future__"
+                && name_parts[0].d().value() == "__future__"
         };
 
         let possible_input_token = self._peek_token(0);
@@ -3390,7 +3390,7 @@ impl Parser {
                 .name_parts
                 .borrow()
                 .iter()
-                .map(|p| p.d().value.clone())
+                .map(|p| p.d().value().to_string())
                 .collect(),
             imported_symbols: Some(
                 import_from_node
@@ -3398,14 +3398,14 @@ impl Parser {
                     .imports
                     .borrow()
                     .iter()
-                    .map(|imp| imp.d().name.get().d().value.clone())
+                    .map(|imp| imp.d().name.get().d().value().to_string())
                     .collect(),
             ),
         });
 
         let mut is_typing_import = false;
         if module.d().name_parts.borrow().len() == 1 {
-            let first_name_part_value = &module.d().name_parts.borrow()[0].d().value;
+            let first_name_part_value = module.d().name_parts.borrow()[0].d().value();
             if first_name_part_value == "typing" || first_name_part_value == "typing_extensions" {
                 is_typing_import = true;
             }
@@ -3422,14 +3422,14 @@ impl Parser {
             } else {
                 let imports = import_from_node.d().imports.borrow().clone();
                 for imp in imports {
-                    let name_value = &imp.d().name.get().d().value;
-                    if typing_symbols_of_interest.iter().any(|s| s == name_value) {
+                    let name_value = imp.d().name.get().d().value();
+                    if typing_symbols_of_interest.contains(&name_value) {
                         // `imp.d.alias?.d.value || imp.d.name.d.value`: an empty alias falls back.
                         let key = match imp.d().alias.get() {
-                            Some(alias) if !alias.d().value.is_empty() => alias.d().value.clone(),
-                            _ => name_value.clone(),
+                            Some(alias) if !alias.d().value().is_empty() => alias.d().value().to_string(),
+                            _ => name_value.to_string(),
                         };
-                        self._typing_symbol_aliases.insert(key, name_value.clone());
+                        self._typing_symbol_aliases.insert(key, name_value.to_string());
                     }
                 }
             }
@@ -3480,7 +3480,7 @@ impl Parser {
                 .name_parts
                 .borrow()
                 .iter()
-                .map(|p| p.d().value.clone())
+                .map(|p| p.d().value().to_string())
                 .collect();
 
             if import_as_node.d().alias.get().is_some()
@@ -3508,12 +3508,12 @@ impl Parser {
             }
 
             if mod_name.d().name_parts.borrow().len() == 1 {
-                let first_name_part_value = mod_name.d().name_parts.borrow()[0].d().value.clone();
+                let first_name_part_value = mod_name.d().name_parts.borrow()[0].d().value().to_string();
                 if first_name_part_value == "typing" || first_name_part_value == "typing_extensions"
                 {
                     // `importAsNode.d.alias?.d.value || firstNamePartValue`: an empty alias falls back.
                     let alias = match import_as_node.d().alias.get() {
-                        Some(alias) if !alias.d().value.is_empty() => alias.d().value.clone(),
+                        Some(alias) if !alias.d().value().is_empty() => alias.d().value().to_string(),
                         _ => first_name_part_value,
                     };
                     self._typing_import_aliases.push(alias);
@@ -4514,15 +4514,15 @@ impl Parser {
     // parser/parser.ts:3803
     fn _is_typing_annotation(&self, type_annotation: ExpressionNode, name: &str) -> bool {
         if let Some(name_node) = NameNode::cast(type_annotation) {
-            let alias = self._typing_symbol_aliases.get(&name_node.d().value);
+            let alias = self._typing_symbol_aliases.get(name_node.d().value());
             if alias.map(String::as_str) == Some(name) {
                 return true;
             }
         } else if let Some(member_access) = MemberAccessNode::cast(type_annotation) {
             if let Some(left_name) = NameNode::cast(member_access.d().left_expr.get())
-                && member_access.d().member.get().d().value == name
+                && member_access.d().member.get().d().value() == name
             {
-                let base_name = &left_name.d().value;
+                let base_name = left_name.d().value();
                 return self
                     ._typing_import_aliases
                     .iter()

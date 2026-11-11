@@ -453,7 +453,7 @@ impl CodeFlowEngine {
                             // too expensive.
                             let symbol_with_scope = evaluator.look_up_symbol_recursive(
                                 condition_reference.0,
-                                &condition_reference.d().value,
+                                condition_reference.d().value(),
                                 false,
                                 false,
                             );
@@ -806,7 +806,7 @@ impl CodeFlowEngine {
                     if let Some(call_node) = CallNode::cast(test_expression) {
                         let args = call_node.d().args.borrow().clone();
                         if NameNode::cast(call_node.d().left_expr.get())
-                            .is_some_and(|name_node| name_node.d().value == "isinstance")
+                            .is_some_and(|name_node| name_node.d().value() == "isinstance")
                             && args.len() == 2
                         {
                             let arg0_expr = args[0].d().value_expr.get();
@@ -2297,7 +2297,7 @@ impl CodeFlowAnalyzer {
                                     // too expensive.
                                     let symbol_with_scope = evaluator.look_up_symbol_recursive(
                                         condition_reference.0,
-                                        &condition_reference.d().value,
+                                        condition_reference.d().value(),
                                         false,
                                         false,
                                     );
@@ -2532,7 +2532,7 @@ impl CodeFlowAnalyzer {
                         let wildcard_import_flow_node =
                             FlowWildcardImport::cast(cur_flow_node).unwrap();
                         if let Some(reference_name) = reference.and_then(NameNode::cast) {
-                            let name_value = reference_name.d().value.clone();
+                            let name_value = reference_name.d().value().to_string();
                             if wildcard_import_flow_node.d().names.contains(&name_value) {
                                 let node = cur_flow_node;
                                 return self.prevent_recursion(node, &mut || {

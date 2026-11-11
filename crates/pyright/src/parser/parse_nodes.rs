@@ -8,8 +8,9 @@
 //!   with `cast`, `d()`, `Deref` to `ParseNode`, and its TypeScript `create`
 //!   functions.
 //! - A `d` field is a `Cell` (Copy values) or `RefCell<Vec<_>>` (arrays). A
-//!   non-Copy value that TypeScript never writes after creation (`NameNode.value`,
-//!   `StringNode.value`, `NumberNode.value`, `ErrorNode.decorators`) is a plain field.
+//!   non-Copy value that TypeScript never writes after creation (`StringNode.value`,
+//!   `NumberNode.value`, `ErrorNode.decorators`) is a plain field. `NameNode.value`,
+//!   always its token's value, is read from the token: `value()`.
 //! - A field typed as one node type holds that type's handle; a field typed as a
 //!   union (`ExpressionNode`, `SuiteNode | IfNode`, ...) holds `P<ParseNode>`.
 
@@ -1037,7 +1038,6 @@ impl ClassNode {
             key,
             NameNodeDetails {
                 token: Cell::new(name_token),
-                value: String::new(),
             },
         ));
         let suite = SuiteNode(alloc_node(
@@ -2146,9 +2146,16 @@ impl LambdaNode {
 #[derive(jsrt::Trace)]
 pub struct NameNodeDetails {
     pub token: Cell<IdentifierToken>,
-    pub value: String,
 }
 node_handle!(NameNode, Name, NameNodeDetails);
+
+impl NameNodeDetails {
+    /// `value`, which TypeScript sets to `token.value` and never writes again,
+    /// read from the token.
+    pub fn value(&self) -> &'static str {
+        &self.token.get().d().value
+    }
+}
 
 impl NameNode {
     // parser/parseNodes.ts:1732
@@ -2159,7 +2166,6 @@ impl NameNode {
             key,
             NameNodeDetails {
                 token: Cell::new(name_token),
-                value: name_token.d().value.clone(),
             },
         ))
     }
@@ -3228,7 +3234,7 @@ impl PatternCaptureNode {
             PatternCaptureNodeDetails {
                 target: Cell::new(target),
                 is_star: Cell::new(star_token.is_some()),
-                is_wildcard: Cell::new(target.d().value == "_"),
+                is_wildcard: Cell::new(target.d().value() == "_"),
             },
         );
 

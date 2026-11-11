@@ -159,7 +159,7 @@ fn _process_import_from_node(
                         .imports
                         .borrow()
                         .iter()
-                        .find(|i| i.d().name.get().d().value == implicit_import.name)
+                        .find(|i| i.d().name.get().d().value() == implicit_import.name)
                         .copied();
                     if let Some(import_from_as) = import_from_as {
                         implicit_imports.insert(implicit_import.uri.key().to_string(), import_from_as);
@@ -202,7 +202,7 @@ pub fn format_module_name(node: ModuleNameNode) -> String {
         module_name += ".";
     }
 
-    module_name += &node.d().name_parts.borrow().iter().map(|part| part.d().value.clone()).collect::<Vec<_>>().join(".");
+    module_name += &node.d().name_parts.borrow().iter().map(|part| part.d().value().to_string()).collect::<Vec<_>>().join(".");
 
     module_name
 }

@@ -136,7 +136,7 @@ fn single_string_node(node: P<ParseNode>) -> Option<StringNode> {
 /// `node.d.value` of a `NameNode` held as a `P<ParseNode>`.
 fn name_value(node: P<ParseNode>) -> Option<&'static str> {
     match node.d() {
-        D::Name(d) => Some(d.value.as_str()),
+        D::Name(d) => Some(d.value()),
         _ => None,
     }
 }
@@ -145,7 +145,7 @@ fn name_value(node: P<ParseNode>) -> Option<&'static str> {
 /// expr.valueExpr is Name && expr.valueExpr.value === name)`.
 fn is_name_or_annotated_name(expr: ExpressionNode, name: &str) -> bool {
     match expr.d() {
-        D::Name(d) => d.value == name,
+        D::Name(d) => d.value() == name,
         D::TypeAnnotation(d) => name_value(d.value_expr.get()) == Some(name),
         _ => false,
     }
@@ -182,14 +182,14 @@ fn get_called_built_in_name(
     visited_symbols: &mut Vec<P<Symbol>>,
 ) -> Option<String> {
     if let D::Name(name) = expression.d() {
-        let symbol_with_scope = scope.look_up_symbol_recursive(&name.value, None)?;
+        let symbol_with_scope = scope.look_up_symbol_recursive(name.value(), None)?;
         if visited_symbols.contains(&symbol_with_scope.symbol) {
             return None;
         }
         visited_symbols.push(symbol_with_scope.symbol);
 
         if symbol_with_scope.scope.type_ == ScopeType::Builtin {
-            return Some(name.value.clone());
+            return Some(name.value().to_string());
         }
 
         let declarations = symbol_with_scope.symbol.get_declarations();
@@ -227,7 +227,7 @@ fn get_called_built_in_name(
                     if *declaration.module_name.borrow() == "builtins"
                         && alias.symbol_name.borrow().as_ref().is_none_or(|s| s.is_empty())
                     {
-                        return Some(member_access.member.get().d().value.clone());
+                        return Some(member_access.member.get().d().value().to_string());
                     }
                 }
             }
@@ -649,7 +649,7 @@ impl ParseTreeVisitor<bool> for Binder {
                         let implicit_import = import_result
                             .filtered_implicit_imports
                             .as_ref()
-                            .and_then(|imports| imports.get(&import_as.d().name.get().d().value));
+                            .and_then(|imports| imports.get(import_as.d().name.get().d().value()));
                         implicit_import.is_some_and(|i| i.py_typed_info.is_some())
                     }) {
                         report_stub_missing = false;
@@ -1044,7 +1044,7 @@ impl ParseTreeVisitor<bool> for Binder {
         {
             let left = left_member_access.unwrap();
             let mut emit_dunder_all_warning = true;
-            let member_name = left.d().member.get().d().value.clone();
+            let member_name = left.d().member.get().d().value().to_string();
             let args = node.d().args.borrow().clone();
 
             // Is this a call to "__all__.extend()"?
@@ -1069,7 +1069,7 @@ impl ParseTreeVisitor<bool> for Binder {
                     }
                 } else if let Some(member_access) = MemberAccessNode::cast(arg_expr).filter(|m| {
                     m.d().left_expr.get().node_type == ParseNodeType::Name
-                        && m.d().member.get().d().value == "__all__"
+                        && m.d().member.get().d().value() == "__all__"
                 }) {
                     // Is this a call to "__all__.extend(<mod>.__all__)"?
                     let names_to_add = self._get_dunder_all_names_from_import(
@@ -1144,7 +1144,7 @@ impl ParseTreeVisitor<bool> for Binder {
 
         for param in &params {
             let name = param.d().name.get();
-            let symbol = type_param_scope.add_symbol(&name.d().value, SymbolFlags::None);
+            let symbol = type_param_scope.add_symbol(name.d().value(), SymbolFlags::None);
             let param_declaration = Declaration::create(
                 DeclarationType::TypeParam,
                 param.node(),
@@ -1158,14 +1158,14 @@ impl ParseTreeVisitor<bool> for Binder {
             symbol.add_declaration(param_declaration);
             self._node_info.set_declaration(name, param_declaration);
 
-            if type_params_seen.contains(&name.d().value) {
+            if type_params_seen.contains(name.d().value()) {
                 self._add_syntax_error(
                     LocMessage::type_parameter_existing_type_parameter()
-                        .format(&[("name", &name.d().value)]),
+                        .format(&[("name", name.d().value())]),
                     &name.text_range(),
                 );
             } else {
-                type_params_seen.insert(name.d().value.clone());
+                type_params_seen.insert(name.d().value().to_string());
             }
         }
 
@@ -1431,11 +1431,11 @@ impl ParseTreeVisitor<bool> for Binder {
                 let name = node.d().name.get();
                 let mut cur_scope = self._current_scope;
                 while let Some(scope) = cur_scope.filter(|scope| *scope != container_scope) {
-                    let local_symbol = scope.look_up_symbol(&name.d().value);
+                    let local_symbol = scope.look_up_symbol(name.d().value());
                     if local_symbol.is_some() {
                         self._add_syntax_error(
                             LocMessage::assignment_expr_comprehension()
-                                .format(&[("name", &name.d().value)]),
+                                .format(&[("name", name.d().value())]),
                             &name.text_range(),
                         );
                         break;
@@ -1502,7 +1502,7 @@ impl ParseTreeVisitor<bool> for Binder {
                 emit_dunder_all_warning = false;
             } else if let Some(member_access) = MemberAccessNode::cast(expr).filter(|m| {
                 m.d().left_expr.get().node_type == ParseNodeType::Name
-                    && m.d().member.get().d().value == "__all__"
+                    && m.d().member.get().d().value() == "__all__"
             }) {
                 // Is this using the form "__all__ += <mod>.__all__"?
                 let names_to_add = self._get_dunder_all_names_from_import(
@@ -1923,11 +1923,11 @@ impl ParseTreeVisitor<bool> for Binder {
 
             if let Some(symbol) = symbol {
                 let details = VariableDeclarationDetails::default();
-                details.is_constant.set(Some(is_constant_name(&name.d().value)));
+                details.is_constant.set(Some(is_constant_name(name.d().value())));
                 details.inferred_type_source.set(Some(node.node()));
                 details
                     .is_explicit_binding
-                    .set(Some(self.cur_scope().get_binding_type(&name.d().value).is_some()));
+                    .set(Some(self.cur_scope().get_binding_type(name.d().value()).is_some()));
                 let declaration = Declaration::create(
                     DeclarationType::Variable,
                     name.node(),
@@ -2170,7 +2170,7 @@ impl ParseTreeVisitor<bool> for Binder {
 
         let targets = node.d().targets.borrow().clone();
         for name in targets {
-            let name_value = name.d().value.as_str();
+            let name_value = name.d().value();
 
             // Is the binding inconsistent?
             if self.cur_scope().get_binding_type(name_value) == Some(NameBindingType::Nonlocal) {
@@ -2210,7 +2210,7 @@ impl ParseTreeVisitor<bool> for Binder {
         } else {
             let targets = node.d().targets.borrow().clone();
             for name in targets {
-                let name_value = name.d().value.as_str();
+                let name_value = name.d().value();
 
                 // Is the binding inconsistent?
                 if self.cur_scope().get_binding_type(name_value) == Some(NameBindingType::Global) {
@@ -2249,13 +2249,13 @@ impl ParseTreeVisitor<bool> for Binder {
         let module = node.d().module.get();
         let name_parts = module.d().name_parts.borrow().clone();
         if !name_parts.is_empty() {
-            let first_name_part_value = name_parts[0].d().value.clone();
+            let first_name_part_value = name_parts[0].d().value().to_string();
 
             let symbol_name: String;
             let symbol_name_node: NameNode;
             if let Some(alias) = node.d().alias.get() {
                 // The symbol name is defined by the alias.
-                symbol_name = alias.d().value.clone();
+                symbol_name = alias.d().value().to_string();
                 symbol_name_node = alias;
             } else {
                 // There was no alias, so we need to use the first element of
@@ -2269,7 +2269,7 @@ impl ParseTreeVisitor<bool> for Binder {
                 let scope_type = self.cur_scope().type_;
                 if (scope_type == ScopeType::Module || scope_type == ScopeType::Builtin)
                     && node.d().alias.get().is_none_or(|alias| {
-                        name_parts.len() != 1 || name_parts[0].d().value != alias.d().value
+                        name_parts.len() != 1 || name_parts[0].d().value() != alias.d().value()
                     })
                 {
                     if self._file_info.is_stub_file || self._file_info.is_in_py_typed_package {
@@ -2305,7 +2305,7 @@ impl ParseTreeVisitor<bool> for Binder {
                     .d()
                     .alias
                     .get()
-                    .map(|alias| alias.d().value.clone())
+                    .map(|alias| alias.d().value().to_string())
                     .unwrap_or_else(|| first_name_part_value.clone());
                 if first_name_part_value == "typing" || first_name_part_value == "typing_extensions" {
                     self._typing_import_aliases.push(alias_value);
@@ -2351,7 +2351,7 @@ impl ParseTreeVisitor<bool> for Binder {
         let mut is_dataclasses_import = false;
 
         if name_parts.len() == 1 {
-            let first_name_part_value = name_parts[0].d().value.as_str();
+            let first_name_part_value = name_parts[0].d().value();
             if first_name_part_value == "typing" || first_name_part_value == "typing_extensions" {
                 is_typing_import = true;
             }
@@ -2388,7 +2388,7 @@ impl ParseTreeVisitor<bool> for Binder {
                         // imported symbol, skip this.
                         let is_immediately_replaced = wildcard_names
                             .iter()
-                            .any(|name| *name == name_parts[0].d().value);
+                            .any(|name| *name == name_parts[0].d().value());
 
                         if !is_immediately_replaced {
                             self._add_implicit_from_import(node, Some(import_info));
@@ -2497,7 +2497,7 @@ impl ParseTreeVisitor<bool> for Binder {
 
             let imports = node.d().imports.borrow().clone();
             for import_symbol_node in imports {
-                let imported_name = import_symbol_node.d().name.get().d().value.clone();
+                let imported_name = import_symbol_node.d().name.get().d().value().to_string();
                 let name_node = import_symbol_node
                     .d()
                     .alias
@@ -2518,7 +2518,7 @@ impl ParseTreeVisitor<bool> for Binder {
                                 .d()
                                 .alias
                                 .get()
-                                .is_none_or(|alias| alias.d().value != import_symbol_node.d().name.get().d().value)
+                                .is_none_or(|alias| alias.d().value() != import_symbol_node.d().name.get().d().value())
                             {
                                 if self._file_info.is_stub_file || self._file_info.is_in_py_typed_package {
                                     // PEP 484 indicates that imported symbols should not be
@@ -2526,7 +2526,7 @@ impl ParseTreeVisitor<bool> for Binder {
                                     // they are imported using the "as" form using a redundant form.
                                     // Py.typed packages follow the same rule as PEP 484.
                                     self._potential_hidden_symbols
-                                        .insert(name_node.d().value.clone(), symbol);
+                                        .insert(name_node.d().value().to_string(), symbol);
                                 }
                             }
                         }
@@ -2599,15 +2599,15 @@ impl ParseTreeVisitor<bool> for Binder {
                     if is_typing_import {
                         if typing_symbols_of_interest
                             .iter()
-                            .any(|s| *s == import_symbol_node.d().name.get().d().value)
+                            .any(|s| *s == import_symbol_node.d().name.get().d().value())
                         {
                             self._typing_symbol_aliases.insert(
-                                name_node.d().value.clone(),
-                                import_symbol_node.d().name.get().d().value.clone(),
+                                name_node.d().value().to_string(),
+                                import_symbol_node.d().name.get().d().value().to_string(),
                             );
 
                             if is_typing_import {
-                                symbol.set_typing_symbol_alias(&name_node.d().value);
+                                symbol.set_typing_symbol_alias(name_node.d().value());
                             }
                         }
                     }
@@ -2615,11 +2615,11 @@ impl ParseTreeVisitor<bool> for Binder {
                     if is_dataclasses_import {
                         if dataclasses_symbols_of_interest
                             .iter()
-                            .any(|s| *s == import_symbol_node.d().name.get().d().value)
+                            .any(|s| *s == import_symbol_node.d().name.get().d().value())
                         {
                             self._dataclasses_symbol_aliases.insert(
-                                name_node.d().value.clone(),
-                                import_symbol_node.d().name.get().d().value.clone(),
+                                name_node.d().value().to_string(),
+                                import_symbol_node.d().name.get().d().value().to_string(),
                             );
                         }
                     }
@@ -3024,11 +3024,11 @@ impl ParseTreeVisitor<bool> for Binder {
 
             if let Some(symbol) = symbol {
                 let details = VariableDeclarationDetails::default();
-                details.is_constant.set(Some(is_constant_name(&target.d().value)));
+                details.is_constant.set(Some(is_constant_name(target.d().value())));
                 details.inferred_type_source.set(Some(node.node()));
                 details
                     .is_explicit_binding
-                    .set(Some(self.cur_scope().get_binding_type(&target.d().value).is_some()));
+                    .set(Some(self.cur_scope().get_binding_type(target.d().value()).is_some()));
                 let declaration = Declaration::create(
                     DeclarationType::Variable,
                     target.node(),
@@ -3056,7 +3056,7 @@ impl ParseTreeVisitor<bool> for Binder {
 
     // analyzer/binder.ts:2661
     fn visit_pattern_mapping_expand_entry(&mut self, node: PatternMappingExpandEntryNode) -> bool {
-        if node.d().target.get().d().value != "_" {
+        if node.d().target.get().d().value() != "_" {
             self._add_pattern_capture_target(node.d().target.get());
         }
 
@@ -3111,7 +3111,7 @@ impl Binder {
                 .name_parts
                 .borrow()
                 .iter()
-                .map(|part| part.d().value.as_str())
+                .map(|part| part.d().value())
                 .collect::<Vec<_>>()
                 .join(".")
     }
@@ -3235,11 +3235,11 @@ impl Binder {
 
         if let Some(symbol) = symbol {
             let details = VariableDeclarationDetails::default();
-            details.is_constant.set(Some(is_constant_name(&target.d().value)));
+            details.is_constant.set(Some(is_constant_name(target.d().value())));
             details.inferred_type_source.set(target.parent.get());
             details
                 .is_explicit_binding
-                .set(Some(self.cur_scope().get_binding_type(&target.d().value).is_some()));
+                .set(Some(self.cur_scope().get_binding_type(target.d().value()).is_some()));
             let declaration = Declaration::create(
                 DeclarationType::Variable,
                 target.node(),
@@ -3301,7 +3301,7 @@ impl Binder {
     // analyzer/binder.ts:2865
     fn _add_implicit_from_import(&mut self, node: ImportFromNode, import_info: Option<P<ImportResult>>) {
         let first_name_part = node.d().module.get().d().name_parts.borrow()[0];
-        let symbol_name = first_name_part.d().value.clone();
+        let symbol_name = first_name_part.d().value().to_string();
         let symbol = self._bind_name_value_to_scope(self.cur_scope(), &symbol_name, None);
         if let Some(symbol) = symbol {
             self._create_alias_declaration_for_multipart_import_name(
@@ -3330,7 +3330,7 @@ impl Binder {
             _ => unreachable!(),
         };
         let name_parts = module.d().name_parts.borrow().clone();
-        let first_name_part_value = name_parts[0].d().value.clone();
+        let first_name_part_value = name_parts[0].d().value().to_string();
 
         self._node_info.set_flow_node(node, self.cur_flow());
 
@@ -3443,7 +3443,7 @@ impl Binder {
             let mut cur_loader_actions: &'static dyn ModuleLoaderActionsLike = new_decl.get();
 
             for i in 1..name_parts.len() {
-                let name_part_value = name_parts[i].d().value.clone();
+                let name_part_value = name_parts[i].d().value().to_string();
 
                 // Is there an existing loader action for this name?
                 let mut loader_actions = cur_loader_actions
@@ -4303,7 +4303,7 @@ impl Binder {
         node: NameNode,
         added_symbols: Option<&mut JsMap<String, P<Symbol>>>,
     ) -> Option<P<Symbol>> {
-        self._bind_name_value_to_scope(scope, &node.d().value, added_symbols)
+        self._bind_name_value_to_scope(scope, node.d().value(), added_symbols)
     }
 
     // analyzer/binder.ts:3782
@@ -4562,21 +4562,21 @@ impl Binder {
         match target.d() {
             D::Name(name_details) => {
                 let name = NameNode(target);
-                let symbol_with_scope = self.cur_scope().look_up_symbol_recursive(&name_details.value, None);
+                let symbol_with_scope = self.cur_scope().look_up_symbol_recursive(name_details.value(), None);
                 if let Some(symbol_with_scope) = symbol_with_scope {
                     let details = VariableDeclarationDetails::default();
-                    details.is_constant.set(Some(is_constant_name(&name_details.value)));
+                    details.is_constant.set(Some(is_constant_name(name_details.value())));
                     details.inferred_type_source.set(Some(source));
                     details
                         .is_inference_allowed_in_py_typed
-                        .set(Some(self._is_inference_allowed_in_py_typed(&name_details.value)));
+                        .set(Some(self._is_inference_allowed_in_py_typed(name_details.value())));
                     details
                         .type_alias_name
                         .set(if is_possible_type_alias { Some(name) } else { None });
                     *details.doc_string.borrow_mut() = self._get_variable_doc_string(target);
                     details
                         .is_explicit_binding
-                        .set(Some(self.cur_scope().get_binding_type(&name_details.value).is_some()));
+                        .set(Some(self.cur_scope().get_binding_type(name_details.value()).is_some()));
                     let declaration = Declaration::create(
                         DeclarationType::Variable,
                         target,
@@ -4595,14 +4595,14 @@ impl Binder {
                 if let Some(member_access_info) = member_access_info {
                     let name = member_access.member.get();
 
-                    let mut symbol = member_access_info.class_scope.look_up_symbol(&name.d().value);
+                    let mut symbol = member_access_info.class_scope.look_up_symbol(name.d().value());
                     if symbol.is_none() {
                         let new_symbol = member_access_info
                             .class_scope
-                            .add_symbol(&name.d().value, SymbolFlags::InitiallyUnbound);
+                            .add_symbol(name.d().value(), SymbolFlags::InitiallyUnbound);
                         let honor_private_naming =
                             self._file_info.diagnostic_rule_set.report_private_usage != DiagnosticLevel::None;
-                        if is_private_or_protected_name(&name.d().value) && honor_private_naming {
+                        if is_private_or_protected_name(name.d().value()) && honor_private_naming {
                             new_symbol.set_is_private_member();
                         }
                         symbol = Some(new_symbol);
@@ -4627,7 +4627,7 @@ impl Binder {
                     }
 
                     let details = VariableDeclarationDetails::default();
-                    details.is_constant.set(Some(is_constant_name(&name.d().value)));
+                    details.is_constant.set(Some(is_constant_name(name.d().value())));
                     details.inferred_type_source.set(Some(source));
                     details.is_defined_by_member_access.set(Some(true));
                     *details.doc_string.borrow_mut() = self._get_variable_doc_string(target);
@@ -4683,7 +4683,7 @@ impl Binder {
         match target.d() {
             D::Name(name_details) => {
                 let name = NameNode(target);
-                let symbol_with_scope = self.cur_scope().look_up_symbol_recursive(&name_details.value, None);
+                let symbol_with_scope = self.cur_scope().look_up_symbol_recursive(name_details.value(), None);
                 if let Some(symbol_with_scope) = symbol_with_scope {
                     let final_info = self._is_annotation_final(Some(type_annotation));
 
@@ -4724,14 +4724,14 @@ impl Binder {
                     }
 
                     let details = VariableDeclarationDetails::default();
-                    details.is_constant.set(Some(is_constant_name(&name_details.value)));
+                    details.is_constant.set(Some(is_constant_name(name_details.value())));
                     details.is_final.set(Some(final_info.is_final));
                     details.type_alias_name.set(Some(name));
                     details.type_annotation_node.set(type_annotation_node);
                     *details.doc_string.borrow_mut() = self._get_variable_doc_string(target);
                     details
                         .is_explicit_binding
-                        .set(Some(self.cur_scope().get_binding_type(&name_details.value).is_some()));
+                        .set(Some(self.cur_scope().get_binding_type(name_details.value()).is_some()));
                     let declaration = Declaration::create(
                         DeclarationType::Variable,
                         target,
@@ -4797,14 +4797,14 @@ impl Binder {
                 if let Some(member_access_info) = member_access_info {
                     let name = member_access.member.get();
 
-                    let mut symbol = member_access_info.class_scope.look_up_symbol(&name.d().value);
+                    let mut symbol = member_access_info.class_scope.look_up_symbol(name.d().value());
                     if symbol.is_none() {
                         let new_symbol = member_access_info
                             .class_scope
-                            .add_symbol(&name.d().value, SymbolFlags::InitiallyUnbound);
+                            .add_symbol(name.d().value(), SymbolFlags::InitiallyUnbound);
                         let honor_private_naming =
                             self._file_info.diagnostic_rule_set.report_private_usage != DiagnosticLevel::None;
-                        if is_private_or_protected_name(&name.d().value) && honor_private_naming {
+                        if is_private_or_protected_name(name.d().value()) && honor_private_naming {
                             new_symbol.set_is_private_member();
                         }
                         symbol = Some(new_symbol);
@@ -4819,7 +4819,7 @@ impl Binder {
 
                     let final_info = self._is_annotation_final(Some(type_annotation));
                     let details = VariableDeclarationDetails::default();
-                    details.is_constant.set(Some(is_constant_name(&name.d().value)));
+                    details.is_constant.set(Some(is_constant_name(name.d().value())));
                     details.is_defined_by_member_access.set(Some(true));
                     details.is_final.set(Some(final_info.is_final));
                     details
@@ -4901,14 +4901,14 @@ impl Binder {
 
         match annotation_node.d() {
             D::Name(d) => {
-                let alias = symbol_aliases.get(&d.value);
+                let alias = symbol_aliases.get(d.value());
                 if alias.is_some_and(|alias| alias == name) {
                     return true;
                 }
             }
             D::MemberAccess(d) => {
                 if let Some(base_name) = name_value(d.left_expr.get()) {
-                    if d.member.get().d().value == name {
+                    if d.member.get().d().value() == name {
                         return import_aliases.iter().any(|alias| alias == base_name);
                     }
                 }
@@ -5067,8 +5067,8 @@ impl Binder {
         }
         let first_param_name = params[0].d().name.get()?;
 
-        let class_name = class_node.d().name.get().d().value.clone();
-        let first_param_name = first_param_name.d().value.clone();
+        let class_name = class_node.d().name.get().d().value().to_string();
+        let first_param_name = first_param_name.d().value().to_string();
 
         if left_symbol_name == class_name {
             is_instance_member = false;
@@ -5081,7 +5081,7 @@ impl Binder {
             // refers to the class or the instance, we need to apply
             // some heuristics.
             let implicit_class_methods = ["__new__", "__init_subclass__", "__class_getitem__"];
-            if implicit_class_methods.contains(&method_node.d().name.get().d().value.as_str()) {
+            if implicit_class_methods.contains(&method_node.d().name.get().d().value()) {
                 // Several methods are special. They act as class methods even
                 // though they don't have a @classmethod decorator.
                 is_instance_member = false;
@@ -5096,10 +5096,10 @@ impl Binder {
                     let expr = decorator.d().expr.get();
                     match expr.d() {
                         D::Name(d) => {
-                            decorator_name = Some(d.value.clone());
+                            decorator_name = Some(d.value().to_string());
                         }
                         D::MemberAccess(d) if name_value(d.left_expr.get()) == Some("builtins") => {
-                            decorator_name = Some(d.member.get().d().value.clone());
+                            decorator_name = Some(d.member.get().d().value().to_string());
                         }
                         _ => {}
                     }
@@ -5421,7 +5421,7 @@ impl Binder {
             "TypeIs",
         ];
 
-        let assigned_name = assigned_name_node.d().value.as_str();
+        let assigned_name = assigned_name_node.d().value();
 
         if !special_types.contains(&assigned_name) {
             return false;

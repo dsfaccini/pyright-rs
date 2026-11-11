@@ -233,7 +233,7 @@ pub fn get_class_full_name(
         let enclosing_class = get_enclosing_class(cur, false);
         cur_node = enclosing_class.map(ClassNode::node);
         if let Some(enclosing_class) = enclosing_class {
-            name_parts.push(&enclosing_class.d().name.get().d().value);
+            name_parts.push(enclosing_class.d().name.get().d().value());
         }
     }
 
@@ -261,7 +261,7 @@ pub fn print_arg(node: ArgumentNode, flags: PrintExpressionFlags) -> String {
         arg_str = "**".to_string();
     }
     if let Some(name) = node.d().name.get() {
-        arg_str += &name.d().value;
+        arg_str += name.d().value();
         arg_str += "=";
     }
     arg_str += &print_expression(node.d().value_expr.get(), flags);
@@ -274,11 +274,11 @@ pub fn print_arg(node: ArgumentNode, flags: PrintExpressionFlags) -> String {
 pub fn print_expression(node: ExpressionNode, flags: PrintExpressionFlags) -> String {
     match node.d() {
         ParseNodeDetails::Name(d) => {
-            return d.value.clone();
+            return d.value().to_string();
         }
 
         ParseNodeDetails::MemberAccess(d) => {
-            return print_expression(d.left_expr.get(), flags) + "." + &d.member.get().d().value;
+            return print_expression(d.left_expr.get(), flags) + "." + d.member.get().d().value();
         }
 
         ParseNodeDetails::Call(d) => {
@@ -657,7 +657,7 @@ pub fn print_expression(node: ExpressionNode, flags: PrintExpressionFlags) -> St
                         }
 
                         if let Some(name) = param.d().name.get() {
-                            param_str += &name.d().value;
+                            param_str += name.d().value();
                         } else if param.d().category.get() == ParamCategory::Simple {
                             param_str += "/";
                         }
@@ -1432,7 +1432,7 @@ pub fn is_final_allowed_for_assignment_target(target_node: ExpressionNode) -> bo
             return false;
         };
 
-        if method_node.d().name.get().d().value != "__init__" {
+        if method_node.d().name.get().d().value() != "__init__" {
             return false;
         }
 
@@ -1625,7 +1625,7 @@ pub fn is_matching_expression(
         }
 
         if let Some(name_to_compare) = name_to_compare {
-            if reference.d().value != name_to_compare.d().value {
+            if reference.d().value() != name_to_compare.d().value() {
                 return false;
             }
 
@@ -1645,7 +1645,7 @@ pub fn is_matching_expression(
             reference.d().left_expr.get(),
             expression.d().left_expr.get(),
             None,
-        ) && reference.d().member.get().d().value == expression.d().member.get().d().value;
+        ) && reference.d().member.get().d().value() == expression.d().member.get().d().value();
     } else if let (Some(reference), Some(expression)) =
         (IndexNode::cast(reference), IndexNode::cast(expression))
     {
@@ -2005,7 +2005,7 @@ pub fn is_assignment_to_defaults_following_named_tuple(call_node: P<ParseNode>) 
         return false;
     };
 
-    let named_tuple_assigned_name = &NameNode(assignment.d().left_expr.get()).d().value;
+    let named_tuple_assigned_name = NameNode(assignment.d().left_expr.get()).d().value();
     if statement_list.d().statements.borrow().first().copied() != Some(assignment.node()) {
         return false;
     }
@@ -2048,12 +2048,12 @@ pub fn is_assignment_to_defaults_following_named_tuple(call_node: P<ParseNode>) 
 
         if let Some(assign_node) = first_statement.and_then(AssignmentNode::cast) {
             if let Some(left_expr) = MemberAccessNode::cast(assign_node.d().left_expr.get()) {
-                if left_expr.d().member.get().d().value == "__defaults__" {
+                if left_expr.d().member.get().d().value() == "__defaults__" {
                     let default_target = left_expr.d().left_expr.get();
                     if let Some(default_target) = MemberAccessNode::cast(default_target) {
-                        if default_target.d().member.get().d().value == "__new__" {
+                        if default_target.d().member.get().d().value() == "__new__" {
                             if let Some(name) = NameNode::cast(default_target.d().left_expr.get()) {
-                                if name.d().value == *named_tuple_assigned_name {
+                                if name.d().value() == named_tuple_assigned_name {
                                     return true;
                                 }
                             }
@@ -2785,7 +2785,7 @@ pub fn get_decorator_name(decorator: DecoratorNode) -> Option<String> {
             return get_dotted_name(node).map(|names| {
                 names
                     .iter()
-                    .map(|n| n.d().value.as_str())
+                    .map(|n| n.d().value())
                     .collect::<Vec<_>>()
                     .join(".")
             });
@@ -3047,7 +3047,7 @@ pub fn is_valid_location_for_future_import(node: ImportFromNode) -> bool {
                 let name_parts = module_name.d().name_parts.borrow();
                 if module_name.d().leading_dots.get() != 0
                     || name_parts.len() != 1
-                    || name_parts[0].d().value != "__future__"
+                    || name_parts[0].d().value() != "__future__"
                 {
                     return false;
                 }
@@ -3280,7 +3280,7 @@ pub fn get_variable_doc_string_node(node: ExpressionNode) -> Option<StringListNo
 
         // If we're within an __init__ method, the attribute docstring is valid.
         if let Some(func) = func {
-            if func.d().name.get().d().value == "__init__"
+            if func.d().name.get().d().value() == "__init__"
                 && get_enclosing_class(func.node(), /* stopAtFunction */ true).is_some()
             {
                 is_valid_context = true;
@@ -3303,9 +3303,9 @@ pub fn get_variable_doc_string_node(node: ExpressionNode) -> Option<StringListNo
 pub fn get_scope_id_for_node(node: P<ParseNode>, node_info: &dyn AnalyzerNodeInfoReader) -> String {
     let mut name: &str = "";
     if let Some(class_node) = ClassNode::cast(node) {
-        name = &class_node.d().name.get().d().value;
+        name = class_node.d().name.get().d().value();
     } else if let Some(function_node) = FunctionNode::cast(node) {
-        name = &function_node.d().name.get().d().value;
+        name = function_node.d().name.get().d().value();
     }
 
     let file_info = analyzer_node_info::get_file_info(node, node_info);
@@ -3342,7 +3342,7 @@ pub fn get_type_var_scopes_for_node(
 
 // analyzer/parseTreeUtils.ts:2747
 pub fn check_decorator(node: DecoratorNode, value: &str) -> bool {
-    NameNode::cast(node.d().expr.get()).is_some_and(|expr| expr.d().value == value)
+    NameNode::cast(node.d().expr.get()).is_some_and(|expr| expr.d().value() == value)
 }
 
 // analyzer/parseTreeUtils.ts:2751

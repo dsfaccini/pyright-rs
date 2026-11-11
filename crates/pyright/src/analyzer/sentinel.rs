@@ -77,7 +77,7 @@ pub fn create_sentinel_type(
     if let Some(assignment) = error_node.parent.get().and_then(AssignmentNode::cast) {
         let left_expr = assignment.d().left_expr.get();
         if let Some(left_name) = NameNode::cast(left_expr)
-            && left_name.d().value != class_name
+            && left_name.d().value() != class_name
         {
             evaluator.add_diagnostic(
                 DiagnosticRule::reportGeneralTypeIssues,

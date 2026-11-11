@@ -354,7 +354,7 @@ fn parser_string_annotation_side_data_preserves_recursive_associations_and_struc
     let nested_name = NameNode::cast(nested_annotation)
         .expect("Expected the nested quoted annotation to parse as a name");
 
-    assert_eq!(nested_name.d().value, "Data");
+    assert_eq!(nested_name.d().value(), "Data");
     assert_eq!(outer_annotation.parent.get(), Some(outer_string_list));
     assert_eq!(nested_annotation.parent.get(), Some(nested_string_list));
     assert_eq!(outer_string_list.a, parser_output.parse_tree.a);

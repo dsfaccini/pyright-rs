@@ -3835,7 +3835,7 @@ impl TypeEvaluator {
             let value_expr = annotation.d().value_expr.get();
             if let Some(name_node) = NameNode::cast(value_expr) {
                 let symbol_with_scope =
-                    self.look_up_symbol_recursive(expression, &name_node.d().value, false, false);
+                    self.look_up_symbol_recursive(expression, &name_node.d().value(), false, false);
                 if let Some(symbol_with_scope) = symbol_with_scope {
                     let symbol = symbol_with_scope.symbol;
                     return symbol
@@ -3925,7 +3925,7 @@ impl TypeEvaluator {
             parser::parse_nodes::ParseNodeType::Name => {
                 let name_node = NameNode::cast(expression).unwrap();
                 let symbol_with_scope =
-                    self.look_up_symbol_recursive(expression, &name_node.d().value, true, false);
+                    self.look_up_symbol_recursive(expression, &name_node.d().value(), true, false);
                 if let Some(symbol_with_scope) = symbol_with_scope {
                     symbol = Some(symbol_with_scope.symbol);
 
@@ -3945,7 +3945,7 @@ impl TypeEvaluator {
                             if let Some(class_type_info) = class_type_info {
                                 let class_member_info = analyzer::type_utils::look_up_class_member(
                                     class_type_info.class_type,
-                                    &name_node.d().value,
+                                    &name_node.d().value(),
                                     MemberAccessFlags::SkipInstanceMembers | MemberAccessFlags::DeclaredTypesOnly,
                                     None,
                                 );
@@ -3974,7 +3974,7 @@ impl TypeEvaluator {
                     .type_
                     .get();
                 let base_type_concrete = self.make_top_level_type_vars_concrete(base_type, false, None);
-                let member_name = member_access.d().member.get().d().value.clone();
+                let member_name = member_access.d().member.get().d().value().to_string();
 
                 if analyzer::types::is_type_var(base_type) {
                     self_type = Some(base_type);
@@ -5188,7 +5188,7 @@ impl TypeEvaluator {
         allow_assignment_to_final_var: bool,
         expected_type_diag_addendum: Option<P<DiagnosticAddendum>>,
     ) {
-        let name_value = name_node.d().value.clone();
+        let name_value = name_node.d().value().to_string();
 
         let Some(symbol_with_scope) =
             self.look_up_symbol_recursive(name_node.node(), &name_value, false, false)
@@ -5216,7 +5216,7 @@ impl TypeEvaluator {
                 if let Some(class_type) = class_type {
                     let member_info = analyzer::type_utils::look_up_class_member(
                         class_type.class_type,
-                        &name_node.d().value,
+                        &name_node.d().value(),
                         MemberAccessFlags::SkipOriginalClass,
                         None,
                     );
@@ -5450,7 +5450,7 @@ impl TypeEvaluator {
                         if ClassType::is_protocol_class(class_type_results.class_type) {
                             let member_symbol =
                                 ClassType::get_symbol_table(class_type_results.class_type)
-                                    .get(&target.d().member.get().d().value);
+                                    .get(target.d().member.get().d().value());
                             if let Some(member_symbol) = member_symbol {
                                 let class_level_decls: Vec<P<Declaration>> = member_symbol
                                     .get_declarations()
@@ -5564,7 +5564,7 @@ impl TypeEvaluator {
         src_expr_node: Option<ExpressionNode>,
     ) {
         let mut type_result = type_result;
-        let member_name = node.d().member.get().d().value.clone();
+        let member_name = node.d().member.get().d().value().to_string();
         let file_info = self.node_info.get_file_info(node.node());
 
         let Some(class_def) = analyzer::parse_tree_utils::get_enclosing_class(node.node(), false)
@@ -5687,7 +5687,7 @@ impl TypeEvaluator {
                         self.add_diagnostic(
                             DiagnosticRule::reportConstantRedefinition,
                             &crate::localization::localize::LocMessage::constant_redefinition()
-                                .format(&[("name", &node.d().member.get().d().value)]),
+                                .format(&[("name", &node.d().member.get().d().value())]),
                             node.d().member.get().node(),
                             None,
                         );
@@ -6571,7 +6571,7 @@ impl TypeEvaluator {
                     let type_var = TypeVarType(type_result.type_.get());
                     let is_name_mismatch = match NameNode::cast(type_var_target) {
                         Some(name_node) => {
-                            name_node.d().value != *type_var.d().shared.get().name.borrow()
+                            name_node.d().value() != *type_var.d().shared.get().name.borrow()
                         }
                         None => true,
                     };
@@ -7022,7 +7022,7 @@ impl TypeEvaluator {
     // analyzer/typeEvaluator.ts:5127
     pub(crate) fn get_type_of_name(&self, node: NameNode, flags: EvalFlags) -> P<TypeResult> {
         let file_info = self.node_info.get_file_info(node.node());
-        let name = node.d().value.clone();
+        let name = node.d().value().to_string();
         let symbol: P<Symbol>;
         let mut type_: P<Type>;
         let mut is_incomplete = false;
@@ -7045,7 +7045,7 @@ impl TypeEvaluator {
             if let Some(alias) = alias {
                 symbol_with_scope = self.look_up_symbol_recursive(
                     alias.node(),
-                    &alias.d().value,
+                    &alias.d().value(),
                     !allow_forward_references,
                     allow_forward_references && flags.any(EvalFlags::TypeExpression),
                 );
@@ -7711,9 +7711,9 @@ impl TypeEvaluator {
         };
         let name_of = |scope_node: P<ParseNode>| -> String {
             if let Some(class_node) = ClassNode::cast(scope_node) {
-                class_node.d().name.get().d().value.clone()
+                class_node.d().name.get().d().value().to_string()
             } else {
-                FunctionNode::cast(scope_node).unwrap().d().name.get().d().value.clone()
+                FunctionNode::cast(scope_node).unwrap().d().name.get().d().value().to_string()
             }
         };
 
@@ -7777,7 +7777,7 @@ impl TypeEvaluator {
             if let Some(cur_enclosing_scope) = enclosing_scope {
                 if let Some(member_access) = node.parent.get().and_then(MemberAccessNode::cast) {
                     if member_access.d().left_expr.get() == node {
-                        let member_name = member_access.d().member.get().d().value.clone();
+                        let member_name = member_access.d().member.get().d().value().to_string();
                         if member_name == "args" || member_name == "kwargs" {
                             let outer_function_scope =
                                 analyzer::parse_tree_utils::get_enclosing_class_or_function(cur_enclosing_scope);
@@ -7809,7 +7809,7 @@ impl TypeEvaluator {
             if let Some(type_params) = type_params_of(enclosing_scope) {
                 let type_var_name = type_.d().shared.get().name.borrow().clone();
                 let params = type_params.d().params.borrow().clone();
-                if !params.iter().any(|param| param.d().name.get().d().value == type_var_name) {
+                if !params.iter().any(|param| param.d().name.get().d().value() == type_var_name) {
                     self.add_diagnostic(
                         DiagnosticRule::reportGeneralTypeIssues,
                         &crate::localization::localize::LocMessage::type_parameter_not_declared().format(&[
@@ -8047,7 +8047,7 @@ impl TypeEvaluator {
                                 DiagnosticRule::reportGeneralTypeIssues,
                                 &crate::localization::localize::LocMessage::type_parameter_not_declared().format(&[
                                     ("name", type_var_name.as_str()),
-                                    ("container", type_alias_node.unwrap().d().name.get().d().value.as_str()),
+                                    ("container", type_alias_node.unwrap().d().name.get().d().value()),
                                 ]),
                                 node,
                                 None,
@@ -8112,7 +8112,7 @@ impl TypeEvaluator {
 
         // Handle special casing for ParamSpec "args" and "kwargs" accesses.
         if flags.any(EvalFlags::InstantiableType) {
-            let member_name = &node.d().member.get().d().value;
+            let member_name = node.d().member.get().d().value();
             if member_name == "args" || member_name == "kwargs" {
                 left_expr_flags |= EvalFlags::NoConvertSpecialForm;
             }
@@ -8176,14 +8176,14 @@ impl TypeEvaluator {
                 if analyzer::types::is_instantiable_class(base_type) {
                     class_member_info = analyzer::type_utils::look_up_class_member(
                         ClassType(base_type),
-                        &node.d().member.get().d().value,
+                        &node.d().member.get().d().value(),
                         MemberAccessFlags::SkipOriginalClass,
                         None,
                     );
                 } else if analyzer::types::is_class_instance(base_type) {
                     class_member_info = analyzer::type_utils::look_up_object_member(
                         ClassType(base_type),
-                        &node.d().member.get().d().value,
+                        &node.d().member.get().d().value(),
                         MemberAccessFlags::SkipOriginalClass,
                         None,
                     );
@@ -8306,7 +8306,7 @@ impl TypeEvaluator {
         )
         .unwrap();
         let member = node.d().member.get();
-        let member_name = member.d().value.clone();
+        let member_name = member.d().value().to_string();
         let mut diag = DiagnosticAddendum::new();
         let file_info = self.node_info.get_file_info(node.node());
         let mut type_: Option<P<Type>> = None;
@@ -9392,7 +9392,7 @@ impl TypeEvaluator {
                             let enclosing_function_node =
                                 analyzer::parse_tree_utils::get_enclosing_function(error_node);
                             if enclosing_function_node.is_none_or(|enclosing_function_node| {
-                                enclosing_function_node.d().name.get().d().value != "__init__"
+                                enclosing_function_node.d().name.get().d().value() != "__init__"
                             }) || final_var_type_decl
                                 .variable()
                                 .and_then(|variable| variable.inferred_type_source.get())
@@ -12736,7 +12736,7 @@ impl TypeEvaluator {
         // that guides the user to the right solution.
         if flags.any(EvalFlags::TypeExpression)
             && parser::parse_nodes::NameNode::cast(left_expr)
-                .is_some_and(|name| name.d().value == "type")
+                .is_some_and(|name| name.d().value() == "type")
         {
             let diag = DiagnosticAddendum::new();
             diag.add_message(crate::localization::localize::LocAddendum::use_type_instead());
@@ -12790,7 +12790,7 @@ impl TypeEvaluator {
 
         let left_name_is = |value: &str| {
             parser::parse_nodes::NameNode::cast(left_expr)
-                .is_some_and(|name| name.d().value == value)
+                .is_some_and(|name| name.d().value() == value)
         };
 
         if !analyzer::type_utils::is_type_alias_placeholder(base_type_result.type_.get()) {
@@ -13709,7 +13709,7 @@ impl TypeEvaluator {
                 || arg_name.is_none()
             {
                 arg0_value = None;
-            } else if arg_name.is_some_and(|name| name.d().value == "expected_text") {
+            } else if arg_name.is_some_and(|name| name.d().value() == "expected_text") {
                 expected_text_node = Some(arg.d().value_expr.get());
                 let expected_text_type = self
                     .get_type_of_expression(arg.d().value_expr.get(), EvalFlags::None, None)
@@ -13745,7 +13745,7 @@ impl TypeEvaluator {
                 } else {
                     expected_text = literal_string;
                 }
-            } else if arg_name.is_some_and(|name| name.d().value == "expected_type") {
+            } else if arg_name.is_some_and(|name| name.d().value() == "expected_type") {
                 expected_reveal_type_node = Some(arg.d().value_expr.get());
                 expected_reveal_type = Some(analyzer::type_utils::convert_to_instance(
                     self.get_type_of_arg_expecting_type(
@@ -14160,7 +14160,7 @@ impl TypeEvaluator {
         let parent_node = node.parent.get();
         if let Some(parent_node) = parent_node.and_then(parser::parse_nodes::MemberAccessNode::cast)
         {
-            let member_name = parent_node.d().member.get().d().value.clone();
+            let member_name = parent_node.d().member.get().d().value().to_string();
             let mut effective_target_class =
                 if analyzer::types::is_class(concrete_target_class_type) {
                     Some(ClassType(concrete_target_class_type))
@@ -17795,7 +17795,7 @@ impl TypeEvaluator {
                         .params
                         .iter()
                         .position(|param_info| {
-                            param_info.param.name.as_deref() == Some(arg_name.d().value.as_str())
+                            param_info.param.name.as_deref() == Some(arg_name.d().value())
                                 && param_info.param.category == ParamCategory::Simple
                         })
                         .map_or(-1, |i| i as i32);
@@ -18746,7 +18746,7 @@ impl TypeEvaluator {
                     // error, but we need to protect against it here.
                     let param_name = arg.name();
                     if let Some(param_name) = param_name {
-                        let param_name_value = param_name.d().value.clone();
+                        let param_name_value = param_name.d().value().to_string();
                         let param_entry = param_tracker.lookup_name(&param_name_value);
 
                         if let Some(param_entry) = param_entry {
@@ -18813,7 +18813,7 @@ impl TypeEvaluator {
                                     self.add_diagnostic(
                 DiagnosticRule::reportCallIssue,
                 &crate::localization::localize::LocMessage::param_name_missing()
-                    .format(&[("name", &param_name.d().value)]),
+                    .format(&[("name", &param_name.d().value())]),
                 param_name.0,
                 None,
             );
@@ -18855,7 +18855,7 @@ impl TypeEvaluator {
                                     DiagnosticRule::reportCallIssue,
                                     &crate::localization::localize::LocMessage::param_name_missing(
                                     )
-                                    .format(&[("name", &param_name.d().value)]),
+                                    .format(&[("name", &param_name.d().value())]),
                                     param_name.0,
                                     None,
                                 );
@@ -20919,7 +20919,7 @@ impl TypeEvaluator {
         let mut param_name_map: JsMap<String, String> = JsMap::default();
         for i in 1..arg_list.len() {
             let param_name_node = arg_list[i].name();
-            let param_name = param_name_node.map(|n| n.d().value.clone());
+            let param_name = param_name_node.map(|n| n.d().value().to_string());
 
             if let Some(param_name) = param_name.filter(|n| !n.is_empty()) {
                 if param_name_map
@@ -21345,7 +21345,7 @@ impl TypeEvaluator {
         // Parse the remaining parameters.
         for i in 1..arg_list.len() {
             let param_name_node = arg_list[i].name();
-            let param_name = param_name_node.map(|n| n.d().value.clone());
+            let param_name = param_name_node.map(|n| n.d().value().to_string());
 
             if let Some(param_name) = param_name.filter(|n| !n.is_empty()) {
                 if param_name == "default" {
@@ -21377,7 +21377,7 @@ impl TypeEvaluator {
                 } else {
                     let name = arg_list[i]
                         .name()
-                        .map(|n| n.d().value.clone())
+                        .map(|n| n.d().value().to_string())
                         .filter(|n| !n.is_empty())
                         .unwrap_or_else(|| "?".to_string());
                     self.add_diagnostic(
@@ -21518,7 +21518,7 @@ impl TypeEvaluator {
         // Parse the remaining parameters.
         for i in 1..arg_list.len() {
             let param_name_node = arg_list[i].name();
-            let param_name = param_name_node.map(|n| n.d().value.clone());
+            let param_name = param_name_node.map(|n| n.d().value().to_string());
 
             if let Some(param_name) = param_name.filter(|n| !n.is_empty()) {
                 if param_name == "default" {
@@ -21748,7 +21748,7 @@ impl TypeEvaluator {
             .and_then(parser::parse_nodes::StringListNode::cast)
         {
             let type_alias_name = join_string_list(string_list);
-            if type_alias_name != jsrt::JsString::from(name_node.d().value.as_str()) {
+            if type_alias_name != jsrt::JsString::from(name_node.d().value()) {
                 self.add_diagnostic(
                     DiagnosticRule::reportGeneralTypeIssues,
                     &crate::localization::localize::LocMessage::type_alias_type_name_mismatch(),
@@ -21772,7 +21772,7 @@ impl TypeEvaluator {
         // Parse the remaining parameters.
         for i in 1..arg_list.len() {
             let param_name_node = arg_list[i].name();
-            let param_name = param_name_node.map(|n| n.d().value.clone());
+            let param_name = param_name_node.map(|n| n.d().value().to_string());
 
             if let Some(param_name) = param_name.filter(|n| !n.is_empty()) {
                 if param_name == "type_params" && type_params_expr.is_none() {
@@ -21833,7 +21833,7 @@ impl TypeEvaluator {
                         entry_type = TypeVarType::clone_for_scope_id(
                             TypeVarType(entry_type),
                             self.get_scope_id_for_node(name_node.0),
-                            Some(name_node.d().value.clone()),
+                            Some(name_node.d().value().to_string()),
                             Some(analyzer::types::TypeVarScopeType::TypeAlias),
                         )
                         .0;
@@ -21907,7 +21907,7 @@ impl TypeEvaluator {
                     Some(class_node) => class_node.d().name.get(),
                     None => FunctionNode::cast(enclosing).unwrap().d().name.get(),
                 };
-                name_parts.push(name.d().value.clone());
+                name_parts.push(name.d().value().to_string());
             }
         }
 
@@ -21982,7 +21982,7 @@ impl TypeEvaluator {
             .and_then(parser::parse_nodes::AssignmentNode::cast)
         {
             if let Some(left_name) = NameNode::cast(assignment.d().left_expr.get()) {
-                if left_name.d().value != class_name {
+                if left_name.d().value() != class_name {
                     self.add_diagnostic(
                         DiagnosticRule::reportGeneralTypeIssues,
                         &crate::localization::localize::LocMessage::new_type_name_mismatch(),
@@ -24446,7 +24446,7 @@ impl TypeEvaluator {
 
             match param_name {
                 Some(param_name) if category == ParamCategory::Simple => {
-                    if analyzer::symbol_name_utils::is_private_name(&param_name.d().value) {
+                    if analyzer::symbol_name_utils::is_private_name(param_name.d().value()) {
                         is_implicit_position_only_param = true;
                     }
                 }
@@ -24477,7 +24477,7 @@ impl TypeEvaluator {
                 category,
                 param_type.unwrap_or_else(|| analyzer::types::UnknownType::create(false).0),
                 analyzer::types::FunctionParamFlags::TypeDeclared,
-                param_name.map(|n| n.d().value.as_str()),
+                param_name.map(|n| n.d().value()),
                 default_value.map(|_| analyzer::types::AnyType::create(/* isEllipsis */ true).0),
                 default_value,
             );
@@ -24719,7 +24719,7 @@ impl TypeEvaluator {
             return;
         }
 
-        let name_value = target.d().value.as_str();
+        let name_value = target.d().value();
 
         // Sometimes variables contain an "unbound" type if they're
         // assigned only within conditional statements. Remove this
@@ -27264,7 +27264,7 @@ impl TypeEvaluator {
         let parent = node.parent.get().and_then(TypeAnnotationNode::cast)?;
 
         let name_node = NameNode::cast(parent.d().value_expr.get())?;
-        let assigned_name = name_node.d().value.as_str();
+        let assigned_name = name_node.d().value();
 
         let entry = |alias: &str, is_special_form: bool| AliasMapEntry {
             alias: alias.to_string(),
@@ -27352,7 +27352,7 @@ impl TypeEvaluator {
     // analyzer/typeEvaluator.ts:18244
     pub(crate) fn handle_typing_stub_assignment(&self, node: AssignmentNode) -> Option<P<Type>> {
         let name_node = NameNode::cast(node.d().left_expr.get())?;
-        let assigned_name = name_node.d().value.as_str();
+        let assigned_name = name_node.d().value();
 
         if assigned_name == "Any" {
             return Some(analyzer::types::AnyType::create_special_form().0);
@@ -27395,7 +27395,7 @@ impl TypeEvaluator {
             parser::parse_nodes::ParseNodeType::Name => {
                 let name = NameNode(expression);
                 let symbol_with_scope =
-                    self.look_up_symbol_recursive(expression, &name.d().value, /* honorCodeFlow */ true, false);
+                    self.look_up_symbol_recursive(expression, &name.d().value(), /* honorCodeFlow */ true, false);
                 symbol_with_scope.is_some_and(|symbol_with_scope| {
                     symbol_with_scope.symbol.has_typed_declarations()
                         || symbol_with_scope.scope.type_ == analyzer::scope::ScopeType::Class
@@ -27511,7 +27511,7 @@ impl TypeEvaluator {
                 } else if let Some(left_name) = NameNode::cast(left_expr) {
                     let symbol_with_scope = self.look_up_symbol_recursive(
                         left_expr,
-                        &left_name.d().value,
+                        &left_name.d().value(),
                         /* honorCodeFlow */ false,
                         false,
                     );
@@ -27596,7 +27596,7 @@ impl TypeEvaluator {
                         self.add_diagnostic(
                             DiagnosticRule::reportGeneralTypeIssues,
                             &crate::localization::localize::LocMessage::type_alias_is_recursive_direct()
-                                .format(&[("name", &type_alias_name_node.d().value)]),
+                                .format(&[("name", &type_alias_name_node.d().value())]),
                             right_expr,
                             None,
                         );
@@ -27675,7 +27675,7 @@ impl TypeEvaluator {
         name_node: NameNode,
         is_type_alias_type: bool,
     ) -> TypeVarType {
-        let name = name_node.d().value.as_str();
+        let name = name_node.d().value();
         let placeholder = TypeVarType::create_instantiable(&format!("__type_alias_{name}"), analyzer::types::TypeVarKind::TypeVar);
         placeholder.d().shared.get().is_synthesized.set(true);
         let type_var_scope_id = self.get_scope_id_for_node(name_node.0);
@@ -27734,7 +27734,7 @@ impl TypeEvaluator {
 
         // Set a partial type to handle recursive (self-referential) type aliases.
         let scope = self.get_scope_for_node(decl_node);
-        let type_alias_symbol = scope.and_then(|scope| scope.look_up_symbol_recursive(&name_node.d().value, None));
+        let type_alias_symbol = scope.and_then(|scope| scope.look_up_symbol_recursive(&name_node.d().value(), None));
         let type_alias_decl = self.node_info.get_declaration(decl_node);
         if let (Some(type_alias_decl), Some(type_alias_symbol)) = (type_alias_decl, type_alias_symbol) {
             self.set_symbol_resolution_partial_type(type_alias_symbol.symbol, type_alias_decl, type_alias_type_var.0);
@@ -27782,7 +27782,7 @@ impl TypeEvaluator {
         if analyzer::type_utils::is_type_alias_recursive(type_alias_type_var, alias_type).unwrap_or(false) {
             self.add_diagnostic(
                 DiagnosticRule::reportGeneralTypeIssues,
-                &crate::localization::localize::LocMessage::type_alias_is_recursive_direct().format(&[("name", &name_node.d().value)]),
+                &crate::localization::localize::LocMessage::type_alias_is_recursive_direct().format(&[("name", &name_node.d().value())]),
                 value_node,
                 None,
             );
@@ -27899,7 +27899,7 @@ impl TypeEvaluator {
         self.initialize_prefetched_types(node.0);
 
         let name_node = node.d().name.get();
-        let class_name = name_node.d().value.as_str();
+        let class_name = name_node.d().value();
 
         // Is this type already cached?
         let cached_class_type = self.read_type_cache(name_node.0, Some(EvalFlags::None));
@@ -28296,7 +28296,7 @@ impl TypeEvaluator {
                     }
                 }
                 Some(arg_name) if ClassType::is_typed_dict_class(class_type) => {
-                    let arg_name_value = arg_name.d().value.as_str();
+                    let arg_name_value = arg_name.d().value();
                     if arg_name_value == "total" || arg_name_value == "closed" {
                         // The "total" and "readonly" parameters apply only for TypedDict classes.
                         // PEP 589 specifies that the parameter must be either True or False.
@@ -28404,7 +28404,7 @@ impl TypeEvaluator {
                         );
                     }
                 }
-                Some(arg_name) if arg_name.d().value == "metaclass" => {
+                Some(arg_name) if arg_name.d().value() == "metaclass" => {
                     if metaclass_node.is_some() {
                         self.add_diagnostic(
                             DiagnosticRule::reportGeneralTypeIssues,
@@ -28634,7 +28634,7 @@ impl TypeEvaluator {
                                 .iter()
                                 .map(|param| {
                                     let type_var = TypeVarType::create_instance(
-                                        &self.get_pseudo_generic_type_var_name(&param.d().name.get().unwrap().d().value),
+                                        &self.get_pseudo_generic_type_var_name(param.d().name.get().unwrap().d().value()),
                                         analyzer::types::TypeVarKind::TypeVar,
                                     );
                                     type_var.d().shared.get().is_synthesized.set(true);
@@ -29133,7 +29133,7 @@ impl TypeEvaluator {
         let params = node.d().params.borrow().clone();
         for param in params {
             let param_name = param.d().name.get();
-            let Some(param_symbol) = type_param_scope.and_then(|s| s.symbol_table.get(&param_name.d().value)) else {
+            let Some(param_symbol) = type_param_scope.and_then(|s| s.symbol_table.get(param_name.d().value())) else {
                 // This can happen if the code is unreachable.
                 continue;
             };
@@ -29358,7 +29358,7 @@ impl TypeEvaluator {
 
         let arguments = node.d().arguments.borrow().clone();
         for arg in arguments {
-            if let Some(arg_name) = arg.d().name.get().filter(|n| n.d().value != "metaclass") {
+            if let Some(arg_name) = arg.d().name.get().filter(|n| n.d().value() != "metaclass") {
                 arg_list.push(Arg::ArgWithExpression(P::new_eval(
                     analyzer::type_evaluator_types::ArgWithExpression {
                         arg_category: parser::parse_nodes::ArgCategory::Simple,
@@ -29430,7 +29430,7 @@ impl TypeEvaluator {
                         }
 
                         let param_index = param_map
-                            .get(&arg_name.d().value)
+                            .get(arg_name.d().value())
                             .copied()
                             .or(param_list_details.kwargs_index.map(|i| i as usize));
 
@@ -29461,11 +29461,11 @@ impl TypeEvaluator {
                                     skip_report_error: None,
                                 },
                             );
-                            param_map.shift_remove(&arg_name.d().value);
+                            param_map.shift_remove(arg_name.d().value());
                         } else {
                             self.add_diagnostic(
                                 DiagnosticRule::reportGeneralTypeIssues,
-                                &crate::localization::localize::LocMessage::param_name_missing().format(&[("name", &arg_name.d().value)]),
+                                &crate::localization::localize::LocMessage::param_name_missing().format(&[("name", &arg_name.d().value())]),
                                 arg_name.0,
                                 None,
                             );
@@ -29689,7 +29689,7 @@ impl TypeEvaluator {
     pub(crate) fn get_type_of_function_predecorated(&self, node: FunctionNode) -> FunctionType {
         let file_info = self.node_info.get_file_info(node.0);
         let name_node = node.d().name.get();
-        let function_name = name_node.d().value.as_str();
+        let function_name = name_node.d().value();
 
         // Is this type already cached?
         let cached_function_type = self.read_type_cache(name_node.0, Some(EvalFlags::None));
@@ -29910,7 +29910,7 @@ impl TypeEvaluator {
             if annotated_type.is_none() && add_generic_param_types {
                 if let Some(param_name) = param_name {
                     if index > 0 && category == ParamCategory::Simple && default_value.is_none() {
-                        let type_param_name = self.get_pseudo_generic_type_var_name(&param_name.d().value);
+                        let type_param_name = self.get_pseudo_generic_type_var_name(param_name.d().value());
                         let containing_type_params =
                             containing_class_type.unwrap().d().shared.get().type_params.borrow().clone();
                         annotated_type = containing_type_params
@@ -29997,7 +29997,7 @@ impl TypeEvaluator {
 
                 match param_name {
                     Some(param_name) if category == ParamCategory::Simple => {
-                        if analyzer::symbol_name_utils::is_private_name(&param_name.d().value)
+                        if analyzer::symbol_name_utils::is_private_name(param_name.d().value())
                             && !params.iter().any(|p| {
                                 p.d().category.get() == ParamCategory::Simple && p.d().name.get().is_none()
                             })
@@ -30065,7 +30065,7 @@ impl TypeEvaluator {
                 } else {
                     analyzer::types::FunctionParamFlags::None
                 }),
-                param_name.map(|n| n.d().value.as_str()),
+                param_name.map(|n| n.d().value()),
                 default_value_type,
                 default_value,
             );
@@ -30205,7 +30205,7 @@ impl TypeEvaluator {
     pub(crate) fn mark_param_accessed(&self, param: ParameterNode) {
         if let Some(param_name) = param.d().name.get() {
             let symbol_with_scope =
-                self.look_up_symbol_recursive(param_name.0, &param_name.d().value, /* honorCodeFlow */ false, false);
+                self.look_up_symbol_recursive(param_name.0, &param_name.d().value(), /* honorCodeFlow */ false, false);
             if let Some(symbol_with_scope) = symbol_with_scope {
                 self.set_symbol_accessed(self.node_info.get_file_info(param.0), symbol_with_scope.symbol, param_name.0);
             }
@@ -30254,7 +30254,7 @@ impl TypeEvaluator {
                 );
             }
 
-            let method_name = function_node.d().name.get().d().value.as_str();
+            let method_name = function_node.d().name.get().d().value();
 
             let base_class_member_info = analyzer::type_utils::look_up_class_member(
                 containing_class_type,
@@ -30273,8 +30273,8 @@ impl TypeEvaluator {
                     if base_params.len() == function_params.len()
                         && base_params.iter().enumerate().all(|(i, param)| {
                             let override_param = function_params[i];
-                            override_param.d().name.get().map(|n| n.d().value.clone())
-                                == param.d().name.get().map(|n| n.d().value.clone())
+                            override_param.d().name.get().map(|n| n.d().value().to_string())
+                                == param.d().name.get().map(|n| n.d().value().to_string())
                                 && override_param.d().category.get() == param.d().category.get()
                         })
                     {
@@ -31250,7 +31250,7 @@ impl TypeEvaluator {
 
         // Look up the symbol to find the alias declaration.
         let mut symbol_type = self
-            .get_aliased_symbol_type_for_name(node.0, &symbol_name_node.d().value)
+            .get_aliased_symbol_type_for_name(node.0, &symbol_name_node.d().value())
             .unwrap_or_else(|| analyzer::types::UnknownType::create(false).0);
 
         // Is there a cached module type associated with this node? If so, use
@@ -31286,9 +31286,9 @@ impl TypeEvaluator {
 
         // If this is a redundant form of an import, assume it is an intentional
         // export and mark the symbol as accessed.
-        if node.d().alias.get().is_some_and(|alias| alias.d().value == name_node.d().value) {
+        if node.d().alias.get().is_some_and(|alias| alias.d().value() == name_node.d().value()) {
             let symbol_in_scope =
-                self.look_up_symbol_recursive(node.0, &name_node.d().value, /* honorCodeFlow */ true, false);
+                self.look_up_symbol_recursive(node.0, &name_node.d().value(), /* honorCodeFlow */ true, false);
             if let Some(symbol_in_scope) = symbol_in_scope {
                 self.set_symbol_accessed(file_info, symbol_in_scope.symbol, node.0);
             }
@@ -31298,13 +31298,13 @@ impl TypeEvaluator {
         let class_node = analyzer::parse_tree_utils::get_enclosing_class(node.0, /* stopAtFunction */ true);
         if class_node.is_some() {
             let symbol_in_scope =
-                self.look_up_symbol_recursive(node.0, &alias_node.d().value, /* honorCodeFlow */ true, false);
+                self.look_up_symbol_recursive(node.0, &alias_node.d().value(), /* honorCodeFlow */ true, false);
             if let Some(symbol_in_scope) = symbol_in_scope {
                 self.set_symbol_accessed(file_info, symbol_in_scope.symbol, node.0);
             }
         }
 
-        let mut symbol_type = self.get_aliased_symbol_type_for_name(node.0, &alias_node.d().value);
+        let mut symbol_type = self.get_aliased_symbol_type_for_name(node.0, &alias_node.d().value());
         if symbol_type.is_none() {
             let parent_node = ImportFromNode(node.parent.get().unwrap());
 
@@ -31345,7 +31345,7 @@ impl TypeEvaluator {
                 if report_error {
                     self.add_diagnostic(
                         DiagnosticRule::reportAttributeAccessIssue,
-                        &crate::localization::localize::LocMessage::import_symbol_unknown().format(&[("name", &name_node.d().value)]),
+                        &crate::localization::localize::LocMessage::import_symbol_unknown().format(&[("name", &name_node.d().value())]),
                         name_node.0,
                         None,
                     );
@@ -31531,7 +31531,7 @@ impl TypeEvaluator {
             let symbol_name_node = node.d().module.get().d().name_parts.borrow()[0];
 
             // Look up the symbol to find the alias declaration.
-            let Some(mut symbol_type) = self.get_aliased_symbol_type_for_name(node.0, &symbol_name_node.d().value) else {
+            let Some(mut symbol_type) = self.get_aliased_symbol_type_for_name(node.0, &symbol_name_node.d().value()) else {
                 return;
             };
 
@@ -31637,7 +31637,7 @@ impl TypeEvaluator {
             if resolved_alias_info.is_private {
                 self.add_diagnostic(
                     DiagnosticRule::reportPrivateUsage,
-                    &crate::localization::localize::LocMessage::private_used_outside_of_module().format(&[("name", &import_name.d().value)]),
+                    &crate::localization::localize::LocMessage::private_used_outside_of_module().format(&[("name", &import_name.d().value())]),
                     import_name.0,
                     None,
                 );
@@ -31658,7 +31658,7 @@ impl TypeEvaluator {
                 self.add_diagnostic(
                     DiagnosticRule::reportPrivateImportUsage,
                     &(crate::localization::localize::LocMessage::private_import_from_py_typed_module()
-                        .format(&[("name", &import_name.d().value), ("module", private_py_typed_importer)])
+                        .format(&[("name", &import_name.d().value()), ("module", private_py_typed_importer)])
                         + &diag.get_string(
                             common::diagnostic::DEFAULT_MAX_DIAGNOSTIC_DEPTH,
                             common::diagnostic::DEFAULT_MAX_DIAGNOSTIC_LINE_COUNT,
@@ -31851,7 +31851,7 @@ impl TypeEvaluator {
                 if node_to_evaluate == left_expr {
                     // Handle the special case where the LHS is a call to super().
                     if let Some(call) = CallNode::cast(node_to_evaluate) {
-                        if NameNode::cast(call.d().left_expr.get()).is_some_and(|n| n.d().value == "super") {
+                        if NameNode::cast(call.d().left_expr.get()).is_some_and(|n| n.d().value() == "super") {
                             node_to_evaluate = parent;
                             continue;
                         }
@@ -32060,9 +32060,9 @@ impl TypeEvaluator {
 
         if let Some(class_info) = &class_info {
             if ClassType::is_pseudo_generic_class(class_info.class_type)
-                && function_node.d().name.get().d().value == "__init__"
+                && function_node.d().name.get().d().value() == "__init__"
             {
-                let type_param_name = self.get_pseudo_generic_type_var_name(&param_name.d().value);
+                let type_param_name = self.get_pseudo_generic_type_var_name(param_name.d().value());
                 let type_params = class_info.class_type.d().shared.get().type_params.borrow().clone();
                 let param_type = type_params
                     .iter()
@@ -33825,7 +33825,7 @@ impl TypeEvaluator {
             let scope = self.get_scope_for_node(node.0);
             if let Some(scope) = scope {
                 // Look up the alias symbol.
-                let symbol_in_scope = scope.look_up_symbol_recursive(&alias.d().value, None);
+                let symbol_in_scope = scope.look_up_symbol_recursive(&alias.d().value(), None);
                 if let Some(symbol_in_scope) = symbol_in_scope {
                     // The alias could have more decls that don't refer to this import. Filter
                     // out the one(s) that specifically associated with this import statement.
@@ -33851,7 +33851,7 @@ impl TypeEvaluator {
             let base_type = self.get_type(member_access.d().left_expr.get());
             if let Some(base_type) = base_type {
                 let base_type = self.make_top_level_type_vars_concrete(base_type, false, None);
-                let member_name = member_access.d().member.get().d().value.clone();
+                let member_name = member_access.d().member.get().d().value().to_string();
                 analyzer::type_utils::do_for_each_subtype(
                     base_type,
                     &mut |subtype, _, _| {
@@ -33968,7 +33968,7 @@ impl TypeEvaluator {
         {
             // The target node is the name in a keyword argument. We need to determine whether
             // the corresponding keyword parameter can be determined from the context.
-            let param_name = node.d().value.clone();
+            let param_name = node.d().value().to_string();
             let arg_parent = arg_node.parent.get();
             if let Some(call_node) = arg_parent.and_then(CallNode::cast) {
                 let base_type = self.get_type(call_node.d().left_expr.get());
@@ -34054,7 +34054,7 @@ impl TypeEvaluator {
             // Only the keyword (left of `=`) is handled here; the capture target on the
             // right (e.g. the second `prop` in `case Foo(prop=prop)`) is a separate local
             // binding that is resolved through the normal name-lookup path.
-            let member_name = node.d().value.clone();
+            let member_name = node.d().value().to_string();
             let class_type = self.get_type(pattern_class.d().class_name.get());
             if let Some(class_type) = class_type {
                 let class_type = self.make_top_level_type_vars_concrete(class_type, false, None);
@@ -34122,7 +34122,7 @@ impl TypeEvaluator {
 
             let symbol_with_scope = self.look_up_symbol_recursive(
                 node.0,
-                &node.d().value,
+                &node.d().value(),
                 !allow_forward_references,
                 is_within_type_annotation,
             );
@@ -34416,7 +34416,7 @@ impl TypeEvaluator {
             _ => None,
         };
 
-        let mut type_var = TypeVarType::create_instantiable(&node.d().name.get().d().value, kind);
+        let mut type_var = TypeVarType::create_instantiable(&node.d().name.get().d().value(), kind);
         if let Some(runtime_class) = runtime_class {
             type_var = TypeVarType::cast(analyzer::types::TypeBase::clone_as_special_form(
                 type_var.0,
@@ -34647,7 +34647,7 @@ impl TypeEvaluator {
                         scope_node
                     },
                 ),
-                Some(scope_name_node.d().value.clone()),
+                Some(scope_name_node.d().value().to_string()),
                 Some(scope_type),
             );
         }
@@ -35976,7 +35976,7 @@ impl TypeEvaluator {
                         let mut param_type: Option<P<Type>> = None;
                         let arg = args
                             .iter()
-                            .find(|arg| arg.param_name.as_deref() == Some(param_name.d().value.as_str()));
+                            .find(|arg| arg.param_name.as_deref() == Some(param_name.d().value()));
                         let arg_value_expression = arg.and_then(|arg| match &arg.argument {
                             Arg::ArgWithType(arg) => arg.value_expression,
                             Arg::ArgWithExpression(arg) => Some(arg.value_expression),
@@ -42030,9 +42030,9 @@ impl TypeEvaluator {
         // a call to the TypedDict call. This avoids the expensive (and potentially
         // recursive) call to getTypeOfExpression in cases where it's not needed.
         let is_typed_dict_name =
-            NameNode::cast(call_left_node).is_some_and(|name| name.d().value == "TypedDict");
+            NameNode::cast(call_left_node).is_some_and(|name| name.d().value() == "TypedDict");
         let is_typed_dict_member_access = MemberAccessNode::cast(call_left_node).is_some_and(|member_access| {
-            member_access.d().member.get().d().value == "TypedDict"
+            member_access.d().member.get().d().value() == "TypedDict"
                 && member_access.d().left_expr.get().node_type == parser::parse_nodes::ParseNodeType::Name
         });
         if is_typed_dict_name || is_typed_dict_member_access {

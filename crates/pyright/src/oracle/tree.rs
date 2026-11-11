@@ -369,7 +369,7 @@ fn fields(node: &ParseNode) -> Vec<(&'static str, Field<'_>)> {
         ],
         ParseNodeDetails::Name(d) => vec![
             ("token", Field::Token(d.token.get().0)),
-            ("value", Field::Str(&d.value)),
+            ("value", Field::Str(d.value())),
         ],
         ParseNodeDetails::Constant(d) => vec![("constType", Field::Int(d.const_type.get() as i32))],
         ParseNodeDetails::Ellipsis(_) => vec![],

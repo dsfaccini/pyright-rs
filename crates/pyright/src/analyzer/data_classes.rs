@@ -520,7 +520,7 @@ pub fn synthesize_data_class_methods(
                                 arg.d()
                                     .name
                                     .get()
-                                    .is_some_and(|name| name.d().value == arg_name)
+                                    .is_some_and(|name| name.d().value() == arg_name)
                             })
                         };
 
@@ -574,7 +574,7 @@ pub fn synthesize_data_class_methods(
 
                         let default_factory_arg = args.iter().copied().find(|arg| {
                             arg.d().name.get().is_some_and(|name| {
-                                name.d().value == "default_factory" || name.d().value == "factory"
+                                name.d().value() == "default_factory" || name.d().value() == "factory"
                             })
                         });
                         if default_factory_arg.is_some() {
@@ -646,7 +646,7 @@ pub fn synthesize_data_class_methods(
                         .get()
                         .fields
                         .get()
-                        .get(&name_node.d().value),
+                        .get(name_node.d().value()),
                     annotation_node.d().annotation.get(),
                 )
             {
@@ -656,7 +656,7 @@ pub fn synthesize_data_class_methods(
                     evaluator.add_diagnostic(
                         DiagnosticRule::reportGeneralTypeIssues,
                         &LocMessage::data_class_duplicate_kw_only()
-                            .format(&[("name", &name_node.d().value)]),
+                            .format(&[("name", name_node.d().value())]),
                         name_node.0,
                         None,
                     );
@@ -671,7 +671,7 @@ pub fn synthesize_data_class_methods(
             if let Some(variable_name_node) = variable_name_node
                 && let Some(variable_type_evaluator) = variable_type_evaluator
             {
-                let variable_name = variable_name_node.d().value.clone();
+                let variable_name = variable_name_node.d().value().to_string();
 
                 // Named tuples don't allow attributes that begin with an underscore.
                 if is_named_tuple && variable_name.starts_with('_') {
@@ -1035,7 +1035,7 @@ pub fn synthesize_data_class_methods(
 
                     if entry.alias.as_ref().is_none_or(|alias| alias.is_empty())
                         && let Some(name_node) = entry.name_node
-                        && is_private_name(&name_node.d().value)
+                        && is_private_name(name_node.d().value())
                     {
                         evaluator.add_diagnostic(
                             DiagnosticRule::reportGeneralTypeIssues,
@@ -2015,7 +2015,7 @@ pub fn validate_data_class_transform_decorator(
             continue;
         };
 
-        match arg_name.d().value.as_str() {
+        match arg_name.d().value() {
             "kw_only_default" => {
                 let value = evaluate_static_bool_expression(
                     arg.d().value_expr.get(),
@@ -2178,7 +2178,7 @@ pub fn validate_data_class_transform_decorator(
                 evaluator.add_diagnostic(
                     DiagnosticRule::reportGeneralTypeIssues,
                     &LocMessage::data_class_transform_unknown_argument()
-                        .format(&[("name", &arg_name.d().value)]),
+                        .format(&[("name", arg_name.d().value())]),
                     arg.d().value_expr.get(),
                     None,
                 );
@@ -2476,13 +2476,13 @@ pub fn apply_data_class_class_behavior_overrides(
                 evaluator,
                 name.0,
                 class_type,
-                &name.d().value,
+                name.d().value(),
                 value_expression,
                 behaviors,
                 node_info,
             );
 
-            if name.d().value == "frozen" {
+            if name.d().value() == "frozen" {
                 saw_frozen_arg = true;
             }
         }

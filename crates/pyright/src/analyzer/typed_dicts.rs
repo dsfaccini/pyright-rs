@@ -198,7 +198,7 @@ pub fn create_typed_dict_type(
                     continue;
                 };
 
-                if entry_set.contains(&entry_name.d().value) {
+                if entry_set.contains(entry_name.d().value()) {
                     evaluator.add_diagnostic(
                         DiagnosticRule::reportGeneralTypeIssues,
                         &LocMessage::typed_dict_entry_unique(),
@@ -209,7 +209,7 @@ pub fn create_typed_dict_type(
                 }
 
                 // Record names in a map to detect duplicates.
-                entry_set.insert(entry_name.d().value.clone());
+                entry_set.insert(entry_name.d().value().to_string());
 
                 let new_symbol = Symbol::new(SymbolFlags::InstanceMember);
                 let details = VariableDeclarationDetails::default();
@@ -232,7 +232,7 @@ pub fn create_typed_dict_type(
                 );
                 new_symbol.add_declaration(declaration);
 
-                class_fields.set(&entry_name.d().value, new_symbol);
+                class_fields.set(entry_name.d().value(), new_symbol);
             }
         } else {
             evaluator.add_diagnostic(
@@ -250,7 +250,7 @@ pub fn create_typed_dict_type(
 
         for arg in args_to_consider {
             let arg_value_expression = arg.value_expression();
-            let arg_name_value = arg.name().map(|name| name.d().value.as_str());
+            let arg_name_value = arg.name().map(|name| name.d().value());
             if arg_name_value == Some("total") || arg_name_value == Some("closed") {
                 let arg_name_value = arg_name_value.unwrap();
                 let const_type = arg_value_expression
@@ -332,7 +332,7 @@ pub fn create_typed_dict_type(
         };
 
         if let Some(typed_dict_target) = NameNode::cast(typed_dict_target)
-            && typed_dict_target.d().value != class_name
+            && typed_dict_target.d().value() != class_name
         {
             evaluator.add_diagnostic(
                 DiagnosticRule::reportGeneralTypeIssues,

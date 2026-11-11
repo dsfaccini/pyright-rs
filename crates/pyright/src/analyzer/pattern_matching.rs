@@ -1742,7 +1742,7 @@ pub(crate) fn narrow_type_of_class_pattern_arg(
     let mut arg_name: Option<String> = None;
 
     if let Some(name) = arg.d().name.get() {
-        arg_name = Some(name.d().value.clone());
+        arg_name = Some(name.d().value().to_string());
     } else if (arg_index as usize) < positional_arg_names.len() {
         arg_name = Some(positional_arg_names[arg_index as usize].clone());
     }
@@ -3373,7 +3373,7 @@ pub fn get_pattern_subtype_narrowing_callback(
                         Some(narrow_type_for_discriminated_literal_field_comparison(
                             evaluator,
                             unnarrowed_reference_type,
-                            &member_access_node.d().member.get().d().value,
+                            member_access_node.d().member.get().d().value(),
                             ClassType(literal_subtype),
                             true,
                         ))

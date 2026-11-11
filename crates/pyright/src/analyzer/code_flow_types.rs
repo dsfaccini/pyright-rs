@@ -452,14 +452,14 @@ pub fn create_key_for_reference(reference: CodeFlowReferenceExpressionNode) -> S
     let key;
     match reference.d() {
         D::Name(d) => {
-            key = d.value.clone();
+            key = d.value().to_string();
         }
         D::AssignmentExpression(d) => {
-            key = d.name.get().d().value.clone();
+            key = d.name.get().d().value().to_string();
         }
         D::MemberAccess(d) => {
             let left_key = create_key_for_reference(d.left_expr.get());
-            key = format!("{}.{}", left_key, d.member.get().d().value);
+            key = format!("{}.{}", left_key, d.member.get().d().value());
         }
         D::Index(d) => {
             let left_key = create_key_for_reference(d.left_expr.get());

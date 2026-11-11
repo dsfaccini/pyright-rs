@@ -152,8 +152,8 @@ pub fn get_name_from_declaration(declaration: P<Declaration>) -> Option<String> 
                 .name
                 .get()
                 .d()
-                .value
-                .clone(),
+                .value()
+                .to_string(),
         ),
         DeclarationType::Function => Some(
             FunctionNode::cast(node)
@@ -162,8 +162,8 @@ pub fn get_name_from_declaration(declaration: P<Declaration>) -> Option<String> 
                 .name
                 .get()
                 .d()
-                .value
-                .clone(),
+                .value()
+                .to_string(),
         ),
         DeclarationType::TypeParam => Some(
             TypeParameterNode::cast(node)
@@ -172,8 +172,8 @@ pub fn get_name_from_declaration(declaration: P<Declaration>) -> Option<String> 
                 .name
                 .get()
                 .d()
-                .value
-                .clone(),
+                .value()
+                .to_string(),
         ),
         DeclarationType::TypeAlias => Some(
             TypeAliasNode::cast(node)
@@ -182,8 +182,8 @@ pub fn get_name_from_declaration(declaration: P<Declaration>) -> Option<String> 
                 .name
                 .get()
                 .d()
-                .value
-                .clone(),
+                .value()
+                .to_string(),
         ),
 
         DeclarationType::Param => ParameterNode::cast(node)
@@ -191,14 +191,14 @@ pub fn get_name_from_declaration(declaration: P<Declaration>) -> Option<String> 
             .d()
             .name
             .get()
-            .map(|name| name.d().value.clone()),
+            .map(|name| name.d().value().to_string()),
 
-        DeclarationType::Variable => NameNode::cast(node).map(|name| name.d().value.clone()),
+        DeclarationType::Variable => NameNode::cast(node).map(|name| name.d().value().to_string()),
 
         DeclarationType::Intrinsic | DeclarationType::SpecialBuiltInClass => {
             TypeAnnotationNode::cast(node)
                 .and_then(|annotation| NameNode::cast(annotation.d().value_expr.get()))
-                .map(|name| name.d().value.clone())
+                .map(|name| name.d().value().to_string())
         }
     }
 }

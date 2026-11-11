@@ -90,7 +90,7 @@ pub fn create_named_tuple_type(
         joined
     };
     let has_name =
-        |name: Option<NameNode>, value: &str| name.is_some_and(|name| name.d().value == value);
+        |name: Option<NameNode>, value: &str| name.is_some_and(|name| name.d().value() == value);
 
     let file_info = node_info.get_file_info(error_node);
     let mut class_name = "namedtuple".to_string();

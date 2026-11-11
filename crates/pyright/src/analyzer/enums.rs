@@ -570,12 +570,12 @@ pub fn transform_type_for_enum_member(
 
         // Handle aliases to other enum members within the same enum.
         if let Some(value_name_node) = value_type_expr_node.and_then(NameNode::cast)
-            && value_name_node.d().value != member_name
+            && value_name_node.d().value() != member_name
         {
             let aliased_enum_type = transform_type_for_enum_member(
                 evaluator,
                 class_type,
-                &value_name_node.d().value,
+                value_name_node.d().value(),
                 node_info,
                 /* ignoreAnnotation */ false,
                 recursion_count,

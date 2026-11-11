@@ -205,10 +205,10 @@ fn _evaluate_static_bool_or_bool_like_expression(
                 let mut constant_value: Option<&DefineConstantValue> = None;
 
                 if let D::Name(left_name) = left_expr.d() {
-                    constant_value = defined_constants.get(&left_name.value);
+                    constant_value = defined_constants.get(left_name.value());
                 } else if let D::MemberAccess(left_member_access) = left_expr.d() {
                     constant_value =
-                        defined_constants.get(&left_member_access.member.get().d().value);
+                        defined_constants.get(left_member_access.member.get().d().value());
                 }
 
                 if let Some(DefineConstantValue::String(constant_value)) = constant_value {
@@ -222,24 +222,24 @@ fn _evaluate_static_bool_or_bool_like_expression(
             }
         }
     } else if let D::Name(d) = node.d() {
-        if d.value == "TYPE_CHECKING" {
+        if d.value() == "TYPE_CHECKING" {
             return Some(true);
         }
 
-        let constant = defined_constants.get(&d.value);
+        let constant = defined_constants.get(d.value());
         if let Some(constant) = constant {
             return Some(is_truthy(constant));
         }
     } else if let D::MemberAccess(d) = node.d() {
         if let Some(typing_import_aliases) = typing_import_aliases
-            && d.member.get().d().value == "TYPE_CHECKING"
+            && d.member.get().d().value() == "TYPE_CHECKING"
             && let D::Name(left_name) = d.left_expr.get().d()
-            && typing_import_aliases.contains(&left_name.value)
+            && typing_import_aliases.iter().any(|alias| alias == left_name.value())
         {
             return Some(true);
         }
 
-        let constant = defined_constants.get(&d.member.get().d().value);
+        let constant = defined_constants.get(d.member.get().d().value());
         if let Some(constant) = constant {
             return Some(is_truthy(constant));
         }
@@ -531,9 +531,9 @@ fn _is_sys_version_info_expression(
 
     if let D::MemberAccess(d) = node.d() {
         if let D::Name(left_name) = d.left_expr.get().d()
-            && d.member.get().d().value == "version_info"
+            && d.member.get().d().value() == "version_info"
         {
-            if sys_import_aliases.contains(&left_name.value) {
+            if sys_import_aliases.iter().any(|alias| alias == left_name.value()) {
                 return true;
             }
         }
@@ -558,9 +558,9 @@ fn _is_sys_platform_info_expression(
 
     if let D::MemberAccess(d) = node.d() {
         if let D::Name(left_name) = d.left_expr.get().d()
-            && d.member.get().d().value == "platform"
+            && d.member.get().d().value() == "platform"
         {
-            if sys_import_aliases.contains(&left_name.value) {
+            if sys_import_aliases.iter().any(|alias| alias == left_name.value()) {
                 return true;
             }
         }
@@ -573,8 +573,8 @@ fn _is_sys_platform_info_expression(
 fn _is_os_name_info_expression(node: ExpressionNode) -> bool {
     if let D::MemberAccess(d) = node.d() {
         if let D::Name(left_name) = d.left_expr.get().d()
-            && left_name.value == "os"
-            && d.member.get().d().value == "name"
+            && left_name.value() == "os"
+            && d.member.get().d().value() == "name"
         {
             return true;
         }
