@@ -5,6 +5,7 @@
 # Usage: oracle/corpus/check.sh OUTDIR [CORPUS...]
 #   OUTDIR must not exist yet; delete it when done.
 #   Default corpora: every corpus except pydantic-ai, which needs far more memory.
+#   pydantic-ai runs hold /tmp/pyright-rs-pydantic-ai.lock, so only one runs at a time.
 # Environment:
 #   CHECK_MEMORY_MAX  memory cap per run, as systemd MemoryMax (default 28G);
 #                     a run over the cap is killed and reported as unreadable.
@@ -21,9 +22,12 @@ cargo build -q --release ${CHECK_FEATURES:+--features "$CHECK_FEATURES"} --manif
 status=0
 for c in $corpora; do
   echo "== $c"
+  # pydantic-ai runs take up to 30 GB each, so they run one at a time across worktrees.
+  lock=()
+  [ "$c" = pydantic-ai ] && lock=(flock /tmp/pyright-rs-pydantic-ai.lock)
   ORACLE_CHECKER="$ROOT/target/release/pyright-rs" ORACLE_OUT="$OUT/$c" \
     ORACLE_TYPESHED="$PYRIGHT_RS_MODULE_PATH/typeshed-fallback" \
-    systemd-run --user --scope -q -p MemoryMax="${CHECK_MEMORY_MAX:-28G}" -p MemorySwapMax=0 \
+    "${lock[@]}" systemd-run --user --scope -q -p MemoryMax="${CHECK_MEMORY_MAX:-28G}" -p MemorySwapMax=0 \
     python3 "$ROOT/oracle/corpus/run.py" "$ROOT/oracle/corpus/$c.json" > /dev/null 2>&1
   grep -E "Elapsed|Maximum resident" "$OUT/$c/time.txt" 2>/dev/null | sed 's/^\s*/  pyright-rs /'
   grep -E "Elapsed|Maximum resident" "$REF/$c/gate-nodump.time.txt" | sed 's/^\s*/  pyright    /'
