@@ -8,8 +8,11 @@
 //! nodes do (see `docs/porting.md`).
 
 use jsrt::flag_ops;
+use std::cell::{Cell, UnsafeCell};
 use std::ops::Deref;
 use std::ptr;
+
+use jsrt::region::Region;
 
 use jsrt::{JsStr, JsString, NormalizationForm, P};
 
@@ -325,8 +328,17 @@ pub struct Token {
     /// `Token.create` can carry any type, `Keyword` included.
     kind: TokenKind,
 
+    /// The token lives in its tokenizer's scratch region (`TokenScratch`).
+    scratch: bool,
+
     // Comments prior to the token.
     comments: Option<P<Vec<Comment>>>,
+
+    /// `Token::keep` writes the slot before a scratch token through a shared
+    /// reference. Without an `UnsafeCell` the compiler takes a `&Token` as
+    /// read-only memory and may drop that write.
+    #[trace(skip)]
+    _written_through_shared: UnsafeCell<()>,
 }
 const _: () = assert!(size_of::<Token>() <= 24);
 
@@ -359,9 +371,26 @@ struct TokenAlloc<D> {
 /// The fields one specific token interface adds to `Token`.
 trait TokenInterface: jsrt::Trace + 'static {
     const KIND: TokenKind;
+
+    /// Parse nodes hold nearly every token of this interface (names, strings and
+    /// f-string parts), so the tokenizer puts it on the program heap directly
+    /// rather than copying it out of the scratch region later.
+    const HELD_BY_NODES: bool = matches!(
+        Self::KIND,
+        TokenKind::Identifier | TokenKind::String | TokenKind::FStringStart | TokenKind::FStringMiddle
+    );
 }
 
-/// A token of a specific interface.
+/// The fields of a plain `Token`: none.
+#[derive(jsrt::Trace)]
+struct NoInterface;
+
+impl TokenInterface for NoInterface {
+    const KIND: TokenKind = TokenKind::None;
+}
+
+/// A token of a specific interface, in the scratch region of the tokenizer run in
+/// progress, or on the program heap outside a run.
 fn alloc_token<D: TokenInterface>(
     type_: TokenType,
     start: i32,
@@ -369,13 +398,166 @@ fn alloc_token<D: TokenInterface>(
     comments: Option<P<Vec<Comment>>>,
     d: D,
 ) -> P<Token> {
-    let token = Token { type_, start, length, kind: D::KIND, comments };
-    P::new(TokenAlloc { token, d }).header(|alloc| &alloc.token)
+    let scratch = if D::HELD_BY_NODES { ptr::null() } else { SCRATCH.with(Cell::get) };
+    let token = Token {
+        type_,
+        start,
+        length,
+        kind: D::KIND,
+        scratch: !scratch.is_null(),
+        comments,
+        _written_through_shared: UnsafeCell::new(()),
+    };
+    let alloc = TokenAlloc { token, d };
+    if scratch.is_null() {
+        return P::new(alloc).header(|alloc| &alloc.token);
+    }
+    // SAFETY: `SCRATCH` points at the region of the tokenizer run in progress.
+    let slot = unsafe { &*scratch }.alloc(ScratchToken { kept: Cell::new(None), alloc });
+    // SAFETY: the region lives as long as the tokenizer output. Parse nodes hold
+    // kept copies (`TokenCell`), and nothing else holds a token past the output.
+    unsafe { P::from_raw(ptr::addr_of!((*slot).alloc.token)) }
 }
 
 /// A plain `Token`, with no interface fields.
 fn alloc_plain_token(type_: TokenType, start: i32, length: i32, comments: Option<P<Vec<Comment>>>) -> P<Token> {
-    P::new(Token { type_, start, length, kind: TokenKind::None, comments })
+    alloc_token(type_, start, length, comments, NoInterface)
+}
+
+thread_local! {
+    /// The scratch region of the tokenizer run in progress, or null.
+    static SCRATCH: Cell<*const Region> = const { Cell::new(ptr::null()) };
+
+    /// `PYRIGHT_RS_TOKENS`: `keep` puts every token on the program heap; `check`
+    /// makes a freed scratch region inaccessible, so a later use faults. Anything
+    /// else frees the tokens no parse node holds with their tokenizer output.
+    static TOKEN_MODE: TokenMode = match std::env::var("PYRIGHT_RS_TOKENS").as_deref() {
+        Ok("keep") => TokenMode::Keep,
+        Ok("check") => TokenMode::Check,
+        _ => TokenMode::Free,
+    };
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum TokenMode {
+    Free,
+    Keep,
+    Check,
+}
+
+/// A token in a scratch region: the copy a parse node keeps (`Token::keep`), then the token.
+#[repr(C)]
+struct ScratchToken<D> {
+    kept: Cell<Option<P<Token>>>,
+    alloc: TokenAlloc<D>,
+}
+
+/// The region one tokenizer run puts its tokens in, owned by its `TokenizerOutput`.
+/// pyright drops the tokenizer output once `SourceFile.parse` is done with it, so
+/// the tokens no parse node holds become garbage; here they are dropped with the
+/// output. A parse node holds a copy on the program heap (`TokenCell`).
+pub struct TokenScratch {
+    region: Box<Region>,
+}
+
+/// Restores the previous scratch region when dropped.
+pub struct TokenScratchGuard(*const Region);
+
+impl Drop for TokenScratchGuard {
+    fn drop(&mut self) {
+        SCRATCH.with(|scratch| scratch.set(self.0));
+    }
+}
+
+impl TokenScratch {
+    /// A region for one tokenizer run, or `None` under `PYRIGHT_RS_TOKENS=keep`.
+    pub fn new() -> Option<TokenScratch> {
+        let mode = TOKEN_MODE.with(|mode| *mode);
+        (mode != TokenMode::Keep).then(|| TokenScratch { region: Box::new(Region::new(mode == TokenMode::Check)) })
+    }
+
+    /// New tokens go to this region until the guard drops.
+    pub fn enter(&self) -> TokenScratchGuard {
+        TokenScratchGuard(SCRATCH.with(|scratch| scratch.replace(&*self.region)))
+    }
+}
+
+/// Drops the tokens no parse node kept. A kept token's buffers belong to its copy.
+impl Drop for TokenScratch {
+    fn drop(&mut self) {
+        /// Drops the token at `at` unless it was kept; returns its size.
+        unsafe fn drop_unkept<D>(at: usize) -> usize {
+            let token = at as *mut ScratchToken<D>;
+            // SAFETY: the caller passes the address of a live `ScratchToken<D>`.
+            unsafe {
+                if (*token).kept.get().is_none() {
+                    ptr::drop_in_place(ptr::addr_of_mut!((*token).alloc.d));
+                }
+            }
+            size_of::<ScratchToken<D>>()
+        }
+
+        self.region.for_each_used(|start, end| {
+            let mut at = start;
+            while at < end {
+                // SAFETY: the region holds only `ScratchToken`s, back to back: each
+                // has a size that is a multiple of its alignment, 8.
+                let kind = unsafe { (*(at as *const ScratchToken<NoInterface>)).alloc.token.kind };
+                at += unsafe {
+                    match kind {
+                        TokenKind::None => drop_unkept::<NoInterface>(at),
+                        TokenKind::Indent => drop_unkept::<IndentTokenDetails>(at),
+                        TokenKind::Dedent => drop_unkept::<DedentTokenDetails>(at),
+                        TokenKind::NewLine => drop_unkept::<NewLineTokenDetails>(at),
+                        TokenKind::Keyword => drop_unkept::<KeywordTokenDetails>(at),
+                        TokenKind::String => drop_unkept::<StringTokenDetails>(at),
+                        TokenKind::FStringStart => drop_unkept::<FStringStartTokenDetails>(at),
+                        TokenKind::FStringMiddle => drop_unkept::<FStringMiddleTokenDetails>(at),
+                        TokenKind::FStringEnd => drop_unkept::<FStringEndTokenDetails>(at),
+                        TokenKind::Number => drop_unkept::<NumberTokenDetails>(at),
+                        TokenKind::Operator => drop_unkept::<OperatorTokenDetails>(at),
+                        TokenKind::Identifier => drop_unkept::<IdentifierTokenDetails>(at),
+                    }
+                };
+            }
+        });
+    }
+}
+
+/// A token handle that a parse node can keep (`Token::keep`).
+pub trait KeepToken: Copy + jsrt::Trace {
+    fn keep(self) -> Self;
+}
+
+impl KeepToken for P<Token> {
+    fn keep(self) -> Self {
+        Token::keep(self)
+    }
+}
+
+impl<T: KeepToken> KeepToken for Option<T> {
+    fn keep(self) -> Self {
+        self.map(T::keep)
+    }
+}
+
+/// A token field of a parse node: it holds the kept copy of each token stored in it.
+#[derive(Clone)]
+#[derive(jsrt::Trace)]
+pub struct TokenCell<T: Copy>(jsrt::cell::Cell<T>);
+
+impl<T: KeepToken> TokenCell<T> {
+    pub fn new(token: T) -> TokenCell<T> {
+        TokenCell(jsrt::cell::Cell::new(token.keep()))
+    }
+
+    pub fn get(&self) -> T {
+        self.0.get()
+    }
+
+    pub fn set(&self, token: T) {
+        self.0.set(token.keep());
+    }
 }
 
 impl HasTextRange for Token {
@@ -423,6 +605,58 @@ impl Token {
         self.comments
     }
 
+    /// `token` as a parse node holds it. A token in a scratch region is copied once
+    /// to the program heap, where it outlives the region; later calls return the
+    /// same copy. Any other token is itself.
+    pub fn keep(token: P<Token>) -> P<Token> {
+        if !token.scratch {
+            return token;
+        }
+        // SAFETY: a scratch token is the `alloc.token` of a `ScratchToken`, whose
+        // `kept` slot is the word before it.
+        let kept = unsafe { &*ptr::from_ref(token.get()).cast::<Cell<Option<P<Token>>>>().sub(1) };
+        if let Some(copy) = kept.get() {
+            return copy;
+        }
+        // SAFETY: each arm copies the interface of its kind. Once `kept` is set, the
+        // scratch token is never dropped (`TokenScratch::drop`): its buffers move to the copy.
+        let copy = unsafe {
+            match token.kind {
+                TokenKind::None => token.copy_out::<NoInterface>(),
+                TokenKind::Indent => token.copy_out::<IndentTokenDetails>(),
+                TokenKind::Dedent => token.copy_out::<DedentTokenDetails>(),
+                TokenKind::NewLine => token.copy_out::<NewLineTokenDetails>(),
+                TokenKind::Keyword => token.copy_out::<KeywordTokenDetails>(),
+                TokenKind::String => token.copy_out::<StringTokenDetails>(),
+                TokenKind::FStringStart => token.copy_out::<FStringStartTokenDetails>(),
+                TokenKind::FStringMiddle => token.copy_out::<FStringMiddleTokenDetails>(),
+                TokenKind::FStringEnd => token.copy_out::<FStringEndTokenDetails>(),
+                TokenKind::Number => token.copy_out::<NumberTokenDetails>(),
+                TokenKind::Operator => token.copy_out::<OperatorTokenDetails>(),
+                TokenKind::Identifier => token.copy_out::<IdentifierTokenDetails>(),
+            }
+        };
+        kept.set(Some(copy));
+        copy
+    }
+
+    /// # Safety
+    /// `self.kind` is `D::KIND`, and `self` is never dropped afterwards.
+    unsafe fn copy_out<D: TokenInterface>(&self) -> P<Token> {
+        let token = Token {
+            type_: self.type_,
+            start: self.start,
+            length: self.length,
+            kind: self.kind,
+            scratch: false,
+            comments: self.comments,
+            _written_through_shared: UnsafeCell::new(()),
+        };
+        // SAFETY: the caller guarantees the kind, and that the buffers move.
+        let d = unsafe { ptr::read(self.details_unchecked::<D>()) };
+        P::new(TokenAlloc { token, d }).header(|alloc| &alloc.token)
+    }
+
     /// The fields of interface `D`.
     fn details<D: TokenInterface>(&self) -> &'static D {
         assert!(self.kind == D::KIND);
@@ -433,9 +667,9 @@ impl Token {
     /// # Safety
     /// `self.kind` is `D::KIND`.
     unsafe fn details_unchecked<D: TokenInterface>(&self) -> &'static D {
-        // SAFETY: `alloc_token` makes every header of a kind other than `None` the
-        // first field of a `#[repr(C)]` `TokenAlloc` whose fields match `kind`, on
-        // the program heap, which is never freed.
+        // SAFETY: `alloc_token` makes every header the first field of a `#[repr(C)]`
+        // `TokenAlloc` whose fields match `kind`, on the program heap, which is never
+        // freed, or in a scratch region, which outlives every use of its tokens.
         unsafe { &(*ptr::from_ref(self).cast::<TokenAlloc<D>>()).d }
     }
 
@@ -522,6 +756,12 @@ macro_rules! token_handle {
         impl From<$handle> for P<Token> {
             fn from(handle: $handle) -> P<Token> {
                 handle.0
+            }
+        }
+
+        impl KeepToken for $handle {
+            fn keep(self) -> Self {
+                $handle(Token::keep(self.0))
             }
         }
     };

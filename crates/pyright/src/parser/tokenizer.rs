@@ -14,6 +14,7 @@ use super::characters::{
     is_surrogate_char,
 };
 use super::tokenizer_types::{
+    TokenScratch,
     Comment, CommentType, DedentToken, FStringEndToken, FStringMiddleToken, FStringStartToken,
     IdentifierToken, IndentToken, KeywordToken, KeywordType, NewLineToken, NewLineType,
     NumberToken, OperatorFlags, OperatorToken, OperatorType, StringToken, StringTokenFlags, Token,
@@ -641,7 +642,8 @@ pub struct TokenizerOutput {
     pub tokens: TextRangeCollection<P<Token>>,
 
     // List of ranges that comprise the lines.
-    pub lines: TextRangeCollection<TextRange>,
+    /// On the program heap: the source file keeps the lines after the output drops.
+    pub lines: P<TextRangeCollection<TextRange>>,
 
     // Map of all line numbers that end in a "type: ignore" comment.
     pub type_ignore_lines: JsMap<i32, IgnoreComment>,
@@ -665,6 +667,10 @@ pub struct TokenizerOutput {
     // Does the code mostly use single or double quote
     // characters for string literals?
     pub predominant_single_quote_character: String,
+
+    /// Where the tokens live; dropping the output frees those no parse node keeps.
+    #[trace(skip)]
+    pub scratch: Option<TokenScratch>,
 }
 
 // parser/tokenizer.ts:605
@@ -816,6 +822,8 @@ impl<'a> Tokenizer<'a> {
         initial_paren_depth: i32,
         use_notebook_mode: bool,
     ) -> TokenizerOutput {
+        let scratch = TokenScratch::new();
+        let _entered = scratch.as_ref().map(TokenScratch::enter);
         let text_length = text.len() as i32;
         let start = match start {
             None => 0,
@@ -955,7 +963,7 @@ impl<'a> Tokenizer<'a> {
 
         TokenizerOutput {
             tokens: TextRangeCollection::new(std::mem::take(&mut self._tokens)),
-            lines: TextRangeCollection::new(std::mem::take(&mut self._line_ranges)),
+            lines: P::new(TextRangeCollection::new(std::mem::take(&mut self._line_ranges))),
             type_ignore_lines: self._type_ignore_lines.clone(),
             type_ignore_all: self._type_ignore_all.clone(),
             pyright_ignore_lines: self._pyright_ignore_lines.clone(),
@@ -969,6 +977,7 @@ impl<'a> Tokenizer<'a> {
             } else {
                 "\"".to_string()
             },
+            scratch,
         }
     }
 

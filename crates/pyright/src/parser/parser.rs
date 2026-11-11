@@ -102,7 +102,7 @@ pub struct ParseFileResults {
     pub text: JsString,
     pub content_hash: StringFingerprint,
     pub parser_output: ParserOutput,
-    pub tokenizer_output: P<TokenizerOutput>,
+    pub tokenizer_output: TokenizerOutput,
 }
 
 // parser/parser.ts:207
@@ -176,8 +176,7 @@ fn format1(
 // parser/parser.ts:238
 pub struct Parser {
     _file_contents: Option<JsString>,
-    _tokenizer_output: Option<P<TokenizerOutput>>,
-    _tokens: Option<&'static TextRangeCollection<P<Token>>>,
+    _tokenizer_output: Option<TokenizerOutput>,
     _token_count: i32,
     _token_index: i32,
     _are_errors_suppressed: bool,
@@ -215,7 +214,6 @@ impl Parser {
         Parser {
             _file_contents: None,
             _tokenizer_output: None,
-            _tokens: None,
             _token_count: 0,
             _token_index: 0,
             _are_errors_suppressed: false,
@@ -304,7 +302,7 @@ impl Parser {
 
         self._attach_parser_string_annotations();
 
-        let tokenizer_output = self._tokenizer_output.expect("tokenizer output");
+        let tokenizer_output = self._tokenizer_output.take().expect("tokenizer output");
         let content_hash = content_hash
             .unwrap_or_else(|| get_string_fingerprint(&file_contents.to_string_lossy()));
         ParseFileResults {
@@ -318,7 +316,7 @@ impl Parser {
                 contains_wildcard_import: self._contains_wildcard_import,
                 typing_symbol_aliases: std::mem::take(&mut self._typing_symbol_aliases),
                 has_type_annotations: self._has_type_annotations,
-                lines: &tokenizer_output.get().lines,
+                lines: tokenizer_output.lines.get(),
             },
             tokenizer_output,
         }
@@ -394,11 +392,7 @@ impl Parser {
         ParseExpressionTextResults {
             parse_tree,
             string_annotations: self._string_annotations.info,
-            lines: &self
-                ._tokenizer_output
-                .expect("tokenizer output")
-                .get()
-                .lines,
+            lines: self._tokenizer_output.as_ref().expect("tokenizer output").lines.get(),
             diagnostics: diag_sink.fetch_and_clear(),
         }
     }
@@ -437,16 +431,15 @@ impl Parser {
 
         // Tokenize the file contents.
         let mut tokenizer = Tokenizer::new();
-        let tokenizer_output = P::new(tokenizer.tokenize(
+        let tokenizer_output = tokenizer.tokenize(
             &file_contents,
             Some(text_offset),
             Some(text_length),
             initial_paren_depth,
             self._parse_options.use_notebook_mode,
-        ));
-        self._tokenizer_output = Some(tokenizer_output);
-        self._tokens = Some(&tokenizer_output.get().tokens);
+        );
         self._token_count = tokenizer_output.tokens.count();
+        self._tokenizer_output = Some(tokenizer_output);
         self._token_index = 0;
     }
 
@@ -1943,6 +1936,7 @@ impl Parser {
             if self._token_index > 0 {
                 let token = self
                     ._tokenizer_output
+                    .as_ref()
                     .unwrap()
                     .tokens
                     .get_item_at(self._token_index - 1);
@@ -5982,7 +5976,7 @@ impl Parser {
             return None;
         }
 
-        let tokens = &self._tokenizer_output.unwrap().get().tokens;
+        let tokens = &self._tokenizer_output.as_ref().unwrap().tokens;
         let cur_token = tokens.get_item_at(self._token_index - 1);
         let next_token = tokens.get_item_at(self._token_index);
 
@@ -6618,7 +6612,7 @@ impl Parser {
 
     // parser/parser.ts:5533
     fn _get_next_token(&mut self) -> P<Token> {
-        let token = self._tokens.unwrap().get_item_at(self._token_index);
+        let token = self._tokenizer_output.as_ref().unwrap().tokens.get_item_at(self._token_index);
         if !self._at_eof() {
             self._token_index += 1;
         }
@@ -6637,14 +6631,14 @@ impl Parser {
     fn _peek_token(&self, count: i32) -> P<Token> {
         let target_index = self._token_index + count;
         if target_index < 0 {
-            return self._tokens.unwrap().get_item_at(0);
+            return self._tokenizer_output.as_ref().unwrap().tokens.get_item_at(0);
         }
 
         if target_index >= self._token_count {
-            return self._tokens.unwrap().get_item_at(self._token_count - 1);
+            return self._tokenizer_output.as_ref().unwrap().tokens.get_item_at(self._token_count - 1);
         }
 
-        self._tokens.unwrap().get_item_at(target_index)
+        self._tokenizer_output.as_ref().unwrap().tokens.get_item_at(target_index)
     }
 
     // parser/parser.ts:5561
@@ -6799,7 +6793,7 @@ impl Parser {
                 convert_offsets_to_range(
                     range.start,
                     range.start + range.length,
-                    &self._tokenizer_output.unwrap().get().lines,
+                    &self._tokenizer_output.as_ref().unwrap().lines,
                 ),
             );
         }

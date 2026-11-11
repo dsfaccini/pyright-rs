@@ -24,7 +24,7 @@ use jsrt::NumberValue;
 
 use super::string_annotation_info::{StringAnnotationInfo, empty_string_annotation_info};
 use super::tokenizer_types::{
-    FStringEndToken, FStringMiddleToken, FStringStartToken, IdentifierToken, KeywordToken,
+    KeepToken, TokenCell, FStringEndToken, FStringMiddleToken, FStringStartToken, IdentifierToken, KeywordToken,
     KeywordType, NumberToken, OperatorType, StringToken, Token, TokenType,
 };
 use crate::common::text_range::{HasTextRange, TextRange};
@@ -551,7 +551,7 @@ impl ModuleNode {
 #[derive(jsrt::Trace)]
 pub struct SuiteNodeDetails {
     pub statements: RefCell<Vec<StatementNode>>,
-    pub type_comment: Cell<Option<StringToken>>,
+    pub type_comment: TokenCell<Option<StringToken>>,
 }
 node_handle!(SuiteNode, Suite, SuiteNodeDetails);
 
@@ -565,7 +565,7 @@ impl SuiteNode {
             key,
             SuiteNodeDetails {
                 statements: RefCell::new(vec![]),
-                type_comment: Cell::new(None),
+                type_comment: TokenCell::new(None),
             },
         ))
     }
@@ -575,7 +575,7 @@ impl SuiteNode {
 #[derive(Clone)]
 #[derive(jsrt::Trace)]
 pub struct IfNodeDetails {
-    pub first_token: Cell<P<Token>>,
+    pub first_token: TokenCell<P<Token>>,
     pub test_expr: Cell<ExpressionNode>,
     pub if_suite: Cell<SuiteNode>,
     /// `SuiteNode | IfNode`.
@@ -597,7 +597,7 @@ impl IfNode {
             if_or_elif_token.length,
             key,
             IfNodeDetails {
-                first_token: Cell::new(if_or_elif_token),
+                first_token: TokenCell::new(if_or_elif_token),
                 test_expr: Cell::new(test_expr),
                 if_suite: Cell::new(if_suite),
                 else_suite: Cell::new(else_suite.map(|s| s.0)),
@@ -622,7 +622,7 @@ impl IfNode {
 #[derive(Clone)]
 #[derive(jsrt::Trace)]
 pub struct WhileNodeDetails {
-    pub first_token: Cell<P<Token>>,
+    pub first_token: TokenCell<P<Token>>,
     pub test_expr: Cell<ExpressionNode>,
     pub while_suite: Cell<SuiteNode>,
     pub else_suite: Cell<Option<SuiteNode>>,
@@ -642,7 +642,7 @@ impl WhileNode {
             while_token.length,
             key,
             WhileNodeDetails {
-                first_token: Cell::new(while_token),
+                first_token: TokenCell::new(while_token),
                 test_expr: Cell::new(test_expr),
                 while_suite: Cell::new(while_suite),
                 else_suite: Cell::new(None),
@@ -662,14 +662,14 @@ impl WhileNode {
 #[derive(Clone)]
 #[derive(jsrt::Trace)]
 pub struct ForNodeDetails {
-    pub first_token: Cell<P<Token>>,
+    pub first_token: TokenCell<P<Token>>,
     pub is_async: Cell<Option<bool>>,
-    pub async_token: Cell<Option<P<Token>>>,
+    pub async_token: TokenCell<Option<P<Token>>>,
     pub target_expr: Cell<ExpressionNode>,
     pub iterable_expr: Cell<ExpressionNode>,
     pub for_suite: Cell<SuiteNode>,
     pub else_suite: Cell<Option<SuiteNode>>,
-    pub type_comment: Cell<Option<StringToken>>,
+    pub type_comment: TokenCell<Option<StringToken>>,
 }
 node_handle!(ForNode, For, ForNodeDetails);
 
@@ -687,14 +687,14 @@ impl ForNode {
             for_token.length,
             key,
             ForNodeDetails {
-                first_token: Cell::new(for_token),
+                first_token: TokenCell::new(for_token),
                 is_async: Cell::new(None),
-                async_token: Cell::new(None),
+                async_token: TokenCell::new(None),
                 target_expr: Cell::new(target_expr),
                 iterable_expr: Cell::new(iterable_expr),
                 for_suite: Cell::new(for_suite),
                 else_suite: Cell::new(None),
-                type_comment: Cell::new(None),
+                type_comment: TokenCell::new(None),
             },
         );
 
@@ -716,7 +716,7 @@ pub type ComprehensionForIfNode = P<ParseNode>;
 #[derive(jsrt::Trace)]
 pub struct ComprehensionForNodeDetails {
     pub is_async: Cell<Option<bool>>,
-    pub async_token: Cell<Option<P<Token>>>,
+    pub async_token: TokenCell<Option<P<Token>>>,
     pub target_expr: Cell<ExpressionNode>,
     pub iterable_expr: Cell<ExpressionNode>,
 }
@@ -740,7 +740,7 @@ impl ComprehensionForNode {
             key,
             ComprehensionForNodeDetails {
                 is_async: Cell::new(None),
-                async_token: Cell::new(None),
+                async_token: TokenCell::new(None),
                 target_expr: Cell::new(target_expr),
                 iterable_expr: Cell::new(iterable_expr),
             },
@@ -796,7 +796,7 @@ impl ComprehensionIfNode {
 #[derive(Clone)]
 #[derive(jsrt::Trace)]
 pub struct TryNodeDetails {
-    pub first_token: Cell<P<Token>>,
+    pub first_token: TokenCell<P<Token>>,
     pub try_suite: Cell<SuiteNode>,
     pub except_clauses: RefCell<Vec<ExceptNode>>,
     pub else_suite: Cell<Option<SuiteNode>>,
@@ -812,7 +812,7 @@ impl TryNode {
             try_token.length,
             key,
             TryNodeDetails {
-                first_token: Cell::new(try_token),
+                first_token: TokenCell::new(try_token),
                 try_suite: Cell::new(try_suite),
                 except_clauses: RefCell::new(vec![]),
                 else_suite: Cell::new(None),
@@ -836,7 +836,7 @@ pub struct ExceptNodeDetails {
     pub name: Cell<Option<NameNode>>,
     pub except_suite: Cell<SuiteNode>,
     pub is_except_group: Cell<bool>,
-    pub except_token: Cell<P<Token>>,
+    pub except_token: TokenCell<P<Token>>,
 }
 node_handle!(ExceptNode, Except, ExceptNodeDetails);
 
@@ -857,7 +857,7 @@ impl ExceptNode {
                 name: Cell::new(None),
                 except_suite: Cell::new(except_suite),
                 is_except_group: Cell::new(is_except_group),
-                except_token: Cell::new(except_token),
+                except_token: TokenCell::new(except_token),
             },
         );
 
@@ -873,7 +873,7 @@ impl ExceptNode {
 #[derive(Clone)]
 #[derive(jsrt::Trace)]
 pub struct FunctionNodeDetails {
-    pub first_token: Cell<P<Token>>,
+    pub first_token: TokenCell<P<Token>>,
     pub decorators: RefCell<Vec<DecoratorNode>>,
     pub is_async: Cell<bool>,
     pub name: Cell<NameNode>,
@@ -899,7 +899,7 @@ impl FunctionNode {
             def_token.length,
             key,
             FunctionNodeDetails {
-                first_token: Cell::new(def_token),
+                first_token: TokenCell::new(def_token),
                 decorators: RefCell::new(vec![]),
                 is_async: Cell::new(false),
                 name: Cell::new(name),
@@ -972,7 +972,7 @@ impl ParameterNode {
 #[derive(Clone)]
 #[derive(jsrt::Trace)]
 pub struct ClassNodeDetails {
-    pub first_token: Cell<P<Token>>,
+    pub first_token: TokenCell<P<Token>>,
     pub decorators: RefCell<Vec<DecoratorNode>>,
     pub name: Cell<NameNode>,
     pub type_params: Cell<Option<TypeParameterListNode>>,
@@ -995,7 +995,7 @@ impl ClassNode {
             class_token.length,
             key,
             ClassNodeDetails {
-                first_token: Cell::new(class_token),
+                first_token: TokenCell::new(class_token),
                 decorators: RefCell::new(vec![]),
                 name: Cell::new(name),
                 type_params: Cell::new(type_params),
@@ -1037,7 +1037,7 @@ impl ClassNode {
             0,
             key,
             NameNodeDetails {
-                token: Cell::new(name_token),
+                token: TokenCell::new(name_token),
             },
         ));
         let suite = SuiteNode(alloc_node(
@@ -1047,7 +1047,7 @@ impl ClassNode {
             key,
             SuiteNodeDetails {
                 statements: RefCell::new(vec![]),
-                type_comment: Cell::new(None),
+                type_comment: TokenCell::new(None),
             },
         ));
 
@@ -1057,7 +1057,7 @@ impl ClassNode {
             id,
             key,
             ClassNodeDetails {
-                first_token: Cell::new(first_token),
+                first_token: TokenCell::new(first_token),
                 decorators: RefCell::new(decorators.clone()),
                 name: Cell::new(name),
                 type_params: Cell::new(None),
@@ -1082,12 +1082,12 @@ impl ClassNode {
 #[derive(Clone)]
 #[derive(jsrt::Trace)]
 pub struct WithNodeDetails {
-    pub first_token: Cell<P<Token>>,
+    pub first_token: TokenCell<P<Token>>,
     pub is_async: Cell<Option<bool>>,
-    pub async_token: Cell<Option<P<Token>>>,
+    pub async_token: TokenCell<Option<P<Token>>>,
     pub with_items: RefCell<Vec<WithItemNode>>,
     pub suite: Cell<SuiteNode>,
-    pub type_comment: Cell<Option<StringToken>>,
+    pub type_comment: TokenCell<Option<StringToken>>,
 }
 node_handle!(WithNode, With, WithNodeDetails);
 
@@ -1099,12 +1099,12 @@ impl WithNode {
             with_token.length,
             key,
             WithNodeDetails {
-                first_token: Cell::new(with_token),
+                first_token: TokenCell::new(with_token),
                 is_async: Cell::new(None),
-                async_token: Cell::new(None),
+                async_token: TokenCell::new(None),
                 with_items: RefCell::new(vec![]),
                 suite: Cell::new(suite),
-                type_comment: Cell::new(None),
+                type_comment: TokenCell::new(None),
             },
         );
 
@@ -1176,7 +1176,7 @@ impl DecoratorNode {
 #[derive(Clone)]
 #[derive(jsrt::Trace)]
 pub struct StatementListNodeDetails {
-    pub first_token: Cell<P<Token>>,
+    pub first_token: TokenCell<P<Token>>,
     pub statements: RefCell<Vec<P<ParseNode>>>,
 }
 node_handle!(StatementListNode, StatementList, StatementListNodeDetails);
@@ -1189,7 +1189,7 @@ impl StatementListNode {
             at_token.length,
             key,
             StatementListNodeDetails {
-                first_token: Cell::new(at_token),
+                first_token: TokenCell::new(at_token),
                 statements: RefCell::new(vec![]),
             },
         ))
@@ -1298,7 +1298,7 @@ impl ErrorNode {
 #[derive(jsrt::Trace)]
 pub struct UnaryOperationNodeDetails {
     pub expr: Cell<ExpressionNode>,
-    pub operator_token: Cell<P<Token>>,
+    pub operator_token: TokenCell<P<Token>>,
     pub operator: Cell<OperatorType>,
     pub has_parens: Cell<bool>,
 }
@@ -1322,7 +1322,7 @@ impl UnaryOperationNode {
             key,
             UnaryOperationNodeDetails {
                 operator: Cell::new(operator),
-                operator_token: Cell::new(operator_token),
+                operator_token: TokenCell::new(operator_token),
                 expr: Cell::new(expr),
                 has_parens: Cell::new(false),
             },
@@ -1341,7 +1341,7 @@ impl UnaryOperationNode {
 #[derive(jsrt::Trace)]
 pub struct BinaryOperationNodeDetails {
     pub left_expr: Cell<ExpressionNode>,
-    pub operator_token: Cell<P<Token>>,
+    pub operator_token: TokenCell<P<Token>>,
     pub operator: Cell<OperatorType>,
     pub right_expr: Cell<ExpressionNode>,
     pub has_parens: Cell<bool>,
@@ -1367,7 +1367,7 @@ impl BinaryOperationNode {
             key,
             BinaryOperationNodeDetails {
                 left_expr: Cell::new(left_expr),
-                operator_token: Cell::new(operator_token),
+                operator_token: TokenCell::new(operator_token),
                 operator: Cell::new(operator),
                 right_expr: Cell::new(right_expr),
                 has_parens: Cell::new(false),
@@ -1388,7 +1388,7 @@ impl BinaryOperationNode {
 #[derive(jsrt::Trace)]
 pub struct AssignmentExpressionNodeDetails {
     pub name: Cell<NameNode>,
-    pub walrus_token: Cell<P<Token>>,
+    pub walrus_token: TokenCell<P<Token>>,
     pub right_expr: Cell<ExpressionNode>,
     pub has_parens: Cell<bool>,
 }
@@ -1412,7 +1412,7 @@ impl AssignmentExpressionNode {
             key,
             AssignmentExpressionNodeDetails {
                 name: Cell::new(name),
-                walrus_token: Cell::new(walrus_token),
+                walrus_token: TokenCell::new(walrus_token),
                 right_expr: Cell::new(right_expr),
                 has_parens: Cell::new(false),
             },
@@ -1568,7 +1568,7 @@ impl TypeParameterListNode {
 #[derive(Clone)]
 #[derive(jsrt::Trace)]
 pub struct TypeAliasNodeDetails {
-    pub first_token: Cell<P<Token>>,
+    pub first_token: TokenCell<P<Token>>,
     pub name: Cell<NameNode>,
     pub type_params: Cell<Option<TypeParameterListNode>>,
     pub expr: Cell<ExpressionNode>,
@@ -1589,7 +1589,7 @@ impl TypeAliasNode {
             type_token.length,
             key,
             TypeAliasNodeDetails {
-                first_token: Cell::new(type_token.0),
+                first_token: TokenCell::new(type_token.0),
                 name: Cell::new(name),
                 type_params: Cell::new(type_params),
                 expr: Cell::new(expr),
@@ -1748,7 +1748,7 @@ impl AugmentedAssignmentNode {
 #[derive(jsrt::Trace)]
 pub struct AwaitNodeDetails {
     pub expr: Cell<ExpressionNode>,
-    pub await_token: Cell<P<Token>>,
+    pub await_token: TokenCell<P<Token>>,
     pub has_parens: Cell<bool>,
 }
 node_handle!(AwaitNode, Await, AwaitNodeDetails);
@@ -1762,7 +1762,7 @@ impl AwaitNode {
             key,
             AwaitNodeDetails {
                 expr: Cell::new(expr),
-                await_token: Cell::new(await_token),
+                await_token: TokenCell::new(await_token),
                 has_parens: Cell::new(false),
             },
         );
@@ -1819,7 +1819,7 @@ impl TernaryNode {
 #[derive(jsrt::Trace)]
 pub struct UnpackNodeDetails {
     pub expr: Cell<ExpressionNode>,
-    pub star_token: Cell<P<Token>>,
+    pub star_token: TokenCell<P<Token>>,
 }
 node_handle!(UnpackNode, Unpack, UnpackNodeDetails);
 
@@ -1832,7 +1832,7 @@ impl UnpackNode {
             key,
             UnpackNodeDetails {
                 expr: Cell::new(expr),
-                star_token: Cell::new(star_token),
+                star_token: TokenCell::new(star_token),
             },
         );
 
@@ -2145,7 +2145,7 @@ impl LambdaNode {
 #[derive(Clone)]
 #[derive(jsrt::Trace)]
 pub struct NameNodeDetails {
-    pub token: Cell<IdentifierToken>,
+    pub token: TokenCell<IdentifierToken>,
 }
 node_handle!(NameNode, Name, NameNodeDetails);
 
@@ -2165,7 +2165,7 @@ impl NameNode {
             name_token.length,
             key,
             NameNodeDetails {
-                token: Cell::new(name_token),
+                token: TokenCell::new(name_token),
             },
         ))
     }
@@ -2242,7 +2242,7 @@ impl NumberNode {
 #[derive(Clone)]
 #[derive(jsrt::Trace)]
 pub struct StringNodeDetails {
-    pub token: Cell<StringToken>,
+    pub token: TokenCell<StringToken>,
     pub value: JsString,
 }
 node_handle!(StringNode, String, StringNodeDetails);
@@ -2255,7 +2255,7 @@ impl StringNode {
             token.length,
             key,
             StringNodeDetails {
-                token: Cell::new(token),
+                token: TokenCell::new(token),
                 value,
             },
         ))
@@ -2267,7 +2267,7 @@ impl StringNode {
 #[derive(Clone)]
 #[derive(jsrt::Trace)]
 pub struct FormatStringNodeDetails {
-    pub token: Cell<FStringStartToken>,
+    pub token: TokenCell<FStringStartToken>,
     pub middle_tokens: RefCell<Vec<FStringMiddleToken>>,
     pub field_exprs: RefCell<Vec<ExpressionNode>>,
     pub format_exprs: RefCell<Vec<ExpressionNode>>,
@@ -2292,8 +2292,8 @@ impl FormatStringNode {
             start_token.length,
             key,
             FormatStringNodeDetails {
-                token: Cell::new(start_token),
-                middle_tokens: RefCell::new(middle_tokens),
+                token: TokenCell::new(start_token),
+                middle_tokens: RefCell::new(middle_tokens.into_iter().map(KeepToken::keep).collect()),
                 field_exprs: RefCell::new(field_exprs.clone()),
                 format_exprs: RefCell::new(format_exprs.clone()),
                 value: JsString::from(""),
@@ -2359,7 +2359,7 @@ impl StringListNode {
 #[derive(jsrt::Trace)]
 pub struct DictionaryNodeDetails {
     pub items: RefCell<Vec<DictionaryEntryNode>>,
-    pub trailing_comma_token: Cell<Option<P<Token>>>,
+    pub trailing_comma_token: TokenCell<Option<P<Token>>>,
 }
 node_handle!(DictionaryNode, Dictionary, DictionaryNodeDetails);
 
@@ -2373,7 +2373,7 @@ impl DictionaryNode {
             key,
             DictionaryNodeDetails {
                 items: RefCell::new(vec![]),
-                trailing_comma_token: Cell::new(None),
+                trailing_comma_token: TokenCell::new(None),
             },
         ))
     }
@@ -2598,7 +2598,7 @@ impl PassNode {
 pub struct ImportNodeDetails {
     pub list: RefCell<Vec<ImportAsNode>>,
     pub is_lazy: Cell<Option<bool>>,
-    pub lazy_token: Cell<Option<KeywordToken>>,
+    pub lazy_token: TokenCell<Option<KeywordToken>>,
 }
 node_handle!(ImportNode, Import, ImportNodeDetails);
 
@@ -2613,7 +2613,7 @@ impl ImportNode {
             ImportNodeDetails {
                 list: RefCell::new(vec![]),
                 is_lazy: Cell::new(None),
-                lazy_token: Cell::new(None),
+                lazy_token: TokenCell::new(None),
             },
         ))
     }
@@ -2684,10 +2684,10 @@ pub struct ImportFromNodeDetails {
     pub imports: RefCell<Vec<ImportFromAsNode>>,
     pub is_wildcard_import: Cell<bool>,
     pub uses_parens: Cell<bool>,
-    pub wildcard_token: Cell<Option<P<Token>>>,
+    pub wildcard_token: TokenCell<Option<P<Token>>>,
     pub missing_import: Cell<Option<bool>>,
     pub is_lazy: Cell<Option<bool>>,
-    pub lazy_token: Cell<Option<KeywordToken>>,
+    pub lazy_token: TokenCell<Option<KeywordToken>>,
 }
 node_handle!(ImportFromNode, ImportFrom, ImportFromNodeDetails);
 
@@ -2707,10 +2707,10 @@ impl ImportFromNode {
                 imports: RefCell::new(vec![]),
                 is_wildcard_import: Cell::new(false),
                 uses_parens: Cell::new(false),
-                wildcard_token: Cell::new(None),
+                wildcard_token: TokenCell::new(None),
                 missing_import: Cell::new(None),
                 is_lazy: Cell::new(None),
-                lazy_token: Cell::new(None),
+                lazy_token: TokenCell::new(None),
             },
         );
 
@@ -2920,7 +2920,7 @@ impl RaiseNode {
 #[derive(Clone)]
 #[derive(jsrt::Trace)]
 pub struct MatchNodeDetails {
-    pub first_token: Cell<P<Token>>,
+    pub first_token: TokenCell<P<Token>>,
     pub expr: Cell<ExpressionNode>,
     pub cases: RefCell<Vec<CaseNode>>,
 }
@@ -2934,7 +2934,7 @@ impl MatchNode {
             match_token.length,
             key,
             MatchNodeDetails {
-                first_token: Cell::new(match_token),
+                first_token: TokenCell::new(match_token),
                 expr: Cell::new(expr),
                 cases: RefCell::new(vec![]),
             },

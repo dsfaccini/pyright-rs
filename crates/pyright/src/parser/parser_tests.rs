@@ -652,3 +652,24 @@ fn lazy_import_wildcard_import_rejected_at_3_15() {
         LocMessage::lazy_import_wildcard_illegal()
     );
 }
+
+/// A parse node's tokens outlive the tokenizer output, which frees the rest of
+/// its tokens, and the next parse, which reuses the freed memory.
+#[test]
+fn node_tokens_outlive_the_tokenizer_output() {
+    let results = parse_text("first = 1\ndef second(third): pass\n", new_sink(), ParseOptions::new());
+    let tree = results.parser_output.parse_tree;
+    drop(results);
+    drop(parse_text(&"other = more\n".repeat(20_000), new_sink(), ParseOptions::new()));
+
+    let mut names = vec![];
+    let mut stack = vec![tree.0];
+    while let Some(node) = stack.pop() {
+        if let Some(name) = crate::parser::parse_nodes::NameNode::cast(node) {
+            names.push(name.d().value());
+        }
+        stack.extend(get_child_nodes(node, None).into_iter().flatten());
+    }
+    names.sort();
+    assert_eq!(names, ["first", "second", "third"]);
+}

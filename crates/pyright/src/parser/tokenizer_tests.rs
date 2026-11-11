@@ -2535,3 +2535,18 @@ fn last_empty_line() {
 
 #[path = "tokenizer_unescape_tests.rs"]
 mod unescape_tests;
+
+/// `Token::keep` copies a token out of its tokenizer's scratch region once, and
+/// the copy, which owns the token's buffers, outlives the output.
+#[test]
+fn kept_token_outlives_its_output() {
+    let output = tokenize("x = 123456789012345678901234567890\n");
+    let number = output.tokens.get_item_at(2);
+    let value = NumberToken::cast(number).unwrap().d().value.clone();
+    assert!(matches!(value, NumberValue::BigInt(_)));
+    let kept = crate::parser::tokenizer_types::Token::keep(number);
+    assert_eq!(crate::parser::tokenizer_types::Token::keep(number), kept);
+    drop(output);
+    drop(tokenize(&"y = 98765432109876543210987654321\n".repeat(20_000)));
+    assert_eq!(NumberToken::cast(kept).unwrap().d().value, value);
+}

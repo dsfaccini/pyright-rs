@@ -15,6 +15,7 @@ pub mod js_regex;
 pub mod jsonc;
 pub mod node_path;
 pub mod number;
+pub mod region;
 pub mod smol_toml;
 pub mod sort;
 pub mod string;

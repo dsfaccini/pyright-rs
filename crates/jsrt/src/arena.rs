@@ -148,6 +148,20 @@ impl<T: 'static> P<T> {
         P(header, PhantomData)
     }
 
+    /// A handle to an object outside the heaps, such as in a `jsrt::region::Region`.
+    ///
+    /// # Safety
+    /// `value` points at a live `T` that stays valid for as long as this handle,
+    /// or a copy of it, is used.
+    pub unsafe fn from_raw(value: *const T) -> P<T>
+    where
+        T: Trace,
+    {
+        const { assert!(!T::EVAL, "P::from_raw of an evaluator type") };
+        // SAFETY: the caller guarantees `value` is live while the handle is used.
+        P(unsafe { &*value }, PhantomData)
+    }
+
     /// The same object as a trait object: `p.to_dyn::<dyn Trait>(|x| x)`. An
     /// evaluator object needs a trait whose `P` the collector traces (`U::EVAL`).
     pub fn to_dyn<U: ?Sized + Trace>(self, upcast: fn(&'static T) -> &'static U) -> P<U>

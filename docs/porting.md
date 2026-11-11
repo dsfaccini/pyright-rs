@@ -56,6 +56,7 @@ pyright allocates about 23 times what it keeps alive: 194 GB over a pydantic-ai 
 - Never capture a `P` in a closure that a struct stores. Write the stored callback as a struct with named fields and a method, so the collector can see every `P`. A stored closure that captures program handles only is allowed: mark its field `#[trace(skip)]` and name what it captures.
 - Reach parse-node and type details only through typed handles and `d()`. Create them only through their `create` functions. Their memory layout will change.
 - Keep evaluator objects small: pyright-rs creates millions of them. Box a record or map that few objects set (`Option<Box<T>>`), or move such fields into the struct's cold half (`[cold]` in `tools/stubgen/typemap.toml`; read with `cold()`, write with `cold_mut()`). Lock the size with `const _: () = assert!(size_of::<T>() <= n);` after the type.
+- Tokens live in their tokenizer output's scratch region, and the output frees the tokens no parse node holds when it drops, at the end of `SourceFile.parse`, as pyright drops its `tokenizerOutput`. Names, strings and f-string parts, which parse nodes nearly always hold, go to the program heap directly.
 - The collector's switches are under "switches" below.
 
 ## switches
@@ -74,6 +75,7 @@ Every Rust-only environment variable is listed here. When you add a cache or sho
 | `PYRIGHT_RS_GC_WARM_MIB` | a number; default 256 | MiB of released evaluator blocks kept resident for reuse |
 | `PYRIGHT_RS_GC_CENSUS` | `1` | prints a breakdown of the resident set after each mark, at the end of the check and at exit; changes no result; buffer bytes need the `pyright` crate's `count-malloc` feature (`docs/collector-design.md`, "census") |
 | `PYRIGHT_RS_NODE_INFO_STORE_CACHE` | `on` (default), `off`, `check` | `AnalyzerNodeInfoContextImpl::_store_for` reuses the store of its last lookup |
+| `PYRIGHT_RS_TOKENS` | `free` (default), `keep`, `check` | `keep` puts every token on the program heap; `check` makes a freed tokenizer scratch region inaccessible, so a later use faults |
 | `PYRIGHT_RS_ALLOC_STATS` | `1`, or a number n | prints objects and bytes per type and heap at exit; with n, also each time the evaluator heap grows by another n GiB |
 
 ## collections
@@ -124,6 +126,7 @@ Every Rust-only environment variable is listed here. When you add a cache or sho
 - A node handle is `P<ParseNode>`. Each node type also gets a typed handle, for example `FunctionNode(P<ParseNode>)`, with `cast(P<ParseNode>) -> Option<Self>`, `d()` returning its details, and `Deref` to `ParseNode`.
 - A TypeScript union of node types, such as `ExpressionNode`, is a type alias for `P<ParseNode>`.
 - Each `create` function keeps its parent assignments and range extensions in TypeScript order.
+- A node field that holds a token is a `TokenCell`: storing a token there copies it out of its tokenizer's scratch region (`Token::keep`). Nothing else may hold a token past its `TokenizerOutput`.
 
 ## exceptions and the stack
 
