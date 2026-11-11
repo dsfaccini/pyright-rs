@@ -8,11 +8,12 @@
 //! arena (`arena.rs`): the collector never needs to enumerate them.
 
 use std::any::TypeId;
-use std::cell::UnsafeCell;
+use std::cell::{Cell, UnsafeCell};
 use std::collections::HashMap;
+use std::panic::{AssertUnwindSafe, catch_unwind, resume_unwind};
 use std::ptr;
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering::Relaxed};
-use std::sync::{Mutex, OnceLock};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering::Relaxed};
+use std::sync::{Mutex, MutexGuard, OnceLock, PoisonError};
 use std::time::Instant;
 
 use crate::collections::FxHashMap;
@@ -21,16 +22,21 @@ use crate::trace::Trace;
 const BLOCK_SHIFT: u32 = 16;
 const BLOCK: usize = 1 << BLOCK_SHIFT;
 /// Slot sizes up to this keep the reciprocal slot index exact (offset × slot < 2^32).
-const MAX_SLOT: usize = 1 << 14;
+pub(crate) const MAX_SLOT: usize = 1 << 14;
 const NONE: u32 = u32::MAX;
 const PROGRAM_RESERVE: usize = 64 << 30;
 const EVAL_RESERVE: usize = 256 << 30;
+/// The smallest reservation tried when address space is limited.
+const MIN_RESERVE: usize = 256 << 20;
+/// Blocks committed (made readable and writable) at a time.
+const COMMIT_BLOCKS: usize = 512;
 const POISON: u8 = 0xDB;
 
 /// `PYRIGHT_RS_GC`: whether the evaluator heap is collected between files.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum GcMode {
     Off,
+    /// The default.
     On,
     /// Collect often; poison swept objects, never reuse them, and panic on use.
     Check,
@@ -39,6 +45,7 @@ pub enum GcMode {
 struct Config {
     mode: GcMode,
     min_bytes: usize,
+    ratio: f64,
     log: bool,
 }
 
@@ -50,23 +57,29 @@ const CHECKS: bool = cfg!(any(test, feature = "gc-check"));
 /// Read by every `P` dereference in a `gc-check` build: true in check mode.
 static CHECK_HANDLES: AtomicBool = AtomicBool::new(false);
 
+fn env_number<N: std::str::FromStr>(name: &str) -> Option<N> {
+    let value = std::env::var(name).ok()?;
+    Some(value.parse().unwrap_or_else(|_| panic!("{name} must be a number, not {value:?}")))
+}
+
 fn config() -> &'static Config {
     CONFIG.get_or_init(|| {
         let mode = match std::env::var("PYRIGHT_RS_GC").as_deref() {
-            Err(_) | Ok("") | Ok("off") => GcMode::Off,
-            Ok("on") => GcMode::On,
+            Ok("off") => GcMode::Off,
+            Err(_) | Ok("") | Ok("on") => GcMode::On,
             Ok("check") => GcMode::Check,
             Ok(other) => panic!("PYRIGHT_RS_GC must be off, on or check, not {other:?}"),
         };
-        let default_min_mib = if mode == GcMode::Check { 64 } else { 1024 };
-        let min_mib = std::env::var("PYRIGHT_RS_GC_MIN_MIB").ok().and_then(|v| v.parse::<usize>().ok()).unwrap_or(default_min_mib);
-        if mode == GcMode::Check {
+        let check = mode == GcMode::Check;
+        let min_mib: usize = env_number("PYRIGHT_RS_GC_MIN_MIB").unwrap_or(if check { 64 } else { 1024 });
+        let ratio: f64 = env_number("PYRIGHT_RS_GC_RATIO").unwrap_or(if check { 0.0 } else { 1.0 });
+        if check {
             if !CHECKS {
                 panic!("PYRIGHT_RS_GC=check needs a build with --features jsrt/gc-check");
             }
             CHECK_HANDLES.store(true, Relaxed);
         }
-        Config { mode, min_bytes: min_mib << 20, log: std::env::var_os("PYRIGHT_RS_GC_LOG").is_some() }
+        Config { mode, min_bytes: min_mib << 20, ratio, log: std::env::var_os("PYRIGHT_RS_GC_LOG").is_some() }
     })
 }
 
@@ -81,6 +94,12 @@ pub fn gc_mode() -> GcMode {
 #[inline]
 pub(crate) fn typed_program<T: Trace>() -> bool {
     T::HOLDS_EVAL || (CHECKS && (config().mode == GcMode::Check || CHECK_HANDLES.load(Relaxed)))
+}
+
+/// Locks `mutex`. A panic elsewhere never leaves the guarded data half-written,
+/// so a poisoned lock is still usable.
+fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
+    mutex.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
 // ---------------------------------------------------------------------------
@@ -102,6 +121,9 @@ struct BlockMeta {
     words: u32,
     cap: u32,
 }
+
+/// Committing `COMMIT_BLOCKS` blocks commits whole pages of the metadata table.
+const _: () = assert!(size_of::<BlockMeta>() == 64);
 
 impl BlockMeta {
     #[inline]
@@ -130,25 +152,44 @@ impl BlockMeta {
     }
 }
 
+/// Blocks handed out so far, blocks committed, and released blocks.
+struct RangeBlocks {
+    next: usize,
+    committed: usize,
+    free: Vec<u32>,
+}
+
 struct Range {
     name: &'static str,
     base: usize,
     len: usize,
     meta: *mut BlockMeta,
-    next: AtomicUsize,
-    free: Mutex<Vec<u32>>,
+    blocks: Mutex<RangeBlocks>,
 }
 
 // SAFETY: a block's metadata is touched only by the thread that owns the block;
-// `next` and `free` hand blocks out across threads.
+// `blocks` hands blocks out across threads.
 unsafe impl Sync for Range {}
 unsafe impl Send for Range {}
 
 impl Range {
-    fn reserve(name: &'static str, len: usize) -> Range {
-        let base = map(len + BLOCK).next_multiple_of(BLOCK);
-        let meta = map((len >> BLOCK_SHIFT) * size_of::<BlockMeta>()) as *mut BlockMeta;
-        Range { name, base, len, meta, next: AtomicUsize::new(0), free: Mutex::new(Vec::new()) }
+    /// Reserves up to `want` bytes, halving until the kernel agrees: an address-space
+    /// limit (`ulimit -v`) or strict overcommit can refuse the full size.
+    fn reserve(name: &'static str, want: usize, limit: usize) -> Range {
+        let mut len = want.min(limit).next_multiple_of(BLOCK);
+        loop {
+            let meta_len = (len >> BLOCK_SHIFT) * size_of::<BlockMeta>();
+            if let Some(base) = map(len + BLOCK) {
+                if let Some(meta) = map(meta_len) {
+                    let base = base.next_multiple_of(BLOCK);
+                    let blocks = Mutex::new(RangeBlocks { next: 0, committed: 0, free: Vec::new() });
+                    return Range { name, base, len, meta: meta as *mut BlockMeta, blocks };
+                }
+                unsafe { libc::munmap(base as *mut libc::c_void, len + BLOCK) };
+            }
+            assert!(len > MIN_RESERVE, "collector: cannot reserve address space for the {name} heap");
+            len /= 2;
+        }
     }
 
     #[inline]
@@ -161,23 +202,66 @@ impl Range {
     unsafe fn meta(&self, block: u32) -> &mut BlockMeta {
         unsafe { &mut *self.meta.add(block as usize) }
     }
+
+    /// A free block: a released one, or the next one, committing more when needed.
+    fn take_block(&self) -> u32 {
+        let mut blocks = lock(&self.blocks);
+        if let Some(block) = blocks.free.pop() {
+            return block;
+        }
+        let block = blocks.next;
+        if block == blocks.committed {
+            let count = COMMIT_BLOCKS.min((self.len >> BLOCK_SHIFT) - block);
+            let committed = count > 0
+                && protect(self.block_base(block as u32), count << BLOCK_SHIFT)
+                && protect(self.meta as usize + block * size_of::<BlockMeta>(), count * size_of::<BlockMeta>());
+            if !committed {
+                drop(blocks);
+                panic!("collector: the {} heap reservation of {} MiB is full or cannot be committed", self.name, self.len >> 20);
+            }
+            blocks.committed += count;
+        }
+        blocks.next += 1;
+        block as u32
+    }
+
+    fn release_block(&self, block: u32) {
+        // SAFETY: the block is committed, owned by this thread, and holds no live object.
+        unsafe { libc::madvise(self.block_base(block) as *mut libc::c_void, BLOCK, libc::MADV_DONTNEED) };
+        lock(&self.blocks).free.push(block);
+    }
 }
 
-/// Reserves address space; pages are committed on first touch.
-fn map(len: usize) -> usize {
+/// Reserves address space without committing it.
+fn map(len: usize) -> Option<usize> {
     // SAFETY: an anonymous private mapping at an address the kernel picks.
     let p = unsafe {
         libc::mmap(
             ptr::null_mut(),
             len,
-            libc::PROT_READ | libc::PROT_WRITE,
+            libc::PROT_NONE,
             libc::MAP_PRIVATE | libc::MAP_ANONYMOUS | libc::MAP_NORESERVE,
             -1,
             0,
         )
     };
-    assert!(p != libc::MAP_FAILED, "collector: cannot reserve {} GiB of address space", len >> 30);
-    p as usize
+    (p != libc::MAP_FAILED).then_some(p as usize)
+}
+
+/// Makes reserved pages readable and writable; they are backed on first touch.
+fn protect(addr: usize, len: usize) -> bool {
+    // SAFETY: `addr..addr + len` lies in a mapping `map` reserved.
+    unsafe { libc::mprotect(addr as *mut libc::c_void, len, libc::PROT_READ | libc::PROT_WRITE) == 0 }
+}
+
+/// The address-space limit (`RLIMIT_AS`), or `usize::MAX`.
+fn address_space_limit() -> usize {
+    let mut limit = libc::rlimit { rlim_cur: 0, rlim_max: 0 };
+    // SAFETY: `getrlimit` writes the struct it is given.
+    if unsafe { libc::getrlimit(libc::RLIMIT_AS, &mut limit) } != 0 || limit.rlim_cur == libc::RLIM_INFINITY {
+        return usize::MAX;
+    }
+    usize::try_from(limit.rlim_cur).unwrap_or(usize::MAX)
 }
 
 struct Ranges {
@@ -188,9 +272,14 @@ struct Ranges {
 static RANGES: OnceLock<Ranges> = OnceLock::new();
 
 fn ranges() -> &'static Ranges {
-    RANGES.get_or_init(|| Ranges {
-        program: Range::reserve("program", PROGRAM_RESERVE),
-        eval: Range::reserve("evaluator", EVAL_RESERVE),
+    RANGES.get_or_init(|| {
+        // Under an address-space limit, leave most of it to the program heap's bump
+        // arena, the system allocator and the stack.
+        let limit = address_space_limit();
+        Ranges {
+            program: Range::reserve("program", PROGRAM_RESERVE, limit / 16),
+            eval: Range::reserve("evaluator", EVAL_RESERVE, limit / 4),
+        }
     })
 }
 
@@ -235,16 +324,10 @@ unsafe fn trace_erased<T: Trace>(addr: usize, t: &mut Tracer) {
 }
 
 fn register<T: Trace + 'static>() -> u32 {
-    let mut registry = REGISTRY.lock().unwrap();
-    let registry = registry.get_or_insert_with(Registry::default);
-    if let Some(&id) = registry.ids.get(&TypeId::of::<T>()) {
-        return id;
-    }
     let name = std::any::type_name::<T>();
     let slot = size_of::<T>().max(8).next_multiple_of(align_of::<T>());
     assert!(slot <= MAX_SLOT, "collector: {name} is {slot} bytes; slots go up to {MAX_SLOT}");
-    let id = registry.infos.len() as u32;
-    registry.infos.push(TypeInfo {
+    let info = TypeInfo {
         name,
         holds_eval: T::HOLDS_EVAL,
         slot: slot as u32,
@@ -252,13 +335,20 @@ fn register<T: Trace + 'static>() -> u32 {
         count: (BLOCK / slot) as u32,
         drop: drop_erased::<T>,
         trace: trace_erased::<T>,
-    });
+    };
+    let mut registry = lock(&REGISTRY);
+    let registry = registry.get_or_insert_with(Registry::default);
+    if let Some(&id) = registry.ids.get(&TypeId::of::<T>()) {
+        return id;
+    }
+    let id = registry.infos.len() as u32;
+    registry.infos.push(info);
     registry.ids.insert(TypeId::of::<T>(), id);
     id
 }
 
 fn type_info(id: u32) -> TypeInfo {
-    REGISTRY.lock().unwrap().as_ref().unwrap().infos[id as usize]
+    lock(&REGISTRY).as_ref().unwrap().infos[id as usize]
 }
 
 // ---------------------------------------------------------------------------
@@ -284,27 +374,52 @@ struct ThreadHeap {
     collections: u32,
 }
 
+/// The heap, and whether something is using it: allocation, root registration
+/// and collection must not nest.
+struct HeapCell {
+    busy: Cell<bool>,
+    heap: UnsafeCell<ThreadHeap>,
+}
+
 static NEXT_OWNER: AtomicU32 = AtomicU32::new(1);
 
 thread_local! {
-    static HEAP: &'static UnsafeCell<ThreadHeap> = Box::leak(Box::new(UnsafeCell::new(ThreadHeap {
-        owner: NEXT_OWNER.fetch_add(1, Relaxed),
-        generic: FxHashMap::default(),
-        program: Vec::new(),
-        eval: Vec::new(),
-        roots: Vec::new(),
-        since_gc: 0,
-        live_bytes: 0,
-        collections: 0,
-    })));
+    static HEAP: &'static HeapCell = Box::leak(Box::new(HeapCell {
+        busy: Cell::new(false),
+        heap: UnsafeCell::new(ThreadHeap {
+            owner: OWNER.with(|owner| *owner),
+            generic: FxHashMap::default(),
+            program: Vec::new(),
+            eval: Vec::new(),
+            roots: Vec::new(),
+            since_gc: 0,
+            live_bytes: 0,
+            collections: 0,
+        }),
+    }));
+    /// This thread's block owner id.
+    static OWNER: u32 = NEXT_OWNER.fetch_add(1, Relaxed);
 }
 
-/// Runs `f` on this thread's heap. Nothing `f` calls may re-enter the heap.
+struct Busy<'a>(&'a Cell<bool>);
+
+impl Drop for Busy<'_> {
+    fn drop(&mut self) {
+        self.0.set(false);
+    }
+}
+
+/// Runs `f` on this thread's heap. Panics when `f`, or a root, `Trace` impl
+/// or drop it runs, uses the heap again: an allocation inside a collection.
 #[inline]
 fn with_heap<R>(f: impl FnOnce(&mut ThreadHeap) -> R) -> R {
-    // SAFETY: allocation, collection and root registration never call back into user code
-    // that allocates, so no two `&mut` to the heap coexist.
-    HEAP.with(|h| f(unsafe { &mut *h.get() }))
+    HEAP.with(|cell| {
+        assert!(!cell.busy.get(), "collector: the heap was used inside an allocation or a collection");
+        cell.busy.set(true);
+        let _busy = Busy(&cell.busy);
+        // SAFETY: `busy` guarantees this is the only `&mut` to the heap.
+        f(unsafe { &mut *cell.heap.get() })
+    })
 }
 
 /// A slot for one `T` in a typed block of the evaluator heap (`eval`) or the program heap.
@@ -380,11 +495,7 @@ impl ThreadHeap {
 }
 
 unsafe fn new_block(range: &Range, class: &mut Class, owner: u32, eval: bool) -> u32 {
-    let block = range.free.lock().unwrap().pop().unwrap_or_else(|| {
-        let block = range.next.fetch_add(1, Relaxed);
-        assert!(block < range.len >> BLOCK_SHIFT, "collector: the {} heap reservation of {} GiB is full", range.name, range.len >> 30);
-        block as u32
-    });
+    let block = range.take_block();
     let info = &class.info;
     let meta = unsafe { range.meta(block) };
     meta.name = info.name;
@@ -444,9 +555,10 @@ fn check_handle_slow(addr: usize) {
     if offset >= range.len {
         return;
     }
-    // SAFETY: a handle into the evaluator range points into a block this thread owns.
+    // SAFETY: a handle into the evaluator range points into a committed block; its
+    // metadata is read only when this thread owns it.
     let meta = unsafe { range.meta((offset >> BLOCK_SHIFT) as u32) };
-    if meta.bits.is_null() {
+    if meta.owner != OWNER.with(|owner| *owner) || meta.bits.is_null() {
         return;
     }
     let i = meta.index(offset & (BLOCK - 1));
@@ -531,10 +643,10 @@ impl Tracer {
     }
 }
 
-/// Collects when the evaluator heap grew by `max(live bytes, floor)` since the
-/// last collection (by the floor alone in check mode), unless `PYRIGHT_RS_GC`
-/// is off. Call only where no evaluator frame is live: before a file in the
-/// check loop.
+/// Collects when the evaluator heap grew by `max(ratio × live bytes, floor)`
+/// since the last collection, unless `PYRIGHT_RS_GC` is off. Call only where
+/// no evaluator frame is live: before a file in the check loop. Panics when a
+/// root, `Trace` impl or drop allocates.
 pub fn collect_if_due() -> bool {
     let config = config();
     if config.mode == GcMode::Off {
@@ -542,11 +654,11 @@ pub fn collect_if_due() -> bool {
     }
     let check = config.mode == GcMode::Check;
     with_heap(|heap| {
-        let threshold = if check { config.min_bytes } else { heap.live_bytes.max(config.min_bytes) };
+        let threshold = ((heap.live_bytes as f64 * config.ratio) as usize).max(config.min_bytes);
         if heap.since_gc == 0 || heap.since_gc < threshold {
             return false;
         }
-        unsafe { heap.collect(check, config.log) };
+        heap.collect(check, config.log);
         true
     })
 }
@@ -557,12 +669,25 @@ pub fn collect(check: bool) {
         CHECK_HANDLES.store(true, Relaxed);
     }
     let log = config().log;
-    with_heap(|heap| unsafe { heap.collect(check, log) });
+    with_heap(|heap| heap.collect(check, log));
+}
+
+/// Bytes the system allocator has handed out and not taken back, when it reports them.
+fn malloc_in_use() -> Option<usize> {
+    #[cfg(all(target_os = "linux", target_env = "gnu"))]
+    {
+        // SAFETY: `mallinfo2` only reads allocator statistics.
+        let info = unsafe { libc::mallinfo2() };
+        Some(info.uordblks + info.hblkhd)
+    }
+    #[cfg(not(all(target_os = "linux", target_env = "gnu")))]
+    None
 }
 
 impl ThreadHeap {
-    unsafe fn collect(&mut self, check: bool, log: bool) {
+    fn collect(&mut self, check: bool, log: bool) {
         let start = Instant::now();
+        let malloc_before = if log { malloc_in_use() } else { None };
         let ranges = ranges();
         let mut t = Tracer {
             stack: Vec::new(),
@@ -574,6 +699,49 @@ impl ThreadHeap {
             meta: ranges.eval.meta,
         };
 
+        // A panic while marking (check mode's assertions, a borrowed RefCell) must not
+        // leave mark bits behind: the next collection would skip those objects' children.
+        let marked = catch_unwind(AssertUnwindSafe(|| self.mark(&mut t, check)));
+        let scanned = match marked {
+            Ok(scanned) => scanned,
+            Err(panic) => {
+                self.clear_marks();
+                resume_unwind(panic);
+            }
+        };
+        let mark_ms = start.elapsed().as_millis();
+
+        // A panic while sweeping leaves blocks half-swept; nothing can be trusted after it.
+        let swept = catch_unwind(AssertUnwindSafe(|| self.sweep(check)));
+        let Ok((freed, live_bytes)) = swept else {
+            eprintln!("collector: a drop panicked during the sweep; aborting");
+            std::process::abort();
+        };
+
+        self.collections += 1;
+        if log {
+            let malloc = match (malloc_before, malloc_in_use()) {
+                (Some(before), Some(after)) => format!(", malloc {} -> {} MiB", before >> 20, after >> 20),
+                _ => String::new(),
+            };
+            eprintln!(
+                "gc {}: {} ms ({} ms mark), {} program objects scanned, {} objects freed, evaluator slots {} MiB live (+{} MiB allocated since the last collection){malloc}",
+                self.collections,
+                start.elapsed().as_millis(),
+                mark_ms,
+                scanned,
+                freed,
+                live_bytes >> 20,
+                self.since_gc >> 20,
+            );
+        }
+        self.live_bytes = live_bytes;
+        self.since_gc = 0;
+    }
+
+    /// Marks everything the roots reach. Returns the program objects scanned.
+    fn mark(&self, t: &mut Tracer, check: bool) -> usize {
+        let program = &ranges().program;
         // The program heap is never collected, so each of its objects is a root.
         let mut scanned = 0usize;
         for class in self.program.iter().flatten() {
@@ -582,21 +750,37 @@ impl ThreadHeap {
             }
             let slot = class.info.slot as usize;
             for &block in &class.blocks {
-                let base = ranges.program.block_base(block);
-                let count = unsafe { ranges.program.meta(block).bump } as usize;
+                let base = program.block_base(block);
+                let count = unsafe { program.meta(block).bump } as usize;
                 for i in 0..count {
-                    unsafe { (class.info.trace)(base + i * slot, &mut t) };
+                    unsafe { (class.info.trace)(base + i * slot, t) };
                 }
                 scanned += count;
                 t.drain();
             }
         }
-        for root in self.roots.clone() {
-            root(&mut t);
+        for root in &self.roots {
+            root(t);
             t.drain();
         }
+        scanned
+    }
 
-        let mark_ms = start.elapsed().as_millis();
+    fn clear_marks(&self) {
+        let eval = &ranges().eval;
+        for class in self.eval.iter().flatten() {
+            for &block in &class.blocks {
+                let meta = unsafe { eval.meta(block) };
+                let words = meta.words as usize;
+                unsafe { ptr::write_bytes(meta.bits.add(words), 0, words) };
+            }
+        }
+    }
+
+    /// Drops every live, unmarked evaluator object. Returns the objects freed and the
+    /// slot bytes still live.
+    fn sweep(&mut self, check: bool) -> (usize, usize) {
+        let eval = &ranges().eval;
         let (mut freed, mut live_bytes) = (0usize, 0usize);
         for class in self.eval.iter_mut().flatten() {
             class.partial.clear();
@@ -604,8 +788,8 @@ impl ThreadHeap {
             let slot = class.info.slot as usize;
             let mut kept = Vec::with_capacity(class.blocks.len());
             for &block in &class.blocks {
-                let base = ranges.eval.block_base(block);
-                let meta = unsafe { ranges.eval.meta(block) };
+                let base = eval.block_base(block);
+                let meta = unsafe { eval.meta(block) };
                 let words = meta.words as usize;
                 let mut live = 0usize;
                 for w in 0..words {
@@ -634,9 +818,8 @@ impl ThreadHeap {
                 }
                 live_bytes += live * slot;
                 if live == 0 && !check {
-                    unsafe { libc::madvise(base as *mut libc::c_void, BLOCK, libc::MADV_DONTNEED) };
                     meta.owner = 0;
-                    ranges.eval.free.lock().unwrap().push(block);
+                    eval.release_block(block);
                     continue;
                 }
                 kept.push(block);
@@ -646,22 +829,7 @@ impl ThreadHeap {
             }
             class.blocks = kept;
         }
-
-        self.collections += 1;
-        if log {
-            eprintln!(
-                "gc {}: {} ms ({} ms mark), {} program objects scanned, {} objects freed, evaluator slots {} MiB live (+{} MiB allocated since the last collection)",
-                self.collections,
-                start.elapsed().as_millis(),
-                mark_ms,
-                scanned,
-                freed,
-                live_bytes >> 20,
-                self.since_gc >> 20,
-            );
-        }
-        self.live_bytes = live_bytes;
-        self.since_gc = 0;
+        (freed, live_bytes)
     }
 }
 
@@ -781,5 +949,128 @@ mod tests {
         let drops = Rc::new(());
         let _claim = P::new(Claim { node: Cell::new(Some(node(None, &drops, 0))) });
         collect(true);
+    }
+
+    #[derive(jsrt::Trace)]
+    #[trace(eval)]
+    struct Cyclic {
+        next: Cell<Option<P<Cyclic>>>,
+        extra: std::cell::RefCell<Option<P<Cyclic>>>,
+        val: u32,
+    }
+
+    #[derive(jsrt::Trace)]
+    struct CyclicRoots {
+        a: Cell<Option<P<Cyclic>>>,
+        c: Cell<Option<P<Cyclic>>>,
+    }
+
+    fn cyclic(next: Option<P<Cyclic>>, val: u32) -> P<Cyclic> {
+        P::new_eval(Cyclic { next: Cell::new(next), extra: std::cell::RefCell::new(None), val })
+    }
+
+    /// A panic while marking clears the marks it set; otherwise the next collection
+    /// would skip `a`'s children and free `b` while `a` still holds it.
+    #[test]
+    fn unwound_collection_leaves_no_marks() {
+        let b = cyclic(None, 1);
+        let a = cyclic(Some(b), 2);
+        let c = cyclic(None, 3);
+        let roots = P::new(CyclicRoots { a: Cell::new(Some(a)), c: Cell::new(Some(c)) });
+        let unwound = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _borrowed = c.extra.borrow_mut();
+            collect(false);
+        }));
+        assert!(unwound.is_err());
+        collect(false);
+        for id in 0..BLOCK as u32 {
+            cyclic(None, 1_000_000 + id);
+        }
+        assert_eq!(roots.a.get().unwrap().next.get().unwrap().val, 1);
+        assert_eq!(roots.c.get().unwrap().val, 3);
+    }
+
+    #[derive(jsrt::Trace)]
+    #[trace(eval)]
+    struct Huge([u8; MAX_SLOT + 1]);
+
+    #[derive(jsrt::Trace)]
+    #[trace(eval)]
+    struct Fresh(u8);
+
+    /// An oversize type panics before taking the registry lock, so other types still allocate.
+    #[test]
+    fn oversize_type_leaves_the_registry_usable() {
+        assert!(std::panic::catch_unwind(|| P::new_eval(Huge([0; MAX_SLOT + 1]))).is_err());
+        assert!(std::thread::spawn(|| P::new_eval(Fresh(1)).0).join().is_ok());
+        assert_eq!(P::new_eval(Fresh(2)).0, 2);
+    }
+
+    #[derive(jsrt::Trace)]
+    #[trace(eval)]
+    struct Big {
+        _pad: [u64; 512],
+    }
+
+    #[derive(jsrt::Trace)]
+    struct Kept {
+        v: std::cell::RefCell<Vec<P<Node>>>,
+    }
+
+    /// Blocks another thread released are reused by a type with another slot size,
+    /// and survivors stay intact through two more sweeps.
+    #[test]
+    fn released_blocks_change_type_and_thread() {
+        let released: Vec<usize> = std::thread::spawn(|| {
+            let blocks = (0..64).map(|_| P::new_eval(Big { _pad: [0; 512] }).addr_for_test() & !(BLOCK - 1)).collect();
+            collect(false);
+            assert_eq!(eval_heap_live_bytes(), 0);
+            blocks
+        })
+        .join()
+        .unwrap();
+        let drops = Rc::new(());
+        let kept = P::new(Kept { v: std::cell::RefCell::new(Vec::new()) });
+        let mut reused = 0;
+        for id in 0..40_000u32 {
+            let n = node(None, &drops, id);
+            reused += usize::from(released.contains(&(n.addr_for_test() & !(BLOCK - 1))));
+            if id % 2 == 0 {
+                kept.v.borrow_mut().push(n);
+            }
+        }
+        assert!(reused > 0);
+        collect(false);
+        assert_eq!(Rc::strong_count(&drops), 1 + 20_000);
+        kept.v.borrow_mut().truncate(5);
+        collect(false);
+        assert_eq!(Rc::strong_count(&drops), 1 + 5);
+        for id in 0..40_000u32 {
+            node(None, &drops, 9_000_000 + id);
+        }
+        for (k, n) in kept.v.borrow().iter().enumerate() {
+            assert_eq!(n.id, 2 * k as u32);
+        }
+    }
+
+    #[derive(jsrt::Trace)]
+    #[trace(eval)]
+    struct AllocatesWhileTraced;
+
+    struct AllocatingRoot(AllocatesWhileTraced);
+
+    // SAFETY: a test of the re-entry guard; it holds no handle.
+    unsafe impl Trace for AllocatingRoot {
+        const HOLDS_EVAL: bool = true;
+        fn trace(&self, _: &mut Tracer) {
+            P::new_eval(Fresh(0));
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "the heap was used inside an allocation or a collection")]
+    fn allocation_inside_a_collection_panics() {
+        let _root = P::new(AllocatingRoot(AllocatesWhileTraced));
+        collect(false);
     }
 }

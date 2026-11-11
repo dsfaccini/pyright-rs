@@ -7,6 +7,7 @@ Collector for the evaluator heap (`PLAN.md` step 6, `docs/collector-design.md`).
 - `P::new` and `P::new_eval` require `T: jsrt::Trace`. `P::new_eval` also requires `T::EVAL` (`#[trace(eval)]`), checked at compile time.
 - New in `jsrt`: `Trace` (trait and derive), `Tracer`, `ClassSlot`, `GcMode`, module `heap` (`collect_if_due`, `collect`, `add_root`, `gc_mode`, `eval_heap_live_bytes`). Cargo feature `jsrt/gc-check` compiles check mode's hooks.
 - `TypeAliasSharedInfo.computed_variance` lists are allocated with `P::new`: a type that holds no handle cannot be `EVAL`.
+- Step 3: `P` is neither `Send` nor `Sync`. `P::to_dyn::<U>` requires `T: Trace`, `U: Trace` and `U::EVAL` when `T::EVAL`. Collection is on by default; `PYRIGHT_RS_GC_RATIO` joins `PYRIGHT_RS_GC_MIN_MIB`.
 
 ## Shared-file edits
 
@@ -31,3 +32,5 @@ Collector for the evaluator heap (`PLAN.md` step 6, `docs/collector-design.md`).
 - `tools/stubgen` emits structs without `#[derive(jsrt::Trace)]`. A new struct that a heap object holds fails to compile until it gets one, so the upstream sync (step 7) must add it.
 
 ## Doubts
+
+- Sweeping drops about 110M dead objects on pydantic-ai, and most of the 8 to 9 s it takes is glibc `free` of the buffers they own. With mimalloc as the global allocator the sweep took 3.0 s instead of 8.4 s, and the whole check 0:50.7 instead of 1:05.9 (GC off: 0:41.5 instead of 0:51.3). Not adopted: a project-wide dependency, decision raised with the main session.
