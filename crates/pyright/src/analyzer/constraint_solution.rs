@@ -3,7 +3,7 @@
 //! Evaluator code: allocate with `P::new_eval` (docs/porting.md, "memory").
 
 use crate::analyzer::types::{Type, TypeVarType};
-use jsrt::{LazyJsMap, P};
+use jsrt::{LazyJsMap, NonEmptyList, P};
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -66,18 +66,25 @@ impl ConstraintSolutionSet {
 }
 
 // analyzer/constraintSolution.ts:53
+/// Nothing replaces a solution's sets after construction (`set_type` writes into them), so
+/// copies of a solution share its sets as references to the TypeScript object do.
+#[derive(Clone)]
 pub struct ConstraintSolution {
-    pub(crate) _solution_sets: Vec<P<ConstraintSolutionSet>>,
+    _solution_sets: NonEmptyList<P<ConstraintSolutionSet>>,
 }
 
 impl ConstraintSolution {
     // analyzer/constraintSolution.ts:56
     pub fn new(solution_sets: Option<&[P<ConstraintSolutionSet>]>) -> Self {
-        let _solution_sets = match solution_sets {
-            Some(solution_sets) if !solution_sets.is_empty() => solution_sets.to_vec(),
-            _ => vec![ConstraintSolutionSet::new()],
-        };
+        let _solution_sets = solution_sets
+            .and_then(NonEmptyList::from_slice)
+            .unwrap_or_else(|| NonEmptyList::one(ConstraintSolutionSet::new()));
         ConstraintSolution { _solution_sets }
+    }
+
+    /// `getSolutionSets().length`.
+    pub fn solution_set_count(&self) -> usize {
+        self._solution_sets.len()
     }
 
     // analyzer/constraintSolution.ts:61
@@ -87,7 +94,7 @@ impl ConstraintSolution {
 
     // analyzer/constraintSolution.ts:65
     pub fn set_type(&self, type_var: TypeVarType, type_: P<Type>) {
-        for set in &self._solution_sets {
+        for set in self._solution_sets.iter() {
             set.set_type(type_var, Some(type_));
         }
     }
@@ -99,7 +106,7 @@ impl ConstraintSolution {
 
     // analyzer/constraintSolution.ts:75
     pub fn get_solution_sets(&self) -> Vec<P<ConstraintSolutionSet>> {
-        self._solution_sets.clone()
+        self._solution_sets.to_vec()
     }
 
     // analyzer/constraintSolution.ts:79
@@ -107,14 +114,14 @@ impl ConstraintSolution {
         &self,
         callback: &mut dyn FnMut(P<ConstraintSolutionSet>, i32),
     ) {
-        for (index, set) in self.get_solution_sets().into_iter().enumerate() {
+        for (index, set) in self._solution_sets.iter().enumerate() {
             callback(set, index as i32);
         }
     }
 
     // analyzer/constraintSolution.ts:85
     pub fn get_solution_set(&self, index: i32) -> P<ConstraintSolutionSet> {
-        assert!(index >= 0 && (index as usize) < self._solution_sets.len());
-        self._solution_sets[index as usize]
+        let index = usize::try_from(index).expect("solution set index is not negative");
+        self._solution_sets.get(index).expect("solution set index is in range")
     }
 }

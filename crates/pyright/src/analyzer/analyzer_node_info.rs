@@ -105,9 +105,15 @@ pub trait AnalyzerNodeInfoWriter: AnalyzerNodeInfoReader {
 #[derive(Default)]
 #[derive(jsrt::Trace)]
 pub struct AnalyzerNodeInfoStore {
-    /// `_infoByTree`, keyed by node alone: a node's tree key `a` never changes, so the node
-    /// identifies its tree's inner map.
-    _info_by_node: RefCell<FxHashMap<P<ParseNode>, P<AnalyzerNodeInfo>>>,
+    /// `_infoByTree`, keyed by node id where it can be: no two nodes share a nonzero id
+    /// (`get_next_node_id`), and a parser numbers its tree's nodes consecutively, starting
+    /// with the module node. `_dense[i]` holds the info of the node with id `_dense_base + i`.
+    _dense: RefCell<Vec<Option<P<AnalyzerNodeInfo>>>>,
+    _dense_base: Cell<u32>,
+    /// The nodes outside the dense range, keyed by node: those with id 0 (the parts of a
+    /// decorator dummy class) and those far from the range, such as nodes parsed later from
+    /// string annotations.
+    _sparse: RefCell<FxHashMap<P<ParseNode>, P<AnalyzerNodeInfo>>>,
     _file_info_by_tree: RefCell<FxHashMap<ParseTreeKey, P<AnalyzerFileInfo>>>,
 }
 
@@ -115,12 +121,29 @@ impl AnalyzerNodeInfoStore {
     pub fn new() -> P<AnalyzerNodeInfoStore> {
         P::new(AnalyzerNodeInfoStore::default())
     }
+
+    /// The `_dense` index of `id`, when the id can live there.
+    fn _dense_index(&self, id: u32) -> Option<usize> {
+        if id == 0 || id < self._dense_base.get() {
+            return None;
+        }
+        usize::try_from(id - self._dense_base.get()).ok()
+    }
 }
 
 impl AnalyzerNodeInfoReader for AnalyzerNodeInfoStore {
     // analyzer/analyzerNodeInfo.ts:116
     fn get(&self, node: P<ParseNode>) -> Option<P<AnalyzerNodeInfo>> {
-        self._info_by_node.borrow().get(&node).copied()
+        if let Some(index) = self._dense_index(node.id.get()) {
+            if let Some(Some(info)) = self._dense.borrow().get(index) {
+                return Some(*info);
+            }
+        }
+        let sparse = self._sparse.borrow();
+        if sparse.is_empty() {
+            return None;
+        }
+        sparse.get(&node).copied()
     }
 
     // analyzer/analyzerNodeInfo.ts:120
@@ -132,11 +155,28 @@ impl AnalyzerNodeInfoReader for AnalyzerNodeInfoStore {
 impl AnalyzerNodeInfoWriter for AnalyzerNodeInfoStore {
     // analyzer/analyzerNodeInfo.ts:124
     fn get_or_create(&self, node: P<ParseNode>) -> P<AnalyzerNodeInfo> {
-        *self
-            ._info_by_node
-            .borrow_mut()
-            .entry(node)
-            .or_insert_with(|| P::new(AnalyzerNodeInfo::default()))
+        if let Some(info) = self.get(node) {
+            return info;
+        }
+        let info = P::new(AnalyzerNodeInfo::default());
+        let id = node.id.get();
+        let mut dense = self._dense.borrow_mut();
+        if dense.is_empty() && id != 0 {
+            self._dense_base.set(id);
+        }
+        // The range grows to cover ids near it; a far id would leave a long run of empty slots.
+        match self._dense_index(id) {
+            Some(index) if index <= 2 * dense.len() + 1024 => {
+                if index >= dense.len() {
+                    dense.resize(index + 1, None);
+                }
+                dense[index] = Some(info);
+            }
+            _ => {
+                self._sparse.borrow_mut().insert(node, info);
+            }
+        }
+        info
     }
 
     // analyzer/analyzerNodeInfo.ts:139

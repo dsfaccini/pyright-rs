@@ -143,6 +143,57 @@ impl<T: Eq> SmallJsSet<T> {
     }
 }
 
+/// An array that always holds at least one `Copy` value and is replaced whole, never
+/// edited: the first value sits inline, so a one-value array needs no allocation, and a
+/// copy is a value copy or a reference count increment.
+#[derive(Clone, Debug, jsrt::Trace)]
+pub struct NonEmptyList<T: Copy> {
+    first: T,
+    rest: Option<std::rc::Rc<Vec<T>>>,
+}
+
+#[allow(clippy::len_without_is_empty, reason = "never empty")]
+impl<T: Copy> NonEmptyList<T> {
+    pub fn one(first: T) -> Self {
+        NonEmptyList { first, rest: None }
+    }
+
+    /// `None` for an empty slice.
+    pub fn from_slice(items: &[T]) -> Option<Self> {
+        let (&first, rest) = items.split_first()?;
+        Some(NonEmptyList { first, rest: (!rest.is_empty()).then(|| std::rc::Rc::new(rest.to_vec())) })
+    }
+
+    /// A list of `f` applied to each value, in order.
+    pub fn map(&self, mut f: impl FnMut(T) -> T) -> Self {
+        let first = f(self.first);
+        NonEmptyList { first, rest: self.rest.as_ref().map(|rest| std::rc::Rc::new(rest.iter().map(|&v| f(v)).collect())) }
+    }
+
+    pub fn first(&self) -> T {
+        self.first
+    }
+
+    pub fn len(&self) -> usize {
+        1 + self.rest.as_ref().map_or(0, |rest| rest.len())
+    }
+
+    pub fn get(&self, index: usize) -> Option<T> {
+        match index {
+            0 => Some(self.first),
+            _ => self.rest.as_ref().and_then(|rest| rest.get(index - 1).copied()),
+        }
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = T> + '_ {
+        std::iter::once(self.first).chain(self.rest.iter().flat_map(|rest| rest.iter().copied()))
+    }
+
+    pub fn to_vec(&self) -> Vec<T> {
+        self.iter().collect()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -158,6 +209,17 @@ mod tests {
         assert_eq!(map.iter().map(|(k, v)| (k.as_str(), *v)).collect::<Vec<_>>(), [("b", 3), ("a", 2)]);
         assert_eq!(map.get_index(1), Some((&"a".to_string(), &2)));
         assert!(map.contains_key("a") && map.len() == 2);
+    }
+
+    #[test]
+    fn non_empty_list_keeps_one_value_inline() {
+        assert!(NonEmptyList::<u32>::from_slice(&[]).is_none());
+        let one = NonEmptyList::one(7u32);
+        assert!(one.rest.is_none() && one.len() == 1 && one.get(1).is_none());
+        let three = NonEmptyList::from_slice(&[1u32, 2, 3]).unwrap();
+        assert_eq!((three.first(), three.len(), three.get(2)), (1, 3, Some(3)));
+        assert_eq!(three.map(|v| v * 10).to_vec(), [10, 20, 30]);
+        assert!(NonEmptyList::from_slice(&[4u32]).unwrap().rest.is_none());
     }
 
     #[test]
