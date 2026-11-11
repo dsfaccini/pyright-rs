@@ -4425,7 +4425,7 @@ pub struct TypeVarDetailsPriv {
     pub scope_id: Option<TypeVarScopeId>,
     pub scope_name: Option<Rc<str>>,
     pub scope_type: Option<TypeVarScopeType>,
-    pub name_with_scope: Option<Rc<str>>,
+    pub name_with_scope: Option<Atom>,
     pub computed_variance: Option<Variance>,
     pub is_unification_var: Option<bool>,
     pub free_type_var: Option<TypeVarType>,
@@ -4749,14 +4749,11 @@ impl TypeVarType {
         // function like `foo(foo(1))`.
         let mut new_name_with_scope = type_.d().priv_.borrow().name_with_scope.clone();
         if let Some(usage_offset) = usage_offset.filter(|usage_offset| *usage_offset != 0) {
-            new_name_with_scope = Some(
-                format!(
-                    "{}-{}",
-                    new_name_with_scope.as_deref().unwrap_or("undefined"),
-                    usage_offset
-                )
-                .into(),
-            );
+            new_name_with_scope = Some(Atom::new(&format!(
+                "{}-{}",
+                new_name_with_scope.as_deref().unwrap_or("undefined"),
+                usage_offset
+            )));
         }
 
         let new_instance = TypeVarType(TypeBase::clone_type(type_.0));
@@ -4779,12 +4776,22 @@ impl TypeVarType {
     }
 
     // analyzer/types.ts:3120
-    pub fn make_name_with_scope(name: &str, scope_id: &str, scope_name: &str) -> Rc<str> {
+    pub fn make_name_with_scope(name: &str, scope_id: &str, scope_name: &str) -> Atom {
         // We include the scopeName here even though it's normally already part
         // of the scopeId. There are cases where it can diverge, specifically
         // in scenarios involving higher-order functions that return generic
         // callable types. See adjustCallableReturnType for details.
-        Rc::from([name, ".", scope_id, ".", scope_name].concat())
+        // The text is built in one buffer per thread and interned.
+        thread_local! {
+            static NAME_WITH_SCOPE: std::cell::RefCell<String> = const { std::cell::RefCell::new(String::new()) };
+        }
+        NAME_WITH_SCOPE.with_borrow_mut(|text| {
+            text.clear();
+            for part in [name, ".", scope_id, ".", scope_name] {
+                text.push_str(part);
+            }
+            Atom::new(text)
+        })
     }
 
     // analyzer/types.ts:3134
@@ -4879,12 +4886,12 @@ impl TypeVarType {
     }
 
     // analyzer/types.ts:3204
-    pub fn get_name_with_scope(type_var_type: TypeVarType) -> Rc<str> {
+    pub fn get_name_with_scope(type_var_type: TypeVarType) -> Atom {
         // If there is no name with scope, fall back on the (unscoped) name.
-        let name_with_scope = type_var_type.d().priv_.borrow().name_with_scope.clone();
+        let name_with_scope = type_var_type.d().priv_.borrow().name_with_scope;
         match name_with_scope {
             Some(name_with_scope) if !name_with_scope.is_empty() => name_with_scope,
-            _ => Rc::from(type_var_type.d().shared.get().name.borrow().as_str()),
+            _ => Atom::new(&type_var_type.d().shared.get().name.borrow()),
         }
     }
 

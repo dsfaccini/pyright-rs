@@ -3,15 +3,14 @@
 //! Evaluator code: allocate with `P::new_eval` (docs/porting.md, "memory").
 
 use crate::analyzer::types::{Type, TypeVarType};
-use jsrt::{LazyJsMap, NonEmptyList, P};
+use jsrt::{Atom, LazyJsMap, NonEmptyList, P};
 use jsrt::cell::RefCell;
-use std::rc::Rc;
 
 // analyzer/constraintSolution.ts:15
 #[derive(jsrt::Trace)]
 #[trace(eval)]
 pub struct ConstraintSolutionSet {
-    pub(crate) _type_var_map: RefCell<LazyJsMap<Rc<str>, Option<P<Type>>>>,
+    pub(crate) _type_var_map: RefCell<LazyJsMap<Atom, Option<P<Type>>>>,
 }
 // Most solution sets stay empty: the map is allocated on first insert (PLAN.md step 6).
 const _: () = assert!(size_of::<ConstraintSolutionSet>() <= 16);
@@ -54,7 +53,7 @@ impl ConstraintSolutionSet {
         let mut index = 0;
         loop {
             let (key, type_) = match self._type_var_map.borrow().get_index(index) {
-                Some((key, type_)) => (key.clone(), *type_),
+                Some((key, type_)) => (*key, *type_),
                 None => break,
             };
             if let Some(type_) = type_ {

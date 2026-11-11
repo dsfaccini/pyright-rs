@@ -6,9 +6,8 @@ use crate::analyzer::type_complexity::get_complexity_score_for_type;
 use crate::analyzer::types::TypeSameOptions;
 use crate::analyzer::types::is_type_same;
 use crate::analyzer::types::{Type, TypeVarScopeId, TypeVarType};
-use jsrt::{JsSet, LazyJsMap, NonEmptyList, P};
+use jsrt::{Atom, JsSet, LazyJsMap, NonEmptyList, P};
 use jsrt::cell::RefCell;
-use std::rc::Rc;
 
 // analyzer/constraintTracker.ts:24
 pub(crate) const MAX_CONSTRAINT_SET_COUNT: u32 = 1024;
@@ -27,7 +26,7 @@ pub struct TypeVarConstraints {
 #[derive(jsrt::Trace)]
 #[trace(eval)]
 pub struct ConstraintSet {
-    pub(crate) _type_var_map: RefCell<LazyJsMap<Rc<str>, TypeVarConstraints>>,
+    pub(crate) _type_var_map: RefCell<LazyJsMap<Atom, TypeVarConstraints>>,
     pub(crate) _scope_ids: RefCell<Option<Box<JsSet<TypeVarScopeId>>>>,
 }
 // Most sets stay empty: the map and the scope ids are allocated on first insert (PLAN.md step 6).
@@ -93,11 +92,11 @@ impl ConstraintSet {
         }
 
         let mut is_same = true;
-        let entries: Vec<(Rc<str>, TypeVarConstraints)> = self
+        let entries: Vec<(Atom, TypeVarConstraints)> = self
             ._type_var_map
             .borrow()
             .iter()
-            .map(|(k, v)| (k.clone(), v.clone()))
+            .map(|(k, v)| (*k, v.clone()))
             .collect();
         for (key, value) in entries {
             let other_value = other._type_var_map.borrow().get(&key).cloned();
