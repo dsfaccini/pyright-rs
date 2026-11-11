@@ -121,9 +121,14 @@ fn expand(mut input: DeriveInput) -> syn::Result<TokenStream2> {
     let holds_eval = if container.holds_eval { quote!(true) } else { quote!(false #(|| #holds)*) };
     let eval = container.eval;
     // `#[trace(holds_eval)]` breaks a const cycle, so the type claims no cells:
-    // such a type must hold none.
+    // such a type must hold none, which `trace` asserts at compile time.
     let has_cell = if container.holds_eval { quote!(false) } else { quote!(false #(|| #cells)*) };
     let out_of_line = if container.holds_eval { quote!(false) } else { quote!(false #(|| #outs)*) };
+    let no_cells = if container.holds_eval {
+        quote!(const { assert!(!(false #(|| #cells)*), "a #[trace(holds_eval)] type holds a cell that can hold an evaluator handle") };)
+    } else {
+        quote!()
+    };
 
     // A generic type has no per-instantiation static; the heap falls back to a TypeId map.
     let class_slot = if input.generics.params.is_empty() {
@@ -154,6 +159,7 @@ fn expand(mut input: DeriveInput) -> syn::Result<TokenStream2> {
             #class_slot
             #[allow(unused_variables)]
             fn trace(&self, __t: &mut ::jsrt::Tracer) {
+                #no_cells
                 match self {
                     #(#arms)*
                 }
