@@ -37,7 +37,7 @@ pub unsafe trait Trace {
 ```
 
 - `P<T>` has `HOLDS_EVAL = T::EVAL`. Its `trace` marks the target when the address is in the evaluator range. Marking sets the slot's mark bit and pushes the object on a mark stack; the object's type comes from its block, so a `P<dyn Trait>` traces like any other.
-- Objects leave the mark stack through a FIFO of eight, prefetched when they enter it, so the cache misses of several objects overlap (Cher, Hosking and Vijaykumar, "Software Prefetching for Mark-Sweep Garbage Collection"). The test for an already marked object comes first; the checks for a dangling handle run only on objects marked for the first time.
+- Objects leave the mark stack through a FIFO of eight, prefetched when they enter it, so the cache misses of several objects overlap (Cher, Hosking and Vijaykumar, "Software Prefetching for Mark-Sweep Garbage Collection"). The test for an already marked object comes first, inlined into every trace function: most handles a collection follows point to one. The checks for a dangling handle run only on objects marked for the first time; check mode skips the inlined test, so every handle runs its checks.
 - `#[derive(jsrt::Trace)]` (new proc-macro crate `crates/jsrt_derive`, on the `syn` and `quote` already in `Cargo.lock`): `HOLDS_EVAL` is the OR over the fields; `trace` visits the fields whose type has `HOLDS_EVAL`.
 - `#[trace(eval)]` on a type sets `EVAL`. `P::new_eval` does not compile for a type without it, so a `P<T>` whose `T` lacks `EVAL` never points into the evaluator heap.
 - A std or dependency type has `EVAL = HOLDS_EVAL`: the evaluator allocates `RefCell<Vec<P<Type>>>` directly, and a `P<RefCell<JsSet<String>>>` (the binder's code-flow expressions) stays a program handle. A list of variances holds no handle, so `TypeAliasSharedInfo.computed_variance` is allocated with `P::new`.
@@ -91,6 +91,7 @@ On by default; `PYRIGHT_RS_GC_GENERATIONAL=0` turns it off, and every collection
 
 - A live, unmarked evaluator slot is dropped in place. `drop_in_place` frees the `Vec`, `String` and map buffers it owns, and releases its `Rc`s. Its live bit clears, so the allocation cursor hands the slot out again.
 - Dropping misses the cache on the buffers a dead object owns. `Trace::prefetch_owned`, which the derive writes like `trace`, prefetches a value's `Vec`, `String`, `Box`, `Rc` and `IndexMap` buffers; the sweep calls it on the dead object four slots ahead of the one it drops.
+- The sweep calls one function per type on each bitmap word, so the drop and the prefetch inline into its loop, and a type without drop glue costs nothing per dead object. Check mode drops one object at a time and poisons its slot before the next drop.
 - No port type implements `Drop`, and the std drops never dereference a `P`, so the order in which dead objects drop does not matter.
 - Allocation, root registration and collection never nest: the heap panics when a root, `Trace` impl or drop allocates.
 - A panic while marking (check mode's assertions, a borrowed `RefCell`) clears the marks before it unwinds, so a later collection traces everything again. A panic while sweeping aborts the process.
