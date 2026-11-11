@@ -15,6 +15,7 @@ Shrink the program heap: parse trees, tokens and binder objects, which are never
 - `FlowNode` is the header; a flow node is allocated as `FlowAlloc<D>`. `FlowNode::create(flags, id, details)` takes the details struct (`FlowPlain` for a bare node); `node.d()` returns `FlowNodeDetails`, an enum of `&'static Flow<Name>Details`.
 - `Declaration` is the `DeclarationBase` header; a declaration is allocated as `DeclarationAlloc<D>`, its interface chosen by `type_`. `Declaration::create` (program heap) and `create_eval` (evaluator heap) take the details struct (`NoDeclarationDetails` for `TypeParam`, `Class` and `SpecialBuiltInClass`); `decl.d()` returns `DeclarationDetails`, an enum of `&'static <Name>DeclarationDetails`. `module_name` is `RefCell<Rc<str>>`, shared with `AnalyzerFileInfo.module_name`, which is `Rc<str>`. The function statement lists, parameter inference fields and doc strings are `jsrt::OptionRefCell`.
 - `Symbol._synthesized_type_info` and `_typing_symbol_alias` are `jsrt::OptionRefCell`: `borrow()`, `borrow_mut()`.
+- `Scope.not_local_bindings` is `RefCell<jsrt::LazyJsMap>`, `slots_names` a `jsrt::OptionRefCell`, `chained_module_level_scope_lookup` boxed.
 - `AnalyzerNodeInfo` keeps `flow_node` inline; the other fields live in `AnalyzerNodeInfoCold`. Read `info.cold().and_then(|c| c.scope.get())`, write `info.cold_mut().scope.set(..)`.
 
 ## Shared-file edits
@@ -26,6 +27,7 @@ Shrink the program heap: parse trees, tokens and binder objects, which are never
 - `source_file.rs`, `parser.rs`: own the tokenizer output.
 - `binder.rs`, `code_flow_utils.rs` (tests), `oracle/flow.rs`: flow node creation and `d()`.
 - `binder.rs`, `checker.rs`, `declaration_utils.rs`, `named_tuples.rs`, `typed_dicts.rs`, `type_evaluator.rs`, `source_file.rs`, `analyzer_file_info.rs`, `examples/oracle_bind.rs`: declaration creation and `module_name` as `Rc<str>`. `crates/jsrt/src/cell.rs`: `OptionRefCell: From<Option<T>>`.
+- `crates/jsrt/src/collections.rs`: `LazyJsMap::get_mut`.
 - `oracle/bind.rs`, `oracle/flow.rs`: read the cold node-info fields.
 - `.d` to `.d()` at parse-node match sites in `binder.rs`, `checker.rs`, `code_flow_types.rs`, `declaration.rs`, `decorators.rs`, `enums.rs`, `named_tuples.rs`, `analyzer/parse_tree_utils.rs`, `sentinel.rs`, `static_expressions.rs`, `typed_dicts.rs`, `oracle/tree.rs`, `parser/parse_tree_utils.rs`, `parser.rs`.
 

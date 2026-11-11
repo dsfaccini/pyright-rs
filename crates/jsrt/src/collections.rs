@@ -62,6 +62,15 @@ impl<K: Eq, V> LazyJsMap<K, V> {
         self.position(key).is_some()
     }
 
+    pub fn get_mut<Q>(&mut self, key: &Q) -> Option<&mut V>
+    where
+        K: std::borrow::Borrow<Q>,
+        Q: ?Sized + Eq,
+    {
+        let index = self.position(key)?;
+        self.0.as_mut().map(|map| &mut map[index].1)
+    }
+
     pub fn get_index(&self, index: usize) -> Option<(&K, &V)> {
         self.0.as_ref()?.get(index).map(|(k, v)| (k, v))
     }

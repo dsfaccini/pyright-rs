@@ -3,7 +3,7 @@
 use jsrt::cell::{Cell, RefCell};
 use std::rc::Rc;
 
-use jsrt::{JsMap, P};
+use jsrt::{LazyJsMap, OptionRefCell, P};
 
 use super::declaration::DeclarationType;
 use super::symbol::{Symbol, SymbolFlags, SymbolTable};
@@ -125,18 +125,19 @@ pub struct Scope {
     // consulted after the current scope is checked.
     /// Set only for notebook cells, which the CLI never checks.
     #[trace(skip)]
-    pub chained_module_level_scope_lookup: Option<ScopeChainedModuleLevelLookup>,
+    pub chained_module_level_scope_lookup: Option<Box<ScopeChainedModuleLevelLookup>>,
 
     // Association between names and symbols.
     pub symbol_table: SymbolTable,
 
     // Names within this scope that are bound to other scopes
     // (either nonlocal or global).
-    pub not_local_bindings: RefCell<JsMap<String, NameBindingType>>,
+    /// Allocated on the first insert: few scopes bind a name nonlocal or global.
+    pub not_local_bindings: RefCell<LazyJsMap<String, NameBindingType>>,
 
     // Names defined by __slots__ within this scope (used only
     // for class scopes).
-    pub slots_names: RefCell<Option<Vec<String>>>,
+    pub slots_names: OptionRefCell<Vec<String>>,
 
     // Indicates that __slots__ definitely contains at least one name,
     // even if the complete set of names is unknown.
@@ -150,6 +151,7 @@ pub struct Scope {
     /// This scope's own handle, for methods that return `this`.
     _self: Cell<Option<P<Scope>>>,
 }
+const _: () = assert!(size_of::<Scope>() <= 72);
 
 impl Scope {
     // analyzer/scope.ts:133
@@ -163,10 +165,10 @@ impl Scope {
             type_,
             parent,
             proxy,
-            chained_module_level_scope_lookup,
+            chained_module_level_scope_lookup: chained_module_level_scope_lookup.map(Box::new),
             symbol_table: SymbolTable::new(),
-            not_local_bindings: RefCell::new(JsMap::default()),
-            slots_names: RefCell::new(None),
+            not_local_bindings: RefCell::new(LazyJsMap::default()),
+            slots_names: OptionRefCell::new(),
             has_non_empty_slots: Cell::new(false),
             has_potentially_dynamic_symbol_table: Cell::new(false),
             _self: Cell::new(None),
