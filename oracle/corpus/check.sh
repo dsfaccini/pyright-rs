@@ -11,6 +11,8 @@
 #                     a run over the cap is killed and reported as unreadable.
 #   CHECK_FEATURES    cargo features for the build, e.g. jsrt/gc-check for
 #                     PYRIGHT_RS_GC=check (docs/collector-design.md).
+#   PYRIGHT_RS_BIN    binary to check (default: this tree's target/release/pyright-rs,
+#                     built first), e.g. target/dist/pyright-rs from bench/build-dist.sh
 # Exit status: 0 when every corpus matches, 1 otherwise.
 set -u
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)
@@ -18,14 +20,18 @@ REF=$HOME/pyright-rs-data/reference
 OUT=$1; shift
 corpora=${*:-samples typeshed primer-attrs primer-bidict primer-more-itertools primer-packaging primer-python-chess}
 export PYRIGHT_RS_MODULE_PATH=${PYRIGHT_RS_MODULE_PATH:-$HOME/pyright-oracle/packages/pyright/dist}
-cargo build -q --release ${CHECK_FEATURES:+--features "$CHECK_FEATURES"} --manifest-path "$ROOT/Cargo.toml" || exit 1
+if [ -z "${PYRIGHT_RS_BIN:-}" ]; then
+  cargo build -q --release ${CHECK_FEATURES:+--features "$CHECK_FEATURES"} --manifest-path "$ROOT/Cargo.toml" || exit 1
+  PYRIGHT_RS_BIN=$ROOT/target/release/pyright-rs
+fi
+PYRIGHT_RS_BIN=$(realpath "$PYRIGHT_RS_BIN")
 status=0
 for c in $corpora; do
   echo "== $c"
   # pydantic-ai runs take up to 30 GB each, so they run one at a time across worktrees.
   lock=()
   [ "$c" = pydantic-ai ] && lock=(flock /tmp/pyright-rs-pydantic-ai.lock)
-  ORACLE_CHECKER="$ROOT/target/release/pyright-rs" ORACLE_OUT="$OUT/$c" \
+  ORACLE_CHECKER="$PYRIGHT_RS_BIN" ORACLE_OUT="$OUT/$c" \
     ORACLE_TYPESHED="$PYRIGHT_RS_MODULE_PATH/typeshed-fallback" \
     "${lock[@]}" systemd-run --user --scope -q -p MemoryMax="${CHECK_MEMORY_MAX:-28G}" -p MemorySwapMax=0 \
     python3 "$ROOT/oracle/corpus/run.py" "$ROOT/oracle/corpus/$c.json" > /dev/null 2>&1
