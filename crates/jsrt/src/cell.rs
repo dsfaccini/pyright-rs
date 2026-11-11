@@ -417,6 +417,33 @@ impl<T> OptionRefCell<T> {
     }
 }
 
+impl<T: 'static> OptionRefCell<T> {
+    /// The value, or `empty` while the cell is unallocated or `None`: the reader of an
+    /// optional record whose fields are all optional (`cold()`, docs/evaluator-design.md).
+    pub fn borrow_or(&self, empty: &'static T) -> OptionRefOr<'_, T> {
+        OptionRefOr(self.borrow(), empty)
+    }
+
+    /// The value, allocated as `T::default()` on first use.
+    pub fn borrow_mut_or_default(&self) -> RefMut<'_, T>
+    where
+        T: Trace + Default,
+    {
+        RefMut::map(self.borrow_mut(), |value| value.get_or_insert_with(Default::default))
+    }
+}
+
+/// A shared borrow of an [`OptionRefCell`] that reads a fallback while the cell holds no value.
+pub struct OptionRefOr<'a, T: 'static>(OptionRef<'a, T>, &'static T);
+
+impl<T> Deref for OptionRefOr<'_, T> {
+    type Target = T;
+
+    fn deref(&self) -> &T {
+        self.0.as_ref().unwrap_or(self.1)
+    }
+}
+
 /// A cell holding `value`, allocated only when it is `Some`.
 impl<T: Trace> From<Option<T>> for OptionRefCell<T> {
     fn from(value: Option<T>) -> Self {

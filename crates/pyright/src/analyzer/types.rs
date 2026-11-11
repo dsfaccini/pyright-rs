@@ -203,6 +203,17 @@ pub struct TypeBaseProps {
     pub condition: Option<Vec<TypeCondition>>,
 }
 
+impl TypeBaseProps {
+    fn is_empty(&self) -> bool {
+        let TypeBaseProps { instantiable_depth, special_form, type_form, type_alias_info, condition } = self;
+        instantiable_depth.is_none()
+            && special_form.is_none()
+            && type_form.is_none()
+            && type_alias_info.is_none()
+            && condition.is_none()
+    }
+}
+
 // analyzer/types.ts:195
 #[derive(jsrt::Trace)]
 #[trace(eval)]
@@ -263,6 +274,15 @@ impl TypeBase {
         })
     }
 
+    /// `addProps(type).<field> = value`. Every read of `props` is `props?.<field>`, so
+    /// an empty props object reads as none: writing `None` to a type without props
+    /// allocates nothing.
+    fn set_prop<T>(type_: P<Type>, field: fn(&mut TypeBaseProps) -> &mut Option<T>, value: Option<T>) {
+        if value.is_some() || type_.props.borrow().is_some() {
+            *field(&mut TypeBase::add_props(type_)) = value;
+        }
+    }
+
     // analyzer/types.ts:242
     pub fn get_instantiable_depth(type_: P<Type>) -> u32 {
         type_
@@ -275,27 +295,27 @@ impl TypeBase {
 
     // analyzer/types.ts:246
     pub fn set_special_form(type_: P<Type>, special_form: Option<ClassType>) {
-        TypeBase::add_props(type_).special_form = special_form;
+        TypeBase::set_prop(type_, |props| &mut props.special_form, special_form);
     }
 
     // analyzer/types.ts:250
     pub fn set_instantiable_depth(type_: P<Type>, depth: Option<u32>) {
-        TypeBase::add_props(type_).instantiable_depth = depth;
+        TypeBase::set_prop(type_, |props| &mut props.instantiable_depth, depth);
     }
 
     // analyzer/types.ts:254
     pub fn set_type_alias_info(type_: P<Type>, type_alias_info: Option<TypeAliasInfo>) {
-        TypeBase::add_props(type_).type_alias_info = type_alias_info;
+        TypeBase::set_prop(type_, |props| &mut props.type_alias_info, type_alias_info);
     }
 
     // analyzer/types.ts:258
     pub fn set_type_form(type_: P<Type>, type_form: Option<P<Type>>) {
-        TypeBase::add_props(type_).type_form = type_form;
+        TypeBase::set_prop(type_, |props| &mut props.type_form, type_form);
     }
 
     // analyzer/types.ts:262
     pub fn set_condition(type_: P<Type>, condition: Option<Vec<TypeCondition>>) {
-        TypeBase::add_props(type_).condition = condition;
+        TypeBase::set_prop(type_, |props| &mut props.condition, condition);
     }
 
     // analyzer/types.ts:266
@@ -337,7 +357,11 @@ impl TypeBase {
         P::new_eval(Type {
             category: type_.category,
             flags: type_.flags.clone(),
-            props: type_.props.clone(),
+            // `{ ...type.props }`; a copy of an empty props object reads as none (`set_prop`).
+            props: match type_.props.borrow().as_ref() {
+                Some(props) if !props.is_empty() => Some(props.clone()).into(),
+                _ => OptionRefCell::new(),
+            },
             cached: OptionRefCell::new(),
             cached_requires_specialization: Cell::new(None),
             d,
@@ -927,7 +951,8 @@ pub struct ClassDetailsShared {
     pub fields: Cell<SymbolTable>,
     pub type_params: RefCell<Rc<Vec<TypeVarType>>>,
     pub type_var_scope_id: RefCell<Option<TypeVarScopeId>>,
-    pub doc_string: Option<String>,
+    /// Shared by the copies `{ ...shared }` makes, as the TypeScript string is.
+    pub doc_string: Option<Rc<str>>,
     pub data_class_entries: RefCell<Option<Vec<P<DataClassEntry>>>>,
     pub data_class_behaviors: Cell<Option<P<DataClassBehaviors>>>,
     pub named_tuple_entries: RefCell<Option<JsSet<String>>>,
@@ -1095,7 +1120,7 @@ impl ClassType {
         type_source_id: i32,
         declared_metaclass: Option<P<Type>>,
         effective_metaclass: Option<P<Type>>,
-        doc_string: Option<&str>,
+        doc_string: Option<Rc<str>>,
     ) -> ClassType {
         ClassType(P::new_eval(Type {
             category: TypeCategory::Class,
@@ -1119,7 +1144,7 @@ impl ClassType {
                     fields: Cell::new(SymbolTable::new()),
                     type_params: RefCell::new(Rc::new(Vec::new())),
                     type_var_scope_id: RefCell::new(None),
-                    doc_string: doc_string.map(str::to_string),
+                    doc_string,
                     data_class_entries: RefCell::new(None),
                     data_class_behaviors: Cell::new(None),
                     named_tuple_entries: RefCell::new(None),
@@ -2423,16 +2448,17 @@ pub struct FunctionDetailsShared {
     pub type_var_scope_id: RefCell<Option<TypeVarScopeId>>,
     pub method_class: Cell<Option<ClassType>>,
     // Fields few objects set ([cold] in tools/stubgen/typemap.toml): read with `cold()`, write with `cold_mut()`.
-    pub cold: RefCell<Option<Box<FunctionDetailsSharedCold>>>,
+    pub cold: OptionRefCell<FunctionDetailsSharedCold>,
 }
 // Copied by every FunctionType clone that changes it; rare fields live in the cold half (PLAN.md step 6).
-const _: () = assert!(size_of::<FunctionDetailsShared>() <= 192);
+const _: () = assert!(size_of::<FunctionDetailsShared>() <= 168);
 
 // analyzer/types.ts:1729
 #[derive(Clone, Default)]
 #[derive(jsrt::Trace)]
 pub struct FunctionDetailsSharedCold {
-    pub doc_string: Option<String>,
+    /// Shared by the copies `{ ...shared }` makes, as the TypeScript string is.
+    pub doc_string: Option<Rc<str>>,
     pub deprecated_message: Option<String>,
     pub decorator_data_class_behaviors: Option<P<DataClassBehaviors>>,
     pub inferred_return_type: Option<FunctionDetailsSharedInferredReturnType>,
@@ -2447,26 +2473,22 @@ impl FunctionDetailsSharedCold {
     };
 
     /// The `cold` field that holds these fields: unallocated while every one is unset.
-    pub fn into_cold(self) -> RefCell<Option<Box<FunctionDetailsSharedCold>>> {
+    pub fn into_cold(self) -> OptionRefCell<FunctionDetailsSharedCold> {
         let unset = self.doc_string.is_none()
             && self.deprecated_message.is_none()
             && self.decorator_data_class_behaviors.is_none()
             && self.inferred_return_type.is_none();
-        RefCell::new((!unset).then(|| Box::new(self)))
+        (!unset).then_some(self).into()
     }
 }
 
 impl FunctionDetailsShared {
-    pub fn cold(&self) -> jsrt::cell::Ref<'_, FunctionDetailsSharedCold> {
-        jsrt::cell::Ref::map(self.cold.borrow(), |cold| {
-            cold.as_deref().unwrap_or(&FunctionDetailsSharedCold::EMPTY)
-        })
+    pub fn cold(&self) -> jsrt::cell::OptionRefOr<'_, FunctionDetailsSharedCold> {
+        self.cold.borrow_or(&FunctionDetailsSharedCold::EMPTY)
     }
 
     pub fn cold_mut(&self) -> jsrt::cell::RefMut<'_, FunctionDetailsSharedCold> {
-        jsrt::cell::RefMut::map(self.cold.borrow_mut(), |cold| {
-            &mut **cold.get_or_insert_with(Default::default)
-        })
+        self.cold.borrow_mut_or_default()
     }
 
     /// `field = value`, without allocating the cold half to hold a `None`.
@@ -2564,7 +2586,7 @@ impl FunctionType {
         full_name: &str,
         module_name: &str,
         function_flags: FunctionTypeFlags,
-        doc_string: Option<&str>,
+        doc_string: Option<Rc<str>>,
     ) -> FunctionType {
         FunctionType::create(
             name,
@@ -2579,7 +2601,7 @@ impl FunctionType {
     // analyzer/types.ts:1833
     pub fn create_instantiable(
         function_flags: FunctionTypeFlags,
-        doc_string: Option<&str>,
+        doc_string: Option<Rc<str>>,
     ) -> FunctionType {
         FunctionType::create(
             "",
@@ -2614,7 +2636,7 @@ impl FunctionType {
         module_name: &str,
         function_flags: FunctionTypeFlags,
         type_flags: TypeFlags,
-        doc_string: Option<&str>,
+        doc_string: Option<Rc<str>>,
     ) -> FunctionType {
         FunctionType(P::new_eval(Type {
             category: TypeCategory::Function,
@@ -2634,7 +2656,7 @@ impl FunctionType {
                     declaration: Cell::new(None),
                     type_var_scope_id: RefCell::new(None),
                     cold: FunctionDetailsSharedCold {
-                        doc_string: doc_string.map(str::to_string),
+                        doc_string,
                         deprecated_message: None,
                         decorator_data_class_behaviors: None,
                         inferred_return_type: None,
@@ -3003,7 +3025,7 @@ impl FunctionType {
     }
 
     // analyzer/types.ts:2074
-    pub fn clone_with_doc_string(type_: FunctionType, doc_string: Option<String>) -> FunctionType {
+    pub fn clone_with_doc_string(type_: FunctionType, doc_string: Option<Rc<str>>) -> FunctionType {
         let new_function = FunctionType(TypeBase::clone_type(type_.0));
 
         // Make a shallow clone of the details.

@@ -15,7 +15,7 @@ use crate::common::log_tracker::LogTracker;
 use crate::common::service_provider::ServiceProvider;
 use crate::common::uri::uri::Uri;
 use jsrt::P;
-use std::cell::{Cell, RefCell};
+use jsrt::cell::{Cell, RefCell};
 
 // analyzer/sourceFile.ts:209
 pub struct SourceFile {

@@ -18,8 +18,8 @@ use crate::parser::parse_nodes::{
     ArgumentNode, ClassNode, ExpressionNode, NameNode, ParamCategory, TypeAnnotationNode,
 };
 use crate::{analyzer, common, parser};
+use jsrt::cell::{Cell, RefCell, RefMut};
 use jsrt::{JsBigInt, JsMap, JsSet, JsString, NumberValue, OptionRefCell, P, flag_ops};
-use std::cell::{Cell, RefCell, RefMut};
 use std::ops::Deref;
 use std::rc::Rc;
 
@@ -586,7 +586,7 @@ pub struct ClassDetailsShared {
     pub fields: Cell<SymbolTable>,
     pub type_params: RefCell<Vec<TypeVarType>>,
     pub type_var_scope_id: RefCell<Option<String>>,
-    pub doc_string: Option<String>,
+    pub doc_string: Option<Rc<str>>,
     pub data_class_entries: RefCell<Option<Vec<P<DataClassEntry>>>>,
     pub data_class_behaviors: Cell<Option<P<DataClassBehaviors>>>,
     pub named_tuple_entries: RefCell<Option<JsSet<String>>>,
@@ -1225,13 +1225,13 @@ pub struct FunctionDetailsShared {
     pub type_var_scope_id: RefCell<Option<String>>,
     pub method_class: Cell<Option<ClassType>>,
     // Fields few objects set ([cold] in tools/stubgen/typemap.toml): read with `cold()`, write with `cold_mut()`.
-    pub cold: RefCell<Option<Box<FunctionDetailsSharedCold>>>,
+    pub cold: jsrt::OptionRefCell<FunctionDetailsSharedCold>,
 }
 
 // analyzer/types.ts:1729
 #[derive(Clone, Default)]
 pub struct FunctionDetailsSharedCold {
-    pub doc_string: Option<String>,
+    pub doc_string: Option<Rc<str>>,
     pub deprecated_message: Option<String>,
     pub decorator_data_class_behaviors: Option<P<DataClassBehaviors>>,
     pub inferred_return_type: Option<FunctionDetailsSharedInferredReturnType>,
@@ -1246,26 +1246,22 @@ impl FunctionDetailsSharedCold {
     };
 
     /// The `cold` field that holds these fields: unallocated while every one is unset.
-    pub fn into_cold(self) -> RefCell<Option<Box<FunctionDetailsSharedCold>>> {
+    pub fn into_cold(self) -> jsrt::OptionRefCell<FunctionDetailsSharedCold> {
         let unset = self.doc_string.is_none()
             && self.deprecated_message.is_none()
             && self.decorator_data_class_behaviors.is_none()
             && self.inferred_return_type.is_none();
-        RefCell::new((!unset).then(|| Box::new(self)))
+        (!unset).then_some(self).into()
     }
 }
 
 impl FunctionDetailsShared {
-    pub fn cold(&self) -> std::cell::Ref<'_, FunctionDetailsSharedCold> {
-        std::cell::Ref::map(self.cold.borrow(), |cold| {
-            cold.as_deref().unwrap_or(&FunctionDetailsSharedCold::EMPTY)
-        })
+    pub fn cold(&self) -> jsrt::cell::OptionRefOr<'_, FunctionDetailsSharedCold> {
+        self.cold.borrow_or(&FunctionDetailsSharedCold::EMPTY)
     }
 
-    pub fn cold_mut(&self) -> std::cell::RefMut<'_, FunctionDetailsSharedCold> {
-        std::cell::RefMut::map(self.cold.borrow_mut(), |cold| {
-            &mut **cold.get_or_insert_with(Default::default)
-        })
+    pub fn cold_mut(&self) -> jsrt::cell::RefMut<'_, FunctionDetailsSharedCold> {
+        self.cold.borrow_mut_or_default()
     }
 
     /// `field = value`, without allocating the cold half to hold a `None`.

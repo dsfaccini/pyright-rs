@@ -9,8 +9,8 @@
 )]
 
 use crate::analyzer::symbol::{Symbol, SymbolTable};
+use jsrt::cell::{Cell, RefCell};
 use jsrt::{JsMap, P};
-use std::cell::{Cell, RefCell};
 
 // analyzer/scope.ts:16
 #[repr(i32)]

@@ -134,8 +134,8 @@ How each class and interface of the stubbed files is held (docs/porting.md "memo
 - `analyzer/typeEvaluatorTypes.ts:PrefetchedTypes`: value; written: noneTypeClass at analyzer/typeEvaluator.ts:27032; never stored in a second place
 - `analyzer/typeEvaluatorTypes.ts:TypeResult`: handle; written: type at analyzer/tuples.ts:146; stored at analyzer/typeEvaluator.ts:891
 - `analyzer/typeEvaluatorTypes.ts:TypeResultWithNode`: value; never written after construction; stored at analyzer/typeEvaluator.ts:7583
-- `analyzer/typeEvaluatorTypes.ts:MemberAccessDeprecationInfo`: value; never written after construction; stored at analyzer/typeEvaluator.ts:2653
-- `analyzer/typeEvaluatorTypes.ts:MagicMethodDeprecationInfo`: value; never written after construction; stored at analyzer/operations.ts:245
+- `analyzer/typeEvaluatorTypes.ts:MemberAccessDeprecationInfo`: rc; [modes]
+- `analyzer/typeEvaluatorTypes.ts:MagicMethodDeprecationInfo`: rc; [modes]
 - `analyzer/typeEvaluatorTypes.ts:EvaluatorUsage`: value; never written after construction; never stored in a second place
 - `analyzer/typeEvaluatorTypes.ts:ClassTypeResult`: value; never written after construction; never stored in a second place
 - `analyzer/typeEvaluatorTypes.ts:FunctionTypeResult`: value; never written after construction; never stored in a second place

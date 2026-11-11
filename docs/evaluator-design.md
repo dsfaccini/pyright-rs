@@ -206,9 +206,9 @@ Then:
 
 ### cold fields
 
-`[cold]` names, per value or handle struct, the fields few of its objects set. They move into `<Struct>Cold`, allocated on the first write: a value struct holds it as `pub cold: Option<Box<<Struct>Cold>>`, a handle struct as `pub cold: RefCell<Option<Box<<Struct>Cold>>>` with plain fields inside. Every cold field is optional, so an unset field reads the same either way. The struct's other fields and its copy semantics stay as they were: cloning the struct clones its cold half.
+`[cold]` names, per value or handle struct, the fields few of its objects set. They move into `<Struct>Cold`, allocated on the first write: a value struct holds it as `pub cold: Option<Box<<Struct>Cold>>`, a handle struct as `pub cold: jsrt::OptionRefCell<<Struct>Cold>` with plain fields inside. Every cold field is optional, so an unset field reads the same either way. The struct's other fields and its copy semantics stay as they were: cloning the struct clones its cold half.
 
-- `cold()` reads, returning a shared empty `<Struct>Cold` while none is allocated. On a handle it returns a `Ref`: copy the value out (`let x = r.cold().f.clone();`) before an `if let`, `match` or loop whose body can reach the same object, since the borrow lives as long as the scrutinee.
+- `cold()` reads, returning a shared empty `<Struct>Cold` while none is allocated. On a handle it returns a borrow (`jsrt::cell::OptionRefOr`): copy the value out (`let x = r.cold().f.clone();`) before an `if let`, `match` or loop whose body can reach the same object, since the borrow lives as long as the scrutinee.
 - `cold_mut()` allocates and writes. `set_cold(|cold| &mut cold.f, value)` writes a value that may be `None` without allocating.
 - `<Struct>Cold { f: v, ..Default::default() }.into_cold()` builds the `cold` field in a struct literal; it stays unallocated when every field is unset.
 

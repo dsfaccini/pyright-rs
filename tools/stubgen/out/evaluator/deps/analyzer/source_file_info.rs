@@ -10,7 +10,7 @@
 
 use crate::analyzer::source_file::SourceFile;
 use jsrt::P;
-use std::cell::Cell;
+use jsrt::cell::Cell;
 
 // analyzer/sourceFileInfo.ts:15
 pub struct SourceFileInfo {

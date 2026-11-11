@@ -20,7 +20,7 @@ use crate::parser::parse_nodes::{
     PatternValueNode,
 };
 use jsrt::P;
-use std::cell::Cell;
+use jsrt::cell::Cell;
 use std::rc::Rc;
 
 thread_local! {

@@ -10,8 +10,8 @@
 
 use crate::analyzer::py_typed_utils::PyTypedInfo;
 use crate::common::uri::uri::Uri;
+use jsrt::cell::{Cell, RefCell};
 use jsrt::{JsMap, P};
-use std::cell::{Cell, RefCell};
 
 // analyzer/importResult.ts:27
 pub struct ImportResult {

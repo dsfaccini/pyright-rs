@@ -667,6 +667,14 @@ impl ThreadHeap {
                 if class.free != 0 {
                     class.live = unsafe { meta.bits.add(class.word as usize) };
                     self.since_gc += class.info.slot as usize;
+                    // `take` prefetches the slot after the next; the next is this word's second.
+                    let second = class.free & (class.free - 1);
+                    if second != 0 {
+                        let slot = class.info.slot as usize;
+                        let ahead = class.base.wrapping_add((class.word as usize * 64 + second.trailing_zeros() as usize) * slot);
+                        prefetch(ahead);
+                        prefetch(ahead.wrapping_add(slot - 1));
+                    }
                     return unsafe { class.take() };
                 }
             }
@@ -693,7 +701,18 @@ impl Class {
         let j = self.free.trailing_zeros();
         self.free &= self.free - 1;
         unsafe { *self.live |= 1 << j };
-        self.base.wrapping_add((self.word as usize * 64 + j as usize) * self.info.slot as usize)
+        let slot = self.info.slot as usize;
+        let word = self.base.wrapping_add(self.word as usize * 64 * slot);
+        let after = self.free & self.free.wrapping_sub(1);
+        if after != 0 {
+            // A slot reused after a sweep is cold. Prefetch the one after the next,
+            // its first and last cache lines; the allocation before this one
+            // prefetched the next.
+            let ahead = word.wrapping_add(after.trailing_zeros() as usize * slot);
+            prefetch(ahead);
+            prefetch(ahead.wrapping_add(slot - 1));
+        }
+        word.wrapping_add(j as usize * slot)
     }
 }
 

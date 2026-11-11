@@ -21,8 +21,8 @@ use crate::common::console::ConsoleInterface;
 use crate::common::log_tracker::LogTracker;
 use crate::common::service_provider::ServiceProvider;
 use crate::common::uri::uri::Uri;
+use jsrt::cell::{Cell, RefCell};
 use jsrt::{JsMap, JsSet, P};
-use std::cell::{Cell, RefCell};
 
 // analyzer/program.ts:146
 pub struct Program {

@@ -2408,7 +2408,7 @@ pub(crate) fn narrow_type_for_instance(
                         get_type_source_id(error_node),
                         None,
                         concrete_var_shared.effective_metaclass.get(),
-                        concrete_var_shared.doc_string.as_deref(),
+                        concrete_var_shared.doc_string.clone(),
                     );
                     *new_class_type.d().shared.get().base_classes.borrow_mut() =
                         Rc::new(vec![concrete_var_type.0]);
