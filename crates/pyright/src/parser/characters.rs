@@ -1,8 +1,8 @@
 //! Port of `packages/pyright-internal/src/parser/characters.ts`.
 //!
 //! TypeScript builds the fast table at module load and the full maps on the
-//! first non-ASCII lookup. Every build writes the same values, so here one lazy
-//! build of all tables gives the same lookups.
+//! first lookup past it. Every build writes the same values, so here each is
+//! built lazily on its first use: `fast_table()`, then `tables()`.
 
 use std::sync::OnceLock;
 
@@ -50,18 +50,26 @@ struct IdentifierTables {
     surrogate_char_map: FxHashMap<u32, CharCategoryMap>,
 }
 
+static FAST_TABLE: OnceLock<[CharCategory; _IDENTIFIER_CHAR_FAST_TABLE_SIZE as usize]> = OnceLock::new();
 static TABLES: OnceLock<IdentifierTables> = OnceLock::new();
 
+/// The table TypeScript builds at module load, `_buildIdentifierLookupTable(true)`.
+fn fast_table() -> &'static [CharCategory; _IDENTIFIER_CHAR_FAST_TABLE_SIZE as usize] {
+    FAST_TABLE.get_or_init(|| _build_identifier_lookup_table(true).fast_table)
+}
+
+/// All tables, which TypeScript builds on the first lookup past the fast table.
 fn tables() -> &'static IdentifierTables {
-    TABLES.get_or_init(_build_identifier_lookup_table)
+    TABLES.get_or_init(|| _build_identifier_lookup_table(false))
 }
 
 // parser/characters.ts:45
 pub fn is_identifier_start_char(char: u16, next_char: Option<u16>) -> bool {
-    let tables = tables();
     if (char as u32) < _IDENTIFIER_CHAR_FAST_TABLE_SIZE {
-        return tables.fast_table[char as usize] == CharCategory::StartIdentifierChar;
+        return fast_table()[char as usize] == CharCategory::StartIdentifierChar;
     }
+
+    let tables = tables();
 
     let char_category = match next_char {
         Some(next_char) => _look_up_surrogate(tables, char, next_char),
@@ -73,11 +81,13 @@ pub fn is_identifier_start_char(char: u16, next_char: Option<u16>) -> bool {
 
 // parser/characters.ts:66
 pub fn is_identifier_char(char: u16, next_char: Option<u16>) -> bool {
-    let tables = tables();
     if (char as u32) < _IDENTIFIER_CHAR_FAST_TABLE_SIZE {
-        return tables.fast_table[char as usize] == CharCategory::StartIdentifierChar
-            || tables.fast_table[char as usize] == CharCategory::IdentifierChar;
+        let fast_table = fast_table();
+        return fast_table[char as usize] == CharCategory::StartIdentifierChar
+            || fast_table[char as usize] == CharCategory::IdentifierChar;
     }
+
+    let tables = tables();
 
     let char_category = match next_char {
         Some(next_char) => _look_up_surrogate(tables, char, next_char),
@@ -294,13 +304,12 @@ fn _build_identifier_lookup_table_from_surrogate_range_table(
 
 // Build a lookup table for to speed up tokenization of identifiers.
 // parser/characters.ts:248
-fn _build_identifier_lookup_table() -> IdentifierTables {
+fn _build_identifier_lookup_table(fast_table_only: bool) -> IdentifierTables {
     let mut tables = IdentifierTables {
         fast_table: [CharCategory::NotIdentifierChar; 256],
         identifier_char_map: CharCategoryMap::default(),
         surrogate_char_map: FxHashMap::default(),
     };
-    let fast_table_only = false;
 
     for table in _IDENTIFIER_CHAR_RANGES {
         _build_identifier_lookup_table_from_unicode_range_table(
@@ -322,20 +331,22 @@ fn _build_identifier_lookup_table() -> IdentifierTables {
 
     // Populate the surrogate tables for characters that require two
     // character codes.
-    for surrogate_table in _IDENTIFIER_CHAR_SURROGATE_RANGES {
-        _build_identifier_lookup_table_from_surrogate_range_table(
-            &mut tables,
-            surrogate_table,
-            CharCategory::IdentifierChar,
-        );
-    }
+    if !fast_table_only {
+        for surrogate_table in _IDENTIFIER_CHAR_SURROGATE_RANGES {
+            _build_identifier_lookup_table_from_surrogate_range_table(
+                &mut tables,
+                surrogate_table,
+                CharCategory::IdentifierChar,
+            );
+        }
 
-    for surrogate_table in _START_CHAR_SURROGATE_RANGES {
-        _build_identifier_lookup_table_from_surrogate_range_table(
-            &mut tables,
-            surrogate_table,
-            CharCategory::StartIdentifierChar,
-        );
+        for surrogate_table in _START_CHAR_SURROGATE_RANGES {
+            _build_identifier_lookup_table_from_surrogate_range_table(
+                &mut tables,
+                surrogate_table,
+                CharCategory::StartIdentifierChar,
+            );
+        }
     }
 
     tables

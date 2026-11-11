@@ -33,9 +33,9 @@ impl FlowNumbering {
 
 /// The flow references of a flow node, in printed field order: `antecedent`,
 /// `antecedents`, `preBranchAntecedent`, `preFinallyGate`.
-fn flow_references(flow_node: &FlowNode) -> Vec<P<FlowNode>> {
+fn flow_references(flow_node: P<FlowNode>) -> Vec<P<FlowNode>> {
     let mut refs = Vec::new();
-    if let Some(antecedent) = flow_node.antecedent() {
+    if let Some(antecedent) = flow_node.d().antecedent() {
         refs.push(antecedent);
     }
     match flow_node.d() {
@@ -53,7 +53,7 @@ fn flow_references(flow_node: &FlowNode) -> Vec<P<FlowNode>> {
     refs
 }
 
-fn flow_node_value(flow_node: &FlowNode, numbering: &FlowNumbering, symbol_names: &FxHashMap<u32, String>) -> Value {
+fn flow_node_value(flow_node: P<FlowNode>, numbering: &FlowNumbering, symbol_names: &FxHashMap<u32, String>) -> Value {
     let flow_ref = |n: P<FlowNode>| numbering.reference(n);
     let node = |n: P<ParseNode>| Value::node(n);
     let target_symbol = |id: u32| {
@@ -190,7 +190,7 @@ pub fn dump_flow(
 
     let mut i = 0;
     while i < numbering.flow_nodes.len() {
-        for reference in flow_references(&numbering.flow_nodes[i]) {
+        for reference in flow_references(numbering.flow_nodes[i]) {
             numbering.visit(reference);
         }
         i += 1;
@@ -219,7 +219,7 @@ pub fn dump_flow(
 
     w.field(0, "flowNodes", &format::array_header(numbering.flow_nodes.len()));
     for (i, flow_node) in numbering.flow_nodes.iter().enumerate() {
-        flow_node_value(flow_node, &numbering, &symbol_names).emit(&mut w, 1, &format::index_key(i));
+        flow_node_value(*flow_node, &numbering, &symbol_names).emit(&mut w, 1, &format::index_key(i));
     }
 
     w.finish()

@@ -41,7 +41,7 @@ fn as_node(node: impl Into<P<ParseNode>>) -> P<ParseNode> {
 }
 
 /// The `d` fields of a node, under their TypeScript names, in declaration order.
-fn fields(node: &ParseNode) -> Vec<(&'static str, Field<'_>)> {
+fn fields(node: P<ParseNode>) -> Vec<(&'static str, Field<'static>)> {
     match node.d() {
         ParseNodeDetails::Module(d) => vec![(
             "statements",
@@ -604,7 +604,7 @@ fn write_node(
     w.field(depth, key, &header);
 
     let children = get_child_nodes(node, None);
-    let mut node_fields = fields(&node);
+    let mut node_fields = fields(node);
     node_fields.sort_by(|a, b| a.0.cmp(b.0));
     for (field_key, field) in &node_fields {
         write_field(w, depth + 1, field_key, field, node, &children);
@@ -662,11 +662,11 @@ fn write_field(
         Field::Nodes(values) | Field::OptNodes(Some(values)) => {
             write_detail_nodes(w, depth, key, values, holder, children)
         }
-        Field::Token(token) | Field::OptToken(Some(token)) => write_token(w, depth, key, token),
+        Field::Token(token) | Field::OptToken(Some(token)) => write_token(w, depth, key, *token),
         Field::Tokens(tokens) => {
             w.field(depth, key, &format::array_header(tokens.len()));
             for (i, token) in tokens.iter().enumerate() {
-                write_token(w, depth + 1, &format::index_key(i), token);
+                write_token(w, depth + 1, &format::index_key(i), *token);
             }
         }
         Field::Bool(b) | Field::OptBool(Some(b)) => w.field(depth, key, format::boolean(*b)),

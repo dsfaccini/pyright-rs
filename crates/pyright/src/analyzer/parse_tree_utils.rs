@@ -2469,7 +2469,7 @@ pub fn get_comments_at_token_index(
         preceding_index -= 1;
     }
 
-    token.comments()
+    Token::comments(token)
 }
 
 // analyzer/parseTreeUtils.ts:2022

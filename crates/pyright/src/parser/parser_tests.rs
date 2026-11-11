@@ -169,6 +169,7 @@ fn parser_uses_a_precomputed_content_fingerprint_when_provided() {
 
 // tests/parser.test.ts:47
 #[test]
+#[cfg_attr(miri, ignore = "builds the full Unicode identifier tables: over an hour under Miri")]
 fn parser_computes_the_complete_content_fingerprint_for_unicode_text_when_one_is_not_provided() {
     let results = parse_text("π😀\n", new_sink(), ParseOptions::new());
 
@@ -660,7 +661,10 @@ fn node_tokens_outlive_the_tokenizer_output() {
     let results = parse_text("first = 1\ndef second(third): pass\n", new_sink(), ParseOptions::new());
     let tree = results.parser_output.parse_tree;
     drop(results);
-    drop(parse_text(&"other = more\n".repeat(20_000), new_sink(), ParseOptions::new()));
+    // Enough lines to reuse the freed scratch chunks. Miri retires them instead
+    // (PYRIGHT_RS_TOKENS=check in tools/miri.sh), so a stale token is a use after free.
+    let lines = if cfg!(miri) { 200 } else { 20_000 };
+    drop(parse_text(&"other = more\n".repeat(lines), new_sink(), ParseOptions::new()));
 
     let mut names = vec![];
     let mut stack = vec![tree.0];

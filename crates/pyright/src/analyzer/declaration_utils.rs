@@ -37,7 +37,7 @@ pub struct ResolvedAliasInfo {
 }
 
 // analyzer/declarationUtils.ts:27
-pub fn has_type_for_declaration(declaration: &Declaration) -> bool {
+pub fn has_type_for_declaration(declaration: P<Declaration>) -> bool {
     match declaration.type_ {
         DeclarationType::Intrinsic
         | DeclarationType::Class
@@ -77,6 +77,7 @@ pub fn has_type_for_declaration(declaration: &Declaration) -> bool {
         }
 
         DeclarationType::Variable => declaration
+            .d()
             .variable()
             .unwrap()
             .type_annotation_node
@@ -89,8 +90,8 @@ pub fn has_type_for_declaration(declaration: &Declaration) -> bool {
 
 // analyzer/declarationUtils.ts:71
 pub fn are_declarations_same(
-    decl1: &Declaration,
-    decl2: &Declaration,
+    decl1: P<Declaration>,
+    decl2: P<Declaration>,
     treat_module_in_import_and_from_import_same: bool,
     skip_range_for_aliases: bool,
 ) -> bool {
@@ -114,7 +115,7 @@ pub fn are_declarations_same(
 
     // Alias declarations refer to the entire import statement.
     // We need to further differentiate.
-    if let (Some(alias1), Some(alias2)) = (decl1.alias(), decl2.alias()) {
+    if let (Some(alias1), Some(alias2)) = (decl1.d().alias(), decl2.d().alias()) {
         if *alias1.symbol_name.borrow() != *alias2.symbol_name.borrow()
             || alias1.uses_local_name.get() != alias2.uses_local_name.get()
         {
@@ -144,7 +145,7 @@ pub fn are_declarations_same(
 pub fn get_name_from_declaration(declaration: P<Declaration>) -> Option<String> {
     let node = declaration.node.get();
     match declaration.type_ {
-        DeclarationType::Alias => declaration.alias().unwrap().symbol_name.borrow().clone(),
+        DeclarationType::Alias => declaration.d().alias().unwrap().symbol_name.borrow().clone(),
 
         DeclarationType::Class => Some(
             ClassNode::cast(node)
@@ -278,8 +279,8 @@ pub fn get_declarations_with_uses_local_name_removed(
     decls: &[P<Declaration>],
 ) -> Vec<P<Declaration>> {
     // `{ ...decl }` of an alias declaration: a new object with the same field values.
-    fn copy_alias_declaration(decl: &Declaration) -> P<Declaration> {
-        let alias = decl.alias().unwrap();
+    fn copy_alias_declaration(decl: P<Declaration>) -> P<Declaration> {
+        let alias = decl.d().alias().unwrap();
         let copy = Declaration::create_eval(
             decl.type_,
             decl.node.get(),
@@ -311,8 +312,8 @@ pub fn get_declarations_with_uses_local_name_removed(
                 return local_decl;
             }
 
-            let non_local_decl = copy_alias_declaration(&local_decl);
-            non_local_decl.alias().unwrap().uses_local_name.set(false);
+            let non_local_decl = copy_alias_declaration(local_decl);
+            non_local_decl.d().alias().unwrap().uses_local_name.set(false);
             non_local_decl
         })
         .collect()
@@ -350,8 +351,8 @@ pub fn resolve_alias_declaration(
     options: &ResolveAliasOptions,
 ) -> Option<ResolvedAliasInfo> {
     // `{ ...decl }` of an alias declaration: a new object with the same field values.
-    fn copy_alias_declaration(decl: &Declaration) -> P<Declaration> {
-        let alias = decl.alias().unwrap();
+    fn copy_alias_declaration(decl: P<Declaration>) -> P<Declaration> {
+        let alias = decl.d().alias().unwrap();
         let copy = Declaration::create_eval(
             decl.type_,
             decl.node.get(),
@@ -390,7 +391,7 @@ pub fn resolve_alias_declaration(
 
     loop {
         let symbol_name = cur_declaration
-            .alias()
+            .d().alias()
             .and_then(|alias| alias.symbol_name.borrow().clone());
         let Some(symbol_name) = symbol_name.filter(|name| !name.is_empty()) else {
             return Some(ResolvedAliasInfo {
@@ -400,7 +401,7 @@ pub fn resolve_alias_declaration(
                 private_py_typed_importer,
             });
         };
-        let cur_alias = cur_declaration.alias().unwrap();
+        let cur_alias = cur_declaration.d().alias().unwrap();
 
         // If we are not supposed to follow local alias names and this
         // is a local name, don't continue to follow the alias.
@@ -450,7 +451,7 @@ pub fn resolve_alias_declaration(
                     )?;
                 }
 
-                let submodule_fallback = copy_alias_declaration(&submodule_fallback);
+                let submodule_fallback = copy_alias_declaration(submodule_fallback);
                 let mut base_module_name = submodule_fallback.module_name().to_string();
 
                 if !base_module_name.is_empty() {
@@ -551,7 +552,7 @@ pub fn resolve_alias_declaration(
             // the module is foo, and the foo.__init__.py file contains the statement
             // "from foo import bar", we want to import the foo/bar.py submodule.
             if let Some(submodule_fallback) = cur_declaration
-                .alias()
+                .d().alias()
                 .and_then(|alias| alias.submodule_fallback.get())
             {
                 return resolve_alias_declaration(import_lookup, submodule_fallback, options);

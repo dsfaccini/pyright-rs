@@ -921,7 +921,7 @@ impl ParseTreeVisitor<bool> for Checker {
                     let function_decl = self._node_info.get_declaration(enclosing_function_node.0);
                     if function_decl.is_some_and(|decl| {
                         decl.type_ == analyzer::declaration::DeclarationType::Function
-                            && decl.function().is_some_and(|f| f.is_generator.get())
+                            && decl.d().function().is_some_and(|f| f.is_generator.get())
                     }) {
                         self._evaluator.add_diagnostic(
                             DiagnosticRule::reportGeneralTypeIssues,
@@ -1449,7 +1449,7 @@ impl ParseTreeVisitor<bool> for Checker {
             };
 
             for token in string_tokens {
-                let unescaped_result = parser::string_token_utils::get_unescaped_string(&token, true);
+                let unescaped_result = parser::string_token_utils::get_unescaped_string(token, true);
                 let mut start = token.start;
                 if token.type_ == TokenType::String {
                     let string_token = StringToken::cast(token).unwrap();
@@ -1712,7 +1712,7 @@ impl ParseTreeVisitor<bool> for Checker {
         };
 
         for decl in decls {
-            let submodule_fallback = decl.alias().and_then(|alias| alias.submodule_fallback.get());
+            let submodule_fallback = decl.d().alias().and_then(|alias| alias.submodule_fallback.get());
             if !analyzer::declaration::is_alias_declaration(&decl)
                 || submodule_fallback.is_none()
                 || decl.node.get() != node.0
@@ -2770,7 +2770,7 @@ impl Checker {
 
         let function_decl = function_type.d().shared.get().declaration.get();
         let has_yield_statements = function_decl.is_some_and(|function_decl| {
-            function_decl.function().is_some_and(|function_decl| {
+            function_decl.d().function().is_some_and(|function_decl| {
                 function_decl
                     .yield_statements
                     .borrow()
@@ -4088,7 +4088,7 @@ impl Checker {
                 let resolved_decl = self._evaluator.resolve_alias_declaration(*decl, true, None);
                 if let Some(resolved_decl) = resolved_decl {
                     if resolved_decl
-                        .variable()
+                        .d().variable()
                         .is_some_and(|variable| variable.is_final.get().unwrap_or(false))
                     {
                         return true;
@@ -4183,7 +4183,7 @@ impl Checker {
 
             let mut report_redeclaration = false;
 
-            if let Some(variable_decl) = decl.variable() {
+            if let Some(variable_decl) = decl.d().variable() {
                 if variable_decl.inferred_type_source.get().is_some() {
                     if saw_assignment {
                         let mut exempt_assignment = false;
@@ -4226,7 +4226,7 @@ impl Checker {
         // If it's not a stub file, an assignment must be provided.
         if !saw_assignment && !self._file_info.is_stub_file {
             let first_decl = decls.iter().copied().find(|decl| {
-                decl.variable()
+                decl.d().variable()
                     .is_some_and(|variable| variable.is_final.get().unwrap_or(false))
             });
             if let Some(first_decl) = first_decl {
@@ -4370,7 +4370,7 @@ impl Checker {
 
         let primary_decl_info: String = match primary_decl.type_ {
             analyzer::declaration::DeclarationType::Function => {
-                if primary_decl.function().is_some_and(|function| function.is_method.get()) {
+                if primary_decl.d().function().is_some_and(|function| function.is_method.get()) {
                     LocAddendum::see_method_declaration()
                 } else {
                     LocAddendum::see_function_declaration()
@@ -4490,7 +4490,7 @@ impl Checker {
                 if !duplicate_is_ok {
                     let diag = self._evaluator.add_diagnostic(
                         DiagnosticRule::reportRedeclaration,
-                        &(if other_decl.function().is_some_and(|function| function.is_method.get()) {
+                        &(if other_decl.d().function().is_some_and(|function| function.is_method.get()) {
                             LocMessage::obscured_method_declaration().format(&[("name", name)])
                         } else {
                             LocMessage::obscured_function_declaration().format(&[("name", name)])
@@ -4525,7 +4525,7 @@ impl Checker {
                 let primary_type = self._evaluator.get_type_for_declaration(primary_decl).type_;
 
                 if other_decl
-                    .variable()
+                    .d().variable()
                     .is_some_and(|variable| variable.type_annotation_node.get().is_some())
                 {
                     if other_decl.node.get().node_type == ParseNodeType::Name {
@@ -5580,7 +5580,7 @@ impl Checker {
                     .into_iter()
                     .filter(|decl| {
                         decl.type_ != analyzer::declaration::DeclarationType::Variable
-                            || !decl.variable().unwrap().is_explicit_binding.get().unwrap_or(false)
+                            || !decl.d().variable().unwrap().is_explicit_binding.get().unwrap_or(false)
                     })
                     .collect()
             });
@@ -5596,7 +5596,7 @@ impl Checker {
         if decl.type_ == analyzer::declaration::DeclarationType::Alias {
             // If this symbol is an import alias (i.e. it's a local name rather than the
             // original imported name), skip the private check.
-            if decl.alias().unwrap().uses_local_name.get() {
+            if decl.d().alias().unwrap().uses_local_name.get() {
                 return;
             }
 
@@ -6251,7 +6251,7 @@ impl Checker {
             let typed_decls = symbol.get_typed_declarations();
             if !typed_decls.is_empty() {
                 if typed_decls[0].type_ == analyzer::declaration::DeclarationType::Variable
-                    && typed_decls[0].variable().unwrap().inferred_type_source.get().is_some()
+                    && typed_decls[0].d().variable().unwrap().inferred_type_source.get().is_some()
                 {
                     evaluator.add_diagnostic(
                         DiagnosticRule::reportGeneralTypeIssues,
@@ -6281,7 +6281,7 @@ impl Checker {
             }
 
             // Look for an enum attribute annotated with "Final".
-            if decls[0].variable().unwrap().is_final.get().unwrap_or(false) {
+            if decls[0].d().variable().unwrap().is_final.get().unwrap_or(false) {
                 evaluator.add_diagnostic(
                     DiagnosticRule::reportGeneralTypeIssues,
                     &LocMessage::enum_member_type_annotation(),
@@ -6730,7 +6730,7 @@ impl Checker {
                 // Do one or more declarations involve assignments?
                 if decls.iter().any(|decl| {
                     decl.type_ == analyzer::declaration::DeclarationType::Variable
-                        && decl.variable().unwrap().inferred_type_source.get().is_some()
+                        && decl.d().variable().unwrap().inferred_type_source.get().is_some()
                 }) {
                     continue;
                 }
@@ -6913,14 +6913,14 @@ impl Checker {
             let decls = symbol.get_declarations();
             let is_defined_by_slots = decls.iter().any(|decl| {
                 decl.type_ == analyzer::declaration::DeclarationType::Variable
-                    && decl.variable().unwrap().is_defined_by_slots.get().unwrap_or(false)
+                    && decl.d().variable().unwrap().is_defined_by_slots.get().unwrap_or(false)
             });
 
             if is_defined_by_slots {
                 for decl in decls.iter() {
                     if decl.type_ == analyzer::declaration::DeclarationType::Variable
-                        && !decl.variable().unwrap().is_defined_by_slots.get().unwrap_or(false)
-                        && !decl.variable().unwrap().is_defined_by_member_access.get().unwrap_or(false)
+                        && !decl.d().variable().unwrap().is_defined_by_slots.get().unwrap_or(false)
+                        && !decl.d().variable().unwrap().is_defined_by_member_access.get().unwrap_or(false)
                     {
                         if let Some(name_node) = NameNode::cast(decl.node.get()) {
                             if analyzer::parse_tree_utils::is_write_access(name_node) {
@@ -7542,7 +7542,7 @@ impl Checker {
                     analyzer::symbol_utils::get_last_typed_declaration_for_symbol(overridden_class_and_symbol.symbol);
                 let mut is_invariant = primary_decl.is_some_and(|primary_decl| {
                     primary_decl.type_ == analyzer::declaration::DeclarationType::Variable
-                        && !primary_decl.variable().unwrap().is_final.get().unwrap_or(false)
+                        && !primary_decl.d().variable().unwrap().is_final.get().unwrap_or(false)
                 });
 
                 // If the entry is a member of a frozen dataclass, it is immutable,
@@ -8788,7 +8788,7 @@ impl Checker {
             // Verify that the override type is assignable to (same or narrower than)
             // the declared type of the base symbol.
             let mut is_invariant = primary_decl.type_ == analyzer::declaration::DeclarationType::Variable
-                && !primary_decl.variable().unwrap().is_final.get().unwrap_or(false);
+                && !primary_decl.d().variable().unwrap().is_final.get().unwrap_or(false);
 
             // If the entry is a member of a frozen dataclass, it is immutable,
             // so it does not need to be invariant.

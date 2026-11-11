@@ -331,7 +331,7 @@ impl Symbol {
             // the list.
             let decl_index = declarations
                 .iter()
-                .position(|decl| are_declarations_same(decl, &declaration, false, false));
+                .position(|decl| are_declarations_same(*decl, declaration, false, false));
             match decl_index {
                 None => {
                     let mut declarations = declarations.to_vec();
@@ -340,7 +340,7 @@ impl Symbol {
                     // If there is more than one declaration for a symbol, we will
                     // assume it is not a type alias.
                     for decl in &declarations {
-                        if let Some(var) = decl.variable() {
+                        if let Some(var) = decl.d().variable() {
                             if var.type_alias_name.get().is_some() {
                                 var.type_alias_name.set(None);
                             }
@@ -352,13 +352,13 @@ impl Symbol {
                     // If the new declaration has a defined type, it should replace
                     // the existing one.
                     let cur_decl = declarations[decl_index];
-                    if has_type_for_declaration(&declaration) {
+                    if has_type_for_declaration(declaration) {
                         Rc::make_mut(self._declarations.borrow_mut().as_mut().unwrap())[decl_index] = declaration;
                         if cur_decl.type_ == DeclarationType::Variable
                             && declaration.type_ == DeclarationType::Variable
                         {
-                            let new_var = declaration.variable().unwrap();
-                            let cur_var = cur_decl.variable().unwrap();
+                            let new_var = declaration.d().variable().unwrap();
+                            let cur_var = cur_decl.d().variable().unwrap();
                             if new_var.inferred_type_source.get().is_none()
                                 && cur_var.inferred_type_source.get().is_some()
                             {
@@ -371,8 +371,8 @@ impl Symbol {
                         // If it's marked "final" or "type alias", this should be reflected
                         // in the existing declaration. Likewise, if the existing declaration
                         // doesn't have a type source, add it.
-                        if let Some(cur_var) = cur_decl.variable() {
-                            let new_var = declaration.variable().unwrap();
+                        if let Some(cur_var) = cur_decl.d().variable() {
+                            let new_var = declaration.d().variable().unwrap();
                             if new_var.is_final.get() == Some(true) {
                                 cur_var.is_final.set(Some(true));
                             }
@@ -420,7 +420,7 @@ impl Symbol {
 
         self.get_declarations()
             .iter()
-            .any(|decl| has_type_for_declaration(decl))
+            .any(|decl| has_type_for_declaration(*decl))
     }
 
     // analyzer/symbol.ts:312
@@ -428,7 +428,7 @@ impl Symbol {
         self.get_declarations()
             .iter()
             .copied()
-            .filter(|decl| has_type_for_declaration(decl))
+            .filter(|decl| has_type_for_declaration(*decl))
             .collect()
     }
 
