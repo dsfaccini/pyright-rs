@@ -48,7 +48,7 @@ for i in range(1, runs + 1):
     ins.append(int(n)); wall.append(float(w)); rss.append(int(m) / 1048576)
 if ins:
     print(f"{corpus}: {statistics.median(ins) / 1e9:.2f} G instructions, {statistics.median(wall):.2f} s wall, "
-          f"{max(rss):.2f} GB peak RSS (median of {len(ins)}; instructions spread "
+          f"{max(rss):.2f} GiB peak RSS (median of {len(ins)}; instructions spread "
           f"{(max(ins) - min(ins)) / statistics.median(ins) * 100:.2f}%)")
 EOF
 rm -r "$tmp"
