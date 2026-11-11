@@ -377,10 +377,23 @@ const _CAN_START_STRING: [bool; 128] = {
     table
 };
 
-// Create a detached copy of a source text range.
+// Create a detached copy of a source text range, as an atom. Short ASCII text,
+// nearly every identifier, is narrowed on the stack rather than into a `String`.
 // parser/tokenizer.ts:324
-fn detach_substring(text: &[u16], start: i32, end: i32) -> String {
-    String::from_utf16_lossy(&text[start as usize..end as usize])
+fn detach_substring(text: &[u16], start: i32, end: i32) -> Atom {
+    let units = &text[start as usize..end as usize];
+    let mut bytes = [0u8; 64];
+    if units.len() <= bytes.len() {
+        let mut ascii = true;
+        for (byte, &unit) in bytes.iter_mut().zip(units) {
+            ascii &= unit < 0x80;
+            *byte = unit.to_le_bytes()[0];
+        }
+        if ascii && let Ok(text) = std::str::from_utf8(&bytes[..units.len()]) {
+            return Atom::new(text);
+        }
+    }
+    Atom::new(&String::from_utf16_lossy(units))
 }
 
 // Strip underscore characters from a source text range without first creating
@@ -774,7 +787,7 @@ pub struct Tokenizer<'a> {
     _use_notebook_mode: bool,
 
     // Direct-mapped identifier intern cache: the UTF-16 text and its string.
-    _identifier_cache: Vec<Option<(Box<[u16]>, Atom)>>,
+    _identifier_cache: Vec<Option<Atom>>,
 }
 
 impl Default for Tokenizer<'_> {
@@ -1735,15 +1748,17 @@ impl<'a> Tokenizer<'a> {
         let last_char = text[(end - 1) as usize] as i32;
         // Hash mixes length, first and last char.
         let hash = ((first_char * 31 + last_char * 7 + length) & _IDENTIFIER_CACHE_MASK) as usize;
-        if let Some((cached_text, cached)) = &self._identifier_cache[hash]
-            && cached_text.len() as i32 == length
-            && text[start as usize..].starts_with(cached_text)
+        let units = &text[start as usize..end as usize];
+        // An ASCII atom's bytes are its UTF-16 units. A non-ASCII identifier
+        // misses and interns its text again, which yields the same atom.
+        if let Some(cached) = self._identifier_cache[hash]
+            && cached.len() == units.len()
+            && cached.bytes().zip(units).all(|(byte, &unit)| unit < 0x80 && u16::from(byte) == unit)
         {
-            return *cached;
+            return cached;
         }
-        let value = Atom::new(&detach_substring(text, start, end));
-        self._identifier_cache[hash] =
-            Some((text[start as usize..end as usize].into(), value));
+        let value = detach_substring(text, start, end);
+        self._identifier_cache[hash] = Some(value);
         value
     }
 
