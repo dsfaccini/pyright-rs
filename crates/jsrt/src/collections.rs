@@ -14,11 +14,13 @@ pub type FxHashMap<K, V> = rustc_hash::FxHashMap<K, V>;
 /// Lookup-only hash set. Never iterate one: its order is not JS order.
 pub type FxHashSet<T> = rustc_hash::FxHashSet<T>;
 
-/// JS `Map` that allocates its table on the first insert, so an empty one is one pointer.
-/// For maps most of their owners never fill (`ConstraintSet._typeVarMap`). Iteration order and
-/// lookups are those of [`JsMap`].
+/// JS `Map` for few entries: searched linearly, and allocated on the first insert, so an
+/// empty one is one pointer. For maps most of their owners never fill, and fill with a handful
+/// of entries (`ConstraintSet._typeVarMap`). Iteration order and lookups are those of [`JsMap`].
 #[derive(Clone, Debug, jsrt::Trace)]
-pub struct LazyJsMap<K, V>(Option<Box<JsMap<K, V>>>);
+// The box keeps an empty map one pointer wide; a bare `Vec` is three.
+#[allow(clippy::box_collection)]
+pub struct LazyJsMap<K, V>(Option<Box<Vec<(K, V)>>>);
 
 impl<K, V> Default for LazyJsMap<K, V> {
     fn default() -> Self {
@@ -26,7 +28,7 @@ impl<K, V> Default for LazyJsMap<K, V> {
     }
 }
 
-impl<K: std::hash::Hash + Eq, V> LazyJsMap<K, V> {
+impl<K: Eq, V> LazyJsMap<K, V> {
     pub fn len(&self) -> usize {
         self.0.as_ref().map_or(0, |map| map.len())
     }
@@ -35,34 +37,52 @@ impl<K: std::hash::Hash + Eq, V> LazyJsMap<K, V> {
         self.len() == 0
     }
 
+    fn position<Q>(&self, key: &Q) -> Option<usize>
+    where
+        K: std::borrow::Borrow<Q>,
+        Q: ?Sized + Eq,
+    {
+        self.0.as_ref()?.iter().position(|(k, _)| k.borrow() == key)
+    }
+
     pub fn get<Q>(&self, key: &Q) -> Option<&V>
     where
-        Q: ?Sized + std::hash::Hash + indexmap::Equivalent<K>,
+        K: std::borrow::Borrow<Q>,
+        Q: ?Sized + Eq,
     {
-        self.0.as_ref()?.get(key)
+        let index = self.position(key)?;
+        self.0.as_ref().map(|map| &map[index].1)
     }
 
     pub fn contains_key<Q>(&self, key: &Q) -> bool
     where
-        Q: ?Sized + std::hash::Hash + indexmap::Equivalent<K>,
+        K: std::borrow::Borrow<Q>,
+        Q: ?Sized + Eq,
     {
-        self.0.as_ref().is_some_and(|map| map.contains_key(key))
+        self.position(key).is_some()
     }
 
     pub fn get_index(&self, index: usize) -> Option<(&K, &V)> {
-        self.0.as_ref()?.get_index(index)
+        self.0.as_ref()?.get(index).map(|(k, v)| (k, v))
     }
 
+    /// `map.set(key, value)`: a new key goes last; an existing key keeps its place.
     pub fn insert(&mut self, key: K, value: V) -> Option<V> {
-        self.0.get_or_insert_with(Default::default).insert(key, value)
+        match self.position(&key) {
+            Some(index) => Some(std::mem::replace(&mut self.0.as_mut().unwrap()[index].1, value)),
+            None => {
+                self.0.get_or_insert_with(|| Box::new(Vec::with_capacity(4))).push((key, value));
+                None
+            }
+        }
     }
 
     pub fn iter(&self) -> impl Iterator<Item = (&K, &V)> {
-        self.0.iter().flat_map(|map| map.iter())
+        self.0.iter().flat_map(|map| map.iter().map(|(k, v)| (k, v)))
     }
 
     pub fn values(&self) -> impl Iterator<Item = &V> {
-        self.0.iter().flat_map(|map| map.values())
+        self.0.iter().flat_map(|map| map.iter().map(|(_, v)| v))
     }
 }
 

@@ -238,9 +238,10 @@ interface = "analyzer/codeFlowEngine.ts:CodeFlowAnalyzer"
 "analyzer/types.ts:UnionDetailsPriv.typeAliasSources" = "Option<Box<jsrt::JsSet<crate::analyzer::types::UnionType>>>"
 "analyzer/types.ts:FunctionDetailsPriv.callSiteReturnTypeCache" = "Box<Vec<crate::analyzer::types::CallSiteInferenceTypeCacheEntry>>"
 # Constraint maps that most sets never fill (72-85% stay empty on the python-chess and samples
-# corpora, 2026-11-10): the table is allocated on the first insert.
-"analyzer/constraintSolution.ts:ConstraintSolutionSet._typeVarMap" = "jsrt::LazyJsMap<String, Option<jsrt::P<crate::analyzer::types::Type>>>"
-"analyzer/constraintTracker.ts:ConstraintSet._typeVarMap" = "jsrt::LazyJsMap<String, crate::analyzer::constraint_tracker::TypeVarConstraints>"
+# corpora, 2026-11-10) and that hold a handful of entries otherwise: allocated on the first
+# insert, searched linearly. Keys are `TypeVarType.getNameWithScope`, shared `Rc<str>`.
+"analyzer/constraintSolution.ts:ConstraintSolutionSet._typeVarMap" = "jsrt::LazyJsMap<std::rc::Rc<str>, Option<jsrt::P<crate::analyzer::types::Type>>>"
+"analyzer/constraintTracker.ts:ConstraintSet._typeVarMap" = "jsrt::LazyJsMap<std::rc::Rc<str>, crate::analyzer::constraint_tracker::TypeVarConstraints>"
 "analyzer/constraintTracker.ts:ConstraintSet._scopeIds" = "Option<Box<jsrt::JsSet<String>>>"
 # Replaced whole, cloned and indexed, never pushed to: a boxed slice.
 "analyzer/constraintTracker.ts:ConstraintTracker._constraintSets" = "Box<[jsrt::P<crate::analyzer::constraint_tracker::ConstraintSet>]>"
