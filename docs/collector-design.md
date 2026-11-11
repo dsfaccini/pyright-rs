@@ -61,7 +61,7 @@ pub unsafe trait Trace {
 
 ## parallel marking
 
-- `PYRIGHT_RS_GC_THREADS` threads mark, the collecting thread included: by default the available parallelism, at most 4. At 1 the collecting thread marks alone.
+- `PYRIGHT_RS_GC_THREADS` threads mark, the collecting thread included: by default the available parallelism, at most 8. At 1 the collecting thread marks alone.
 - The collecting thread traces the registered roots first, since they are its thread-locals. Then every thread takes program blocks to scan from a shared counter, and traces from its own mark stack.
 - A thread whose stack holds at least two packets of 512 entries hands its oldest packet to a shared pool while some thread is idle. A thread with no work takes a packet; the mark ends when every thread is idle and the pool is empty.
 - Mark bits are set with an atomic `fetch_or`, so only one thread pushes an object. Tracing only reads objects: `RefCell` contents through `try_borrow_unguarded`, `Cell` through `get`, `Rc` without touching its counts. The mutator is stopped, so nothing writes while helpers read.

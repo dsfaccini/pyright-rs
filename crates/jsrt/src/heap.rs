@@ -98,7 +98,7 @@ fn config() -> &'static Config {
             Ok("2") => 2,
             Ok(_) => 1,
         };
-        let default_threads = std::thread::available_parallelism().map_or(1, |n| n.get().min(4));
+        let default_threads = std::thread::available_parallelism().map_or(1, |n| n.get().min(8));
         let threads = env_number("PYRIGHT_RS_GC_THREADS").unwrap_or(default_threads).max(1);
         let generational = match std::env::var("PYRIGHT_RS_GC_GENERATIONAL").as_deref() {
             Ok("0") => false,
