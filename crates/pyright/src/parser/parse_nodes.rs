@@ -1,8 +1,9 @@
 //! Port of `packages/pyright-internal/src/parser/parseNodes.ts`.
 //!
 //! Layout (see the parse-node section of `docs/porting.md`):
-//! - `ParseNode` is one struct; `d` holds the per-type details as a
-//!   `ParseNodeDetails` variant.
+//! - `ParseNode` is the header every node shares. A node is allocated as its
+//!   header followed by the details struct of its type (`NodeAlloc`); `d()`
+//!   returns them as a `ParseNodeDetails` variant.
 //! - Each node type has a typed handle, for example `FunctionNode(P<ParseNode>)`,
 //!   with `cast`, `d()`, `Deref` to `ParseNode`, and its TypeScript `create`
 //!   functions.
@@ -14,6 +15,7 @@
 
 use jsrt::cell::{Cell, RefCell};
 use std::ops::Deref;
+use std::ptr;
 
 use jsrt::{JsString, P};
 
@@ -200,7 +202,13 @@ pub fn get_parser_string_annotation_info(node: &ParseNode) -> StringAnnotationIn
 }
 
 // parser/parseNodes.ts:167
+/// The fields every node shares. A node is allocated as a `NodeAlloc<D>`: this
+/// header, then the details `D` of its type, so it takes the size of its own
+/// details rather than of the largest. `d()` reads the details.
+#[repr(C)]
 #[derive(jsrt::Trace)]
+// `_details` keeps construction inside this module; `#[non_exhaustive]` allows the crate.
+#[allow(clippy::manual_non_exhaustive)]
 pub struct ParseNode {
     pub node_type: ParseNodeType,
     pub start: Cell<i32>,
@@ -214,9 +222,10 @@ pub struct ParseNode {
     // Opaque key used to retrieve binding information for this parse tree.
     pub a: ParseTreeKey,
 
-    // Additional details that are specific to the parse node type.
-    pub d: ParseNodeDetails,
+    /// Private, so only `alloc_node` makes a header, always followed by its details.
+    _details: (),
 }
+const _: () = assert!(size_of::<ParseNode>() <= 32);
 
 impl HasTextRange for ParseNode {
     fn text_range(&self) -> TextRange {
@@ -253,23 +262,77 @@ pub fn extend_range(node: &ParseNode, new_range: &(impl HasTextRange + ?Sized)) 
 // parser/parseNodes.ts:197
 pub type ParseNodeArray = Vec<Option<P<ParseNode>>>;
 
-/// The object-literal part of every `create`: a new node with the next id.
-fn create_node(
-    node_type: ParseNodeType,
-    start: i32,
-    length: i32,
-    a: ParseTreeKey,
-    d: ParseNodeDetails,
-) -> P<ParseNode> {
-    P::new(ParseNode {
+/// A node as allocated: the header, then the details of its type.
+#[repr(C)]
+#[derive(jsrt::Trace)]
+struct NodeAlloc<D> {
+    node: ParseNode,
+    d: D,
+}
+
+/// The details struct of one node type.
+pub trait NodeDetails: jsrt::Trace + Clone + 'static {
+    const NODE_TYPE: ParseNodeType;
+}
+
+impl ParseNode {
+    /// The details of a node of type `D::NODE_TYPE`.
+    fn details<D: NodeDetails>(&self) -> &'static D {
+        assert!(self.node_type == D::NODE_TYPE);
+        // SAFETY: checked above.
+        unsafe { self.details_unchecked() }
+    }
+
+    /// # Safety
+    /// `self.node_type` is `D::NODE_TYPE`.
+    unsafe fn details_unchecked<D: NodeDetails>(&self) -> &'static D {
+        // SAFETY: `alloc_node` makes every header the first field of a `#[repr(C)]`
+        // `NodeAlloc` whose details type matches `node_type`, on the program heap,
+        // which is never freed.
+        unsafe { &(*ptr::from_ref(self).cast::<NodeAlloc<D>>()).d }
+    }
+
+    /// `Object.assign({}, node)`: a new node with this node's fields, id included.
+    /// The details are cloned: the copy holds the same child handles, as the shared
+    /// TypeScript `d` object does.
+    pub fn shallow_copy(&self) -> P<ParseNode> {
+        let copy = self.clone_details_into_node();
+        copy.parent.set(self.parent.get());
+        copy
+    }
+}
+
+fn alloc_node<D: NodeDetails>(start: i32, length: i32, id: u32, a: ParseTreeKey, d: D) -> P<ParseNode> {
+    let node = ParseNode {
+        node_type: D::NODE_TYPE,
         start: Cell::new(start),
         length: Cell::new(length),
-        node_type,
-        id: Cell::new(get_next_node_id()),
+        id: Cell::new(id),
         parent: Cell::new(None),
         a,
-        d,
-    })
+        _details: (),
+    };
+    P::new(NodeAlloc { node, d }).header(|alloc| &alloc.node)
+}
+
+/// The object-literal part of every `create`: a new node with the next id.
+fn create_node<D: NodeDetails>(start: i32, length: i32, a: ParseTreeKey, d: D) -> P<ParseNode> {
+    alloc_node(start, length, get_next_node_id(), a, d)
+}
+
+/// A detached error node with id 0, which takes nothing from the node counter.
+pub fn create_placeholder_node() -> P<ParseNode> {
+    alloc_node(
+        0,
+        0,
+        0,
+        create_parse_tree_key(),
+        ErrorNodeDetails {
+            category: Cell::new(ErrorExpressionCategory::MissingExpression),
+            child: Cell::new(None),
+            decorators: None,
+        },
+    )
 }
 
 fn set_parent(child: &ParseNode, parent: P<ParseNode>) {
@@ -278,6 +341,10 @@ fn set_parent(child: &ParseNode, parent: P<ParseNode>) {
 
 macro_rules! node_handle {
     ($handle:ident, $variant:ident, $details:ident) => {
+        impl NodeDetails for $details {
+            const NODE_TYPE: ParseNodeType = ParseNodeType::$variant;
+        }
+
         #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, jsrt::Trace)]
         pub struct $handle(pub P<ParseNode>);
 
@@ -291,10 +358,7 @@ macro_rules! node_handle {
             }
 
             pub fn d(&self) -> &'static $details {
-                match &self.0.get().d {
-                    ParseNodeDetails::$variant(d) => d,
-                    _ => unreachable!(),
-                }
+                self.0.get().details()
             }
 
             pub fn node(self) -> P<ParseNode> {
@@ -335,10 +399,41 @@ macro_rules! node_handle {
     };
 }
 
-/// The per-type details of a node, one variant per `ParseNodeType`.
-#[derive(Clone)]
-#[derive(jsrt::Trace)]
-pub enum ParseNodeDetails {
+macro_rules! parse_node_details {
+    ($($variant:ident($details:ident),)*) => {
+        /// The per-type details of a node, one variant per `ParseNodeType`: `node.d()`.
+        #[derive(Clone, Copy)]
+        pub enum ParseNodeDetails {
+            $($variant(&'static $details),)*
+        }
+
+        impl ParseNode {
+            /// The details of this node, as the variant of its type.
+            pub fn d(&self) -> ParseNodeDetails {
+                // SAFETY: each arm reads the details type of its node type.
+                unsafe {
+                    match self.node_type {
+                        $(ParseNodeType::$variant => ParseNodeDetails::$variant(self.details_unchecked()),)*
+                    }
+                }
+            }
+
+            fn clone_details_into_node(&self) -> P<ParseNode> {
+                let (start, length, id) = (self.start.get(), self.length.get(), self.id.get());
+                // SAFETY: each arm reads the details type of its node type.
+                unsafe {
+                    match self.node_type {
+                        $(ParseNodeType::$variant => {
+                            alloc_node(start, length, id, self.a, self.details_unchecked::<$details>().clone())
+                        })*
+                    }
+                }
+            }
+        }
+    };
+}
+
+parse_node_details! {
     Error(ErrorNodeDetails),
     Argument(ArgumentNodeDetails),
     Assert(AssertNodeDetails),
@@ -436,13 +531,12 @@ impl ModuleNode {
         let range = range.text_range();
         let key = create_parse_tree_key();
         let node = ModuleNode(create_node(
-            ParseNodeType::Module,
             range.start,
             range.length,
             key,
-            ParseNodeDetails::Module(ModuleNodeDetails {
+            ModuleNodeDetails {
                 statements: RefCell::new(vec![]),
-            }),
+            },
         ));
 
         // The module node is its own owner key; every structural node in a file
@@ -466,14 +560,13 @@ impl SuiteNode {
     pub fn create(key: ParseTreeKey, range: &(impl HasTextRange + ?Sized)) -> SuiteNode {
         let range = range.text_range();
         SuiteNode(create_node(
-            ParseNodeType::Suite,
             range.start,
             range.length,
             key,
-            ParseNodeDetails::Suite(SuiteNodeDetails {
+            SuiteNodeDetails {
                 statements: RefCell::new(vec![]),
                 type_comment: Cell::new(None),
-            }),
+            },
         ))
     }
 }
@@ -500,16 +593,15 @@ impl IfNode {
         else_suite: Option<SuiteNode>,
     ) -> IfNode {
         let node = create_node(
-            ParseNodeType::If,
             if_or_elif_token.start,
             if_or_elif_token.length,
             key,
-            ParseNodeDetails::If(IfNodeDetails {
+            IfNodeDetails {
                 first_token: Cell::new(if_or_elif_token),
                 test_expr: Cell::new(test_expr),
                 if_suite: Cell::new(if_suite),
                 else_suite: Cell::new(else_suite.map(|s| s.0)),
-            }),
+            },
         );
 
         set_parent(&test_expr, node);
@@ -546,16 +638,15 @@ impl WhileNode {
         while_suite: SuiteNode,
     ) -> WhileNode {
         let node = create_node(
-            ParseNodeType::While,
             while_token.start,
             while_token.length,
             key,
-            ParseNodeDetails::While(WhileNodeDetails {
+            WhileNodeDetails {
                 first_token: Cell::new(while_token),
                 test_expr: Cell::new(test_expr),
                 while_suite: Cell::new(while_suite),
                 else_suite: Cell::new(None),
-            }),
+            },
         );
 
         set_parent(&test_expr, node);
@@ -592,11 +683,10 @@ impl ForNode {
         for_suite: SuiteNode,
     ) -> ForNode {
         let node = create_node(
-            ParseNodeType::For,
             for_token.start,
             for_token.length,
             key,
-            ParseNodeDetails::For(ForNodeDetails {
+            ForNodeDetails {
                 first_token: Cell::new(for_token),
                 is_async: Cell::new(None),
                 async_token: Cell::new(None),
@@ -605,7 +695,7 @@ impl ForNode {
                 for_suite: Cell::new(for_suite),
                 else_suite: Cell::new(None),
                 type_comment: Cell::new(None),
-            }),
+            },
         );
 
         set_parent(&target_expr, node);
@@ -645,16 +735,15 @@ impl ComprehensionForNode {
         iterable_expr: ExpressionNode,
     ) -> ComprehensionForNode {
         let node = create_node(
-            ParseNodeType::ComprehensionFor,
             start_token.start,
             start_token.length,
             key,
-            ParseNodeDetails::ComprehensionFor(ComprehensionForNodeDetails {
+            ComprehensionForNodeDetails {
                 is_async: Cell::new(None),
                 async_token: Cell::new(None),
                 target_expr: Cell::new(target_expr),
                 iterable_expr: Cell::new(iterable_expr),
-            }),
+            },
         );
 
         set_parent(&target_expr, node);
@@ -687,13 +776,12 @@ impl ComprehensionIfNode {
         test_expr: ExpressionNode,
     ) -> ComprehensionIfNode {
         let node = create_node(
-            ParseNodeType::ComprehensionIf,
             if_token.start,
             if_token.length,
             key,
-            ParseNodeDetails::ComprehensionIf(ComprehensionIfNodeDetails {
+            ComprehensionIfNodeDetails {
                 test_expr: Cell::new(test_expr),
-            }),
+            },
         );
 
         set_parent(&test_expr, node);
@@ -720,17 +808,16 @@ impl TryNode {
     // parser/parseNodes.ts:454
     pub fn create(key: ParseTreeKey, try_token: P<Token>, try_suite: SuiteNode) -> TryNode {
         let node = create_node(
-            ParseNodeType::Try,
             try_token.start,
             try_token.length,
             key,
-            ParseNodeDetails::Try(TryNodeDetails {
+            TryNodeDetails {
                 first_token: Cell::new(try_token),
                 try_suite: Cell::new(try_suite),
                 except_clauses: RefCell::new(vec![]),
                 else_suite: Cell::new(None),
                 finally_suite: Cell::new(None),
-            }),
+            },
         );
 
         set_parent(&try_suite, node);
@@ -762,17 +849,16 @@ impl ExceptNode {
         is_except_group: bool,
     ) -> ExceptNode {
         let node = create_node(
-            ParseNodeType::Except,
             except_token.start,
             except_token.length,
             key,
-            ParseNodeDetails::Except(ExceptNodeDetails {
+            ExceptNodeDetails {
                 type_expr: Cell::new(None),
                 name: Cell::new(None),
                 except_suite: Cell::new(except_suite),
                 is_except_group: Cell::new(is_except_group),
                 except_token: Cell::new(except_token),
-            }),
+            },
         );
 
         set_parent(&except_suite, node);
@@ -809,11 +895,10 @@ impl FunctionNode {
         type_params: Option<TypeParameterListNode>,
     ) -> FunctionNode {
         let node = create_node(
-            ParseNodeType::Function,
             def_token.start,
             def_token.length,
             key,
-            ParseNodeDetails::Function(FunctionNodeDetails {
+            FunctionNodeDetails {
                 first_token: Cell::new(def_token),
                 decorators: RefCell::new(vec![]),
                 is_async: Cell::new(false),
@@ -823,7 +908,7 @@ impl FunctionNode {
                 return_annotation: Cell::new(None),
                 func_annotation_comment: Cell::new(None),
                 suite: Cell::new(suite),
-            }),
+            },
         );
 
         set_parent(&name, node);
@@ -869,17 +954,16 @@ impl ParameterNode {
         param_category: ParamCategory,
     ) -> ParameterNode {
         ParameterNode(create_node(
-            ParseNodeType::Parameter,
             start_token.start,
             start_token.length,
             key,
-            ParseNodeDetails::Parameter(ParameterNodeDetails {
+            ParameterNodeDetails {
                 category: Cell::new(param_category),
                 name: Cell::new(None),
                 annotation: Cell::new(None),
                 annotation_comment: Cell::new(None),
                 default_value: Cell::new(None),
-            }),
+            },
         ))
     }
 }
@@ -907,18 +991,17 @@ impl ClassNode {
         type_params: Option<TypeParameterListNode>,
     ) -> ClassNode {
         let node = create_node(
-            ParseNodeType::Class,
             class_token.start,
             class_token.length,
             key,
-            ParseNodeDetails::Class(ClassNodeDetails {
+            ClassNodeDetails {
                 first_token: Cell::new(class_token),
                 decorators: RefCell::new(vec![]),
                 name: Cell::new(name),
                 type_params: Cell::new(type_params),
                 arguments: RefCell::new(vec![]),
                 suite: Cell::new(suite),
-            }),
+            },
         );
 
         set_parent(&name, node);
@@ -958,47 +1041,41 @@ impl ClassNode {
                 value: String::new(),
             }),
         }));
-        let name = NameNode(P::new(ParseNode {
-            start: Cell::new(decorators_start),
-            length: Cell::new(0),
-            node_type: ParseNodeType::Name,
-            id: Cell::new(0),
-            parent: Cell::new(None),
-            a: key,
-            d: ParseNodeDetails::Name(NameNodeDetails {
+        let name = NameNode(alloc_node(
+            decorators_start,
+            0,
+            0,
+            key,
+            NameNodeDetails {
                 token: Cell::new(name_token),
                 value: String::new(),
-            }),
-        }));
-        let suite = SuiteNode(P::new(ParseNode {
-            start: Cell::new(decorators_start),
-            length: Cell::new(0),
-            node_type: ParseNodeType::Suite,
-            id: Cell::new(0),
-            parent: Cell::new(None),
-            a: key,
-            d: ParseNodeDetails::Suite(SuiteNodeDetails {
+            },
+        ));
+        let suite = SuiteNode(alloc_node(
+            decorators_start,
+            0,
+            0,
+            key,
+            SuiteNodeDetails {
                 statements: RefCell::new(vec![]),
                 type_comment: Cell::new(None),
-            }),
-        }));
+            },
+        ));
 
-        let node = P::new(ParseNode {
-            start: Cell::new(decorators_start),
-            length: Cell::new(0),
-            node_type: ParseNodeType::Class,
-            id: Cell::new(id),
-            parent: Cell::new(None),
-            a: key,
-            d: ParseNodeDetails::Class(ClassNodeDetails {
+        let node = alloc_node(
+            decorators_start,
+            0,
+            id,
+            key,
+            ClassNodeDetails {
                 first_token: Cell::new(first_token),
                 decorators: RefCell::new(decorators.clone()),
                 name: Cell::new(name),
                 type_params: Cell::new(None),
                 arguments: RefCell::new(vec![]),
                 suite: Cell::new(suite),
-            }),
-        });
+            },
+        );
 
         for decorator in &decorators {
             set_parent(decorator, node);
@@ -1029,18 +1106,17 @@ impl WithNode {
     // parser/parseNodes.ts:727
     pub fn create(key: ParseTreeKey, with_token: P<Token>, suite: SuiteNode) -> WithNode {
         let node = create_node(
-            ParseNodeType::With,
             with_token.start,
             with_token.length,
             key,
-            ParseNodeDetails::With(WithNodeDetails {
+            WithNodeDetails {
                 first_token: Cell::new(with_token),
                 is_async: Cell::new(None),
                 async_token: Cell::new(None),
                 with_items: RefCell::new(vec![]),
                 suite: Cell::new(suite),
                 type_comment: Cell::new(None),
-            }),
+            },
         );
 
         set_parent(&suite, node);
@@ -1064,14 +1140,13 @@ impl WithItemNode {
     // parser/parseNodes.ts:758
     pub fn create(key: ParseTreeKey, expr: ExpressionNode) -> WithItemNode {
         let node = create_node(
-            ParseNodeType::WithItem,
             expr.start.get(),
             expr.length.get(),
             key,
-            ParseNodeDetails::WithItem(WithItemNodeDetails {
+            WithItemNodeDetails {
                 expr: Cell::new(expr),
                 target: Cell::new(None),
-            }),
+            },
         );
 
         set_parent(&expr, node);
@@ -1092,13 +1167,12 @@ impl DecoratorNode {
     // parser/parseNodes.ts:782
     pub fn create(key: ParseTreeKey, at_token: P<Token>, expr: ExpressionNode) -> DecoratorNode {
         let node = create_node(
-            ParseNodeType::Decorator,
             at_token.start,
             at_token.length,
             key,
-            ParseNodeDetails::Decorator(DecoratorNodeDetails {
+            DecoratorNodeDetails {
                 expr: Cell::new(expr),
-            }),
+            },
         );
 
         set_parent(&expr, node);
@@ -1122,14 +1196,13 @@ impl StatementListNode {
     // parser/parseNodes.ts:809
     pub fn create(key: ParseTreeKey, at_token: P<Token>) -> StatementListNode {
         StatementListNode(create_node(
-            ParseNodeType::StatementList,
             at_token.start,
             at_token.length,
             key,
-            ParseNodeDetails::StatementList(StatementListNodeDetails {
+            StatementListNodeDetails {
                 first_token: Cell::new(at_token),
                 statements: RefCell::new(vec![]),
-            }),
+            },
         ))
     }
 }
@@ -1202,15 +1275,14 @@ impl ErrorNode {
         let initial_range = initial_range.text_range();
         let decorator_list = decorators.clone();
         let node = create_node(
-            ParseNodeType::Error,
             initial_range.start,
             initial_range.length,
             key,
-            ParseNodeDetails::Error(ErrorNodeDetails {
+            ErrorNodeDetails {
                 category: Cell::new(category),
                 child: Cell::new(child),
                 decorators,
-            }),
+            },
         );
 
         if let Some(child) = child {
@@ -1256,16 +1328,15 @@ impl UnaryOperationNode {
         operator: OperatorType,
     ) -> UnaryOperationNode {
         let node = create_node(
-            ParseNodeType::UnaryOperation,
             operator_token.start,
             operator_token.length,
             key,
-            ParseNodeDetails::UnaryOperation(UnaryOperationNodeDetails {
+            UnaryOperationNodeDetails {
                 operator: Cell::new(operator),
                 operator_token: Cell::new(operator_token),
                 expr: Cell::new(expr),
                 has_parens: Cell::new(false),
-            }),
+            },
         );
 
         set_parent(&expr, node);
@@ -1302,17 +1373,16 @@ impl BinaryOperationNode {
         operator: OperatorType,
     ) -> BinaryOperationNode {
         let node = create_node(
-            ParseNodeType::BinaryOperation,
             left_expr.start.get(),
             left_expr.length.get(),
             key,
-            ParseNodeDetails::BinaryOperation(BinaryOperationNodeDetails {
+            BinaryOperationNodeDetails {
                 left_expr: Cell::new(left_expr),
                 operator_token: Cell::new(operator_token),
                 operator: Cell::new(operator),
                 right_expr: Cell::new(right_expr),
                 has_parens: Cell::new(false),
-            }),
+            },
         );
 
         set_parent(&left_expr, node);
@@ -1348,16 +1418,15 @@ impl AssignmentExpressionNode {
         right_expr: ExpressionNode,
     ) -> AssignmentExpressionNode {
         let node = create_node(
-            ParseNodeType::AssignmentExpression,
             name.start.get(),
             name.length.get(),
             key,
-            ParseNodeDetails::AssignmentExpression(AssignmentExpressionNodeDetails {
+            AssignmentExpressionNodeDetails {
                 name: Cell::new(name),
                 walrus_token: Cell::new(walrus_token),
                 right_expr: Cell::new(right_expr),
                 has_parens: Cell::new(false),
-            }),
+            },
         );
 
         set_parent(&name, node);
@@ -1388,16 +1457,15 @@ impl AssignmentNode {
         right_expr: ExpressionNode,
     ) -> AssignmentNode {
         let node = create_node(
-            ParseNodeType::Assignment,
             left_expr.start.get(),
             left_expr.length.get(),
             key,
-            ParseNodeDetails::Assignment(AssignmentNodeDetails {
+            AssignmentNodeDetails {
                 left_expr: Cell::new(left_expr),
                 right_expr: Cell::new(right_expr),
                 annotation_comment: Cell::new(None),
                 chained_annotation_comment: Cell::new(None),
-            }),
+            },
         );
 
         set_parent(&left_expr, node);
@@ -1440,16 +1508,15 @@ impl TypeParameterNode {
         default_expr: Option<ExpressionNode>,
     ) -> TypeParameterNode {
         let node = create_node(
-            ParseNodeType::TypeParameter,
             name.start.get(),
             name.length.get(),
             key,
-            ParseNodeDetails::TypeParameter(TypeParameterNodeDetails {
+            TypeParameterNodeDetails {
                 name: Cell::new(name),
                 type_param_kind: Cell::new(type_param_kind),
                 bound_expr: Cell::new(bound_expr),
                 default_expr: Cell::new(default_expr),
-            }),
+            },
         );
 
         set_parent(&name, node);
@@ -1489,13 +1556,12 @@ impl TypeParameterListNode {
         params: Vec<TypeParameterNode>,
     ) -> TypeParameterListNode {
         let node = create_node(
-            ParseNodeType::TypeParameterList,
             start_token.start,
             start_token.length,
             key,
-            ParseNodeDetails::TypeParameterList(TypeParameterListNodeDetails {
+            TypeParameterListNodeDetails {
                 params: RefCell::new(params.clone()),
-            }),
+            },
         );
 
         extend_range(&node, &end_token);
@@ -1530,16 +1596,15 @@ impl TypeAliasNode {
         type_params: Option<TypeParameterListNode>,
     ) -> TypeAliasNode {
         let node = create_node(
-            ParseNodeType::TypeAlias,
             type_token.start,
             type_token.length,
             key,
-            ParseNodeDetails::TypeAlias(TypeAliasNodeDetails {
+            TypeAliasNodeDetails {
                 first_token: Cell::new(type_token.0),
                 name: Cell::new(name),
                 type_params: Cell::new(type_params),
                 expr: Cell::new(expr),
-            }),
+            },
         );
 
         set_parent(&name, node);
@@ -1576,14 +1641,13 @@ impl TypeAnnotationNode {
         annotation: ExpressionNode,
     ) -> TypeAnnotationNode {
         let node = create_node(
-            ParseNodeType::TypeAnnotation,
             value_expr.start.get(),
             value_expr.length.get(),
             key,
-            ParseNodeDetails::TypeAnnotation(TypeAnnotationNodeDetails {
+            TypeAnnotationNodeDetails {
                 value_expr: Cell::new(value_expr),
                 annotation: Cell::new(annotation),
-            }),
+            },
         );
 
         set_parent(&value_expr, node);
@@ -1619,15 +1683,14 @@ impl FunctionAnnotationNode {
         return_annotation: ExpressionNode,
     ) -> FunctionAnnotationNode {
         let node = create_node(
-            ParseNodeType::FunctionAnnotation,
             open_paren_token.start,
             open_paren_token.length,
             key,
-            ParseNodeDetails::FunctionAnnotation(FunctionAnnotationNodeDetails {
+            FunctionAnnotationNodeDetails {
                 is_ellipsis: Cell::new(is_ellipsis),
                 param_annotations: RefCell::new(param_annotations.clone()),
                 return_annotation: Cell::new(return_annotation),
-            }),
+            },
         );
 
         for p in &param_annotations {
@@ -1670,16 +1733,15 @@ impl AugmentedAssignmentNode {
         dest_expr: ExpressionNode,
     ) -> AugmentedAssignmentNode {
         let node = create_node(
-            ParseNodeType::AugmentedAssignment,
             left_expr.start.get(),
             left_expr.length.get(),
             key,
-            ParseNodeDetails::AugmentedAssignment(AugmentedAssignmentNodeDetails {
+            AugmentedAssignmentNodeDetails {
                 left_expr: Cell::new(left_expr),
                 operator: Cell::new(operator),
                 right_expr: Cell::new(right_expr),
                 dest_expr: Cell::new(dest_expr),
-            }),
+            },
         );
 
         set_parent(&left_expr, node);
@@ -1706,15 +1768,14 @@ impl AwaitNode {
     // parser/parseNodes.ts:1362
     pub fn create(key: ParseTreeKey, await_token: P<Token>, expr: ExpressionNode) -> AwaitNode {
         let node = create_node(
-            ParseNodeType::Await,
             await_token.start,
             await_token.length,
             key,
-            ParseNodeDetails::Await(AwaitNodeDetails {
+            AwaitNodeDetails {
                 expr: Cell::new(expr),
                 await_token: Cell::new(await_token),
                 has_parens: Cell::new(false),
-            }),
+            },
         );
 
         set_parent(&expr, node);
@@ -1744,15 +1805,14 @@ impl TernaryNode {
         else_expr: ExpressionNode,
     ) -> TernaryNode {
         let node = create_node(
-            ParseNodeType::Ternary,
             if_expr.start.get(),
             if_expr.length.get(),
             key,
-            ParseNodeDetails::Ternary(TernaryNodeDetails {
+            TernaryNodeDetails {
                 if_expr: Cell::new(if_expr),
                 test_expr: Cell::new(test_expr),
                 else_expr: Cell::new(else_expr),
-            }),
+            },
         );
 
         set_parent(&if_expr, node);
@@ -1778,14 +1838,13 @@ impl UnpackNode {
     // parser/parseNodes.ts:1428
     pub fn create(key: ParseTreeKey, star_token: P<Token>, expr: ExpressionNode) -> UnpackNode {
         let node = create_node(
-            ParseNodeType::Unpack,
             star_token.start,
             star_token.length,
             key,
-            ParseNodeDetails::Unpack(UnpackNodeDetails {
+            UnpackNodeDetails {
                 expr: Cell::new(expr),
                 star_token: Cell::new(star_token),
-            }),
+            },
         );
 
         set_parent(&expr, node);
@@ -1814,14 +1873,13 @@ impl TupleNode {
     ) -> TupleNode {
         let range = range.text_range();
         TupleNode(create_node(
-            ParseNodeType::Tuple,
             range.start,
             range.length,
             key,
-            ParseNodeDetails::Tuple(TupleNodeDetails {
+            TupleNodeDetails {
                 items: RefCell::new(vec![]),
                 has_parens: Cell::new(has_parens),
-            }),
+            },
         ))
     }
 }
@@ -1845,15 +1903,14 @@ impl CallNode {
         trailing_comma: bool,
     ) -> CallNode {
         let node = create_node(
-            ParseNodeType::Call,
             left_expr.start.get(),
             left_expr.length.get(),
             key,
-            ParseNodeDetails::Call(CallNodeDetails {
+            CallNodeDetails {
                 left_expr: Cell::new(left_expr),
                 args: RefCell::new(args.clone()),
                 trailing_comma: Cell::new(trailing_comma),
-            }),
+            },
         );
 
         set_parent(&left_expr, node);
@@ -1884,16 +1941,15 @@ impl ComprehensionNode {
     // parser/parseNodes.ts:1523
     pub fn create(key: ParseTreeKey, expr: P<ParseNode>, is_generator: bool) -> ComprehensionNode {
         let node = create_node(
-            ParseNodeType::Comprehension,
             expr.start.get(),
             expr.length.get(),
             key,
-            ParseNodeDetails::Comprehension(ComprehensionNodeDetails {
+            ComprehensionNodeDetails {
                 expr: Cell::new(expr),
                 for_if_nodes: RefCell::new(vec![]),
                 is_generator: Cell::new(is_generator),
                 has_parens: Cell::new(false),
-            }),
+            },
         );
 
         set_parent(&expr, node);
@@ -1922,15 +1978,14 @@ impl IndexNode {
         close_bracket_token: P<Token>,
     ) -> IndexNode {
         let node = create_node(
-            ParseNodeType::Index,
             left_expr.start.get(),
             left_expr.length.get(),
             key,
-            ParseNodeDetails::Index(IndexNodeDetails {
+            IndexNodeDetails {
                 left_expr: Cell::new(left_expr),
                 items: RefCell::new(items.clone()),
                 trailing_comma: Cell::new(trailing_comma),
-            }),
+            },
         );
 
         set_parent(&left_expr, node);
@@ -1959,15 +2014,14 @@ impl SliceNode {
     pub fn create(key: ParseTreeKey, range: &(impl HasTextRange + ?Sized)) -> SliceNode {
         let range = range.text_range();
         SliceNode(create_node(
-            ParseNodeType::Slice,
             range.start,
             range.length,
             key,
-            ParseNodeDetails::Slice(SliceNodeDetails {
+            SliceNodeDetails {
                 start_value: Cell::new(None),
                 end_value: Cell::new(None),
                 step_value: Cell::new(None),
-            }),
+            },
         ))
     }
 }
@@ -1988,13 +2042,12 @@ impl YieldNode {
         expr: Option<ExpressionNode>,
     ) -> YieldNode {
         let node = create_node(
-            ParseNodeType::Yield,
             yield_token.start,
             yield_token.length,
             key,
-            ParseNodeDetails::Yield(YieldNodeDetails {
+            YieldNodeDetails {
                 expr: Cell::new(expr),
-            }),
+            },
         );
 
         if let Some(expr) = expr {
@@ -2018,13 +2071,12 @@ impl YieldFromNode {
     // parser/parseNodes.ts:1644
     pub fn create(key: ParseTreeKey, yield_token: P<Token>, expr: ExpressionNode) -> YieldFromNode {
         let node = create_node(
-            ParseNodeType::YieldFrom,
             yield_token.start,
             yield_token.length,
             key,
-            ParseNodeDetails::YieldFrom(YieldFromNodeDetails {
+            YieldFromNodeDetails {
                 expr: Cell::new(expr),
-            }),
+            },
         );
 
         set_parent(&expr, node);
@@ -2052,14 +2104,13 @@ impl MemberAccessNode {
         member: NameNode,
     ) -> MemberAccessNode {
         let node = create_node(
-            ParseNodeType::MemberAccess,
             left_expr.start.get(),
             left_expr.length.get(),
             key,
-            ParseNodeDetails::MemberAccess(MemberAccessNodeDetails {
+            MemberAccessNodeDetails {
                 left_expr: Cell::new(left_expr),
                 member: Cell::new(member),
-            }),
+            },
         );
 
         set_parent(&left_expr, node);
@@ -2084,14 +2135,13 @@ impl LambdaNode {
     // parser/parseNodes.ts:1702
     pub fn create(key: ParseTreeKey, lambda_token: P<Token>, expr: ExpressionNode) -> LambdaNode {
         let node = create_node(
-            ParseNodeType::Lambda,
             lambda_token.start,
             lambda_token.length,
             key,
-            ParseNodeDetails::Lambda(LambdaNodeDetails {
+            LambdaNodeDetails {
                 params: RefCell::new(vec![]),
                 expr: Cell::new(expr),
-            }),
+            },
         );
 
         set_parent(&expr, node);
@@ -2115,14 +2165,13 @@ impl NameNode {
     // parser/parseNodes.ts:1732
     pub fn create(key: ParseTreeKey, name_token: IdentifierToken) -> NameNode {
         NameNode(create_node(
-            ParseNodeType::Name,
             name_token.start,
             name_token.length,
             key,
-            ParseNodeDetails::Name(NameNodeDetails {
+            NameNodeDetails {
                 token: Cell::new(name_token),
                 value: name_token.d().value.clone(),
-            }),
+            },
         ))
     }
 }
@@ -2139,13 +2188,12 @@ impl ConstantNode {
     // parser/parseNodes.ts:1757
     pub fn create(key: ParseTreeKey, token: KeywordToken) -> ConstantNode {
         ConstantNode(create_node(
-            ParseNodeType::Constant,
             token.start,
             token.length,
             key,
-            ParseNodeDetails::Constant(ConstantNodeDetails {
+            ConstantNodeDetails {
                 const_type: Cell::new(token.d().keyword_type),
-            }),
+            },
         ))
     }
 }
@@ -2161,11 +2209,10 @@ impl EllipsisNode {
     pub fn create(key: ParseTreeKey, range: &(impl HasTextRange + ?Sized)) -> EllipsisNode {
         let range = range.text_range();
         EllipsisNode(create_node(
-            ParseNodeType::Ellipsis,
             range.start,
             range.length,
             key,
-            ParseNodeDetails::Ellipsis(EllipsisNodeDetails {}),
+            EllipsisNodeDetails {},
         ))
     }
 }
@@ -2184,15 +2231,14 @@ impl NumberNode {
     // parser/parseNodes.ts:1799
     pub fn create(key: ParseTreeKey, token: NumberToken) -> NumberNode {
         NumberNode(create_node(
-            ParseNodeType::Number,
             token.start,
             token.length,
             key,
-            ParseNodeDetails::Number(NumberNodeDetails {
+            NumberNodeDetails {
                 value: token.d().value.clone(),
                 is_integer: Cell::new(token.d().is_integer),
                 is_imaginary: Cell::new(token.d().is_imaginary),
-            }),
+            },
         ))
     }
 }
@@ -2210,14 +2256,13 @@ impl StringNode {
     // parser/parseNodes.ts:1826
     pub fn create(key: ParseTreeKey, token: StringToken, value: JsString) -> StringNode {
         StringNode(create_node(
-            ParseNodeType::String,
             token.start,
             token.length,
             key,
-            ParseNodeDetails::String(StringNodeDetails {
+            StringNodeDetails {
                 token: Cell::new(token),
                 value,
-            }),
+            },
         ))
     }
 }
@@ -2248,17 +2293,16 @@ impl FormatStringNode {
         format_exprs: Vec<ExpressionNode>,
     ) -> FormatStringNode {
         let node = create_node(
-            ParseNodeType::FormatString,
             start_token.start,
             start_token.length,
             key,
-            ParseNodeDetails::FormatString(FormatStringNodeDetails {
+            FormatStringNodeDetails {
                 token: Cell::new(start_token),
                 middle_tokens: RefCell::new(middle_tokens),
                 field_exprs: RefCell::new(field_exprs.clone()),
                 format_exprs: RefCell::new(format_exprs.clone()),
                 value: JsString::from(""),
-            }),
+            },
         );
 
         for expr in &field_exprs {
@@ -2295,14 +2339,13 @@ impl StringListNode {
     // parser/parseNodes.ts:1912
     pub fn create(key: ParseTreeKey, strings: Vec<P<ParseNode>>) -> StringListNode {
         let node = create_node(
-            ParseNodeType::StringList,
             strings[0].start.get(),
             strings[0].length.get(),
             key,
-            ParseNodeDetails::StringList(StringListNodeDetails {
+            StringListNodeDetails {
                 strings: RefCell::new(strings.clone()),
                 has_parens: Cell::new(false),
-            }),
+            },
         );
 
         if !strings.is_empty() {
@@ -2330,14 +2373,13 @@ impl DictionaryNode {
     pub fn create(key: ParseTreeKey, range: &(impl HasTextRange + ?Sized)) -> DictionaryNode {
         let range = range.text_range();
         DictionaryNode(create_node(
-            ParseNodeType::Dictionary,
             range.start,
             range.length,
             key,
-            ParseNodeDetails::Dictionary(DictionaryNodeDetails {
+            DictionaryNodeDetails {
                 items: RefCell::new(vec![]),
                 trailing_comma_token: Cell::new(None),
-            }),
+            },
         ))
     }
 }
@@ -2363,14 +2405,13 @@ impl DictionaryKeyEntryNode {
         value_expr: ExpressionNode,
     ) -> DictionaryKeyEntryNode {
         let node = create_node(
-            ParseNodeType::DictionaryKeyEntry,
             key_expr.start.get(),
             key_expr.length.get(),
             key,
-            ParseNodeDetails::DictionaryKeyEntry(DictionaryKeyEntryNodeDetails {
+            DictionaryKeyEntryNodeDetails {
                 key_expr: Cell::new(key_expr),
                 value_expr: Cell::new(value_expr),
-            }),
+            },
         );
 
         set_parent(&key_expr, node);
@@ -2398,13 +2439,12 @@ impl DictionaryExpandEntryNode {
     // parser/parseNodes.ts:2001
     pub fn create(key: ParseTreeKey, expr: ExpressionNode) -> DictionaryExpandEntryNode {
         let node = create_node(
-            ParseNodeType::DictionaryExpandEntry,
             expr.start.get(),
             expr.length.get(),
             key,
-            ParseNodeDetails::DictionaryExpandEntry(DictionaryExpandEntryNodeDetails {
+            DictionaryExpandEntryNodeDetails {
                 expr: Cell::new(expr),
-            }),
+            },
         );
 
         set_parent(&expr, node);
@@ -2430,13 +2470,12 @@ impl SetNode {
     pub fn create(key: ParseTreeKey, range: &(impl HasTextRange + ?Sized)) -> SetNode {
         let range = range.text_range();
         SetNode(create_node(
-            ParseNodeType::Set,
             range.start,
             range.length,
             key,
-            ParseNodeDetails::Set(SetNodeDetails {
+            SetNodeDetails {
                 items: RefCell::new(vec![]),
-            }),
+            },
         ))
     }
 }
@@ -2454,13 +2493,12 @@ impl ListNode {
     pub fn create(key: ParseTreeKey, range: &(impl HasTextRange + ?Sized)) -> ListNode {
         let range = range.text_range();
         ListNode(create_node(
-            ParseNodeType::List,
             range.start,
             range.length,
             key,
-            ParseNodeDetails::List(ListNodeDetails {
+            ListNodeDetails {
                 items: RefCell::new(vec![]),
-            }),
+            },
         ))
     }
 }
@@ -2494,7 +2532,6 @@ impl ArgumentNode {
         arg_category: ArgCategory,
     ) -> ArgumentNode {
         let node = create_node(
-            ParseNodeType::Argument,
             match start_token {
                 Some(t) => t.start,
                 None => value_expr.start.get(),
@@ -2504,11 +2541,11 @@ impl ArgumentNode {
                 None => value_expr.length.get(),
             },
             key,
-            ParseNodeDetails::Argument(ArgumentNodeDetails {
+            ArgumentNodeDetails {
                 arg_category: Cell::new(arg_category),
                 name: Cell::new(None),
                 value_expr: Cell::new(value_expr),
-            }),
+            },
         );
 
         set_parent(&value_expr, node);
@@ -2531,13 +2568,12 @@ impl DelNode {
     // parser/parseNodes.ts:2112
     pub fn create(key: ParseTreeKey, del_token: P<Token>) -> DelNode {
         DelNode(create_node(
-            ParseNodeType::Del,
             del_token.start,
             del_token.length,
             key,
-            ParseNodeDetails::Del(DelNodeDetails {
+            DelNodeDetails {
                 targets: RefCell::new(vec![]),
-            }),
+            },
         ))
     }
 }
@@ -2553,11 +2589,10 @@ impl PassNode {
     pub fn create(key: ParseTreeKey, pass_token: &(impl HasTextRange + ?Sized)) -> PassNode {
         let range = pass_token.text_range();
         PassNode(create_node(
-            ParseNodeType::Pass,
             range.start,
             range.length,
             key,
-            ParseNodeDetails::Pass(PassNodeDetails {}),
+            PassNodeDetails {},
         ))
     }
 }
@@ -2577,15 +2612,14 @@ impl ImportNode {
     pub fn create(key: ParseTreeKey, import_token: &(impl HasTextRange + ?Sized)) -> ImportNode {
         let range = import_token.text_range();
         ImportNode(create_node(
-            ParseNodeType::Import,
             range.start,
             range.length,
             key,
-            ParseNodeDetails::Import(ImportNodeDetails {
+            ImportNodeDetails {
                 list: RefCell::new(vec![]),
                 is_lazy: Cell::new(None),
                 lazy_token: Cell::new(None),
-            }),
+            },
         ))
     }
 }
@@ -2607,15 +2641,14 @@ impl ModuleNameNode {
     pub fn create(key: ParseTreeKey, range: &(impl HasTextRange + ?Sized)) -> ModuleNameNode {
         let range = range.text_range();
         ModuleNameNode(create_node(
-            ParseNodeType::ModuleName,
             range.start,
             range.length,
             key,
-            ParseNodeDetails::ModuleName(ModuleNameNodeDetails {
+            ModuleNameNodeDetails {
                 leading_dots: Cell::new(0),
                 name_parts: RefCell::new(vec![]),
                 has_trailing_dot: Cell::new(None),
-            }),
+            },
         ))
     }
 }
@@ -2633,14 +2666,13 @@ impl ImportAsNode {
     // parser/parseNodes.ts:2206
     pub fn create(key: ParseTreeKey, module: ModuleNameNode) -> ImportAsNode {
         let node = create_node(
-            ParseNodeType::ImportAs,
             module.start.get(),
             module.length.get(),
             key,
-            ParseNodeDetails::ImportAs(ImportAsNodeDetails {
+            ImportAsNodeDetails {
                 module: Cell::new(module),
                 alias: Cell::new(None),
-            }),
+            },
         );
 
         set_parent(&module, node);
@@ -2672,11 +2704,10 @@ impl ImportFromNode {
         module: ModuleNameNode,
     ) -> ImportFromNode {
         let node = create_node(
-            ParseNodeType::ImportFrom,
             from_token.start,
             from_token.length,
             key,
-            ParseNodeDetails::ImportFrom(ImportFromNodeDetails {
+            ImportFromNodeDetails {
                 module: Cell::new(module),
                 imports: RefCell::new(vec![]),
                 is_wildcard_import: Cell::new(false),
@@ -2685,7 +2716,7 @@ impl ImportFromNode {
                 missing_import: Cell::new(None),
                 is_lazy: Cell::new(None),
                 lazy_token: Cell::new(None),
-            }),
+            },
         );
 
         set_parent(&module, node);
@@ -2709,14 +2740,13 @@ impl ImportFromAsNode {
     // parser/parseNodes.ts:2269
     pub fn create(key: ParseTreeKey, name: NameNode) -> ImportFromAsNode {
         let node = create_node(
-            ParseNodeType::ImportFromAs,
             name.start.get(),
             name.length.get(),
             key,
-            ParseNodeDetails::ImportFromAs(ImportFromAsNodeDetails {
+            ImportFromAsNodeDetails {
                 name: Cell::new(name),
                 alias: Cell::new(None),
-            }),
+            },
         );
 
         set_parent(&name, node);
@@ -2738,13 +2768,12 @@ impl GlobalNode {
     pub fn create(key: ParseTreeKey, range: &(impl HasTextRange + ?Sized)) -> GlobalNode {
         let range = range.text_range();
         GlobalNode(create_node(
-            ParseNodeType::Global,
             range.start,
             range.length,
             key,
-            ParseNodeDetails::Global(GlobalNodeDetails {
+            GlobalNodeDetails {
                 targets: RefCell::new(vec![]),
-            }),
+            },
         ))
     }
 }
@@ -2762,13 +2791,12 @@ impl NonlocalNode {
     pub fn create(key: ParseTreeKey, range: &(impl HasTextRange + ?Sized)) -> NonlocalNode {
         let range = range.text_range();
         NonlocalNode(create_node(
-            ParseNodeType::Nonlocal,
             range.start,
             range.length,
             key,
-            ParseNodeDetails::Nonlocal(NonlocalNodeDetails {
+            NonlocalNodeDetails {
                 targets: RefCell::new(vec![]),
-            }),
+            },
         ))
     }
 }
@@ -2790,14 +2818,13 @@ impl AssertNode {
         test_expr: ExpressionNode,
     ) -> AssertNode {
         let node = create_node(
-            ParseNodeType::Assert,
             assert_token.start,
             assert_token.length,
             key,
-            ParseNodeDetails::Assert(AssertNodeDetails {
+            AssertNodeDetails {
                 test_expr: Cell::new(test_expr),
                 exception_expr: Cell::new(None),
-            }),
+            },
         );
 
         set_parent(&test_expr, node);
@@ -2819,11 +2846,10 @@ impl BreakNode {
     pub fn create(key: ParseTreeKey, range: &(impl HasTextRange + ?Sized)) -> BreakNode {
         let range = range.text_range();
         BreakNode(create_node(
-            ParseNodeType::Break,
             range.start,
             range.length,
             key,
-            ParseNodeDetails::Break(BreakNodeDetails {}),
+            BreakNodeDetails {},
         ))
     }
 }
@@ -2839,11 +2865,10 @@ impl ContinueNode {
     pub fn create(key: ParseTreeKey, range: &(impl HasTextRange + ?Sized)) -> ContinueNode {
         let range = range.text_range();
         ContinueNode(create_node(
-            ParseNodeType::Continue,
             range.start,
             range.length,
             key,
-            ParseNodeDetails::Continue(ContinueNodeDetails {}),
+            ContinueNodeDetails {},
         ))
     }
 }
@@ -2861,13 +2886,12 @@ impl ReturnNode {
     pub fn create(key: ParseTreeKey, range: &(impl HasTextRange + ?Sized)) -> ReturnNode {
         let range = range.text_range();
         ReturnNode(create_node(
-            ParseNodeType::Return,
             range.start,
             range.length,
             key,
-            ParseNodeDetails::Return(ReturnNodeDetails {
+            ReturnNodeDetails {
                 expr: Cell::new(None),
-            }),
+            },
         ))
     }
 }
@@ -2886,14 +2910,13 @@ impl RaiseNode {
     pub fn create(key: ParseTreeKey, range: &(impl HasTextRange + ?Sized)) -> RaiseNode {
         let range = range.text_range();
         RaiseNode(create_node(
-            ParseNodeType::Raise,
             range.start,
             range.length,
             key,
-            ParseNodeDetails::Raise(RaiseNodeDetails {
+            RaiseNodeDetails {
                 expr: Cell::new(None),
                 from_expr: Cell::new(None),
-            }),
+            },
         ))
     }
 }
@@ -2912,15 +2935,14 @@ impl MatchNode {
     // parser/parseNodes.ts:2447
     pub fn create(key: ParseTreeKey, match_token: P<Token>, expr: ExpressionNode) -> MatchNode {
         let node = create_node(
-            ParseNodeType::Match,
             match_token.start,
             match_token.length,
             key,
-            ParseNodeDetails::Match(MatchNodeDetails {
+            MatchNodeDetails {
                 first_token: Cell::new(match_token),
                 expr: Cell::new(expr),
                 cases: RefCell::new(vec![]),
-            }),
+            },
         );
 
         set_parent(&expr, node);
@@ -2954,16 +2976,15 @@ impl CaseNode {
     ) -> CaseNode {
         let range = case_token.text_range();
         let node = create_node(
-            ParseNodeType::Case,
             range.start,
             range.length,
             key,
-            ParseNodeDetails::Case(CaseNodeDetails {
+            CaseNodeDetails {
                 pattern: Cell::new(pattern),
                 is_irrefutable: Cell::new(is_irrefutable),
                 guard_expr: Cell::new(guard_expr),
                 suite: Cell::new(suite),
-            }),
+            },
         );
 
         extend_range(&node, &suite);
@@ -3011,18 +3032,17 @@ impl PatternSequenceNode {
 
         let range = first_token.text_range();
         let node = create_node(
-            ParseNodeType::PatternSequence,
             range.start,
             range.length,
             key,
-            ParseNodeDetails::PatternSequence(PatternSequenceNodeDetails {
+            PatternSequenceNodeDetails {
                 entries: RefCell::new(entries.clone()),
                 star_entry_index: Cell::new(if star_entry_index >= 0 {
                     Some(star_entry_index)
                 } else {
                     None
                 }),
-            }),
+            },
         );
 
         if !entries.is_empty() {
@@ -3054,14 +3074,13 @@ impl PatternAsNode {
         target: Option<NameNode>,
     ) -> PatternAsNode {
         let node = create_node(
-            ParseNodeType::PatternAs,
             or_patterns[0].start.get(),
             or_patterns[0].length.get(),
             key,
-            ParseNodeDetails::PatternAs(PatternAsNodeDetails {
+            PatternAsNodeDetails {
                 or_patterns: RefCell::new(or_patterns.clone()),
                 target: Cell::new(target),
-            }),
+            },
         );
 
         if or_patterns.len() > 1 {
@@ -3097,13 +3116,12 @@ impl PatternLiteralNode {
     // parser/parseNodes.ts:2603
     pub fn create(key: ParseTreeKey, expr: ExpressionNode) -> PatternLiteralNode {
         let node = create_node(
-            ParseNodeType::PatternLiteral,
             expr.start.get(),
             expr.length.get(),
             key,
-            ParseNodeDetails::PatternLiteral(PatternLiteralNodeDetails {
+            PatternLiteralNodeDetails {
                 expr: Cell::new(expr),
-            }),
+            },
         );
 
         set_parent(&expr, node);
@@ -3130,14 +3148,13 @@ impl PatternClassNode {
         args: Vec<PatternClassArgumentNode>,
     ) -> PatternClassNode {
         let node = create_node(
-            ParseNodeType::PatternClass,
             class_name.start.get(),
             class_name.length.get(),
             key,
-            ParseNodeDetails::PatternClass(PatternClassNodeDetails {
+            PatternClassNodeDetails {
                 class_name: Cell::new(class_name),
                 args: RefCell::new(args.clone()),
-            }),
+            },
         );
 
         set_parent(&class_name, node);
@@ -3174,14 +3191,13 @@ impl PatternClassArgumentNode {
         name: Option<NameNode>,
     ) -> PatternClassArgumentNode {
         let node = create_node(
-            ParseNodeType::PatternClassArgument,
             pattern.start.get(),
             pattern.length.get(),
             key,
-            ParseNodeDetails::PatternClassArgument(PatternClassArgumentNodeDetails {
+            PatternClassArgumentNodeDetails {
                 pattern: Cell::new(pattern),
                 name: Cell::new(name),
-            }),
+            },
         );
 
         set_parent(&pattern, node);
@@ -3217,15 +3233,14 @@ impl PatternCaptureNode {
         star_token: Option<&(impl HasTextRange + ?Sized)>,
     ) -> PatternCaptureNode {
         let node = create_node(
-            ParseNodeType::PatternCapture,
             target.start.get(),
             target.length.get(),
             key,
-            ParseNodeDetails::PatternCapture(PatternCaptureNodeDetails {
+            PatternCaptureNodeDetails {
                 target: Cell::new(target),
                 is_star: Cell::new(star_token.is_some()),
                 is_wildcard: Cell::new(target.d().value == "_"),
-            }),
+            },
         );
 
         set_parent(&target, node);
@@ -3259,13 +3274,12 @@ impl PatternMappingNode {
     ) -> PatternMappingNode {
         let range = start_token.text_range();
         let node = create_node(
-            ParseNodeType::PatternMapping,
             range.start,
             range.length,
             key,
-            ParseNodeDetails::PatternMapping(PatternMappingNodeDetails {
+            PatternMappingNodeDetails {
                 entries: RefCell::new(entries.clone()),
-            }),
+            },
         );
 
         if !entries.is_empty() {
@@ -3307,14 +3321,13 @@ impl PatternMappingKeyEntryNode {
         value_pattern: P<ParseNode>,
     ) -> PatternMappingKeyEntryNode {
         let node = create_node(
-            ParseNodeType::PatternMappingKeyEntry,
             key_pattern.start.get(),
             key_pattern.length.get(),
             key,
-            ParseNodeDetails::PatternMappingKeyEntry(PatternMappingKeyEntryNodeDetails {
+            PatternMappingKeyEntryNodeDetails {
                 key_pattern: Cell::new(key_pattern),
                 value_pattern: Cell::new(value_pattern),
-            }),
+            },
         );
 
         set_parent(&key_pattern, node);
@@ -3347,13 +3360,12 @@ impl PatternMappingExpandEntryNode {
     ) -> PatternMappingExpandEntryNode {
         let range = star_star_token.text_range();
         let node = create_node(
-            ParseNodeType::PatternMappingExpandEntry,
             range.start,
             range.length,
             key,
-            ParseNodeDetails::PatternMappingExpandEntry(PatternMappingExpandEntryNodeDetails {
+            PatternMappingExpandEntryNodeDetails {
                 target: Cell::new(target),
-            }),
+            },
         );
 
         set_parent(&target, node);
@@ -3376,13 +3388,12 @@ impl PatternValueNode {
     // parser/parseNodes.ts:2826
     pub fn create(key: ParseTreeKey, expr: MemberAccessNode) -> PatternValueNode {
         let node = create_node(
-            ParseNodeType::PatternValue,
             expr.start.get(),
             expr.length.get(),
             key,
-            ParseNodeDetails::PatternValue(PatternValueNodeDetails {
+            PatternValueNodeDetails {
                 expr: Cell::new(expr),
-            }),
+            },
         );
 
         set_parent(&expr, node);

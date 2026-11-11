@@ -118,8 +118,8 @@ Every Rust-only environment variable is listed here. When you add a cache or sho
 
 ## parse nodes
 
-- `ParseNode` is one struct: `node_type`, `start`, `length`, `id`, `parent`, `a`, and `d`.
-- `d` is `ParseNodeDetails`, an enum with one variant per `ParseNodeType`. Each variant holds a `<Name>NodeDetails` struct.
+- `ParseNode` is the header every node shares: `node_type`, `start`, `length`, `id`, `parent` and `a`. Each node type has a `<Name>NodeDetails` struct.
+- A node is allocated as its header followed by its own details, so it takes the size of its type, not of the largest type. `node.d()` returns `ParseNodeDetails`, an enum with one variant per `ParseNodeType`, each holding a `&'static <Name>NodeDetails`.
 - Every `d` field is `Cell<T>`, or `RefCell<Vec<T>>` for arrays. Every node field written after creation is a `Cell`. The parser writes most fields after `create`.
 - A node handle is `P<ParseNode>`. Each node type also gets a typed handle, for example `FunctionNode(P<ParseNode>)`, with `cast(P<ParseNode>) -> Option<Self>`, `d()` returning its details, and `Deref` to `ParseNode`.
 - A TypeScript union of node types, such as `ExpressionNode`, is a type alias for `P<ParseNode>`.

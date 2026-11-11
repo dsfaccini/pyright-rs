@@ -13,8 +13,7 @@ use jsrt::{JsMap, P};
 use crate::common::text_range::Range;
 use crate::common::uri::Uri;
 use crate::parser::parse_nodes::{
-    ErrorExpressionCategory, ErrorNodeDetails, ExpressionNode, NameNode, ParseNode, ParseNodeDetails,
-    ParseNodeType, RaiseNode, ReturnNode, create_parse_tree_key,
+    ExpressionNode, NameNode, ParseNode, RaiseNode, ReturnNode, create_placeholder_node,
 };
 
 thread_local! {
@@ -22,20 +21,8 @@ thread_local! {
     static UNRESOLVED_MODULE_MARKER: Uri = Uri::constant("*** unresolved module ***");
 
     // Never read: id 0 takes nothing from the parser's node counter, so real nodes
-    // keep pyright's ids; the details are filler.
-    static UNDEFINED_DECLARATION_NODE: P<ParseNode> = P::new(ParseNode {
-        node_type: ParseNodeType::Error,
-        start: Cell::new(0),
-        length: Cell::new(0),
-        id: Cell::new(0),
-        parent: Cell::new(None),
-        a: create_parse_tree_key(),
-        d: ParseNodeDetails::Error(ErrorNodeDetails {
-            category: Cell::new(ErrorExpressionCategory::MissingExpression),
-            child: Cell::new(None),
-            decorators: None,
-        }),
-    });
+    // keep pyright's ids.
+    static UNDEFINED_DECLARATION_NODE: P<ParseNode> = create_placeholder_node();
 }
 
 /// `UnresolvedModuleMarker`: one constant Uri, compared by identity.

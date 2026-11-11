@@ -54,7 +54,7 @@ pub fn create_sentinel_type(
     {
         let mut joined = JsString::from("");
         for s in string_list.d().strings.borrow().iter() {
-            let value = match &s.get().d {
+            let value = match s.d() {
                 ParseNodeDetails::String(d) => &d.value,
                 ParseNodeDetails::FormatString(d) => &d.value,
                 _ => unreachable!("a string list holds string nodes"),

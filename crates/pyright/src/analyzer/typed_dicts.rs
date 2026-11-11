@@ -110,7 +110,7 @@ pub fn create_typed_dict_type(
             Some(string_list) if name_arg.arg_category() == ArgCategory::Simple => {
                 let mut joined = JsString::from("");
                 for s in string_list.d().strings.borrow().iter() {
-                    let value = match &s.get().d {
+                    let value = match s.d() {
                         ParseNodeDetails::String(d) => &d.value,
                         ParseNodeDetails::FormatString(d) => &d.value,
                         _ => unreachable!("a string list holds string nodes"),
@@ -1518,7 +1518,7 @@ pub(crate) fn get_typed_dict_fields_from_dict_syntax(
 
         let mut joined = JsString::from("");
         for s in key_string_list.d().strings.borrow().iter() {
-            let value = match &s.get().d {
+            let value = match s.d() {
                 ParseNodeDetails::String(d) => &d.value,
                 ParseNodeDetails::FormatString(d) => &d.value,
                 _ => unreachable!("a string list holds string nodes"),

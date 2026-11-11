@@ -2195,7 +2195,7 @@ impl Checker {
 
     // analyzer/checker.ts:1924
     pub(crate) fn _report_unnecessary_condition_expression(&mut self, expression: ExpressionNode) {
-        if let D::BinaryOperation(d) = &expression.get().d {
+        if let D::BinaryOperation(d) = expression.d() {
             if d.operator.get() == parser::tokenizer_types::OperatorType::And
                 || d.operator.get() == parser::tokenizer_types::OperatorType::Or
             {
@@ -2204,7 +2204,7 @@ impl Checker {
             }
 
             return;
-        } else if let D::UnaryOperation(d) = &expression.get().d {
+        } else if let D::UnaryOperation(d) = expression.d() {
             if d.operator.get() == parser::tokenizer_types::OperatorType::Not {
                 self._report_unnecessary_condition_expression(d.expr.get());
             }
@@ -2289,7 +2289,7 @@ impl Checker {
             || node.node_type == ParseNodeType::Set
             || node.node_type == ParseNodeType::Dictionary
         {
-            let items: Vec<P<ParseNode>> = match &node.get().d {
+            let items: Vec<P<ParseNode>> = match node.d() {
                 D::List(d) => d.items.borrow().clone(),
                 D::Set(d) => d.items.borrow().clone(),
                 D::Dictionary(d) => d.items.borrow().clone(),
@@ -2309,10 +2309,10 @@ impl Checker {
             && self._file_info.ipython_mode == analyzer::source_file::IPythonMode::CellDocs
         {
             if let Some(parent) = node.parent.get() {
-                if let D::StatementList(parent_d) = &parent.get().d {
+                if let D::StatementList(parent_d) = parent.d() {
                     if parent_d.statements.borrow().last() == Some(&node) {
                         if let Some(grandparent) = parent.parent.get() {
-                            if let D::Module(grandparent_d) = &grandparent.get().d {
+                            if let D::Module(grandparent_d) = grandparent.d() {
                                 if grandparent_d.statements.borrow().last() == Some(&parent) {
                                     // Exclude an expression at the end of a notebook cell, as that is treated as
                                     // the cell's value.
@@ -2526,7 +2526,7 @@ impl Checker {
             || operator == parser::tokenizer_types::OperatorType::IsNot;
 
         // Check for chained comparisons.
-        if let D::BinaryOperation(right_d) = &right_expression.get().d {
+        if let D::BinaryOperation(right_d) = right_expression.d() {
             if !right_d.has_parens.get()
                 && analyzer::parse_tree_utils::operator_supports_chaining(right_d.operator.get())
             {
@@ -3526,7 +3526,7 @@ impl Checker {
 
         // `statement.d.firstToken`: every statement node but `Error` has one.
         let first_token_of = |statement: StatementNode| -> P<parser::tokenizer_types::Token> {
-            match &statement.get().d {
+            match statement.d() {
                 D::If(d) => d.first_token.get(),
                 D::While(d) => d.first_token.get(),
                 D::For(d) => d.first_token.get(),
@@ -4387,7 +4387,7 @@ impl Checker {
             if let Some(diag) = diag {
                 let primary_decl_node: Option<P<ParseNode>> = match primary_decl.type_ {
                     analyzer::declaration::DeclarationType::Function
-                    | analyzer::declaration::DeclarationType::Class => match &primary_decl.node.get().get().d {
+                    | analyzer::declaration::DeclarationType::Class => match primary_decl.node.get().d() {
                         D::Function(d) => Some(d.name.get().0),
                         D::Class(d) => Some(d.name.get().0),
                         _ => None,
@@ -4400,7 +4400,7 @@ impl Checker {
                         }
                     }
                     analyzer::declaration::DeclarationType::Param
-                    | analyzer::declaration::DeclarationType::TypeParam => match &primary_decl.node.get().get().d {
+                    | analyzer::declaration::DeclarationType::TypeParam => match primary_decl.node.get().d() {
                         D::Parameter(d) => d.name.get().map(|name| name.0),
                         D::TypeParameter(d) => Some(d.name.get().0),
                         _ => None,

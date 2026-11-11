@@ -964,7 +964,7 @@ pub fn get_deprecated_message_from_call(node: CallNode) -> String {
         let string_list_node = StringListNode(args[0].d().value_expr.get());
         let mut message = JsString::from("");
         for s in string_list_node.d().strings.borrow().iter() {
-            let value = match &s.get().d {
+            let value = match s.d() {
                 ParseNodeDetails::String(d) => &d.value,
                 ParseNodeDetails::FormatString(d) => &d.value,
                 _ => unreachable!("a string list holds string nodes"),

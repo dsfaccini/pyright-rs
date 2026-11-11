@@ -568,7 +568,7 @@ impl Parser {
             self._parse_import_statement().0
         };
 
-        match &node.d {
+        match node.d() {
             ParseNodeDetails::Import(d) => {
                 d.is_lazy.set(Some(true));
                 d.lazy_token.set(Some(lazy_token));
@@ -1022,7 +1022,7 @@ impl Parser {
         global_name_map: &JsMap<String, NameNode>,
         local_name_map: &mut JsMap<String, NameNode>,
     ) {
-        match &node.d {
+        match node.d() {
             ParseNodeDetails::PatternSequence(d) => {
                 let entries = d.entries.borrow().clone();
                 for subpattern in entries {
@@ -1116,7 +1116,7 @@ impl Parser {
 
     // parser/parser.ts:1008
     fn _get_pattern_target_names(&self, node: PatternAtomNode, name_set: &mut JsSet<String>) {
-        match &node.d {
+        match node.d() {
             ParseNodeDetails::PatternSequence(d) => {
                 for subpattern in d.entries.borrow().iter() {
                     self._get_pattern_target_names(subpattern.0, name_set);
@@ -1301,7 +1301,7 @@ impl Parser {
 
             let args = self._parse_class_pattern_arg_list();
 
-            let class_name_expr = match &pattern_capture_or_value.d {
+            let class_name_expr = match pattern_capture_or_value.d() {
                 ParseNodeDetails::PatternCapture(d) => d.target.get().0,
                 ParseNodeDetails::PatternValue(d) => d.expr.get().0,
                 _ => unreachable!(),
@@ -5117,7 +5117,7 @@ impl Parser {
         if next_token.type_ == TokenType::OpenParenthesis {
             let possible_tuple_node = self._parse_tuple_atom();
 
-            match &possible_tuple_node.d {
+            match possible_tuple_node.d() {
                 // Mark binary expressions as parenthesized so we don't attempt
                 // to use comparison chaining, which isn't appropriate when the
                 // expression is parenthesized. Unary and await expressions
@@ -5128,7 +5128,7 @@ impl Parser {
                 _ => {}
             }
 
-            match &possible_tuple_node.d {
+            match possible_tuple_node.d() {
                 ParseNodeDetails::StringList(d) => d.has_parens.set(true),
                 ParseNodeDetails::Comprehension(d) => d.has_parens.set(true),
                 ParseNodeDetails::AssignmentExpression(d) => d.has_parens.set(true),
@@ -5738,17 +5738,8 @@ impl Parser {
             self._report_conditional_error_for_star_tuple_element(right_expr, PYTHON_VERSION3_9);
 
             // Make a shallow copy of the dest expression but give it a new ID.
-            // The copy's `d` is a clone: it holds the same child handles, as the
-            // shared TypeScript `d` object does. Nothing writes to either `d` after this.
-            let dest_expr = P::new(ParseNode {
-                node_type: left_expr.node_type,
-                start: jsrt::cell::Cell::new(left_expr.start.get()),
-                length: jsrt::cell::Cell::new(left_expr.length.get()),
-                id: jsrt::cell::Cell::new(left_expr.id.get()),
-                parent: jsrt::cell::Cell::new(left_expr.parent.get()),
-                a: left_expr.a,
-                d: left_expr.d.clone(),
-            });
+            // Nothing writes to either node's details after this.
+            let dest_expr = left_expr.shallow_copy();
             dest_expr.id.set(get_next_node_id());
 
             return AugmentedAssignmentNode::create(

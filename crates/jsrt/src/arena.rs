@@ -135,6 +135,18 @@ impl<T: Trace + 'static> P<T> {
 }
 
 impl<T: 'static> P<T> {
+    /// The handle of the object's first field, for a `#[repr(C)]` type that
+    /// starts with a header: both handles hold the same address. Code that
+    /// knows the full type reads past the header (`parser/parse_nodes.rs`).
+    pub fn header<U: Trace>(self, first_field: fn(&'static T) -> &'static U) -> P<U>
+    where
+        T: Trace,
+    {
+        const { assert!(T::EVAL == U::EVAL, "P::header across heaps") };
+        let header = first_field(self.0);
+        assert!(ptr::addr_eq(header, self.0), "P::header of a field that is not first");
+        P(header, PhantomData)
+    }
 
     /// The same object as a trait object: `p.to_dyn::<dyn Trait>(|x| x)`. An
     /// evaluator object needs a trait whose `P` the collector traces (`U::EVAL`).

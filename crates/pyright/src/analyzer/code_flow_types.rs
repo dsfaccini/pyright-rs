@@ -394,7 +394,7 @@ pub fn is_code_flow_supported_for_reference(reference: ExpressionNode) -> bool {
         return true;
     }
 
-    if let D::MemberAccess(d) = &reference.get().d {
+    if let D::MemberAccess(d) = reference.d() {
         return is_code_flow_supported_for_reference(d.left_expr.get());
     }
 
@@ -402,7 +402,7 @@ pub fn is_code_flow_supported_for_reference(reference: ExpressionNode) -> bool {
         return true;
     }
 
-    if let D::Index(d) = &reference.get().d {
+    if let D::Index(d) = reference.d() {
         // Allow index expressions that have a single subscript that is a
         // literal integer or string value.
         let items = d.items.borrow().clone();
@@ -415,21 +415,21 @@ pub fn is_code_flow_supported_for_reference(reference: ExpressionNode) -> bool {
         }
 
         let subscript_node = items[0].d().value_expr.get();
-        let is_integer_index = match &subscript_node.get().d {
+        let is_integer_index = match subscript_node.d() {
             D::Number(n) => !n.is_imaginary.get() && n.is_integer.get(),
             _ => false,
         };
-        let is_negative_integer_index = match &subscript_node.get().d {
+        let is_negative_integer_index = match subscript_node.d() {
             D::UnaryOperation(u) => {
                 u.operator.get() == OperatorType::Subtract
-                    && match &u.expr.get().get().d {
+                    && match u.expr.get().d() {
                         D::Number(n) => !n.is_imaginary.get() && n.is_integer.get(),
                         _ => false,
                     }
             }
             _ => false,
         };
-        let is_string_index = match &subscript_node.get().d {
+        let is_string_index = match subscript_node.d() {
             D::StringList(s) => {
                 let strings = s.strings.borrow();
                 strings.len() == 1 && strings[0].node_type == ParseNodeType::String
@@ -450,7 +450,7 @@ pub fn is_code_flow_supported_for_reference(reference: ExpressionNode) -> bool {
 // analyzer/codeFlowTypes.ts:223
 pub fn create_key_for_reference(reference: CodeFlowReferenceExpressionNode) -> String {
     let key;
-    match &reference.get().d {
+    match reference.d() {
         D::Name(d) => {
             key = d.value.clone();
         }
@@ -467,7 +467,7 @@ pub fn create_key_for_reference(reference: CodeFlowReferenceExpressionNode) -> S
             assert(items.len() == 1, None);
             let expr = items[0].d().value_expr.get();
             drop(items);
-            match &expr.get().d {
+            match expr.d() {
                 D::Number(n) => {
                     key = format!("{}[{}]", left_key, n.value.to_js_string());
                 }
@@ -477,7 +477,7 @@ pub fn create_key_for_reference(reference: CodeFlowReferenceExpressionNode) -> S
                         strings.len() == 1 && strings[0].node_type == ParseNodeType::String,
                         None,
                     );
-                    let D::String(s) = &strings[0].get().d else {
+                    let D::String(s) = strings[0].d() else {
                         unreachable!()
                     };
                     key = format!("{}[\"{}\"]", left_key, s.value.to_string_lossy());
@@ -486,7 +486,7 @@ pub fn create_key_for_reference(reference: CodeFlowReferenceExpressionNode) -> S
                     if u.operator.get() == OperatorType::Subtract
                         && u.expr.get().node_type == ParseNodeType::Number =>
                 {
-                    let D::Number(n) = &u.expr.get().get().d else {
+                    let D::Number(n) = u.expr.get().d() else {
                         unreachable!()
                     };
                     key = format!("{}[-{}]", left_key, n.value.to_js_string());
@@ -508,7 +508,7 @@ pub fn create_key_for_reference(reference: CodeFlowReferenceExpressionNode) -> S
 pub fn create_keys_for_reference_subexpressions(
     reference: CodeFlowReferenceExpressionNode,
 ) -> Vec<String> {
-    match &reference.get().d {
+    match reference.d() {
         D::Name(_) => vec![create_key_for_reference(reference)],
         D::AssignmentExpression(d) => vec![create_key_for_reference(d.name.get().node())],
         D::MemberAccess(d) => {

@@ -272,7 +272,7 @@ pub fn print_arg(node: ArgumentNode, flags: PrintExpressionFlags) -> String {
 /// passes none.
 // analyzer/parseTreeUtils.ts:217
 pub fn print_expression(node: ExpressionNode, flags: PrintExpressionFlags) -> String {
-    match &node.d {
+    match node.d() {
         ParseNodeDetails::Name(d) => {
             return d.value.clone();
         }
@@ -691,7 +691,7 @@ pub fn print_expression(node: ExpressionNode, flags: PrintExpressionFlags) -> St
             let items = d.items.borrow().clone();
             let dict_contents = items
                 .iter()
-                .map(|entry| match &entry.d {
+                .map(|entry| match entry.d() {
                     ParseNodeDetails::DictionaryKeyEntry(entry) => {
                         format!("{}: ", print_expression(entry.key_expr.get(), flags))
                             + &print_expression(entry.value_expr.get(), flags)
@@ -1085,7 +1085,7 @@ pub fn get_evaluation_scope_node(
         // We found a scope associated with this node. In most cases,
         // we'll return this scope, but in a few cases we need to return
         // the enclosing scope instead.
-        match &cur.d {
+        match cur.d() {
             ParseNodeDetails::TypeParameterList(_) => {
                 return EvaluationScopeInfo {
                     node: cur,
@@ -1296,7 +1296,7 @@ pub fn get_type_var_scope_node(node: P<ParseNode>) -> Option<TypeParameterScopeN
     let mut cur_node: Option<P<ParseNode>> = Some(node);
 
     while let Some(cur) = cur_node {
-        match &cur.d {
+        match cur.d() {
             ParseNodeDetails::Function(d) => {
                 if !d
                     .decorators
@@ -1524,7 +1524,7 @@ pub fn get_parent_annotation_node(node: ExpressionNode) -> Option<ExpressionNode
             return None;
         }
 
-        if let ParseNodeDetails::FunctionAnnotation(d) = &cur.d {
+        if let ParseNodeDetails::FunctionAnnotation(d) = cur.d() {
             if prev_node == Some(d.return_annotation.get())
                 || d.param_annotations
                     .borrow()
@@ -2018,7 +2018,7 @@ pub fn is_assignment_to_defaults_following_named_tuple(call_node: P<ParseNode>) 
         return false;
     }
 
-    let statements = match &module_or_suite.d {
+    let statements = match module_or_suite.d() {
         ParseNodeDetails::Module(d) => d.statements.borrow().clone(),
         ParseNodeDetails::Suite(d) => d.statements.borrow().clone(),
         _ => unreachable!(),
@@ -2485,7 +2485,7 @@ pub fn is_write_access(node: NameNode) -> bool {
     let mut cur_node: Option<P<ParseNode>> = prev_node.parent.get();
 
     while let Some(cur) = cur_node {
-        match &cur.d {
+        match cur.d() {
             ParseNodeDetails::Assignment(d) => {
                 return prev_node == d.left_expr.get();
             }
@@ -3243,7 +3243,7 @@ pub fn get_variable_doc_string_node(node: ExpressionNode) -> Option<StringListNo
             || suite_or_module.node_type == ParseNodeType::Suite
     })?;
 
-    let statements = match &suite_or_module.d {
+    let statements = match suite_or_module.d() {
         ParseNodeDetails::Module(d) => d.statements.borrow().clone(),
         ParseNodeDetails::Suite(d) => d.statements.borrow().clone(),
         _ => unreachable!(),
@@ -3347,7 +3347,7 @@ pub fn check_decorator(node: DecoratorNode, value: &str) -> bool {
 
 // analyzer/parseTreeUtils.ts:2751
 pub fn is_simple_default(node: ExpressionNode) -> bool {
-    match &node.d {
+    match node.d() {
         ParseNodeDetails::Number(_)
         | ParseNodeDetails::Constant(_)
         | ParseNodeDetails::MemberAccess(_) => true,

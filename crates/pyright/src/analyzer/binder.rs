@@ -112,7 +112,7 @@ fn string_value(node: StringNode) -> String {
 /// `stringList.d.strings[0].d.value`: a `StringNode` or `FormatStringNode`.
 fn first_string_value(node: StringListNode) -> String {
     let first = node.d().strings.borrow()[0];
-    match &first.get().d {
+    match first.d() {
         D::String(d) => d.value.to_string_lossy(),
         D::FormatString(d) => d.value.to_string_lossy(),
         _ => unreachable!(),
@@ -122,7 +122,7 @@ fn first_string_value(node: StringListNode) -> String {
 /// `node.nodeType === StringList && node.d.strings.length === 1 &&
 /// node.d.strings[0].nodeType === String`: the one string node.
 fn single_string_node(node: P<ParseNode>) -> Option<StringNode> {
-    let D::StringList(d) = &node.get().d else {
+    let D::StringList(d) = node.d() else {
         return None;
     };
     let strings = d.strings.borrow();
@@ -135,7 +135,7 @@ fn single_string_node(node: P<ParseNode>) -> Option<StringNode> {
 
 /// `node.d.value` of a `NameNode` held as a `P<ParseNode>`.
 fn name_value(node: P<ParseNode>) -> Option<&'static str> {
-    match &node.get().d {
+    match node.d() {
         D::Name(d) => Some(d.value.as_str()),
         _ => None,
     }
@@ -144,7 +144,7 @@ fn name_value(node: P<ParseNode>) -> Option<&'static str> {
 /// `(expr is Name && expr.value === name) || (expr is TypeAnnotation &&
 /// expr.valueExpr is Name && expr.valueExpr.value === name)`.
 fn is_name_or_annotated_name(expr: ExpressionNode, name: &str) -> bool {
-    match &expr.get().d {
+    match expr.d() {
         D::Name(d) => d.value == name,
         D::TypeAnnotation(d) => name_value(d.value_expr.get()) == Some(name),
         _ => false,
@@ -153,7 +153,7 @@ fn is_name_or_annotated_name(expr: ExpressionNode, name: &str) -> bool {
 
 // analyzer/binder.ts:167
 fn is_static_class_assignment_target(target: ExpressionNode) -> bool {
-    match &target.get().d {
+    match target.d() {
         D::Name(_) => true,
 
         D::TypeAnnotation(d) => is_static_class_assignment_target(d.value_expr.get()),
@@ -181,7 +181,7 @@ fn get_called_built_in_name(
     expression: ExpressionNode,
     visited_symbols: &mut Vec<P<Symbol>>,
 ) -> Option<String> {
-    if let D::Name(name) = &expression.get().d {
+    if let D::Name(name) = expression.d() {
         let symbol_with_scope = scope.look_up_symbol_recursive(&name.value, None)?;
         if visited_symbols.contains(&symbol_with_scope.symbol) {
             return None;
@@ -215,7 +215,7 @@ fn get_called_built_in_name(
                 }
             }
         }
-    } else if let D::MemberAccess(member_access) = &expression.get().d {
+    } else if let D::MemberAccess(member_access) = expression.d() {
         if let Some(left_name) = name_value(member_access.left_expr.get()) {
             let symbol_with_scope = scope.look_up_symbol_recursive(left_name, None);
             let declarations = symbol_with_scope
@@ -1309,7 +1309,7 @@ impl ParseTreeVisitor<bool> for Binder {
                 self._dunder_all_names = Some(Vec::new());
                 let mut emit_dunder_all_warning = false;
 
-                let items = match &expr.get().d {
+                let items = match expr.d() {
                     D::List(d) => Some(d.items.borrow().clone()),
                     D::Tuple(d) => Some(d.items.borrow().clone()),
                     _ => None,
@@ -1349,12 +1349,12 @@ impl ParseTreeVisitor<bool> for Binder {
                 let mut entries: Vec<StringListNode> = Vec::new();
                 let mut is_expression_understood = true;
 
-                match &expr.get().d {
+                match expr.d() {
                     D::StringList(_) => {
                         entries.push(StringListNode(expr));
                     }
                     D::List(_) | D::Tuple(_) => {
-                        let items = match &expr.get().d {
+                        let items = match expr.d() {
                             D::List(d) => d.items.borrow().clone(),
                             D::Tuple(d) => d.items.borrow().clone(),
                             _ => unreachable!(),
@@ -1370,7 +1370,7 @@ impl ParseTreeVisitor<bool> for Binder {
                     D::Dictionary(d) => {
                         let items = d.items.borrow().clone();
                         for dictionary_entry_node in items {
-                            let key_expr = match &dictionary_entry_node.get().d {
+                            let key_expr = match dictionary_entry_node.d() {
                                 D::DictionaryKeyEntry(entry) => Some(entry.key_expr.get()),
                                 _ => None,
                             };
@@ -2823,7 +2823,7 @@ impl ParseTreeVisitor<bool> for Binder {
         // The first iterable is executed outside of the comprehension scope.
         let for_if_nodes = node.d().for_if_nodes.borrow().clone();
         if let Some(first) = for_if_nodes.first() {
-            if let D::ComprehensionFor(d) = &first.get().d {
+            if let D::ComprehensionFor(d) = first.d() {
                 self.walk(d.iterable_expr.get());
             }
         }
@@ -2844,7 +2844,7 @@ impl ParseTreeVisitor<bool> for Binder {
                 // expressions and create the control flow graph.
                 for compr in &for_if_nodes {
                     let mut added_symbols: JsMap<String, P<Symbol>> = JsMap::default();
-                    if let D::ComprehensionFor(d) = &compr.get().d {
+                    if let D::ComprehensionFor(d) = compr.d() {
                         this._bind_possible_tuple_named_target(d.target_expr.get(), Some(&mut added_symbols));
                         this._add_inferred_type_assignment_for_variable(d.target_expr.get(), *compr, false);
 
@@ -2873,7 +2873,7 @@ impl ParseTreeVisitor<bool> for Binder {
                 }
 
                 for (i, compr) in for_if_nodes.iter().enumerate() {
-                    match &compr.get().d {
+                    match compr.d() {
                         D::ComprehensionFor(d) => {
                             // We already walked the first iterable expression above,
                             // so skip it here.
@@ -2916,7 +2916,7 @@ impl ParseTreeVisitor<bool> for Binder {
 
         // We also support narrowing of individual tuple entries found within a
         // match subject expression, so add those here as well.
-        if let D::Tuple(tuple) = &node.d().expr.get().get().d {
+        if let D::Tuple(tuple) = node.d().expr.get().d() {
             let items = tuple.items.borrow().clone();
             for item_expr in items {
                 if self._is_narrowing_expression(item_expr, &mut expression_list, NarrowExprOptions::default()) {
@@ -3072,14 +3072,14 @@ impl Binder {
     // This is a syntactic check, not a semantic one, so it's very fast.
     // Guards against starred expressions ([*empty_list]) and comprehensions ([v for v in []]).
     fn _is_non_empty_list_or_tuple_literal(&self, expr: ExpressionNode) -> bool {
-        if let D::List(d) = &expr.get().d {
+        if let D::List(d) = expr.d() {
             let items = d.items.borrow();
             return items.len() > 0
                 && items.iter().all(|item| {
                     item.node_type != ParseNodeType::Unpack && item.node_type != ParseNodeType::Comprehension
                 });
         }
-        if let D::Tuple(d) = &expr.get().d {
+        if let D::Tuple(d) = expr.d() {
             let items = d.items.borrow();
             return items.len() > 0 && items.iter().all(|item| item.node_type != ParseNodeType::Unpack);
         }
@@ -3196,12 +3196,12 @@ impl Binder {
         let mut prev_prev_node: Option<P<ParseNode>> = None;
 
         while let Some(cur) = cur_node {
-            if let D::Comprehension(d) = &cur.get().d {
+            if let D::Comprehension(d) = cur.d() {
                 let for_if_nodes = d.for_if_nodes.borrow();
                 if ignore_outermost_iterable && for_if_nodes.len() > 0 {
                     let outermost_compr = for_if_nodes[0];
                     if prev_node == Some(outermost_compr) {
-                        if let D::ComprehensionFor(f) = &outermost_compr.get().d {
+                        if let D::ComprehensionFor(f) = outermost_compr.d() {
                             if prev_prev_node == Some(f.iterable_expr.get()) {
                                 return false;
                             }
@@ -3324,7 +3324,7 @@ impl Binder {
         import_info: Option<P<ImportResult>>,
         symbol: P<Symbol>,
     ) {
-        let module = match &node.get().d {
+        let module = match node.d() {
             D::ImportAs(d) => d.module.get(),
             D::ImportFrom(d) => d.module.get(),
             _ => unreachable!(),
@@ -3365,9 +3365,9 @@ impl Binder {
         let is_lazy = if node.node_type == ParseNodeType::ImportAs {
             node.parent
                 .get()
-                .is_some_and(|parent| matches!(&parent.get().d, D::Import(d) if d.is_lazy.get() == Some(true)))
+                .is_some_and(|parent| matches!(parent.d(), D::Import(d) if d.is_lazy.get() == Some(true)))
         } else {
-            matches!(&node.get().d, D::ImportFrom(d) if d.is_lazy.get() == Some(true))
+            matches!(node.d(), D::ImportFrom(d) if d.is_lazy.get() == Some(true))
         };
 
         if let Some(existing_decl) = existing_decl {
@@ -3643,11 +3643,11 @@ impl Binder {
     fn _bind_never_condition(&mut self, node: ExpressionNode, target: FlowLabel, is_positive_test: bool) {
         let mut expression_list: Vec<CodeFlowReferenceExpressionNode> = Vec::new();
 
-        let unary_not = match &node.get().d {
+        let unary_not = match node.d() {
             D::UnaryOperation(d) if d.operator.get() == OperatorType::Not => Some(d.expr.get()),
             _ => None,
         };
-        let and_or = match &node.get().d {
+        let and_or = match node.d() {
             D::BinaryOperation(d)
                 if d.operator.get() == OperatorType::And || d.operator.get() == OperatorType::Or =>
             {
@@ -3834,7 +3834,7 @@ impl Binder {
     // analyzer/binder.ts:3315
     // Indicates whether the expression is a NOT, AND or OR expression.
     fn _is_logical_expression(&self, expression: ExpressionNode) -> bool {
-        match &expression.get().d {
+        match expression.d() {
             D::UnaryOperation(d) => d.operator.get() == OperatorType::Not,
 
             D::BinaryOperation(d) => {
@@ -3866,7 +3866,7 @@ impl Binder {
             ..options
         };
 
-        match &expression.get().d {
+        match expression.d() {
             D::Name(_) | D::MemberAccess(_) | D::Index(_) => {
                 if options.filter_for_never_narrowing == Some(true) {
                     // Never narrowing doesn't support member access or index
@@ -3890,7 +3890,7 @@ impl Binder {
                         // If the expression is a member access expression, add its
                         // leftExpression to the expression list because that expression
                         // can be narrowed based on the attribute type.
-                        if let D::MemberAccess(d) = &expression.get().d {
+                        if let D::MemberAccess(d) = expression.d() {
                             if options.allow_discriminated_narrowing == Some(true) {
                                 if is_code_flow_supported_for_reference(d.left_expr.get()) {
                                     expression_list.push(d.left_expr.get());
@@ -3901,7 +3901,7 @@ impl Binder {
                         // If the expression is an index expression with a supported
                         // subscript, add its baseExpression to the expression list because
                         // that expression can be narrowed.
-                        if let D::Index(d) = &expression.get().d {
+                        if let D::Index(d) = expression.d() {
                             let items = d.items.borrow();
                             if items.len() == 1
                                 && !d.trailing_comma.get()
@@ -3936,13 +3936,13 @@ impl Binder {
                 if is_or_is_not_operator || equals_or_not_equals_operator {
                     // Look for "X is None", "X is not None", "X == None", "X != None".
                     // These are commonly-used patterns used in control flow.
-                    if matches!(&right_expr.get().d, D::Constant(c) if c.const_type.get() == KeywordType::None) {
+                    if matches!(right_expr.d(), D::Constant(c) if c.const_type.get() == KeywordType::None) {
                         return self._is_narrowing_expression(left_expr, expression_list, complex(Some(true)));
                     }
 
                     // Look for "type(X) is Y" or "type(X) is not Y".
                     if is_or_is_not_operator {
-                        if let D::Call(call) = &left_expr.get().d {
+                        if let D::Call(call) = left_expr.d() {
                             let args = call.args.borrow().clone();
                             if name_value(call.left_expr.get()) == Some("type")
                                 && args.len() == 1
@@ -3967,7 +3967,7 @@ impl Binder {
                 }
 
                 // Look for len(X) < <literal>, len(X) <= <literal>, len(X) > <literal>, len(X) >= <literal>.
-                if matches!(&right_expr.get().d, D::Number(n) if n.is_integer.get()) {
+                if matches!(right_expr.d(), D::Number(n) if n.is_integer.get()) {
                     if operator == OperatorType::LessThan
                         || operator == OperatorType::LessThanOrEqual
                         || operator == OperatorType::GreaterThan
@@ -4049,7 +4049,7 @@ impl Binder {
 
     // analyzer/binder.ts:3559
     fn _create_assignment_target_flow_nodes(&mut self, target: ExpressionNode, walk_targets: bool, unbound: bool) {
-        match &target.get().d {
+        match target.d() {
             D::Name(_) | D::MemberAccess(_) => {
                 self._create_flow_assignment(target, unbound);
                 if walk_targets {
@@ -4375,7 +4375,7 @@ impl Binder {
             self.cur_scope().has_potentially_dynamic_symbol_table.set(true);
         }
 
-        match &target.get().d {
+        match target.d() {
             D::Name(_) => {
                 self._bind_name_to_scope(self.cur_scope(), NameNode(target), added_symbols);
             }
@@ -4559,7 +4559,7 @@ impl Binder {
         source: P<ParseNode>,
         is_possible_type_alias: bool,
     ) {
-        match &target.get().d {
+        match target.d() {
             D::Name(name_details) => {
                 let name = NameNode(target);
                 let symbol_with_scope = self.cur_scope().look_up_symbol_recursive(&name_details.value, None);
@@ -4680,7 +4680,7 @@ impl Binder {
     fn _add_type_declaration_for_variable(&mut self, target: ExpressionNode, type_annotation: ExpressionNode) {
         let mut declaration_handled = false;
 
-        match &target.get().d {
+        match target.d() {
             D::Name(name_details) => {
                 let name = NameNode(target);
                 let symbol_with_scope = self.cur_scope().look_up_symbol_recursive(&name_details.value, None);
@@ -4754,13 +4754,13 @@ impl Binder {
                     }
 
                     // Look for an 'InitVar' either by itself or wrapped in an 'Annotated'.
-                    if let D::Index(index) = &type_annotation.get().d {
+                    if let D::Index(index) = type_annotation.d() {
                         let items = index.items.borrow().clone();
                         if self._is_dataclasses_annotation(index.left_expr.get(), "InitVar") {
                             symbol_with_scope.symbol.set_is_init_var();
                         } else if self._is_typing_annotation(index.left_expr.get(), "Annotated") && items.len() > 0 {
                             let item0_expr = items[0].d().value_expr.get();
-                            if let D::Index(item0) = &item0_expr.get().d {
+                            if let D::Index(item0) = item0_expr.d() {
                                 if self._is_dataclasses_annotation(item0.left_expr.get(), "InitVar") {
                                     symbol_with_scope.symbol.set_is_init_var();
                                 }
@@ -4770,7 +4770,7 @@ impl Binder {
 
                     if self._is_dataclasses_annotation(type_annotation, "KW_ONLY") {
                         symbol_with_scope.symbol.set_is_data_class_keyword_only();
-                    } else if let D::Index(index) = &type_annotation.get().d {
+                    } else if let D::Index(index) = type_annotation.d() {
                         let items = index.items.borrow().clone();
                         if self._is_typing_annotation(index.left_expr.get(), "Annotated")
                             && items.len() > 0
@@ -4899,7 +4899,7 @@ impl Binder {
                 .unwrap_or(annotation_node);
         }
 
-        match &annotation_node.get().d {
+        match annotation_node.d() {
             D::Name(d) => {
                 let alias = symbol_aliases.get(&d.value);
                 if alias.is_some_and(|alias| alias == name) {
@@ -4925,7 +4925,7 @@ impl Binder {
 
         // A docstring can consist of multiple joined strings in a single expression.
         let strings = doc_node.d().strings.borrow().clone();
-        let value_of = |s: &P<ParseNode>| match &s.get().d {
+        let value_of = |s: &P<ParseNode>| match s.d() {
             D::String(d) => d.value.to_string_lossy(),
             D::FormatString(d) => d.value.to_string_lossy(),
             _ => unreachable!(),
@@ -4954,7 +4954,7 @@ impl Binder {
                 type_annotation = class_var_type_node;
             }
 
-            let index = match &type_annotation.get().d {
+            let index = match type_annotation.d() {
                 D::Index(d) => Some(d),
                 _ => None,
             };
@@ -5005,7 +5005,7 @@ impl Binder {
                     .unwrap_or(annotation);
             }
 
-            let index = match &annotation.get().d {
+            let index = match annotation.d() {
                 D::Index(d) => Some(d),
                 _ => None,
             };
@@ -5094,7 +5094,7 @@ impl Binder {
                     let mut decorator_name: Option<String> = None;
 
                     let expr = decorator.d().expr.get();
-                    match &expr.get().d {
+                    match expr.d() {
                         D::Name(d) => {
                             decorator_name = Some(d.value.clone());
                         }
@@ -5502,7 +5502,7 @@ impl Binder {
             function.is_generator.set(true);
         }
 
-        let expr = match &node.get().d {
+        let expr = match node.d() {
             D::Yield(d) => d.expr.get(),
             D::YieldFrom(d) => Some(d.expr.get()),
             _ => unreachable!(),

@@ -159,7 +159,7 @@ pub fn create_enum_type(
     let join_string_values = |strings: &[P<ParseNode>]| {
         let mut joined = JsString::from("");
         for s in strings {
-            let value = match &s.get().d {
+            let value = match s.d() {
                 ParseNodeDetails::String(d) => &d.value,
                 ParseNodeDetails::FormatString(d) => &d.value,
                 _ => unreachable!("a string list holds string nodes"),
@@ -361,7 +361,7 @@ pub fn create_enum_type(
                 return None;
             }
 
-            let entry_name = match &name_strings[0].get().d {
+            let entry_name = match name_strings[0].d() {
                 ParseNodeDetails::String(d) => d.value.to_string_lossy(),
                 _ => unreachable!("checked to be a string node"),
             };
@@ -411,7 +411,7 @@ pub fn create_enum_type(
                 return None;
             }
 
-            let entry_name = match &name_strings[0].get().d {
+            let entry_name = match name_strings[0].d() {
                 ParseNodeDetails::String(d) => d.value.to_string_lossy(),
                 _ => unreachable!("checked to be a string node"),
             };
