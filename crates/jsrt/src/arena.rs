@@ -3,6 +3,7 @@
 use std::cell::{Cell, RefCell};
 use std::fmt;
 use std::hash::{Hash, Hasher};
+use std::marker::PhantomData;
 use std::ops::Deref;
 use std::ptr;
 
@@ -82,7 +83,10 @@ fn report_if_due() {
 ///
 /// A trait object is a `P<dyn Trait>`, made from a `P` of the concrete type
 /// with [`P::to_dyn`].
-pub struct P<T: ?Sized + 'static>(&'static T);
+///
+/// Not `Send` or `Sync`: an evaluator object belongs to the thread whose
+/// collector frees it.
+pub struct P<T: ?Sized + 'static>(&'static T, PhantomData<*const ()>);
 
 impl<T: Trace + 'static> P<T> {
     /// Moves `value` into the current thread's program heap, which is never
@@ -95,10 +99,10 @@ impl<T: Trace + 'static> P<T> {
             // SAFETY: a fresh slot sized and aligned for `T`, never freed.
             unsafe {
                 slot.write(value);
-                P(&*slot)
+                P(&*slot, PhantomData)
             }
         } else {
-            ARENA.with(|arena| P(arena.alloc(value)))
+            ARENA.with(|arena| P(arena.alloc(value), PhantomData))
         }
     }
 
@@ -113,16 +117,21 @@ impl<T: Trace + 'static> P<T> {
         // only when no traced handle reaches it.
         unsafe {
             slot.write(value);
-            P(&*slot)
+            P(&*slot, PhantomData)
         }
     }
 }
 
 impl<T: 'static> P<T> {
 
-    /// The same object as a trait object: `p.to_dyn::<dyn Trait>(|x| x)`.
-    pub fn to_dyn<U: ?Sized>(self, upcast: fn(&'static T) -> &'static U) -> P<U> {
-        P(upcast(self.0))
+    /// The same object as a trait object: `p.to_dyn::<dyn Trait>(|x| x)`. An
+    /// evaluator object needs a trait whose `P` the collector traces (`U::EVAL`).
+    pub fn to_dyn<U: ?Sized + Trace>(self, upcast: fn(&'static T) -> &'static U) -> P<U>
+    where
+        T: Trace,
+    {
+        const { assert!(!T::EVAL || U::EVAL, "P::to_dyn of an evaluator type to a trait without EVAL") };
+        P(upcast(self.0), PhantomData)
     }
 }
 
@@ -268,6 +277,27 @@ mod tests {
         fn name(&self) -> &'static str {
             if self.0 == 1 { "thing" } else { "other" }
         }
+    }
+
+    unsafe impl Trace for dyn Named {
+        const HOLDS_EVAL: bool = false;
+        const EVAL: bool = false;
+        fn trace(&self, _: &mut heap::Tracer) {}
+    }
+
+    /// Compiles only while `P` is neither `Send` nor `Sync` (the ambiguity trick of
+    /// `static_assertions::assert_not_impl_any!`).
+    #[test]
+    fn handles_stay_on_their_thread() {
+        trait AmbiguousIfImpl<A> {
+            fn some_item() {}
+        }
+        impl<T: ?Sized> AmbiguousIfImpl<()> for T {}
+        struct IfSend;
+        struct IfSync;
+        impl<T: ?Sized + Send> AmbiguousIfImpl<IfSend> for T {}
+        impl<T: ?Sized + Sync> AmbiguousIfImpl<IfSync> for T {}
+        let _ = <P<u64> as AmbiguousIfImpl<_>>::some_item;
     }
 
     #[test]

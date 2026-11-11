@@ -45,7 +45,7 @@ Every porting agent follows this file. Change a rule here first, then in the cod
 pyright allocates about 23 times what it keeps alive: 194 GB over a pydantic-ai check, 8.4 GB live (`docs/research/memory-advice.md`). A collector reclaims evaluator objects between files (`docs/collector-design.md`). These rules keep it correct.
 
 - Allocate with `P::new_eval` in evaluator and checker code. Keep `P::new` for parsing, binding, configuration and the program.
-- Make an object a `P` only when pyright compares it with `===`, or writes to it after storing it elsewhere. Otherwise use an owned value, or `Rc` when it is shared and acyclic. A program object is never dropped; a swept evaluator object is dropped in place, so never implement `Drop` for a type that dereferences a `P`.
+- Make an object a `P` only when pyright compares it with `===`, or writes to it after storing it elsewhere. Otherwise use an owned value, or `Rc` when it is shared and acyclic. A program object is never dropped; a swept evaluator object is dropped in place during a collection, so never implement `Drop` for a type that dereferences a `P` or allocates one.
 - Derive `jsrt::Trace` on every struct and enum that a heap object holds. Add `#[trace(eval)]` to a type allocated with `P::new_eval`; `P::new_eval` does not compile without it.
 - Mark a field `#[trace(program)]` when its type allows an evaluator handle but it only ever holds program handles, such as a declaration only the binder sets. Check mode verifies it.
 - An object that lives for the whole run, such as a singleton type, goes on the program heap (`P::new`).
@@ -54,7 +54,7 @@ pyright allocates about 23 times what it keeps alive: 194 GB over a pydantic-ai 
 - Never capture a `P` in a closure that a struct stores. Write the stored callback as a struct with named fields and a method, so the collector can see every `P`. A stored closure that captures program handles only is allowed: mark its field `#[trace(skip)]` and name what it captures.
 - Reach parse-node and type details only through typed handles and `d()`. Create them only through their `create` functions. Their memory layout will change.
 - Keep evaluator objects small: pyright-rs creates millions of them. Box a record or map that few objects set (`Option<Box<T>>`), or move such fields into the struct's cold half (`[cold]` in `tools/stubgen/typemap.toml`; read with `cold()`, write with `cold_mut()`). Lock the size with `const _: () = assert!(size_of::<T>() <= n);` after the type.
-- `PYRIGHT_RS_GC` turns collection off, on, or to check mode; `PYRIGHT_RS_GC_LOG=1` prints each collection (`docs/collector-design.md`).
+- `PYRIGHT_RS_GC` turns collection off, on (the default), or to check mode; `PYRIGHT_RS_GC_LOG=1` prints each collection (`docs/collector-design.md`).
 - Set `PYRIGHT_RS_ALLOC_STATS=1` to print objects and bytes per type and heap when `pyright-rs` exits. Set it to a number n to also print them each time the evaluator heap grows by another n GiB.
 
 ## collections

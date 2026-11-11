@@ -18,7 +18,7 @@ Recommendation 1 in `docs/research/memory-advice.md` gives the motivation; this 
 
 ## heap layout
 
-- Two address ranges, reserved once per process with `mmap(MAP_NORESERVE)`: 256 GiB for the evaluator heap, 64 GiB for typed program blocks. Pages are committed on first touch. "Is this handle in the evaluator heap" is one subtraction and one compare.
+- Two address ranges, reserved once per process with `mmap(PROT_NONE, MAP_NORESERVE)`: 256 GiB for the evaluator heap, 64 GiB for typed program blocks. Under an address-space limit (`ulimit -v`) they shrink to a quarter and a sixteenth of it, and a refused reservation is retried at half the size. Blocks become readable and writable 512 at a time (`mprotect`), so strict overcommit charges only what is handed out; pages are backed on first touch. "Is this handle in the evaluator heap" is one subtraction and one compare.
 - Each range is cut into 64 KiB blocks. A block belongs to one thread and holds objects of one Rust type, in fixed slots of `size_of` rounded up to the alignment (at least 8 bytes, so every `P` has its own address).
 - Block metadata lives in a side table indexed by block number: the type, the slot size, a bump index, a free list, and bitmaps for live and marked slots (plus dead slots in check mode). No per-object header: `Type` keeps its `size_of`.
 - Every `P::new_eval` goes to a typed block. A `P::new` goes to a typed block when its type has `HOLDS_EVAL` (below), because the collector scans those objects as roots; every other program object stays in the bump arena, which parse and bind speed depends on. The choice is made at compile time from the const.
@@ -45,6 +45,7 @@ pub unsafe trait Trace {
 - `#[trace(holds_eval)]` on a type forces `HOLDS_EVAL`, for a type that contains itself without a `P` (the const would otherwise be a cycle): `TypeResultWithNode`.
 - `jsrt` implements `Trace` for the std and dependency types the port stores: `Option`, `Vec`, `Box`, `Rc`, `Cell<T: Copy>`, `RefCell`, `OnceCell`, `JsMap`, `JsSet`, `FxHashMap`, `FxHashSet`, tuples, arrays, strings, numbers, `fn` pointers and `&'static T` (holds no evaluator handle; check mode verifies it).
 - `RefCell` contents are read with `try_borrow_unguarded`. A `RefCell` mutably borrowed at a collection panics.
+- `P::to_dyn` to a trait needs `U::EVAL` when `T::EVAL`, so an evaluator object is never held as an untraced trait object.
 
 ## roots
 
@@ -54,25 +55,28 @@ pub unsafe trait Trace {
 - **The stack.** At the collection point the frames above `Program.analyze` hold program handles only (`pyright.rs`, `service.rs`, `background_analysis_program.rs`, `analysis.rs`).
 - **Stored closures** are opaque (`#[trace(skip)]`). Each may capture program handles only: `ImportLookup` captures the `Program`, `ImportLookupResult.doc_string` a module node, the `getModuleName` callback of each `SourceFile` the `Program`; file-system filters and cleanups capture no heap handle; `Scope.chained_module_level_scope_lookup` is set only for notebook cells. Type-narrowing callbacks capture evaluator handles but are only passed and returned, never stored.
 - **Trait objects.** `P<dyn AnalyzerNodeInfoReader>` is a program handle (`EVAL = false`); `P<dyn FunctionReturnTypeCallback>` can be the evaluator (`EVAL = true`).
+- **Other threads.** `P` is neither `Send` nor `Sync`: a block belongs to one thread, and only that thread's collector frees it.
 
 ## sweep
 
 - A live, unmarked evaluator slot is dropped in place. `drop_in_place` frees the `Vec`, `String` and map buffers it owns, and releases its `Rc`s. The slot then joins its block's free list.
 - No port type implements `Drop`, and the std drops never dereference a `P`, so the order in which dead objects drop does not matter.
+- Allocation, root registration and collection never nest: the heap panics when a root, `Trace` impl or drop allocates.
+- A panic while marking (check mode's assertions, a borrowed `RefCell`) clears the marks before it unwinds, so a later collection traces everything again. A panic while sweeping aborts the process.
 - A block left with no live slot returns to the process's free-block pool, and `madvise(MADV_DONTNEED)` returns its pages to the OS.
 
 ## trigger
 
-- Before each file, collect when the evaluator slot bytes allocated since the last collection reach `max(live bytes after the last collection, 1 GiB)`. The evaluator heap then stays under twice the live set plus one file.
-- `PYRIGHT_RS_GC_MIN_MIB` overrides the 1 GiB floor. Check mode collects on the floor alone, 64 MiB by default; `PYRIGHT_RS_GC_MIN_MIB=0` collects before every file that follows an allocation.
-- `PYRIGHT_RS_GC_LOG=1` prints each collection: live bytes before and after, objects freed, milliseconds.
+- Before each file, collect when the evaluator slot bytes allocated since the last collection reach `max(ratio × live slot bytes after the last collection, floor)`. Defaults: ratio 1 and floor 1 GiB; check mode ratio 0 and floor 64 MiB. `PYRIGHT_RS_GC_RATIO` and `PYRIGHT_RS_GC_MIN_MIB` override them; both at 0 collect before every file that follows an allocation.
+- The trigger counts slots only. The `Vec`, `String` and map buffers that dead objects own come on top: on pydantic-ai each collection frees 1.1 to 1.6 GB of them next to about 1 GB of slots.
+- `PYRIGHT_RS_GC_LOG=1` prints each collection: milliseconds (and those spent marking), program objects scanned, objects freed, live slot bytes, slot bytes allocated since the last collection, and the system allocator's bytes in use before and after (glibc).
 
 ## switch and check mode
 
 `PYRIGHT_RS_GC` selects the mode, read once per process:
 
 - `off`: no collection. Allocation still goes through the typed blocks.
-- `on`: collect as above.
+- `on`, the default: collect as above.
 - `check`: needs a build with `--features jsrt/gc-check` (`CHECK_FEATURES=jsrt/gc-check oracle/corpus/check.sh`). Collect as `on`, and:
   - a swept slot is dropped, filled with a poison byte, marked dead, and never reused; its block is never released;
   - dereferencing (`Deref`, `P::get`), comparing (`==`, `P::ptr_eq`) or hashing a `P` to a dead slot panics with the type name;
@@ -84,9 +88,9 @@ The `P` hooks are compiled only into a `gc-check` build: as a runtime flag, the 
 
 ## rollout
 
-1. Machinery with `PYRIGHT_RS_GC=off` as the default: allocator, `Trace`, derive, roots, check mode, `docs/porting.md` rules. `main` keeps passing. Gate: with collection off, samples wall time and `oracle_bind --timing` parse and bind time on pydantic-ai within noise of `main`. Compare builds with `CARGO_PROFILE_RELEASE_CODEGEN_UNITS=1` too: with the default 16 codegen units, adding the `Trace` impls alone moved parse and bind time by 5% (it reshuffles which functions can inline into each other), and with one unit the difference was under 1%.
+1. Machinery with `PYRIGHT_RS_GC=off` as the default: allocator, `Trace`, derive, roots, check mode, `docs/porting.md` rules. `main` keeps passing. Gate: with collection off, samples wall time and `oracle_bind --timing` parse and bind time on pydantic-ai within noise of `main`. With the default 16 codegen units, adding the `Trace` impls alone moved parse and bind time by 5% (it reshuffles which functions can inline into each other); with one unit the difference was under 1%, and release builds use one unit since 51c777d.
 2. Check mode on the seven corpora, output identical.
-3. `on` becomes the default once step 2 passes; pydantic-ai runs to completion under the 30G cap, output identical to the reference.
+3. `on` becomes the default once step 2 passes, and once the seven corpora are identical with `PYRIGHT_RS_GC=on PYRIGHT_RS_GC_MIN_MIB=0 PYRIGHT_RS_GC_RATIO=0` (slot reuse and block release, which check mode never exercises); pydantic-ai runs to completion under the 30G cap, output identical to the reference.
 
 ## rules for ported code
 
