@@ -776,6 +776,8 @@ pub struct Tracer {
     check: bool,
     program_only: u32,
     owner: u32,
+    /// `owner`, or `NONE` in check mode, where every handle takes `mark_eval`.
+    fast_owner: u32,
     eval_base: usize,
     eval_len: usize,
     meta: *mut BlockMeta,
@@ -790,16 +792,29 @@ impl Tracer {
         self.check
     }
 
-    /// Marks the object at `addr` when it is on the evaluator heap.
-    #[inline]
+    /// Marks the object at `addr` when it is on the evaluator heap. Most handles a
+    /// collection follows point to an object already marked, so that test is
+    /// inlined into every trace function; the rest go through `mark_eval`.
+    #[inline(always)]
     pub fn mark(&mut self, addr: usize) {
         let offset = addr.wrapping_sub(self.eval_base);
         if offset < self.eval_len {
+            // SAFETY: the metadata table covers the range.
+            let meta = unsafe { &*self.meta.add(offset >> BLOCK_SHIFT) };
+            if meta.owner == self.fast_owner {
+                let i = meta.index(offset & (BLOCK - 1));
+                // SAFETY: this thread owns the block, so `i` is one of its slots and its
+                // bitmaps are allocated; a parallel mark sets mark bits atomically.
+                let mark = unsafe { AtomicU64::from_ptr(meta.bits.add(meta.words as usize + i / 64)) }.load(Relaxed);
+                if mark & (1 << (i % 64)) != 0 {
+                    return;
+                }
+            }
             self.mark_eval(offset);
         }
     }
 
-    #[inline]
+    #[inline(never)]
     fn mark_eval(&mut self, offset: usize) {
         if self.check {
             assert!(self.program_only == 0, "collector check: a #[trace(program)] field holds an evaluator handle");
@@ -1069,6 +1084,7 @@ impl Helpers {
                     check: job.check,
                 program_only: 0,
                 owner: job.owner,
+                fast_owner: if job.check { NONE } else { job.owner },
                 eval_base: job.eval_base,
                 eval_len: job.eval_len,
                 meta: job.meta as *mut BlockMeta,
@@ -1271,6 +1287,7 @@ impl ThreadHeap {
             check,
             program_only: 0,
             owner: self.owner,
+            fast_owner: if check { NONE } else { self.owner },
             eval_base: ranges.eval.base,
             eval_len: ranges.eval.len,
             meta: ranges.eval.meta,
