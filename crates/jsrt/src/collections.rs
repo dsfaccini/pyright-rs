@@ -2,6 +2,9 @@
 
 use rustc_hash::FxBuildHasher;
 
+use crate::heap::{Tracer, epoch};
+use crate::trace::Trace;
+
 /// JS `Map`. Remove entries with `shift_remove`: `swap_remove` reorders the map.
 pub type JsMap<K, V> = indexmap::IndexMap<K, V, FxBuildHasher>;
 
@@ -212,17 +215,41 @@ const ID_MAP_PAGE: usize = 32;
 /// range; the page table spans only the pages between the lowest and the highest id
 /// inserted. A lookup is two loads, and a page half full holds an entry in twice its size,
 /// where a hash map holds it in its size plus key, padding and spare buckets.
-#[derive(jsrt::Trace)]
+///
+/// Each page records the [`epoch`] of its last insert, so a minor collection traces only
+/// the pages written since the last collection (`docs/collector-design.md`, "write logs").
 pub struct IdMap<V> {
     /// The page number of `pages[0]`.
     first_page: usize,
     pages: Vec<Option<Box<[Option<V>; ID_MAP_PAGE]>>>,
+    /// The epoch of each page's last insert.
+    stamps: Vec<u32>,
     len: usize,
 }
 
 impl<V> Default for IdMap<V> {
     fn default() -> Self {
-        IdMap { first_page: 0, pages: Vec::new(), len: 0 }
+        IdMap { first_page: 0, pages: Vec::new(), stamps: Vec::new(), len: 0 }
+    }
+}
+
+// SAFETY: visits every page, or in a minor collection every page inserted into since the
+// last collection; the others hold only handles that collection marked.
+unsafe impl<V: Trace> Trace for IdMap<V> {
+    const HOLDS_EVAL: bool = V::HOLDS_EVAL;
+    const HAS_CELL: bool = V::HAS_CELL;
+    const CELL_OUT_OF_LINE: bool = V::HAS_CELL;
+    #[inline]
+    fn prefetch_owned(&self) {
+        self.pages.prefetch_owned();
+    }
+    fn trace(&self, t: &mut Tracer) {
+        let young = t.young_epoch();
+        for (page, &stamp) in self.pages.iter().zip(&self.stamps) {
+            if young.is_none_or(|epoch| stamp == epoch) {
+                page.trace(t);
+            }
+        }
     }
 }
 
@@ -254,12 +281,15 @@ impl<V> IdMap<V> {
             self.first_page = page;
         } else if page < self.first_page {
             self.pages.splice(0..0, std::iter::repeat_with(|| None).take(self.first_page - page));
+            self.stamps.splice(0..0, std::iter::repeat_n(0, self.first_page - page));
             self.first_page = page;
         }
         let index = page - self.first_page;
         if index >= self.pages.len() {
             self.pages.resize_with(index + 1, || None);
+            self.stamps.resize(index + 1, 0);
         }
+        self.stamps[index] = epoch();
         let slots = self.pages[index].get_or_insert_with(|| Box::new([const { None }; ID_MAP_PAGE]));
         let old = slots[id % ID_MAP_PAGE].replace(value);
         if old.is_none() {
@@ -277,6 +307,139 @@ impl<V> IdMap<V> {
             self.len -= 1;
         }
         old
+    }
+}
+
+#[cfg(test)]
+impl<V> IdMap<V> {
+    /// Replaces the value of an id in an existing page and keeps the page's stamp, as an
+    /// insert that missed the log would.
+    pub(crate) fn replace_unstamped(&mut self, id: u32, value: V) {
+        let index = id as usize / ID_MAP_PAGE - self.first_page;
+        let stamp = self.stamps[index];
+        self.insert(id, value);
+        self.stamps[index] = stamp;
+    }
+}
+
+/// The keys of a map written since the last collection (`docs/collector-design.md`,
+/// "write logs").
+struct WriteLog {
+    keys: Vec<u32>,
+    /// The [`epoch`] of the writes in `keys`.
+    epoch: u32,
+    /// Trace every entry: the map is new, or its writes since the last collection reach
+    /// an eighth of its entries, where a lookup per key costs more than one pass.
+    all: bool,
+}
+
+impl WriteLog {
+    fn new() -> Self {
+        WriteLog { keys: Vec::new(), epoch: epoch(), all: true }
+    }
+
+    #[inline]
+    fn note(&mut self, key: u32, len: usize) {
+        let now = epoch();
+        if self.epoch != now {
+            self.keys.clear();
+            self.epoch = now;
+            self.all = false;
+        }
+        if !self.all {
+            if self.keys.len() >= (len / 8).max(16) {
+                self.all = true;
+                self.keys = Vec::new();
+            } else {
+                self.keys.push(key);
+            }
+        }
+    }
+}
+
+/// A map keyed by a `u32` id that a [`LoggedMap`] can log.
+pub trait LogKeyed: Trace {
+    type Value: Trace;
+    fn value(&self, key: u32) -> Option<&Self::Value>;
+    fn entries(&self) -> usize;
+}
+
+impl<V: Trace> LogKeyed for JsMap<u32, V> {
+    type Value = V;
+    #[inline]
+    fn value(&self, key: u32) -> Option<&V> {
+        self.get(&key)
+    }
+    fn entries(&self) -> usize {
+        self.len()
+    }
+}
+
+impl<V: Trace> LogKeyed for FxHashMap<u32, V> {
+    type Value = V;
+    #[inline]
+    fn value(&self, key: u32) -> Option<&V> {
+        self.get(&key)
+    }
+    fn entries(&self) -> usize {
+        self.len()
+    }
+}
+
+/// A map keyed by a `u32` id that logs the keys it writes, so a minor collection traces
+/// only their values: a large evaluator cache would otherwise be traced in full at every
+/// minor collection that follows a write to it (`docs/collector-design.md`, "write logs").
+/// Read through `Deref`; change the value of a key only through [`LoggedMap::write`].
+pub struct LoggedMap<M> {
+    map: M,
+    log: WriteLog,
+}
+
+impl<M: Default> Default for LoggedMap<M> {
+    fn default() -> Self {
+        LoggedMap { map: M::default(), log: WriteLog::new() }
+    }
+}
+
+impl<M> std::ops::Deref for LoggedMap<M> {
+    type Target = M;
+    #[inline]
+    fn deref(&self) -> &M {
+        &self.map
+    }
+}
+
+impl<M: LogKeyed> LoggedMap<M> {
+    /// The map, to insert, replace or change the value of `key` and no other.
+    #[inline]
+    pub fn write(&mut self, key: u32) -> &mut M {
+        self.log.note(key, self.map.entries());
+        &mut self.map
+    }
+}
+
+// SAFETY: visits every entry, or in a minor collection the values of the keys written
+// since the last collection; the others hold only handles that collection marked.
+unsafe impl<M: LogKeyed> Trace for LoggedMap<M> {
+    const HOLDS_EVAL: bool = M::HOLDS_EVAL;
+    const HAS_CELL: bool = M::HAS_CELL;
+    const CELL_OUT_OF_LINE: bool = M::CELL_OUT_OF_LINE;
+    #[inline]
+    fn prefetch_owned(&self) {
+        self.map.prefetch_owned();
+    }
+    fn trace(&self, t: &mut Tracer) {
+        match t.young_epoch() {
+            Some(epoch) if self.log.epoch != epoch => {}
+            Some(_) if !self.log.all => {
+                for &key in &self.log.keys {
+                    if let Some(value) = self.map.value(key) {
+                        value.trace(t);
+                    }
+                }
+            }
+            _ => self.map.trace(t),
+        }
     }
 }
 

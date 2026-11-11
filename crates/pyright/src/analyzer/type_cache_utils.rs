@@ -11,7 +11,7 @@ use crate::analyzer::types::TypeSameOptions;
 use crate::analyzer::types::is_type_same;
 use crate::common::debug::assert;
 use crate::parser::parse_nodes::ParseNode;
-use jsrt::{FxHashMap, P};
+use jsrt::{FxHashMap, LoggedMap, P};
 use jsrt::cell::RefCell;
 
 // analyzer/typeCacheUtils.ts:17
@@ -118,7 +118,8 @@ pub fn add_contextual_type_cache_entry<T: Clone + ContextualTypeCacheEntry>(
 #[derive(jsrt::Trace)]
 pub struct SpeculativeTypeTracker {
     pub(crate) _speculative_context_stack: Vec<SpeculativeContext>,
-    pub(crate) _speculative_type_cache: FxHashMap<u32, Vec<P<SpeculativeTypeEntry>>>,
+    /// Logs its writes for minor collections (`LoggedMap`).
+    pub(crate) _speculative_type_cache: LoggedMap<FxHashMap<u32, Vec<P<SpeculativeTypeEntry>>>>,
     pub(crate) _active_dependent_types: Vec<DependentType>,
 }
 
@@ -253,6 +254,7 @@ impl SpeculativeTypeTracker {
             }),
         );
         self._speculative_type_cache
+            .write(node.id.get())
             .insert(node.id.get(), cache_entries);
     }
 
