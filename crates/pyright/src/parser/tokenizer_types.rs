@@ -332,8 +332,8 @@ pub struct Token {
     /// The token lives in its tokenizer's scratch region (`TokenScratch`).
     scratch: bool,
 
-    // Comments prior to the token.
-    comments: Option<P<Vec<Comment>>>,
+    /// The token has comments prior to it, after its interface fields (`TokenAlloc`).
+    has_comments: bool,
 
     /// `Token::keep` writes the slot before a scratch token through a shared
     /// reference. Without an `UnsafeCell` the compiler takes a `&Token` as
@@ -341,7 +341,7 @@ pub struct Token {
     #[trace(skip)]
     _written_through_shared: UnsafeCell<()>,
 }
-const _: () = assert!(size_of::<Token>() <= 24);
+const _: () = assert!(size_of::<Token>() <= 16);
 
 #[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -361,12 +361,37 @@ enum TokenKind {
     Identifier,
 }
 
-/// A token as allocated: the header, then the fields of its interface.
+/// A token as allocated: the header, the fields of its interface, then the
+/// comments prior to it: `C` is `P<Vec<Comment>>` for a token that has them, else `()`.
 #[repr(C)]
 #[derive(jsrt::Trace)]
-struct TokenAlloc<D> {
+struct TokenAlloc<D, C = ()> {
     token: Token,
     d: D,
+    comments: C,
+}
+
+/// The comments of a token that has them.
+type Comments = P<Vec<Comment>>;
+
+/// `$body` with `$D` naming the interface type of token kind `$kind`.
+macro_rules! with_interface {
+    ($kind:expr, $D:ident => $body:expr) => {
+        match $kind {
+            TokenKind::None => { type $D = NoInterface; $body }
+            TokenKind::Indent => { type $D = IndentTokenDetails; $body }
+            TokenKind::Dedent => { type $D = DedentTokenDetails; $body }
+            TokenKind::NewLine => { type $D = NewLineTokenDetails; $body }
+            TokenKind::Keyword => { type $D = KeywordTokenDetails; $body }
+            TokenKind::String => { type $D = StringTokenDetails; $body }
+            TokenKind::FStringStart => { type $D = FStringStartTokenDetails; $body }
+            TokenKind::FStringMiddle => { type $D = FStringMiddleTokenDetails; $body }
+            TokenKind::FStringEnd => { type $D = FStringEndTokenDetails; $body }
+            TokenKind::Number => { type $D = NumberTokenDetails; $body }
+            TokenKind::Operator => { type $D = OperatorTokenDetails; $body }
+            TokenKind::Identifier => { type $D = IdentifierTokenDetails; $body }
+        }
+    };
 }
 
 /// The fields one specific token interface adds to `Token`.
@@ -396,7 +421,7 @@ fn alloc_token<D: TokenInterface>(
     type_: TokenType,
     start: i32,
     length: i32,
-    comments: Option<P<Vec<Comment>>>,
+    comments: Option<Comments>,
     d: D,
 ) -> P<Token> {
     let scratch = if D::HELD_BY_NODES { ptr::null() } else { SCRATCH.with(Cell::get) };
@@ -406,10 +431,20 @@ fn alloc_token<D: TokenInterface>(
         length,
         kind: D::KIND,
         scratch: !scratch.is_null(),
-        comments,
+        has_comments: comments.is_some(),
         _written_through_shared: UnsafeCell::new(()),
     };
-    let alloc = TokenAlloc { token, d };
+    match comments {
+        None => place_token(scratch, TokenAlloc { token, d, comments: () }),
+        Some(comments) => place_token(scratch, TokenAlloc { token, d, comments }),
+    }
+}
+
+/// `alloc` in the scratch region `scratch`, or on the program heap when it is null.
+fn place_token<D: TokenInterface, C: jsrt::Trace + 'static>(
+    scratch: *const Region,
+    alloc: TokenAlloc<D, C>,
+) -> P<Token> {
     if scratch.is_null() {
         return P::new(alloc).header(|alloc| &alloc.token);
     }
@@ -421,7 +456,7 @@ fn alloc_token<D: TokenInterface>(
 }
 
 /// A plain `Token`, with no interface fields.
-fn alloc_plain_token(type_: TokenType, start: i32, length: i32, comments: Option<P<Vec<Comment>>>) -> P<Token> {
+fn alloc_plain_token(type_: TokenType, start: i32, length: i32, comments: Option<Comments>) -> P<Token> {
     alloc_token(type_, start, length, comments, NoInterface)
 }
 
@@ -448,9 +483,9 @@ enum TokenMode {
 
 /// A token in a scratch region: the copy a parse node keeps (`Token::keep`), then the token.
 #[repr(C)]
-struct ScratchToken<D> {
+struct ScratchToken<D, C = ()> {
     kept: Cell<Option<P<Token>>>,
-    alloc: TokenAlloc<D>,
+    alloc: TokenAlloc<D, C>,
 }
 
 /// The region one tokenizer run puts its tokens in, owned by its `TokenizerOutput`.
@@ -487,15 +522,15 @@ impl TokenScratch {
 impl Drop for TokenScratch {
     fn drop(&mut self) {
         /// Drops the token at `at` unless it was kept; returns its size.
-        unsafe fn drop_unkept<D>(at: usize) -> usize {
-            let token = at as *mut ScratchToken<D>;
+        unsafe fn drop_unkept<D, C>(at: usize) -> usize {
+            let token = at as *mut ScratchToken<D, C>;
             // SAFETY: the caller passes the address of a live `ScratchToken<D>`.
             unsafe {
                 if (*token).kept.get().is_none() {
                     ptr::drop_in_place(ptr::addr_of_mut!((*token).alloc.d));
                 }
             }
-            size_of::<ScratchToken<D>>()
+            size_of::<ScratchToken<D, C>>()
         }
 
         self.region.for_each_used(|start, end| {
@@ -503,22 +538,13 @@ impl Drop for TokenScratch {
             while at < end {
                 // SAFETY: the region holds only `ScratchToken`s, back to back: each
                 // has a size that is a multiple of its alignment, 8.
-                let kind = unsafe { (*(at as *const ScratchToken<NoInterface>)).alloc.token.kind };
+                let token = unsafe { &(*(at as *const ScratchToken<NoInterface>)).alloc.token };
                 at += unsafe {
-                    match kind {
-                        TokenKind::None => drop_unkept::<NoInterface>(at),
-                        TokenKind::Indent => drop_unkept::<IndentTokenDetails>(at),
-                        TokenKind::Dedent => drop_unkept::<DedentTokenDetails>(at),
-                        TokenKind::NewLine => drop_unkept::<NewLineTokenDetails>(at),
-                        TokenKind::Keyword => drop_unkept::<KeywordTokenDetails>(at),
-                        TokenKind::String => drop_unkept::<StringTokenDetails>(at),
-                        TokenKind::FStringStart => drop_unkept::<FStringStartTokenDetails>(at),
-                        TokenKind::FStringMiddle => drop_unkept::<FStringMiddleTokenDetails>(at),
-                        TokenKind::FStringEnd => drop_unkept::<FStringEndTokenDetails>(at),
-                        TokenKind::Number => drop_unkept::<NumberTokenDetails>(at),
-                        TokenKind::Operator => drop_unkept::<OperatorTokenDetails>(at),
-                        TokenKind::Identifier => drop_unkept::<IdentifierTokenDetails>(at),
-                    }
+                    with_interface!(token.kind, D => if token.has_comments {
+                        drop_unkept::<D, Comments>(at)
+                    } else {
+                        drop_unkept::<D, ()>(at)
+                    })
                 };
             }
         });
@@ -571,7 +597,7 @@ impl HasTextRange for Token {
 }
 
 /// Moves a comment list into the arena, where tokens can share it.
-fn alloc_comments(comments: Option<Vec<Comment>>) -> Option<P<Vec<Comment>>> {
+fn alloc_comments(comments: Option<Vec<Comment>>) -> Option<Comments> {
     comments.map(P::new)
 }
 
@@ -591,19 +617,26 @@ impl Token {
         type_: TokenType,
         start: i32,
         length: i32,
-        comments: Option<P<Vec<Comment>>>,
+        comments: Option<Comments>,
     ) -> P<Token> {
         alloc_plain_token(type_, start, length, comments)
     }
 
     // Comments prior to the token.
     pub fn comments(&self) -> Option<&'static [Comment]> {
-        self.comments.map(|comments| comments.get().as_slice())
+        self.shared_comments().map(|comments| comments.get().as_slice())
     }
 
     /// The comment list itself, for a token that shares it.
-    pub fn shared_comments(&self) -> Option<P<Vec<Comment>>> {
-        self.comments
+    pub fn shared_comments(&self) -> Option<Comments> {
+        if !self.has_comments {
+            return None;
+        }
+        // SAFETY: `alloc_token` allocates a token that has comments as a
+        // `TokenAlloc<D, Comments>` whose `D` matches `kind`.
+        Some(with_interface!(self.kind, D => unsafe {
+            (*ptr::from_ref(self).cast::<TokenAlloc<D, Comments>>()).comments
+        }))
     }
 
     /// `token` as a parse node holds it. A token in a scratch region is copied once
@@ -621,22 +654,7 @@ impl Token {
         }
         // SAFETY: each arm copies the interface of its kind. Once `kept` is set, the
         // scratch token is never dropped (`TokenScratch::drop`): its buffers move to the copy.
-        let copy = unsafe {
-            match token.kind {
-                TokenKind::None => token.copy_out::<NoInterface>(),
-                TokenKind::Indent => token.copy_out::<IndentTokenDetails>(),
-                TokenKind::Dedent => token.copy_out::<DedentTokenDetails>(),
-                TokenKind::NewLine => token.copy_out::<NewLineTokenDetails>(),
-                TokenKind::Keyword => token.copy_out::<KeywordTokenDetails>(),
-                TokenKind::String => token.copy_out::<StringTokenDetails>(),
-                TokenKind::FStringStart => token.copy_out::<FStringStartTokenDetails>(),
-                TokenKind::FStringMiddle => token.copy_out::<FStringMiddleTokenDetails>(),
-                TokenKind::FStringEnd => token.copy_out::<FStringEndTokenDetails>(),
-                TokenKind::Number => token.copy_out::<NumberTokenDetails>(),
-                TokenKind::Operator => token.copy_out::<OperatorTokenDetails>(),
-                TokenKind::Identifier => token.copy_out::<IdentifierTokenDetails>(),
-            }
-        };
+        let copy = unsafe { with_interface!(token.kind, D => token.copy_out::<D>()) };
         kept.set(Some(copy));
         copy
     }
@@ -650,12 +668,15 @@ impl Token {
             length: self.length,
             kind: self.kind,
             scratch: false,
-            comments: self.comments,
+            has_comments: self.has_comments,
             _written_through_shared: UnsafeCell::new(()),
         };
         // SAFETY: the caller guarantees the kind, and that the buffers move.
         let d = unsafe { ptr::read(self.details_unchecked::<D>()) };
-        P::new(TokenAlloc { token, d }).header(|alloc| &alloc.token)
+        match self.shared_comments() {
+            None => place_token(ptr::null(), TokenAlloc { token, d, comments: () }),
+            Some(comments) => place_token(ptr::null(), TokenAlloc { token, d, comments }),
+        }
     }
 
     /// The fields of interface `D`.
@@ -1111,7 +1132,7 @@ impl IdentifierToken {
         start: i32,
         length: i32,
         value: impl Into<Rc<str>>,
-        comments: Option<P<Vec<Comment>>>,
+        comments: Option<Comments>,
     ) -> IdentifierToken {
         let value: Rc<str> = value.into();
         // Perform "NFKC normalization", as per the Python lexical spec.

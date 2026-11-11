@@ -2550,3 +2550,16 @@ fn kept_token_outlives_its_output() {
     drop(tokenize(&"y = 98765432109876543210987654321\n".repeat(20_000)));
     assert_eq!(NumberToken::cast(kept).unwrap().d().value, value);
 }
+
+#[test]
+fn kept_token_keeps_its_comments() {
+    let output = tokenize("x = (  # first\n    1)\n");
+    let number = output.tokens.get_item_at(3);
+    let kept = crate::parser::tokenizer_types::Token::keep(number);
+    drop(output);
+    drop(tokenize(&"y = 2  # other\n".repeat(20_000)));
+    let comments = kept.comments().unwrap();
+    assert_eq!(comments.len(), 1);
+    assert_eq!(comments[0].value, " first");
+    assert_eq!(NumberToken::cast(kept).unwrap().d().value, NumberValue::Number(1.0));
+}
