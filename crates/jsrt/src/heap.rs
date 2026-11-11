@@ -750,8 +750,6 @@ type TraceFn = unsafe fn(usize, &mut Tracer);
 /// Finds the evaluator objects reachable from the roots.
 pub struct Tracer {
     stack: Vec<(usize, TraceFn)>,
-    /// Handles into the evaluator heap visited, marked or not.
-    edges: usize,
     check: bool,
     program_only: u32,
     owner: u32,
@@ -780,7 +778,6 @@ impl Tracer {
 
     #[inline]
     fn mark_eval(&mut self, offset: usize) {
-        self.edges += 1;
         if self.check {
             assert!(self.program_only == 0, "collector check: a #[trace(program)] field holds an evaluator handle");
         }
@@ -898,7 +895,6 @@ struct MarkShared {
     threads: usize,
     abort: AtomicBool,
     panic: Mutex<Option<Box<dyn std::any::Any + Send>>>,
-    edges: AtomicUsize,
 }
 
 #[derive(Default)]
@@ -949,7 +945,6 @@ fn mark_work(t: &mut Tracer, shared: &MarkShared) {
             pool = shared.wake.wait(pool).unwrap_or_else(PoisonError::into_inner);
         }
     }
-    shared.edges.fetch_add(t.edges, Relaxed);
 }
 
 /// Runs `mark_work` on this thread and on the helpers, catching a panic in any
@@ -1044,8 +1039,7 @@ impl Helpers {
             let shared = unsafe { &*(job.shared as *const MarkShared) };
             let mut t = Tracer {
                 stack: Vec::new(),
-                edges: 0,
-                check: job.check,
+                    check: job.check,
                 program_only: 0,
                 owner: job.owner,
                 eval_base: job.eval_base,
@@ -1247,7 +1241,6 @@ impl ThreadHeap {
         let ranges = ranges();
         let mut t = Tracer {
             stack: Vec::new(),
-            edges: 0,
             check,
             program_only: 0,
             owner: self.owner,
@@ -1331,7 +1324,6 @@ impl ThreadHeap {
             );
         }
         if log > 1 {
-            eprintln!("  {} handles into the evaluator heap traced", t.edges);
             stats.sort_by_key(|c| std::cmp::Reverse((c.live + c.freed) * c.slot));
             for c in stats.iter().take(30) {
                 eprintln!(
@@ -1445,7 +1437,6 @@ impl ThreadHeap {
             threads,
             abort: AtomicBool::new(false),
             panic: Mutex::new(None),
-            edges: AtomicUsize::new(0),
         };
         t.shared = &shared;
         // The registered roots trace thread-locals, so they run on this thread.
@@ -1466,11 +1457,8 @@ impl ThreadHeap {
             eval_len: t.eval_len,
             meta: t.meta as usize,
         };
-        let edges = t.edges;
-        t.edges = 0;
         HELPERS.run(threads - 1, job, || mark_work_caught(t, &shared));
         t.shared = ptr::null();
-        t.edges = edges + shared.edges.load(Relaxed);
         if let Some(panic) = lock(&shared.panic).take() {
             resume_unwind(panic);
         }
