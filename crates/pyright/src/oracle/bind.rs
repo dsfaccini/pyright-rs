@@ -358,7 +358,7 @@ fn symbol_value(symbol: &Symbol) -> Value {
         ("_flags", Some(Value::number(symbol._flags.get().0 as f64))),
         (
             "_synthesizedTypeInfo",
-            opt(symbol._synthesized_type_info.get(), |info| {
+            opt(*symbol._synthesized_type_info.borrow(), |info| {
                 Value::Object(vec![
                     ("node", opt(info.node, |n| Value::node(n.node()))),
                     ("type", Some(Value::Line("<type>".to_string()))),

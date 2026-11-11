@@ -14,6 +14,7 @@ Shrink the program heap: parse trees, tokens and binder objects, which are never
 - `jsrt::region::Region`: bump allocation into mmap chunks, released whole to a per-thread pool, or protected under check mode. `jsrt::P::from_raw` makes a handle into it.
 - `FlowNode` is the header; a flow node is allocated as `FlowAlloc<D>`. `FlowNode::create(flags, id, details)` takes the details struct (`FlowPlain` for a bare node); `node.d()` returns `FlowNodeDetails`, an enum of `&'static Flow<Name>Details`.
 - `Declaration` is the `DeclarationBase` header; a declaration is allocated as `DeclarationAlloc<D>`, its interface chosen by `type_`. `Declaration::create` (program heap) and `create_eval` (evaluator heap) take the details struct (`NoDeclarationDetails` for `TypeParam`, `Class` and `SpecialBuiltInClass`); `decl.d()` returns `DeclarationDetails`, an enum of `&'static <Name>DeclarationDetails`. `module_name` is `RefCell<Rc<str>>`, shared with `AnalyzerFileInfo.module_name`, which is `Rc<str>`. The function statement lists, parameter inference fields and doc strings are `jsrt::OptionRefCell`.
+- `Symbol._synthesized_type_info` and `_typing_symbol_alias` are `jsrt::OptionRefCell`: `borrow()`, `borrow_mut()`.
 - `AnalyzerNodeInfo` keeps `flow_node` inline; the other fields live in `AnalyzerNodeInfoCold`. Read `info.cold().and_then(|c| c.scope.get())`, write `info.cold_mut().scope.set(..)`.
 
 ## Shared-file edits
