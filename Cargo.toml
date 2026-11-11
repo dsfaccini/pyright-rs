@@ -8,6 +8,8 @@ license = "MIT"
 
 [profile.release]
 debug = "line-tables-only"
+# One codegen unit: timings stay comparable across unrelated edits.
+codegen-units = 1
 
 [profile.profiling]
 inherits = "release"
