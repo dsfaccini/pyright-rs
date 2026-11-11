@@ -76,6 +76,7 @@ Every Rust-only environment variable is listed here. When you add a cache or sho
 | `PYRIGHT_RS_GC_WARM_MIB` | a number; default 256 | MiB of released evaluator blocks kept resident for reuse |
 | `PYRIGHT_RS_GC_CENSUS` | `1` | prints a breakdown of the resident set after each mark, at the end of the check and at exit; changes no result; buffer bytes need the `pyright` crate's `count-malloc` feature (`docs/collector-design.md`, "census") |
 | `PYRIGHT_RS_NODE_INFO_STORE_CACHE` | `on` (default), `off`, `check` | `AnalyzerNodeInfoContextImpl::_store_for` reuses the store of its last lookup |
+| `PYRIGHT_RS_LOCALIZE_INDEX` | `on` (default), `off`, `check` | `get_raw_string` finds a message by its whole key in an index of the strings |
 | `PYRIGHT_RS_SCOPE_ID_CACHE` | `on` (default), `off`, `check` | `get_scope_id_for_node` remembers each node's scope id |
 | `PYRIGHT_RS_TOKENS` | `free` (default), `keep`, `check` | `keep` puts every token on the program heap; `check` makes a freed tokenizer scratch region inaccessible, so a later use faults |
 | `PYRIGHT_RS_ALLOC_STATS` | `1`, or a number n | prints objects and bytes per type and heap at exit; with n, also each time the evaluator heap grows by another n GiB |
