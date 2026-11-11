@@ -215,25 +215,95 @@ impl TypeBaseProps {
 }
 
 // analyzer/types.ts:195
+/// The `TypeBase` fields. A type is allocated as this header followed by the details of its
+/// category (`TypeAlloc`), so it takes the size of its own details; typed handles' `d()`
+/// return them.
+#[repr(C)]
 #[derive(jsrt::Trace)]
 #[trace(eval)]
 pub struct Type {
     pub category: TypeCategory,
-    pub flags: Cell<TypeFlags>,
-    pub props: OptionRefCell<TypeBaseProps>,
-    pub cached: OptionRefCell<CachedTypeInfo>,
     /// `cached.requiresSpecialization`, held apart from the rest of `cached`: it is read on
     /// every `requires_specialization` call and is often the only field written. Every
     /// constructor and `clone_type` reset it, as they reset `cached`.
     pub cached_requires_specialization: Cell<Option<bool>>,
-    // Private: reach details through typed handles and `d()`; create through the create functions.
+    pub flags: Cell<TypeFlags>,
+    pub props: OptionRefCell<TypeBaseProps>,
+    pub cached: OptionRefCell<CachedTypeInfo>,
+    /// Private, so only `Type::alloc` makes a header, always followed by its details.
+    _details: (),
+}
+const _: () = assert!(size_of::<Type>() <= 24);
+
+/// A type as allocated: the header, then the details of its category.
+#[repr(C)]
+#[derive(jsrt::Trace)]
+#[trace(eval)]
+struct TypeAlloc<D> {
+    header: Type,
+    d: D,
+}
+const _: () = assert!(size_of::<TypeAlloc<ClassTypeDetails>>() <= 112);
+const _: () = assert!(size_of::<TypeAlloc<FunctionTypeDetails>>() <= 104);
+
+/// The fields of a type literal, before `Type::alloc_eval` or `alloc_program` places the
+/// details behind the header.
+struct TypeInit {
+    category: TypeCategory,
+    flags: Cell<TypeFlags>,
+    props: OptionRefCell<TypeBaseProps>,
+    cached: OptionRefCell<CachedTypeInfo>,
+    cached_requires_specialization: Cell<Option<bool>>,
     d: TypeDetails,
 }
-// Every type pays for its largest details variant; rare records are boxed (PLAN.md step 6).
-const _: () = assert!(size_of::<Type>() <= 128);
 
-// analyzer/types.ts: one variant per `category` value.
-#[derive(jsrt::Trace)]
+impl Type {
+    fn alloc_eval(init: TypeInit) -> P<Type> {
+        Type::alloc(init, true)
+    }
+
+    /// For a type that lives for the whole run (docs/porting.md, "memory").
+    fn alloc_program(init: TypeInit) -> P<Type> {
+        Type::alloc(init, false)
+    }
+
+    fn alloc(init: TypeInit, eval: bool) -> P<Type> {
+        let TypeInit { category, flags, props, cached, cached_requires_specialization, d } = init;
+        let header = Type { category, cached_requires_specialization, flags, props, cached, _details: () };
+        fn place<D: jsrt::Trace + 'static>(header: Type, d: D, eval: bool) -> P<Type> {
+            let alloc = TypeAlloc { header, d };
+            let alloc = if eval { P::new_eval(alloc) } else { P::new(alloc) };
+            alloc.header(|alloc| &alloc.header)
+        }
+        match d {
+            TypeDetails::Unbound(d) => place(header, d, eval),
+            TypeDetails::Unknown(d) => place(header, d, eval),
+            TypeDetails::Module(d) => place(header, d, eval),
+            TypeDetails::Class(d) => place(header, d, eval),
+            TypeDetails::Function(d) => place(header, d, eval),
+            TypeDetails::Overloaded(d) => place(header, d, eval),
+            TypeDetails::Never(d) => place(header, d, eval),
+            TypeDetails::Any(d) => place(header, d, eval),
+            TypeDetails::Union(d) => place(header, d, eval),
+            TypeDetails::TypeVar(d) => place(header, d, eval),
+        }
+    }
+
+    /// The details behind the header of `type_`, read through the handle (docs/porting.md,
+    /// "unsafe code").
+    ///
+    /// # Safety
+    /// `D` is the details type of `type_.category`.
+    unsafe fn details<D: 'static>(type_: P<Type>) -> &'static D {
+        // SAFETY: `alloc` makes every header the first field of a `#[repr(C)]` `TypeAlloc`
+        // whose details are those of its category, and the handle's pointer covers the whole
+        // `TypeAlloc`. The program heap is never freed, and the collector frees an evaluator
+        // type only when no handle reaches it.
+        unsafe { &(*type_.as_ptr().cast::<TypeAlloc<D>>()).d }
+    }
+}
+
+/// The details of a type literal, one variant per `category` value (analyzer/types.ts).
 enum TypeDetails {
     Unbound(UnboundTypeDetails),
     Unknown(UnknownTypeDetails),
@@ -339,40 +409,67 @@ impl TypeBase {
     /// `cloneType` with `props` as the clone's.
     fn clone_type_with(type_: P<Type>, props: OptionRefCell<TypeBaseProps>) -> P<Type> {
         // `{ ...type }` with copies of `props` and `priv`: `shared` stays shared.
-        let d = match &type_.get().d {
-            TypeDetails::Unbound(_) => TypeDetails::Unbound(UnboundTypeDetails {}),
-            TypeDetails::Unknown(d) => TypeDetails::Unknown(UnknownTypeDetails {
-                priv_: d.priv_.clone(),
-            }),
-            TypeDetails::Module(d) => TypeDetails::Module(ModuleTypeDetails {
-                priv_: d.priv_.clone(),
-            }),
-            TypeDetails::Class(d) => TypeDetails::Class(ClassTypeDetails {
-                shared: d.shared.clone(),
-                priv_: d.priv_.clone(),
-            }),
-            TypeDetails::Function(d) => TypeDetails::Function(FunctionTypeDetails {
-                shared: d.shared.clone(),
-                priv_: d.priv_.clone(),
-            }),
-            TypeDetails::Overloaded(d) => TypeDetails::Overloaded(OverloadedTypeDetails {
-                priv_: d.priv_.clone(),
-            }),
-            TypeDetails::Never(d) => TypeDetails::Never(NeverTypeDetails {
-                priv_: d.priv_.clone(),
-            }),
-            TypeDetails::Any(d) => TypeDetails::Any(AnyTypeDetails {
-                priv_: d.priv_.clone(),
-            }),
-            TypeDetails::Union(d) => TypeDetails::Union(UnionTypeDetails {
-                priv_: d.priv_.clone(),
-            }),
-            TypeDetails::TypeVar(d) => TypeDetails::TypeVar(TypeVarTypeDetails {
-                shared: d.shared.clone(),
-                priv_: d.priv_.clone(),
-            }),
+        let d = match type_.category {
+            TypeCategory::Unbound => TypeDetails::Unbound(UnboundTypeDetails {}),
+            TypeCategory::Unknown => {
+                let d = UnknownType(type_).d();
+                TypeDetails::Unknown(UnknownTypeDetails {
+                    priv_: d.priv_.clone(),
+                })
+            }
+            TypeCategory::Module => {
+                let d = ModuleType(type_).d();
+                TypeDetails::Module(ModuleTypeDetails {
+                    priv_: d.priv_.clone(),
+                })
+            }
+            TypeCategory::Class => {
+                let d = ClassType(type_).d();
+                TypeDetails::Class(ClassTypeDetails {
+                    shared: d.shared.clone(),
+                    priv_: d.priv_.clone(),
+                })
+            }
+            TypeCategory::Function => {
+                let d = FunctionType(type_).d();
+                TypeDetails::Function(FunctionTypeDetails {
+                    shared: d.shared.clone(),
+                    priv_: d.priv_.clone(),
+                })
+            }
+            TypeCategory::Overloaded => {
+                let d = OverloadedType(type_).d();
+                TypeDetails::Overloaded(OverloadedTypeDetails {
+                    priv_: d.priv_.clone(),
+                })
+            }
+            TypeCategory::Never => {
+                let d = NeverType(type_).d();
+                TypeDetails::Never(NeverTypeDetails {
+                    priv_: d.priv_.clone(),
+                })
+            }
+            TypeCategory::Any => {
+                let d = AnyType(type_).d();
+                TypeDetails::Any(AnyTypeDetails {
+                    priv_: d.priv_.clone(),
+                })
+            }
+            TypeCategory::Union => {
+                let d = UnionType(type_).d();
+                TypeDetails::Union(UnionTypeDetails {
+                    priv_: d.priv_.clone(),
+                })
+            }
+            TypeCategory::TypeVar => {
+                let d = TypeVarType(type_).d();
+                TypeDetails::TypeVar(TypeVarTypeDetails {
+                    shared: d.shared.clone(),
+                    priv_: d.priv_.clone(),
+                })
+            }
         };
-        P::new_eval(Type {
+        Type::alloc_eval(TypeInit {
             category: type_.category,
             flags: type_.flags.clone(),
             props,
@@ -525,15 +622,13 @@ pub struct UnboundType(pub P<Type>);
 
 impl UnboundType {
     pub fn cast(node: P<Type>) -> Option<Self> {
-        match node.d {
-            TypeDetails::Unbound(_) => Some(Self(node)),
-            _ => None,
-        }
+        (node.category == TypeCategory::Unbound).then_some(Self(node))
     }
 
     pub fn d(self) -> &'static UnboundTypeDetails {
-        match &self.0.get().d {
-            TypeDetails::Unbound(d) => d,
+        match self.0.category {
+            // SAFETY: the details of a type of category Unbound.
+            TypeCategory::Unbound => unsafe { Type::details(self.0) },
             _ => unreachable!("UnboundType holds another variant"),
         }
     }
@@ -577,7 +672,7 @@ pub mod unbound_type {
     thread_local! {
         // analyzer/types.ts:392
         // On the program heap: it lives for the whole run.
-        pub(crate) static INSTANCE: UnboundType = UnboundType(P::new(Type {
+        pub(crate) static INSTANCE: UnboundType = UnboundType(Type::alloc_program(TypeInit {
             category: TypeCategory::Unbound,
             flags: Cell::new(TypeFlags::Instantiable | TypeFlags::Instance),
             props: OptionRefCell::new(),
@@ -608,15 +703,13 @@ pub struct UnknownType(pub P<Type>);
 
 impl UnknownType {
     pub fn cast(node: P<Type>) -> Option<Self> {
-        match node.d {
-            TypeDetails::Unknown(_) => Some(Self(node)),
-            _ => None,
-        }
+        (node.category == TypeCategory::Unknown).then_some(Self(node))
     }
 
     pub fn d(self) -> &'static UnknownTypeDetails {
-        match &self.0.get().d {
-            TypeDetails::Unknown(d) => d,
+        match self.0.category {
+            // SAFETY: the details of a type of category Unknown.
+            TypeCategory::Unknown => unsafe { Type::details(self.0) },
             _ => unreachable!("UnknownType holds another variant"),
         }
     }
@@ -643,7 +736,7 @@ impl UnknownType {
 
     // analyzer/types.ts:456
     pub fn create_possible_type(possible_type: P<Type>, is_incomplete: bool) -> UnknownType {
-        UnknownType(P::new_eval(Type {
+        UnknownType(Type::alloc_eval(TypeInit {
             category: TypeCategory::Unknown,
             flags: Cell::new(TypeFlags::Instantiable | TypeFlags::Instance),
             props: OptionRefCell::new(),
@@ -681,7 +774,7 @@ pub mod unknown_type {
     thread_local! {
         // analyzer/types.ts:429
         // On the program heap: it lives for the whole run.
-        pub(crate) static INSTANCE: UnknownType = UnknownType(P::new(Type {
+        pub(crate) static INSTANCE: UnknownType = UnknownType(Type::alloc_program(TypeInit {
             category: TypeCategory::Unknown,
             flags: Cell::new(TypeFlags::Instantiable | TypeFlags::Instance),
             props: OptionRefCell::new(),
@@ -699,7 +792,7 @@ pub mod unknown_type {
     thread_local! {
         // analyzer/types.ts:440
         // On the program heap: it lives for the whole run.
-        pub(crate) static INCOMPLETE_INSTANCE: UnknownType = UnknownType(P::new(Type {
+        pub(crate) static INCOMPLETE_INSTANCE: UnknownType = UnknownType(Type::alloc_program(TypeInit {
             category: TypeCategory::Unknown,
             flags: Cell::new(TypeFlags::Instantiable | TypeFlags::Instance),
             props: OptionRefCell::new(),
@@ -740,15 +833,13 @@ pub struct ModuleType(pub P<Type>);
 
 impl ModuleType {
     pub fn cast(node: P<Type>) -> Option<Self> {
-        match node.d {
-            TypeDetails::Module(_) => Some(Self(node)),
-            _ => None,
-        }
+        (node.category == TypeCategory::Module).then_some(Self(node))
     }
 
     pub fn d(self) -> &'static ModuleTypeDetails {
-        match &self.0.get().d {
-            TypeDetails::Module(d) => d,
+        match self.0.category {
+            // SAFETY: the details of a type of category Module.
+            TypeCategory::Module => unsafe { Type::details(self.0) },
             _ => unreachable!("ModuleType holds another variant"),
         }
     }
@@ -770,7 +861,7 @@ impl ModuleType {
         symbol_table: Option<SymbolTable>,
     ) -> ModuleType {
         // types.ts writes `TypeFlags.Instantiable | TypeFlags.Instantiable`: one flag.
-        ModuleType(P::new_eval(Type {
+        ModuleType(Type::alloc_eval(TypeInit {
             category: TypeCategory::Module,
             flags: Cell::new(TypeFlags::Instantiable),
             props: OptionRefCell::new(),
@@ -1068,15 +1159,13 @@ pub struct ClassType(pub P<Type>);
 
 impl ClassType {
     pub fn cast(node: P<Type>) -> Option<Self> {
-        match node.d {
-            TypeDetails::Class(_) => Some(Self(node)),
-            _ => None,
-        }
+        (node.category == TypeCategory::Class).then_some(Self(node))
     }
 
     pub fn d(self) -> &'static ClassTypeDetails {
-        match &self.0.get().d {
-            TypeDetails::Class(d) => d,
+        match self.0.category {
+            // SAFETY: the details of a type of category Class.
+            TypeCategory::Class => unsafe { Type::details(self.0) },
             _ => unreachable!("ClassType holds another variant"),
         }
     }
@@ -1103,7 +1192,7 @@ impl ClassType {
         effective_metaclass: Option<P<Type>>,
         doc_string: Option<Rc<str>>,
     ) -> ClassType {
-        ClassType(P::new_eval(Type {
+        ClassType(Type::alloc_eval(TypeInit {
             category: TypeCategory::Class,
             flags: Cell::new(TypeFlags::Instantiable),
             props: OptionRefCell::new(),
@@ -2538,15 +2627,13 @@ pub struct FunctionType(pub P<Type>);
 
 impl FunctionType {
     pub fn cast(node: P<Type>) -> Option<Self> {
-        match node.d {
-            TypeDetails::Function(_) => Some(Self(node)),
-            _ => None,
-        }
+        (node.category == TypeCategory::Function).then_some(Self(node))
     }
 
     pub fn d(self) -> &'static FunctionTypeDetails {
-        match &self.0.get().d {
-            TypeDetails::Function(d) => d,
+        match self.0.category {
+            // SAFETY: the details of a type of category Function.
+            TypeCategory::Function => unsafe { Type::details(self.0) },
             _ => unreachable!("FunctionType holds another variant"),
         }
     }
@@ -2619,7 +2706,7 @@ impl FunctionType {
         type_flags: TypeFlags,
         doc_string: Option<Rc<str>>,
     ) -> FunctionType {
-        FunctionType(P::new_eval(Type {
+        FunctionType(Type::alloc_eval(TypeInit {
             category: TypeCategory::Function,
             flags: Cell::new(type_flags),
             props: OptionRefCell::new(),
@@ -3645,15 +3732,13 @@ pub struct OverloadedType(pub P<Type>);
 
 impl OverloadedType {
     pub fn cast(node: P<Type>) -> Option<Self> {
-        match node.d {
-            TypeDetails::Overloaded(_) => Some(Self(node)),
-            _ => None,
-        }
+        (node.category == TypeCategory::Overloaded).then_some(Self(node))
     }
 
     pub fn d(self) -> &'static OverloadedTypeDetails {
-        match &self.0.get().d {
-            TypeDetails::Overloaded(d) => d,
+        match self.0.category {
+            // SAFETY: the details of a type of category Overloaded.
+            TypeCategory::Overloaded => unsafe { Type::details(self.0) },
             _ => unreachable!("OverloadedType holds another variant"),
         }
     }
@@ -3670,7 +3755,7 @@ impl Deref for OverloadedType {
 impl OverloadedType {
     // analyzer/types.ts:2435
     pub fn create(overloads: &[FunctionType], implementation: Option<P<Type>>) -> OverloadedType {
-        let new_type = OverloadedType(P::new_eval(Type {
+        let new_type = OverloadedType(Type::alloc_eval(TypeInit {
             category: TypeCategory::Overloaded,
             flags: Cell::new(TypeFlags::Instance),
             props: OptionRefCell::new(),
@@ -3731,15 +3816,13 @@ pub struct NeverType(pub P<Type>);
 
 impl NeverType {
     pub fn cast(node: P<Type>) -> Option<Self> {
-        match node.d {
-            TypeDetails::Never(_) => Some(Self(node)),
-            _ => None,
-        }
+        (node.category == TypeCategory::Never).then_some(Self(node))
     }
 
     pub fn d(self) -> &'static NeverTypeDetails {
-        match &self.0.get().d {
-            TypeDetails::Never(d) => d,
+        match self.0.category {
+            // SAFETY: the details of a type of category Never.
+            TypeCategory::Never => unsafe { Type::details(self.0) },
             _ => unreachable!("NeverType holds another variant"),
         }
     }
@@ -3791,7 +3874,7 @@ pub mod never_type {
     thread_local! {
         // analyzer/types.ts:2483
         // On the program heap: it lives for the whole run.
-        pub(crate) static NEVER_INSTANCE: NeverType = NeverType(P::new(Type {
+        pub(crate) static NEVER_INSTANCE: NeverType = NeverType(Type::alloc_program(TypeInit {
             category: TypeCategory::Never,
             flags: Cell::new(TypeFlags::Instance | TypeFlags::Instantiable),
             props: OptionRefCell::new(),
@@ -3806,7 +3889,7 @@ pub mod never_type {
     thread_local! {
         // analyzer/types.ts:2492
         // On the program heap: it lives for the whole run.
-        pub(crate) static NO_RETURN_INSTANCE: NeverType = NeverType(P::new(Type {
+        pub(crate) static NO_RETURN_INSTANCE: NeverType = NeverType(Type::alloc_program(TypeInit {
             category: TypeCategory::Never,
             flags: Cell::new(TypeFlags::Instance | TypeFlags::Instantiable),
             props: OptionRefCell::new(),
@@ -3838,15 +3921,13 @@ pub struct AnyType(pub P<Type>);
 
 impl AnyType {
     pub fn cast(node: P<Type>) -> Option<Self> {
-        match node.d {
-            TypeDetails::Any(_) => Some(Self(node)),
-            _ => None,
-        }
+        (node.category == TypeCategory::Any).then_some(Self(node))
     }
 
     pub fn d(self) -> &'static AnyTypeDetails {
-        match &self.0.get().d {
-            TypeDetails::Any(d) => d,
+        match self.0.category {
+            // SAFETY: the details of a type of category Any.
+            TypeCategory::Any => unsafe { Type::details(self.0) },
             _ => unreachable!("AnyType holds another variant"),
         }
     }
@@ -3884,7 +3965,7 @@ pub mod any_type {
     thread_local! {
         // analyzer/types.ts:2528
         // On the program heap: it lives for the whole run.
-        pub(crate) static ANY_INSTANCE_SPECIAL_FORM: AnyType = AnyType(P::new(Type {
+        pub(crate) static ANY_INSTANCE_SPECIAL_FORM: AnyType = AnyType(Type::alloc_program(TypeInit {
             category: TypeCategory::Any,
             flags: Cell::new(TypeFlags::Instance | TypeFlags::Instantiable),
             props: OptionRefCell::new(),
@@ -3899,7 +3980,7 @@ pub mod any_type {
     thread_local! {
         // analyzer/types.ts:2537
         // On the program heap: it lives for the whole run.
-        pub(crate) static ANY_INSTANCE: AnyType = AnyType(P::new(Type {
+        pub(crate) static ANY_INSTANCE: AnyType = AnyType(Type::alloc_program(TypeInit {
             category: TypeCategory::Any,
             flags: Cell::new(TypeFlags::Instance | TypeFlags::Instantiable),
             props: OptionRefCell::new(),
@@ -3914,7 +3995,7 @@ pub mod any_type {
     thread_local! {
         // analyzer/types.ts:2546
         // On the program heap: it lives for the whole run.
-        pub(crate) static ELLIPSIS_INSTANCE: AnyType = AnyType(P::new(Type {
+        pub(crate) static ELLIPSIS_INSTANCE: AnyType = AnyType(Type::alloc_program(TypeInit {
             category: TypeCategory::Any,
             flags: Cell::new(TypeFlags::Instance | TypeFlags::Instantiable),
             props: OptionRefCell::new(),
@@ -4091,15 +4172,13 @@ pub struct UnionType(pub P<Type>);
 
 impl UnionType {
     pub fn cast(node: P<Type>) -> Option<Self> {
-        match node.d {
-            TypeDetails::Union(_) => Some(Self(node)),
-            _ => None,
-        }
+        (node.category == TypeCategory::Union).then_some(Self(node))
     }
 
     pub fn d(self) -> &'static UnionTypeDetails {
-        match &self.0.get().d {
-            TypeDetails::Union(d) => d,
+        match self.0.category {
+            // SAFETY: the details of a type of category Union.
+            TypeCategory::Union => unsafe { Type::details(self.0) },
             _ => unreachable!("UnionType holds another variant"),
         }
     }
@@ -4116,7 +4195,7 @@ impl Deref for UnionType {
 impl UnionType {
     // analyzer/types.ts:2689
     pub fn create() -> UnionType {
-        UnionType(P::new_eval(Type {
+        UnionType(Type::alloc_eval(TypeInit {
             category: TypeCategory::Union,
             flags: Cell::new(TypeFlags::Instance | TypeFlags::Instantiable),
             props: OptionRefCell::new(),
@@ -4454,15 +4533,13 @@ pub struct TypeVarType(pub P<Type>);
 
 impl TypeVarType {
     pub fn cast(node: P<Type>) -> Option<Self> {
-        match node.d {
-            TypeDetails::TypeVar(_) => Some(Self(node)),
-            _ => None,
-        }
+        (node.category == TypeCategory::TypeVar).then_some(Self(node))
     }
 
     pub fn d(self) -> &'static TypeVarTypeDetails {
-        match &self.0.get().d {
-            TypeDetails::TypeVar(d) => d,
+        match self.0.category {
+            // SAFETY: the details of a type of category TypeVar.
+            TypeCategory::TypeVar => unsafe { Type::details(self.0) },
             _ => unreachable!("TypeVarType holds another variant"),
         }
     }
@@ -4486,8 +4563,9 @@ pub struct ParamSpecType(pub P<Type>);
 
 impl ParamSpecType {
     pub fn d(self) -> &'static TypeVarTypeDetails {
-        match &self.0.get().d {
-            TypeDetails::TypeVar(d) => d,
+        match self.0.category {
+            // SAFETY: the details of a type of category TypeVar.
+            TypeCategory::TypeVar => unsafe { Type::details(self.0) },
             _ => unreachable!("ParamSpecType holds another variant"),
         }
     }
@@ -4525,8 +4603,9 @@ pub struct TypeVarTupleType(pub P<Type>);
 
 impl TypeVarTupleType {
     pub fn d(self) -> &'static TypeVarTypeDetails {
-        match &self.0.get().d {
-            TypeDetails::TypeVar(d) => d,
+        match self.0.category {
+            // SAFETY: the details of a type of category TypeVar.
+            TypeCategory::TypeVar => unsafe { Type::details(self.0) },
             _ => unreachable!("TypeVarTupleType holds another variant"),
         }
     }
@@ -4850,7 +4929,7 @@ impl TypeVarType {
 
     // analyzer/types.ts:3174
     pub(crate) fn create(name: &str, kind: TypeVarKind, type_flags: TypeFlags) -> TypeVarType {
-        TypeVarType(P::new_eval(Type {
+        TypeVarType(Type::alloc_eval(TypeInit {
             category: TypeCategory::TypeVar,
             flags: Cell::new(type_flags),
             props: OptionRefCell::new(),
