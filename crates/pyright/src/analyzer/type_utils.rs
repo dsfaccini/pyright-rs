@@ -4604,9 +4604,9 @@ pub(crate) fn transform_type_pair_recursive(
 // analyzer/typeUtils.ts:3687
 pub trait TypeVarTransformer {
     // analyzer/typeUtils.ts:3688
-    fn _pending_type_var_transformations(&self) -> &JsSet<String>;
+    fn _pending_type_var_transformations(&self) -> &JsSet<Rc<str>>;
 
-    fn _pending_type_var_transformations_mut(&mut self) -> &mut JsSet<String>;
+    fn _pending_type_var_transformations_mut(&mut self) -> &mut JsSet<Rc<str>>;
 
     // analyzer/typeUtils.ts:3689
     fn _pending_function_transformations(&self) -> &Vec<P<Type>>;
@@ -4614,7 +4614,7 @@ pub trait TypeVarTransformer {
     fn _pending_function_transformations_mut(&mut self) -> &mut Vec<P<Type>>;
 
     // analyzer/typeUtils.ts:3691
-    fn pending_type_var_transformations(&self) -> JsSet<String> {
+    fn pending_type_var_transformations(&self) -> JsSet<Rc<str>> {
         self._pending_type_var_transformations().clone()
     }
 
@@ -4731,7 +4731,7 @@ pub trait TypeVarTransformer {
 
                 let scope_id = type_var.d().priv_.borrow().scope_id.clone();
                 if let Some(scope_id) = scope_id.filter(|id| !id.is_empty()) {
-                    self._pending_type_var_transformations_mut().insert(scope_id.to_string());
+                    self._pending_type_var_transformations_mut().insert(scope_id.clone());
                     replacement_type = self.apply(replacement_type, recursion_count);
                     self._pending_type_var_transformations_mut().shift_remove(&*scope_id);
                 }
@@ -5330,18 +5330,18 @@ pub trait TypeVarTransformer {
 
 // analyzer/typeUtils.ts:4263
 pub struct TypeVarDefaultValidator {
-    pub(crate) _pending_type_var_transformations: JsSet<String>,
+    pub(crate) _pending_type_var_transformations: JsSet<Rc<str>>,
     pub(crate) _pending_function_transformations: Vec<P<Type>>,
     pub(crate) _live_type_params: Vec<TypeVarType>,
     pub(crate) _invalid_type_vars: JsSet<String>,
 }
 
 impl TypeVarTransformer for TypeVarDefaultValidator {
-    fn _pending_type_var_transformations(&self) -> &JsSet<String> {
+    fn _pending_type_var_transformations(&self) -> &JsSet<Rc<str>> {
         &self._pending_type_var_transformations
     }
 
-    fn _pending_type_var_transformations_mut(&mut self) -> &mut JsSet<String> {
+    fn _pending_type_var_transformations_mut(&mut self) -> &mut JsSet<Rc<str>> {
         &mut self._pending_type_var_transformations
     }
 
@@ -5390,18 +5390,18 @@ impl TypeVarDefaultValidator {
 
 // analyzer/typeUtils.ts:4278
 pub struct UniqueFunctionSignatureTransformer {
-    pub(crate) _pending_type_var_transformations: JsSet<String>,
+    pub(crate) _pending_type_var_transformations: JsSet<Rc<str>>,
     pub(crate) _pending_function_transformations: Vec<P<Type>>,
     pub(crate) _signature_tracker: P<UniqueSignatureTracker>,
     pub(crate) _expression_offset: i32,
 }
 
 impl TypeVarTransformer for UniqueFunctionSignatureTransformer {
-    fn _pending_type_var_transformations(&self) -> &JsSet<String> {
+    fn _pending_type_var_transformations(&self) -> &JsSet<Rc<str>> {
         &self._pending_type_var_transformations
     }
 
-    fn _pending_type_var_transformations_mut(&mut self) -> &mut JsSet<String> {
+    fn _pending_type_var_transformations_mut(&mut self) -> &mut JsSet<Rc<str>> {
         &mut self._pending_type_var_transformations
     }
 
@@ -5443,11 +5443,11 @@ impl TypeVarTransformer for UniqueFunctionSignatureTransformer {
             // `doForEachConstraintSet` and `transformTypeVar`, which this class does not override.
             struct Super<'a>(&'a mut UniqueFunctionSignatureTransformer);
             impl TypeVarTransformer for Super<'_> {
-                fn _pending_type_var_transformations(&self) -> &JsSet<String> {
+                fn _pending_type_var_transformations(&self) -> &JsSet<Rc<str>> {
                     self.0._pending_type_var_transformations()
                 }
 
-                fn _pending_type_var_transformations_mut(&mut self) -> &mut JsSet<String> {
+                fn _pending_type_var_transformations_mut(&mut self) -> &mut JsSet<Rc<str>> {
                     self.0._pending_type_var_transformations_mut()
                 }
 
@@ -5520,17 +5520,17 @@ impl UniqueFunctionSignatureTransformer {
 
 // analyzer/typeUtils.ts:4342
 pub struct BoundTypeVarTransform {
-    pub(crate) _pending_type_var_transformations: JsSet<String>,
+    pub(crate) _pending_type_var_transformations: JsSet<Rc<str>>,
     pub(crate) _pending_function_transformations: Vec<P<Type>>,
     pub(crate) _scope_ids: Option<Vec<String>>,
 }
 
 impl TypeVarTransformer for BoundTypeVarTransform {
-    fn _pending_type_var_transformations(&self) -> &JsSet<String> {
+    fn _pending_type_var_transformations(&self) -> &JsSet<Rc<str>> {
         &self._pending_type_var_transformations
     }
 
-    fn _pending_type_var_transformations_mut(&mut self) -> &mut JsSet<String> {
+    fn _pending_type_var_transformations_mut(&mut self) -> &mut JsSet<Rc<str>> {
         &mut self._pending_type_var_transformations
     }
 
@@ -5589,17 +5589,17 @@ impl BoundTypeVarTransform {
 
 // analyzer/typeUtils.ts:4375
 pub struct FreeTypeVarTransform {
-    pub(crate) _pending_type_var_transformations: JsSet<String>,
+    pub(crate) _pending_type_var_transformations: JsSet<Rc<str>>,
     pub(crate) _pending_function_transformations: Vec<P<Type>>,
     pub(crate) _scope_ids: Vec<String>,
 }
 
 impl TypeVarTransformer for FreeTypeVarTransform {
-    fn _pending_type_var_transformations(&self) -> &JsSet<String> {
+    fn _pending_type_var_transformations(&self) -> &JsSet<Rc<str>> {
         &self._pending_type_var_transformations
     }
 
-    fn _pending_type_var_transformations_mut(&mut self) -> &mut JsSet<String> {
+    fn _pending_type_var_transformations_mut(&mut self) -> &mut JsSet<Rc<str>> {
         &mut self._pending_type_var_transformations
     }
 
@@ -5651,7 +5651,7 @@ impl FreeTypeVarTransform {
 
 // analyzer/typeUtils.ts:4399
 pub struct ApplySolvedTypeVarsTransformer {
-    pub(crate) _pending_type_var_transformations: JsSet<String>,
+    pub(crate) _pending_type_var_transformations: JsSet<Rc<str>>,
     pub(crate) _pending_function_transformations: Vec<P<Type>>,
     pub(crate) _is_solving_default_type: bool,
     pub(crate) _active_constraint_set_index: Option<i32>,
@@ -5660,11 +5660,11 @@ pub struct ApplySolvedTypeVarsTransformer {
 }
 
 impl TypeVarTransformer for ApplySolvedTypeVarsTransformer {
-    fn _pending_type_var_transformations(&self) -> &JsSet<String> {
+    fn _pending_type_var_transformations(&self) -> &JsSet<Rc<str>> {
         &self._pending_type_var_transformations
     }
 
-    fn _pending_type_var_transformations_mut(&mut self) -> &mut JsSet<String> {
+    fn _pending_type_var_transformations_mut(&mut self) -> &mut JsSet<Rc<str>> {
         &mut self._pending_type_var_transformations
     }
 
@@ -6114,18 +6114,18 @@ impl ApplySolvedTypeVarsTransformer {
 
 // analyzer/typeUtils.ts:4728
 pub struct UnificationTypeTransformer {
-    pub(crate) _pending_type_var_transformations: JsSet<String>,
+    pub(crate) _pending_type_var_transformations: JsSet<Rc<str>>,
     pub(crate) _pending_function_transformations: Vec<P<Type>>,
     pub(crate) _live_type_var_scopes: Vec<String>,
     pub(crate) _usage_offset: Option<i32>,
 }
 
 impl TypeVarTransformer for UnificationTypeTransformer {
-    fn _pending_type_var_transformations(&self) -> &JsSet<String> {
+    fn _pending_type_var_transformations(&self) -> &JsSet<Rc<str>> {
         &self._pending_type_var_transformations
     }
 
-    fn _pending_type_var_transformations_mut(&mut self) -> &mut JsSet<String> {
+    fn _pending_type_var_transformations_mut(&mut self) -> &mut JsSet<Rc<str>> {
         &mut self._pending_type_var_transformations
     }
 
