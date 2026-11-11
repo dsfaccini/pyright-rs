@@ -94,7 +94,7 @@ pub unsafe trait Trace {
 - No port type implements `Drop`, and the std drops never dereference a `P`, so the order in which dead objects drop does not matter.
 - Allocation, root registration and collection never nest: the heap panics when a root, `Trace` impl or drop allocates.
 - A panic while marking (check mode's assertions, a borrowed `RefCell`) clears the marks before it unwinds, so a later collection traces everything again. A panic while sweeping aborts the process.
-- A block left with no live slot returns to the process's free-block pool, and `madvise(MADV_DONTNEED)` returns its pages to the OS.
+- A block left with no live slot returns to the process's free-block pool. Up to `PYRIGHT_RS_GC_WARM_MIB` of such blocks (default 256) keep their pages, and new blocks come from them first, so allocating into them does not fault; `madvise(MADV_DONTNEED)` returns the pages of the rest to the OS.
 
 ## trigger
 

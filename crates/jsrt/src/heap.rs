@@ -56,6 +56,8 @@ struct Config {
     /// A minor collection becomes major once the old objects grew by this share of
     /// their bytes after the last major one (`PYRIGHT_RS_GC_MAJOR_RATIO`).
     major_ratio: f64,
+    /// Released blocks kept resident, per range (`PYRIGHT_RS_GC_WARM_MIB`).
+    warm_blocks: usize,
 }
 
 static CONFIG: OnceLock<Config> = OnceLock::new();
@@ -104,7 +106,9 @@ fn config() -> &'static Config {
             Ok(other) => panic!("PYRIGHT_RS_GC_GENERATIONAL must be 0 or 1, not {other:?}"),
         };
         let major_ratio: f64 = env_number("PYRIGHT_RS_GC_MAJOR_RATIO").unwrap_or(1.0);
-        Config { mode, min_bytes: min_mib << 20, ratio, log, threads, generational, major_ratio }
+        let warm_mib: usize = env_number("PYRIGHT_RS_GC_WARM_MIB").unwrap_or(256);
+        let warm_blocks = (warm_mib << 20) >> BLOCK_SHIFT;
+        Config { mode, min_bytes: min_mib << 20, ratio, log, threads, generational, major_ratio, warm_blocks }
     })
 }
 
@@ -186,6 +190,9 @@ impl BlockMeta {
 struct RangeBlocks {
     next: usize,
     committed: usize,
+    /// Released blocks whose pages stay resident, reused first.
+    warm: Vec<u32>,
+    /// Released blocks whose pages went back to the OS.
     free: Vec<u32>,
 }
 
@@ -219,7 +226,7 @@ impl Range {
                 if let Some(meta) = map(meta_len) {
                     if let Some(cards) = map(len >> CARD_SHIFT) {
                         let base = base.next_multiple_of(BLOCK);
-                        let blocks = Mutex::new(RangeBlocks { next: 0, committed: 0, free: Vec::new() });
+                        let blocks = Mutex::new(RangeBlocks { next: 0, committed: 0, warm: Vec::new(), free: Vec::new() });
                         return Range { name, base, len, meta: meta as *mut BlockMeta, cards, blocks };
                     }
                     unsafe { libc::munmap(meta as *mut libc::c_void, meta_len) };
@@ -251,7 +258,7 @@ impl Range {
     /// A free block: a released one, or the next one, committing more when needed.
     fn take_block(&self) -> u32 {
         let mut blocks = lock(&self.blocks);
-        if let Some(block) = blocks.free.pop() {
+        if let Some(block) = blocks.warm.pop().or_else(|| blocks.free.pop()) {
             return block;
         }
         let block = blocks.next;
@@ -271,7 +278,15 @@ impl Range {
         block as u32
     }
 
+    /// Keeps up to `PYRIGHT_RS_GC_WARM_MIB` of released blocks resident, so the next
+    /// allocations into them do not fault; returns the pages of the rest to the OS.
     fn release_block(&self, block: u32) {
+        let mut blocks = lock(&self.blocks);
+        if blocks.warm.len() < config().warm_blocks {
+            blocks.warm.push(block);
+            return;
+        }
+        drop(blocks);
         // SAFETY: the block is committed, owned by this thread, and holds no live object.
         unsafe { libc::madvise(self.block_base(block) as *mut libc::c_void, BLOCK, libc::MADV_DONTNEED) };
         lock(&self.blocks).free.push(block);
