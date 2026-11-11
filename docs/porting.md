@@ -63,6 +63,7 @@ pyright allocates about 23 times what it keeps alive: 194 GB over a pydantic-ai 
 ## unsafe code
 
 - Keep provenance. Derive every pointer into memory pyright-rs allocates itself from the pointer its allocator returned: a heap range's `base`, `meta` or `cards`, a region chunk, `vm::map`. Move it with `add`, `wrapping_add` or `map_addr`. Never cast an integer to a pointer: Miri runs with `-Zmiri-strict-provenance`, where such a pointer can access nothing. Integer addresses are fine for arithmetic and comparison (`ptr.addr()`).
+- A `P` is a raw pointer with the provenance of the whole object as allocated. A `&` from `P::get` or `Deref` covers only its `T`, and lives only while the object does: a `&'static T` handle to a swept object would dangle, which is undefined behavior as soon as the handle is copied.
 - Give code that Miri cannot run a `cfg(miri)` stand-in that keeps the logic around it, as `jsrt/src/vm.rs` does for the virtual-memory calls.
 - Put a `// SAFETY:` comment on every unsafe block, saying why its contract holds.
 

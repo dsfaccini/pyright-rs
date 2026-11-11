@@ -3,9 +3,8 @@
 use std::cell::{Cell, RefCell};
 use std::fmt;
 use std::hash::{Hash, Hasher};
-use std::marker::PhantomData;
 use std::ops::Deref;
-use std::ptr;
+use std::ptr::{self, NonNull};
 
 use bumpalo::Bump;
 
@@ -96,7 +95,12 @@ fn report_if_due() {
 ///
 /// Not `Send` or `Sync`: an evaluator object belongs to the thread whose
 /// collector frees it.
-pub struct P<T: ?Sized + 'static>(&'static T, PhantomData<*const ()>);
+///
+/// A raw pointer, not a `&'static T`: it keeps the provenance of the whole object
+/// as allocated, so a header handle reaches the details behind its header
+/// ([`P::header`]), and a handle to a swept object is never a dangling
+/// reference (`docs/porting.md`, "unsafe code").
+pub struct P<T: ?Sized + 'static>(NonNull<T>);
 
 impl<T: Trace + 'static> P<T> {
     /// Moves `value` into the current thread's program heap, which is never
@@ -110,10 +114,10 @@ impl<T: Trace + 'static> P<T> {
             // SAFETY: a fresh slot sized and aligned for `T`, never freed.
             unsafe {
                 slot.write(value);
-                P(&*slot, PhantomData)
+                P(NonNull::new_unchecked(slot))
             }
         } else {
-            ARENA.with(|arena| P(arena.alloc(value), PhantomData))
+            ARENA.with(|arena| P(NonNull::from(arena.alloc(value))))
         }
     }
 
@@ -129,23 +133,24 @@ impl<T: Trace + 'static> P<T> {
         // only when no traced handle reaches it.
         unsafe {
             slot.write(value);
-            P(&*slot, PhantomData)
+            P(NonNull::new_unchecked(slot))
         }
     }
 }
 
 impl<T: 'static> P<T> {
     /// The handle of the object's first field, for a `#[repr(C)]` type that
-    /// starts with a header: both handles hold the same address. Code that
-    /// knows the full type reads past the header (`parser/parse_nodes.rs`).
+    /// starts with a header: both handles hold the same address, and the header
+    /// handle keeps the provenance of the whole object, so code that knows the
+    /// full type reads past the header through it ([`P::as_ptr`]).
     pub fn header<U: Trace>(self, first_field: fn(&'static T) -> &'static U) -> P<U>
     where
         T: Trace,
     {
         const { assert!(T::EVAL == U::EVAL, "P::header across heaps") };
-        let header = first_field(self.0);
-        assert!(ptr::addr_eq(header, self.0), "P::header of a field that is not first");
-        P(header, PhantomData)
+        let header = first_field(self.get());
+        assert!(ptr::addr_eq(header, self.0.as_ptr()), "P::header of a field that is not first");
+        P(self.0.cast())
     }
 
     /// A handle to an object outside the heaps, such as in a `jsrt::region::Region`.
@@ -158,18 +163,21 @@ impl<T: 'static> P<T> {
         T: Trace,
     {
         const { assert!(!T::EVAL, "P::from_raw of an evaluator type") };
-        // SAFETY: the caller guarantees `value` is live while the handle is used.
-        P(unsafe { &*value }, PhantomData)
+        // SAFETY: the caller guarantees `value` points at a live `T`, so it is not null.
+        P(unsafe { NonNull::new_unchecked(value.cast_mut()) })
     }
 
     /// The same object as a trait object: `p.to_dyn::<dyn Trait>(|x| x)`. An
     /// evaluator object needs a trait whose `P` the collector traces (`U::EVAL`).
-    pub fn to_dyn<U: ?Sized + Trace>(self, upcast: fn(&'static T) -> &'static U) -> P<U>
+    pub fn to_dyn<U: ?Sized + Trace>(self, upcast: fn(*const T) -> *const U) -> P<U>
     where
         T: Trace,
     {
         const { assert!(!T::EVAL || U::EVAL, "P::to_dyn of an evaluator type to a trait without EVAL") };
-        P(upcast(self.0), PhantomData)
+        let object = upcast(self.0.as_ptr());
+        assert!(ptr::addr_eq(object, self.0.as_ptr()), "P::to_dyn to another object");
+        // SAFETY: the same address as `self`, which is not null.
+        P(unsafe { NonNull::new_unchecked(object.cast_mut()) })
     }
 }
 
@@ -179,11 +187,21 @@ impl<T: ?Sized + 'static> P<T> {
     }
 
     /// The referenced value. Never store the returned reference in a struct:
-    /// store the `P`, so the collector can see it.
+    /// store the `P`, so the collector can see it. The reference covers `T`
+    /// only: read past a header through [`P::as_ptr`].
     #[inline]
     pub fn get(self) -> &'static T {
         heap::check_handle(self.addr());
-        self.0
+        // SAFETY: a handle points at a live object: the program heap is never freed,
+        // and the collector frees an evaluator object only once no handle reaches it.
+        unsafe { self.0.as_ref() }
+    }
+
+    /// The object's address, with the provenance of the whole object as allocated.
+    #[inline]
+    pub fn as_ptr(self) -> *const T {
+        heap::check_handle(self.addr());
+        self.0.as_ptr()
     }
 
     #[cfg(test)]
@@ -193,7 +211,7 @@ impl<T: ?Sized + 'static> P<T> {
 
     #[inline]
     fn addr(self) -> usize {
-        ptr::from_ref(self.0).cast::<u8>() as usize
+        self.0.as_ptr().cast::<u8>().addr()
     }
 }
 
@@ -277,7 +295,7 @@ impl<T: ?Sized + 'static> PartialEq for P<T> {
     fn eq(&self, other: &Self) -> bool {
         heap::check_handle(self.addr());
         heap::check_handle(other.addr());
-        ptr::addr_eq(self.0, other.0)
+        ptr::addr_eq(self.0.as_ptr(), other.0.as_ptr())
     }
 }
 
@@ -287,7 +305,7 @@ impl<T: ?Sized + 'static> Hash for P<T> {
     #[inline]
     fn hash<H: Hasher>(&self, state: &mut H) {
         heap::check_handle(self.addr());
-        ptr::hash(ptr::from_ref(self.0).cast::<()>(), state);
+        ptr::hash(self.0.as_ptr().cast::<()>(), state);
     }
 }
 
@@ -296,15 +314,14 @@ impl<T: ?Sized + 'static> Deref for P<T> {
 
     #[inline]
     fn deref(&self) -> &T {
-        heap::check_handle(self.addr());
-        self.0
+        self.get()
     }
 }
 
 /// Prints the address only: arena values form cycles.
 impl<T: ?Sized> fmt::Debug for P<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "P({:p})", self.0)
+        write!(f, "P({:p})", self.0.as_ptr())
     }
 }
 
