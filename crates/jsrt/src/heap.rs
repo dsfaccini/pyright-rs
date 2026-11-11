@@ -609,27 +609,30 @@ impl Tracer {
         }
     }
 
+    #[inline]
     fn mark_eval(&mut self, offset: usize) {
         self.edges += 1;
-        assert!(self.program_only == 0, "collector check: a #[trace(program)] field holds an evaluator handle");
+        if self.check {
+            assert!(self.program_only == 0, "collector check: a #[trace(program)] field holds an evaluator handle");
+        }
         // SAFETY: checked below that this thread owns the block.
-        let meta = unsafe { &mut *self.meta.add(offset >> BLOCK_SHIFT) };
+        let meta = unsafe { &*self.meta.add(offset >> BLOCK_SHIFT) };
         assert!(meta.owner == self.owner, "collector: a handle points into an evaluator block this thread does not own");
         let i = meta.index(offset & (BLOCK - 1));
         let (w, bit, words) = (i / 64, 1u64 << (i % 64), meta.words as usize);
+        // SAFETY: `i` is a slot of the block, and its bitmaps hold `words` words each.
         unsafe {
-            if *meta.bits.add(w) & bit == 0 {
-                let state = if *meta.bits.add(2 * words + w) & bit != 0 { "swept" } else { "free" };
-                panic!("collector: a reachable handle points to a {state} {}", meta.name);
-            }
             let mark = meta.bits.add(words + w);
             if *mark & bit != 0 {
                 return;
             }
+            if *meta.bits.add(w) & bit == 0 {
+                dangling(meta, w, bit);
+            }
             *mark |= bit;
         }
-        let block_base = self.eval_base + (offset & !(BLOCK - 1));
-        self.stack.push((block_base + i * meta.slot as usize, meta.trace));
+        let addr = self.eval_base + (offset & !(BLOCK - 1)) + i * meta.slot as usize;
+        self.stack.push((addr, meta.trace));
     }
 
     /// Check mode: traces a `#[trace(program)]` field and panics on an evaluator handle in it.
@@ -647,12 +650,49 @@ impl Tracer {
         );
     }
 
+    /// Traces every object on the mark stack. Objects pass through a small FIFO
+    /// whose entries are prefetched, so the cache misses of several objects overlap.
     fn drain(&mut self) {
-        while let Some((addr, trace)) = self.stack.pop() {
+        const AHEAD: usize = 8;
+        let mut ring = [(0usize, None::<TraceFn>); AHEAD];
+        let (mut head, mut len) = (0usize, 0usize);
+        loop {
+            while len < AHEAD {
+                let Some((addr, trace)) = self.stack.pop() else { break };
+                prefetch(addr);
+                ring[(head + len) % AHEAD] = (addr, Some(trace));
+                len += 1;
+            }
+            if len == 0 {
+                return;
+            }
+            let (addr, trace) = ring[head];
+            head = (head + 1) % AHEAD;
+            len -= 1;
             // SAFETY: `addr` is a live slot of the type `trace` was made for.
-            unsafe { trace(addr, self) };
+            unsafe { trace.unwrap_unchecked()(addr, self) };
         }
     }
+}
+
+/// Panics on a handle to a slot that holds no object: a handle the collector missed.
+#[cold]
+#[inline(never)]
+fn dangling(meta: &BlockMeta, w: usize, bit: u64) -> ! {
+    // SAFETY: the dead bitmap follows the live and mark bitmaps.
+    let swept = unsafe { *meta.bits.add(2 * meta.words as usize + w) } & bit != 0;
+    panic!("collector: a reachable handle points to a {} {}", if swept { "swept" } else { "free" }, meta.name);
+}
+
+#[inline(always)]
+fn prefetch(addr: usize) {
+    #[cfg(target_arch = "x86_64")]
+    // SAFETY: a prefetch never faults.
+    unsafe {
+        std::arch::x86_64::_mm_prefetch(addr as *const i8, std::arch::x86_64::_MM_HINT_T0);
+    }
+    #[cfg(not(target_arch = "x86_64"))]
+    let _ = addr;
 }
 
 /// Collects when the evaluator heap grew by `max(ratio × live bytes, floor)`
