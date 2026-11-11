@@ -6611,6 +6611,7 @@ impl Parser {
     }
 
     // parser/parser.ts:5533
+    #[inline(always)]
     fn _get_next_token(&mut self) -> P<Token> {
         let token = self._tokenizer_output.as_ref().unwrap().tokens.get_item_at(self._token_index);
         if !self._at_eof() {
@@ -6621,6 +6622,7 @@ impl Parser {
     }
 
     // parser/parser.ts:5542
+    #[inline(always)]
     fn _at_eof(&self) -> bool {
         // Are we pointing at the last token in the stream (which is
         // assumed to be an end-of-stream token)?
@@ -6628,6 +6630,7 @@ impl Parser {
     }
 
     // parser/parser.ts:5548
+    #[inline(always)]
     fn _peek_token(&self, count: i32) -> P<Token> {
         let target_index = self._token_index + count;
         if target_index < 0 {
@@ -6642,11 +6645,13 @@ impl Parser {
     }
 
     // parser/parser.ts:5561
+    #[inline]
     fn _peek_token_type(&self) -> TokenType {
         self._peek_token(0).type_
     }
 
     // parser/parser.ts:5565
+    #[inline]
     fn _peek_keyword_type(&self) -> Option<KeywordType> {
         let next_token = self._peek_token(0);
         if next_token.type_ != TokenType::Keyword {
@@ -6657,6 +6662,7 @@ impl Parser {
     }
 
     // parser/parser.ts:5574
+    #[inline]
     fn _peek_operator_type(&self) -> Option<OperatorType> {
         let next_token = self._peek_token(0);
         if next_token.type_ != TokenType::Operator {
@@ -6728,6 +6734,7 @@ impl Parser {
     }
 
     // parser/parser.ts:5627
+    #[inline]
     fn _get_token_if_type(&mut self, token_type: TokenType) -> Option<P<Token>> {
         if self._peek_token_type() == token_type {
             return Some(self._get_next_token());
@@ -6737,11 +6744,13 @@ impl Parser {
     }
 
     // parser/parser.ts:5635
+    #[inline]
     fn _consume_token_if_type(&mut self, token_type: TokenType) -> bool {
         self._get_token_if_type(token_type).is_some()
     }
 
     // parser/parser.ts:5639
+    #[inline]
     fn _consume_token_if_keyword(&mut self, keyword_type: KeywordType) -> bool {
         if self._peek_keyword_type() == Some(keyword_type) {
             self._get_next_token();
@@ -6752,6 +6761,7 @@ impl Parser {
     }
 
     // parser/parser.ts:5648
+    #[inline]
     fn _consume_token_if_operator(&mut self, operator_type: OperatorType) -> bool {
         if self._peek_operator_type() == Some(operator_type) {
             self._get_next_token();
