@@ -195,6 +195,19 @@ pub fn arena_chunk_bytes() -> usize {
     ARENA.with(|arena| arena.allocated_bytes())
 }
 
+/// Census: bytes used in the current thread's arena chunks, and how many of those are resident.
+pub(crate) fn arena_chunks_resident() -> (usize, usize) {
+    ARENA.with(|arena| {
+        let (mut used, mut resident) = (0, 0);
+        // SAFETY: only reads the chunk bounds; nothing allocates in the arena meanwhile.
+        for (ptr, len) in unsafe { arena.iter_allocated_chunks_raw() } {
+            used += len;
+            resident += heap::resident(ptr as usize, len);
+        }
+        (used, resident)
+    })
+}
+
 /// Bytes moved into the current thread's evaluator heap so far.
 pub fn eval_arena_allocated_bytes() -> usize {
     EVAL_ALLOCATED.with(Cell::get)

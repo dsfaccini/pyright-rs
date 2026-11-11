@@ -429,6 +429,8 @@ impl Program {
                     return true;
                 }
             }
+            // The resident set peaks about here (`docs/collector-design.md`, "census").
+            jsrt::heap::census_end_of_check();
         }
 
         false

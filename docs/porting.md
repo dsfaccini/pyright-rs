@@ -72,6 +72,7 @@ Every Rust-only environment variable is listed here. When you add a cache or sho
 | `PYRIGHT_RS_GC_GENERATIONAL` | `0`, `1` (default) | generational collection: a minor collection traces young objects and the old ones written since the last collection |
 | `PYRIGHT_RS_GC_MAJOR_RATIO` | a number; default 1 | generational: a collection is major once the old objects grew by this share since the last major one |
 | `PYRIGHT_RS_GC_WARM_MIB` | a number; default 256 | MiB of released evaluator blocks kept resident for reuse |
+| `PYRIGHT_RS_GC_CENSUS` | `1` | prints a breakdown of the resident set after each mark, at the end of the check and at exit; changes no result; buffer bytes need the `pyright` crate's `count-malloc` feature (`docs/collector-design.md`, "census") |
 | `PYRIGHT_RS_NODE_INFO_STORE_CACHE` | `on` (default), `off`, `check` | `AnalyzerNodeInfoContextImpl::_store_for` reuses the store of its last lookup |
 | `PYRIGHT_RS_ALLOC_STATS` | `1`, or a number n | prints objects and bytes per type and heap at exit; with n, also each time the evaluator heap grows by another n GiB |
 

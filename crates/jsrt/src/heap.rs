@@ -19,6 +19,10 @@ use std::time::Instant;
 use crate::collections::FxHashMap;
 use crate::trace::Trace;
 
+mod census;
+pub(crate) use census::resident;
+pub use census::{census_at_exit, census_end_of_check};
+
 const BLOCK_SHIFT: u32 = 16;
 const BLOCK: usize = 1 << BLOCK_SHIFT;
 /// Slot sizes up to this keep the reciprocal slot index exact (offset × slot < 2^32).
@@ -1252,6 +1256,10 @@ impl ThreadHeap {
             shared: ptr::null(),
         };
 
+        let census = census::on();
+        if census {
+            census::set_phase(census::MARKING);
+        }
         let roots = self.root_objects(check, minor);
         let scanned = roots.len();
         // A panic while marking (check mode's assertions, a borrowed RefCell) must not
@@ -1279,6 +1287,12 @@ impl ThreadHeap {
             resume_unwind(panic);
         }
         let mark_ms = start.elapsed().as_millis();
+        let census_malloc = malloc_bytes();
+        if census {
+            let kind = if minor { "minor" } else { "major" };
+            self.census_snapshot(&format!("after the mark of collection {} ({kind})", self.collections + 1), true);
+            census::set_phase(census::SWEEPING);
+        }
 
         // A panic while sweeping leaves blocks half-swept; nothing can be trusted after it.
         let mut stats = Vec::new();
@@ -1290,6 +1304,11 @@ impl ThreadHeap {
         self.sticky_marks = generational;
         if generational {
             self.clear_cards();
+        }
+        if census {
+            census::set_phase(census::MUTATOR);
+            let malloc = (malloc_bytes() > 0).then(|| format!(", their buffers {} MiB", census_malloc.saturating_sub(malloc_bytes()) >> 20));
+            eprintln!("census sweep: {freed} objects freed{}", malloc.unwrap_or_default());
         }
 
         self.collections += 1;
@@ -1882,6 +1901,24 @@ mod tests {
         }
         with_heap(|heap| heap.collect(Collection { check: false, log: 0, threads: 4, minor: false, generational: false }));
         assert_eq!(Rc::strong_count(&drops), 1);
+    }
+
+    /// The census snapshot only reads: it changes no mark bit and frees nothing.
+    #[test]
+    fn census_snapshot_reads_only() {
+        let _serial = serial();
+        let drops = Rc::new(());
+        let root = P::new(Holder { node: Cell::new(None) });
+        root.node.set(Some(node(Some(node(None, &drops, 1)), &drops, 2)));
+        node(None, &drops, 3);
+        with_heap(|heap| {
+            let before = heap.marks();
+            heap.census_snapshot("test", true);
+            assert!(heap.marks() == before, "the census changed mark bits");
+        });
+        assert_eq!(Rc::strong_count(&drops), 4);
+        with_heap(|heap| heap.collect(Collection { check: false, log: 0, threads: 1, minor: false, generational: false }));
+        assert_eq!(Rc::strong_count(&drops), 3);
     }
 
     fn generational(minor: bool, check: bool) -> Collection {

@@ -103,6 +103,14 @@ On by default; `PYRIGHT_RS_GC_GENERATIONAL=0` turns it off, and every collection
 - `PYRIGHT_RS_GC_LOG=1` prints each collection: the time since start, milliseconds (and those spent marking), program objects scanned, objects freed, live slot bytes, slot bytes allocated since the last collection, evaluator and typed program block bytes, program arena bytes and chunk bytes, the bytes the collecting thread holds in the global allocator before and after (only with the `pyright` crate's `count-malloc` feature), and the resident set before and after with the share of each reserved range. `PYRIGHT_RS_GC_LOG=2` also prints a table of live and freed objects per type.
 - The global allocator bytes come from `jsrt::heap::CountingAlloc`, which wraps the `pyright-rs` binary's mimalloc under `count-malloc` and counts per thread. Counting every allocation costs about 0.6% of the instructions on pydantic-ai, so the default build does not count.
 
+## census
+
+`PYRIGHT_RS_GC_CENSUS=1` prints where the resident set goes (`crates/jsrt/src/heap/census.rs`). It changes no result.
+
+- A thread samples the resident set every 5 ms and keeps the peak between collections, while marking and while sweeping; they print at exit.
+- After each collection's mark, and once the check loop ends (about the run's peak on pydantic-ai), it prints the resident bytes of the evaluator range, split into slots, free slots and warm released blocks; of the program range; of block metadata and cards; of the program arena's used chunks; of file-backed mappings and the stack; and the rest, which is mostly the malloc heap. After a mark it also splits slots into reachable and garbage. Residency comes from `mincore`.
+- Malloc bytes need the `pyright` crate's `count-malloc` feature (`cargo build --release --features pyright/count-malloc`). With it, each sweep prints the buffer bytes its garbage owned, and at exit, after the output, the census runs a major collection and then drops every evaluator object and every typed program object, type by type, reading the malloc counter: the slot and buffer bytes of each type, largest first. Without the feature it says the bytes are not counted and drops nothing.
+
 ## switch and check mode
 
 `PYRIGHT_RS_GC` selects the mode, read once per process:
