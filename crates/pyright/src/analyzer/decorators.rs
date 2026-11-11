@@ -804,7 +804,7 @@ pub fn add_overloads_to_function_type(
     }
     let symbol_with_scope = evaluator.look_up_symbol_recursive(
         node.0,
-        node.d().name.get().d().value(),
+        node.d().name.get().d().value_atom(),
         /* honorCodeFlow */ false,
         false,
     );

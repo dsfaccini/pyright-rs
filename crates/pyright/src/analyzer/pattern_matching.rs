@@ -368,7 +368,7 @@ pub(crate) fn narrow_type_based_on_sequence_pattern(
 
             // Can we narrow a tuple?
             if can_narrow_tuple && !negative_narrowed_dims.is_empty() {
-                let tuple_class_type = evaluator.get_built_in_type(pattern.0, "tuple");
+                let tuple_class_type = evaluator.get_built_in_type(pattern.0, jsrt::atom!("tuple"));
                 if is_instantiable_class(tuple_class_type) {
                     // Expand the tuple in the dimensions that were narrowed.
                     // Start with the fully-narrowed set of entries.
@@ -419,7 +419,7 @@ pub(crate) fn narrow_type_based_on_sequence_pattern(
             // Other sequences cannot be narrowed because we don't know if they
             // are immutable (covariant).
             if can_narrow_tuple {
-                let tuple_class_type = evaluator.get_built_in_type(pattern.0, "tuple");
+                let tuple_class_type = evaluator.get_built_in_type(pattern.0, jsrt::atom!("tuple"));
                 if is_instantiable_class(tuple_class_type) {
                     let tuple_type_args: Vec<TupleTypeArg> = narrowed_entry_types
                         .iter()
@@ -724,7 +724,7 @@ pub(crate) fn narrow_type_based_on_mapping_pattern(
                 if let Some(key_entry) = PatternMappingKeyEntryNode::cast(*mapping_entry) {
                     let narrowed_key_type = narrow_type_based_on_pattern(
                         evaluator,
-                        evaluator.get_built_in_object(pattern.0, "str", None),
+                        evaluator.get_built_in_object(pattern.0, jsrt::atom!("str"), None),
                         key_entry.d().key_pattern.get(),
                         is_positive_test,
                         node_info,
@@ -1794,7 +1794,7 @@ pub(crate) fn narrow_type_of_class_pattern_arg(
                         evaluator.get_type_of_bound_member(
                             Some(arg.0),
                             ClassType::clone_as_instance(match_class, true),
-                            arg_name,
+                            jsrt::Atom::new(arg_name),
                             &EvaluatorUsage {
                                 method: "get".to_string(),
                                 set_type: None,
@@ -2801,7 +2801,7 @@ pub fn assign_type_to_pattern_targets(
                         if let Some(key_entry) = key_entry {
                             let key_type = narrow_type_based_on_pattern(
                                 evaluator,
-                                evaluator.get_built_in_object(pattern, "str", None),
+                                evaluator.get_built_in_object(pattern, jsrt::atom!("str"), None),
                                 key_entry.d().key_pattern.get(),
                                 true,
                                 node_info,
@@ -2853,7 +2853,7 @@ pub fn assign_type_to_pattern_targets(
                                 false,
                             );
                         } else if expand_entry.is_some() {
-                            key_types.push(evaluator.get_built_in_object(pattern, "str", None));
+                            key_types.push(evaluator.get_built_in_object(pattern, jsrt::atom!("str"), None));
                             value_types.push(evaluator.get_object_type());
                         }
                     } else if let Some(dict_type_args) = &mapping_subtype_info.dict_type_args {
@@ -2899,8 +2899,8 @@ pub fn assign_type_to_pattern_targets(
                         node_info,
                     );
                 } else if let Some(expand_entry) = expand_entry {
-                    let dict_class = evaluator.get_built_in_type(pattern, "dict");
-                    let str_type = evaluator.get_built_in_object(pattern, "str", None);
+                    let dict_class = evaluator.get_built_in_type(pattern, jsrt::atom!("dict"));
+                    let str_type = evaluator.get_built_in_object(pattern, jsrt::atom!("str"), None);
                     let dict_type =
                         if is_instantiable_class(dict_class) && is_class_instance(str_type) {
                             ClassType::clone_as_instance(
@@ -3029,7 +3029,7 @@ pub(crate) fn wrap_type_in_list(
     }
 
     let list_object_type =
-        convert_to_instance(evaluator.get_built_in_object(node, "list", None), true);
+        convert_to_instance(evaluator.get_built_in_object(node, jsrt::atom!("list"), None), true);
     if is_class_instance(list_object_type) {
         // If the type is a union that contains an Any or Unknown, eliminate the other
         // types before wrapping it in a list.

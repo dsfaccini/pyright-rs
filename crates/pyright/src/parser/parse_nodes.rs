@@ -18,7 +18,7 @@ use jsrt::cell::{Cell, RefCell};
 use std::ops::Deref;
 use std::ptr;
 
-use jsrt::{JsString, P};
+use jsrt::{Atom, JsString, P};
 
 use jsrt::NumberValue;
 
@@ -2153,7 +2153,12 @@ impl NameNodeDetails {
     /// `value`, which TypeScript sets to `token.value` and never writes again,
     /// read from the token.
     pub fn value(&self) -> &'static str {
-        &self.token.get().d().value
+        self.token.get().d().value.as_str()
+    }
+
+    /// `value` as an atom (`docs/porting.md`, "strings").
+    pub fn value_atom(&self) -> Atom {
+        self.token.get().d().value
     }
 }
 

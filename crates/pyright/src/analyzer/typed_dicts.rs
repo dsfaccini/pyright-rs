@@ -592,7 +592,7 @@ pub fn synthesize_typed_dict_class_methods(
         Symbol::create_with_type(SymbolFlags::ClassMember, new_type.0, None),
     );
 
-    let str_class = evaluator.get_built_in_type(node, "str");
+    let str_class = evaluator.get_built_in_type(node, jsrt::atom!("str"));
 
     // Synthesize a "get", pop, and setdefault method for each named entry.
     if is_instantiable_class(str_class) {
@@ -901,7 +901,7 @@ pub fn synthesize_typed_dict_class_methods(
                 .set(Some(evaluator.get_none_type()));
 
             let mut tuples_to_combine: Vec<P<Type>> = vec![];
-            let tuple_class = evaluator.get_built_in_type(node, "tuple");
+            let tuple_class = evaluator.get_built_in_type(node, jsrt::atom!("tuple"));
 
             for (name, entry) in &known_items {
                 if !entry.is_read_only {

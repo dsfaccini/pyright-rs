@@ -610,7 +610,7 @@ pub fn create_named_tuple_type(
         .shared
         .get()
         .declared_return_type
-        .set(Some(evaluator.get_built_in_object(error_node, "int", None)));
+        .set(Some(evaluator.get_built_in_object(error_node, jsrt::atom!("int"), None)));
     FunctionType::add_param(len_type, &self_param);
     class_fields.set(
         "__len__",
@@ -631,7 +631,7 @@ pub fn create_named_tuple_type(
             get_attrib_type,
             &FunctionParam::create(
                 ParamCategory::Simple,
-                evaluator.get_built_in_object(error_node, "str", None),
+                evaluator.get_built_in_object(error_node, jsrt::atom!("str"), None),
                 FunctionParamFlags::TypeDeclared,
                 Some("name"),
                 None,
@@ -644,10 +644,10 @@ pub fn create_named_tuple_type(
         );
     }
 
-    let tuple_class_type = evaluator.get_built_in_type(error_node, "tuple");
+    let tuple_class_type = evaluator.get_built_in_type(error_node, jsrt::atom!("tuple"));
 
     // Synthesize the __match_args__ class variable.
-    let str_type = evaluator.get_built_in_type(error_node, "str");
+    let str_type = evaluator.get_built_in_type(error_node, jsrt::atom!("str"));
     if !add_generic_get_attribute
         && is_instantiable_class(str_type)
         && is_instantiable_class(tuple_class_type)

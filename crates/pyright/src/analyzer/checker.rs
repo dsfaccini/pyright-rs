@@ -2340,7 +2340,7 @@ impl Checker {
         // Look up the symbol to see if it's a type parameter.
         let symbol_with_scope =
             self._evaluator
-                .look_up_symbol_recursive(node.0, node.d().value(), false, false);
+                .look_up_symbol_recursive(node.0, node.d().value_atom(), false, false);
         let Some(symbol_with_scope) = symbol_with_scope else {
             return;
         };
@@ -3791,10 +3791,10 @@ impl Checker {
         error_node: ExpressionNode,
         is_except_group: bool,
     ) {
-        let base_exception_type = self._evaluator.get_built_in_type(error_node, "BaseException");
+        let base_exception_type = self._evaluator.get_built_in_type(error_node, jsrt::atom!("BaseException"));
         let base_exception_group_type = self
             ._evaluator
-            .get_built_in_type(error_node, "BaseExceptionGroup");
+            .get_built_in_type(error_node, jsrt::atom!("BaseExceptionGroup"));
         let diag_addendum = DiagnosticAddendum::new();
 
         self._validate_exception_type_recursive(
@@ -3860,19 +3860,19 @@ impl Checker {
             if let Some(scope) = scope {
                 let scope_type = scope.type_;
                 scope.symbol_table.for_each(|symbol, name| {
-                    self._conditionally_report_unused_symbol(name, symbol, scope_type, dependent_file_info.as_deref());
+                    self._conditionally_report_unused_symbol(&name, symbol, scope_type, dependent_file_info.as_deref());
 
-                    self._report_incompatible_declarations(name, symbol);
+                    self._report_incompatible_declarations(&name, symbol);
 
-                    self._report_overwrite_of_imported_final(name, symbol);
-                    self._report_overwrite_of_builtins_final(name, symbol, scope);
-                    self._report_multiple_final_declarations(name, symbol, scope_type);
+                    self._report_overwrite_of_imported_final(&name, symbol);
+                    self._report_overwrite_of_builtins_final(&name, symbol, scope);
+                    self._report_multiple_final_declarations(&name, symbol, scope_type);
 
                     self._report_final_in_loop(symbol);
 
-                    self._report_multiple_type_alias_declarations(name, symbol);
+                    self._report_multiple_type_alias_declarations(&name, symbol);
 
-                    self._report_invalid_overload(name, symbol);
+                    self._report_invalid_overload(&name, symbol);
                 });
             }
         }
@@ -6132,7 +6132,7 @@ impl Checker {
                 return;
             };
             if analyzer::types::is_instantiable_class(parent_symbol.class_type)
-                && !analyzer::symbol_name_utils::is_private_name(name)
+                && !analyzer::symbol_name_utils::is_private_name(&name)
             {
                 // Did the parent class explicitly declare the variable as final?
                 if evaluator.is_final_variable(parent_symbol.symbol) {
@@ -6140,14 +6140,14 @@ impl Checker {
                     evaluator.add_diagnostic(
                         DiagnosticRule::reportGeneralTypeIssues,
                         &LocMessage::final_redeclaration_by_subclass().format(&[
-                            ("name", name),
+                            ("name", &name),
                             ("className", &ClassType(parent_symbol.class_type).d().shared.get().name),
                         ]),
                         decl.node.get(),
                         None,
                     );
-                } else if ClassType::has_named_tuple_entry(ClassType(parent_symbol.class_type), name)
-                    && !analyzer::symbol_name_utils::is_dunder_name(name)
+                } else if ClassType::has_named_tuple_entry(ClassType(parent_symbol.class_type), &name)
+                    && !analyzer::symbol_name_utils::is_dunder_name(&name)
                 {
                     // If the parent class is a named tuple, all instance variables
                     // (other than dundered ones) are implicitly final.
@@ -6157,7 +6157,7 @@ impl Checker {
                         evaluator.add_diagnostic(
                             DiagnosticRule::reportIncompatibleVariableOverride,
                             &LocMessage::named_tuple_entry_redeclared().format(&[
-                                ("name", name),
+                                ("name", &name),
                                 ("className", &ClassType(parent_symbol.class_type).d().shared.get().name),
                             ]),
                             decl.node.get(),
@@ -6223,7 +6223,7 @@ impl Checker {
             let symbol_type = analyzer::enums::transform_type_for_enum_member(
                 &evaluator,
                 class_type,
-                name,
+                &name,
                 node_info_reader,
                 /* ignoreAnnotation */ true,
                 0,
@@ -6268,7 +6268,7 @@ impl Checker {
             if decls.len() >= 2 && decls[0].type_ == analyzer::declaration::DeclarationType::Variable {
                 evaluator.add_diagnostic(
                     DiagnosticRule::reportGeneralTypeIssues,
-                    &LocMessage::duplicate_enum_member().format(&[("name", name)]),
+                    &LocMessage::duplicate_enum_member().format(&[("name", &name)]),
                     decls[1].node.get(),
                     None,
                 );
@@ -6618,7 +6618,7 @@ impl Checker {
 
         let evaluator = self._evaluator;
         ClassType::get_symbol_table(class_type).for_each(|local_symbol, name| {
-            abstract_symbols.shift_remove(name);
+            abstract_symbols.shift_remove(name.as_str());
 
             // This applies only to instance members.
             if !local_symbol.is_instance_member() {
@@ -6660,7 +6660,7 @@ impl Checker {
                     // If this is part of a dataclass, a class handled by a dataclass_transform,
                     // or a NamedTuple, exempt it because the class variable will be transformed
                     // into an instance variable in this case.
-                    if ClassType::is_data_class(class_type) || ClassType::has_named_tuple_entry(class_type, name) {
+                    if ClassType::is_data_class(class_type) || ClassType::has_named_tuple_entry(class_type, &name) {
                         return true;
                     }
 
@@ -6699,7 +6699,7 @@ impl Checker {
             // Report the variable as uninitialized only on the first decl.
             evaluator.add_diagnostic(
                 DiagnosticRule::reportUninitializedInstanceVariable,
-                &LocMessage::uninitialized_instance_variable().format(&[("name", name)]),
+                &LocMessage::uninitialized_instance_variable().format(&[("name", &name)]),
                 decls[0].node.get(),
                 None,
             );
@@ -6768,7 +6768,7 @@ impl Checker {
             return;
         }
 
-        let object_type = self._evaluator.get_built_in_type(error_node.0, "object");
+        let object_type = self._evaluator.get_built_in_type(error_node.0, jsrt::atom!("object"));
         if !analyzer::types::is_instantiable_class(object_type) {
             return;
         }
@@ -6926,7 +6926,7 @@ impl Checker {
                             if analyzer::parse_tree_utils::is_write_access(name_node) {
                                 evaluator.add_diagnostic(
                                     DiagnosticRule::reportGeneralTypeIssues,
-                                    &LocMessage::slots_class_var_conflict().format(&[("name", name)]),
+                                    &LocMessage::slots_class_var_conflict().format(&[("name", &name)]),
                                     decl.node.get(),
                                     None,
                                 );
@@ -8170,7 +8170,7 @@ impl Checker {
             // Private symbols do not need to match in type since their
             // names are mangled, and subclasses can't access the value in
             // the parent class.
-            if analyzer::symbol_name_utils::is_private_name(name) {
+            if analyzer::symbol_name_utils::is_private_name(&name) {
                 return;
             }
 
@@ -8233,7 +8233,7 @@ impl Checker {
                         analyzer::types::AnyType::create(false).0
                     },
                     class_type,
-                    name,
+                    &name,
                 );
             }
 

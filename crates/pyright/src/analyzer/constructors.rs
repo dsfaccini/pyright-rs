@@ -54,7 +54,7 @@ pub fn get_bound_new_method(
     evaluator.get_type_of_bound_member(
         Some(error_node),
         type_,
-        "__new__",
+        jsrt::atom!("__new__"),
         &EvaluatorUsage {
             method: "get".to_string(),
             set_type: None,
@@ -85,7 +85,7 @@ pub fn get_bound_init_method(
     evaluator.get_type_of_bound_member(
         Some(error_node),
         type_,
-        "__init__",
+        jsrt::atom!("__init__"),
         &EvaluatorUsage {
             method: "get".to_string(),
             set_type: None,
@@ -109,7 +109,7 @@ pub fn get_bound_call_method(
     evaluator.get_type_of_bound_member(
         Some(error_node),
         type_,
-        "__call__",
+        jsrt::atom!("__call__"),
         &EvaluatorUsage {
             method: "get".to_string(),
             set_type: None,

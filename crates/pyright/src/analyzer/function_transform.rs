@@ -135,7 +135,7 @@ pub(crate) fn apply_total_ordering_transform(
     let operand_type = match operand_type {
         Some(operand_type) => operand_type,
         None => {
-            let object_type = evaluator.get_built_in_object(error_node, "object", None);
+            let object_type = evaluator.get_built_in_object(error_node, jsrt::atom!("object"), None);
             if !is_class_instance(object_type) {
                 return result.clone();
             }
@@ -143,7 +143,7 @@ pub(crate) fn apply_total_ordering_transform(
         }
     };
 
-    let bool_type = evaluator.get_built_in_object(error_node, "bool", None);
+    let bool_type = evaluator.get_built_in_object(error_node, jsrt::atom!("bool"), None);
     if !is_class_instance(bool_type) {
         return result.clone();
     }
