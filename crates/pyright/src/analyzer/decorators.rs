@@ -43,7 +43,7 @@ use crate::parser::parse_nodes::StringListNode;
 use crate::parser::parse_nodes::{CallNode, DecoratorNode, FunctionNode};
 use jsrt::JsString;
 use jsrt::P;
-use std::cell::Cell;
+use jsrt::cell::Cell;
 
 // analyzer/decorators.ts:49
 #[derive(Clone)]

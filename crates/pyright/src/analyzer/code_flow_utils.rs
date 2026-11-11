@@ -12,7 +12,7 @@
 #![allow(clippy::mutable_key_type)]
 
 use jsrt::flag_ops;
-use std::cell::{Cell, RefCell};
+use jsrt::cell::{Cell, RefCell};
 
 use jsrt::{FxHashMap, FxHashSet, JsStr, P};
 

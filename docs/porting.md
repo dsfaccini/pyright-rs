@@ -48,6 +48,8 @@ pyright allocates about 23 times what it keeps alive: 194 GB over a pydantic-ai 
 - Make an object a `P` only when pyright compares it with `===`, or writes to it after storing it elsewhere. Otherwise use an owned value, or `Rc` when it is shared and acyclic. A program object is never dropped; a swept evaluator object is dropped in place during a collection, so never implement `Drop` for a type that dereferences a `P` or allocates one.
 - Derive `jsrt::Trace` on every struct and enum that a heap object holds. Add `#[trace(eval)]` to a type allocated with `P::new_eval`; `P::new_eval` does not compile without it.
 - Mark a field `#[trace(program)]` when its type allows an evaluator handle but it only ever holds program handles, such as a declaration only the binder sets. Check mode verifies it.
+- Use `jsrt::cell::{Cell, RefCell, OnceCell}`, not `std::cell`, for interior mutability: their writes run the generational collector's write barrier. A std cell that can hold an evaluator handle does not compile. A std cell is fine for state no heap object holds (thread-locals, CLI options, test harnesses).
+- Keep every cell that can hold an evaluator handle in its heap object's own bytes, or behind another `P`: never inside a `Vec`, `Box`, `Rc` or map that the object owns. The barrier finds the written object by the cell's address; `P::new_eval` and `P::new` do not compile for a type that breaks this (`Trace::CELL_OUT_OF_LINE`). `jsrt::OptionRefCell` boxes its storage and runs the barrier itself.
 - An object that lives for the whole run, such as a singleton type, goes on the program heap (`P::new`).
 - A thread-local that holds an evaluator handle registers a root with `jsrt::heap::add_root` in its initializer (`ENUM_EVAL_STACK`).
 - Never store a `&'static T` taken from `P::get` in a struct. Store the `P`.
@@ -67,6 +69,8 @@ Every Rust-only environment variable is listed here. When you add a cache or sho
 | `PYRIGHT_RS_GC_LOG` | `1`, `2` | prints each collection; `2` also prints the live and freed objects per type |
 | `PYRIGHT_RS_GC_RATIO`, `PYRIGHT_RS_GC_MIN_MIB` | numbers | the collection trigger; both 0 collect before every file |
 | `PYRIGHT_RS_GC_THREADS` | a number; default the available parallelism, at most 4 | threads that mark, the collecting thread included; 1 marks on the collecting thread alone |
+| `PYRIGHT_RS_GC_GENERATIONAL` | `0` (default), `1` | generational collection: a minor collection traces young objects and the old ones written since the last collection |
+| `PYRIGHT_RS_GC_MAJOR_RATIO` | a number; default 1 | generational: a collection is major once the old objects grew by this share since the last major one |
 | `PYRIGHT_RS_NODE_INFO_STORE_CACHE` | `on` (default), `off`, `check` | `AnalyzerNodeInfoContextImpl::_store_for` reuses the store of its last lookup |
 | `PYRIGHT_RS_ALLOC_STATS` | `1`, or a number n | prints objects and bytes per type and heap at exit; with n, also each time the evaluator heap grows by another n GiB |
 

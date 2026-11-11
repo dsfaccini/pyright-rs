@@ -4,7 +4,7 @@
 //! ported. No caller passes `processPartialStubPackages`'s `allowMoving`, so
 //! it always uses `_allowMoving`.
 
-use std::cell::RefCell;
+use jsrt::cell::RefCell;
 
 use jsrt::FxHashSet;
 

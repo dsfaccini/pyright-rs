@@ -7,7 +7,7 @@
 //! into the parser, binder and checker; the first two are stand-ins until
 //! those land.
 
-use std::cell::{Cell, RefCell};
+use jsrt::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use jsrt::{JsMap, JsSet, JsStr, JsString, P};
@@ -260,11 +260,11 @@ impl SourceFile {
     }
 
     /// Read access to the writable data, for dumpers and the program.
-    pub fn data(&self) -> std::cell::Ref<'_, WriteableData> {
+    pub fn data(&self) -> jsrt::cell::Ref<'_, WriteableData> {
         self.writable_data.borrow()
     }
 
-    fn data_mut(&self) -> std::cell::RefMut<'_, WriteableData> {
+    fn data_mut(&self) -> jsrt::cell::RefMut<'_, WriteableData> {
         self.writable_data.borrow_mut()
     }
 

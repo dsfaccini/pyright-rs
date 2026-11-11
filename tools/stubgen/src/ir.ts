@@ -190,9 +190,9 @@ export function renderField(t: IR, uses: Uses, interior: boolean): string {
         return base;
     }
     if (isCopy(t)) {
-        uses.add(['std::cell::Cell']);
+        uses.add(['jsrt::cell::Cell']);
         return `Cell<${base}>`;
     }
-    uses.add(['std::cell::RefCell']);
+    uses.add(['jsrt::cell::RefCell']);
     return `RefCell<${base}>`;
 }

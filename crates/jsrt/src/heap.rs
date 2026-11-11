@@ -50,6 +50,12 @@ struct Config {
     log: u8,
     /// Threads that mark, the collecting thread included (`PYRIGHT_RS_GC_THREADS`).
     threads: usize,
+    /// `PYRIGHT_RS_GC_GENERATIONAL`: minor collections trace young objects and the
+    /// old objects written since the last collection.
+    generational: bool,
+    /// A minor collection becomes major once the old objects grew by this share of
+    /// their bytes after the last major one (`PYRIGHT_RS_GC_MAJOR_RATIO`).
+    major_ratio: f64,
 }
 
 static CONFIG: OnceLock<Config> = OnceLock::new();
@@ -92,7 +98,13 @@ fn config() -> &'static Config {
         };
         let default_threads = std::thread::available_parallelism().map_or(1, |n| n.get().min(4));
         let threads = env_number("PYRIGHT_RS_GC_THREADS").unwrap_or(default_threads).max(1);
-        Config { mode, min_bytes: min_mib << 20, ratio, log, threads }
+        let generational = match std::env::var("PYRIGHT_RS_GC_GENERATIONAL").as_deref() {
+            Err(_) | Ok("") | Ok("0") => false,
+            Ok("1") => true,
+            Ok(other) => panic!("PYRIGHT_RS_GC_GENERATIONAL must be 0 or 1, not {other:?}"),
+        };
+        let major_ratio: f64 = env_number("PYRIGHT_RS_GC_MAJOR_RATIO").unwrap_or(1.0);
+        Config { mode, min_bytes: min_mib << 20, ratio, log, threads, generational, major_ratio }
     })
 }
 
@@ -131,7 +143,8 @@ struct BlockMeta {
     count: u32,
     /// Program blocks: the slots handed out, in order.
     bump: u32,
-    _spare: u32,
+    /// Program blocks: the slots a collection traced; the ones after them are young.
+    scanned: u32,
     words: u32,
     cap: u32,
 }
@@ -181,8 +194,14 @@ struct Range {
     base: usize,
     len: usize,
     meta: *mut BlockMeta,
+    /// One byte per `CARD` bytes of the range, set by the write barrier.
+    cards: usize,
     blocks: Mutex<RangeBlocks>,
 }
+
+/// The write barrier marks a card of this many bytes.
+const CARD_SHIFT: u32 = 9;
+const CARDS_PER_BLOCK: usize = BLOCK >> CARD_SHIFT;
 
 // SAFETY: a block's metadata is touched only by the thread that owns the block;
 // `blocks` hands blocks out across threads.
@@ -198,9 +217,12 @@ impl Range {
             let meta_len = (len >> BLOCK_SHIFT) * size_of::<BlockMeta>();
             if let Some(base) = map(len + BLOCK) {
                 if let Some(meta) = map(meta_len) {
-                    let base = base.next_multiple_of(BLOCK);
-                    let blocks = Mutex::new(RangeBlocks { next: 0, committed: 0, free: Vec::new() });
-                    return Range { name, base, len, meta: meta as *mut BlockMeta, blocks };
+                    if let Some(cards) = map(len >> CARD_SHIFT) {
+                        let base = base.next_multiple_of(BLOCK);
+                        let blocks = Mutex::new(RangeBlocks { next: 0, committed: 0, free: Vec::new() });
+                        return Range { name, base, len, meta: meta as *mut BlockMeta, cards, blocks };
+                    }
+                    unsafe { libc::munmap(meta as *mut libc::c_void, meta_len) };
                 }
                 unsafe { libc::munmap(base as *mut libc::c_void, len + BLOCK) };
             }
@@ -220,6 +242,12 @@ impl Range {
         unsafe { &mut *self.meta.add(block as usize) }
     }
 
+    /// The cards of a committed block.
+    #[allow(clippy::mut_from_ref)]
+    unsafe fn cards(&self, block: u32) -> &mut [u8] {
+        unsafe { std::slice::from_raw_parts_mut((self.cards + block as usize * CARDS_PER_BLOCK) as *mut u8, CARDS_PER_BLOCK) }
+    }
+
     /// A free block: a released one, or the next one, committing more when needed.
     fn take_block(&self) -> u32 {
         let mut blocks = lock(&self.blocks);
@@ -231,7 +259,8 @@ impl Range {
             let count = COMMIT_BLOCKS.min((self.len >> BLOCK_SHIFT) - block);
             let committed = count > 0
                 && protect(self.block_base(block as u32), count << BLOCK_SHIFT)
-                && protect(self.meta as usize + block * size_of::<BlockMeta>(), count * size_of::<BlockMeta>());
+                && protect(self.meta as usize + block * size_of::<BlockMeta>(), count * size_of::<BlockMeta>())
+                && protect(self.cards + block * CARDS_PER_BLOCK, count * CARDS_PER_BLOCK);
             if !committed {
                 drop(blocks);
                 panic!("collector: the {} heap reservation of {} MiB is full or cannot be committed", self.name, self.len >> 20);
@@ -288,15 +317,64 @@ struct Ranges {
 
 static RANGES: OnceLock<Ranges> = OnceLock::new();
 
+/// Where the write barrier marks cards. The lengths stay 0, so the barrier marks
+/// nothing, unless collection is generational.
+struct Barrier {
+    eval_base: AtomicUsize,
+    eval_len: AtomicUsize,
+    eval_cards: AtomicUsize,
+    program_base: AtomicUsize,
+    program_len: AtomicUsize,
+    program_cards: AtomicUsize,
+}
+
+static BARRIER: Barrier = Barrier {
+    eval_base: AtomicUsize::new(0),
+    eval_len: AtomicUsize::new(0),
+    eval_cards: AtomicUsize::new(0),
+    program_base: AtomicUsize::new(0),
+    program_len: AtomicUsize::new(0),
+    program_cards: AtomicUsize::new(0),
+};
+
+/// The write barrier: the cell at `addr` was written, or is about to be, with a
+/// value that can hold an evaluator handle. When the cell lies in a typed block,
+/// marks its card, so a minor collection traces the objects on it. `jsrt::cell`
+/// calls it; a cell elsewhere (the stack, a buffer) needs none, because no heap
+/// object's cell sits in a buffer (`Trace::CELL_OUT_OF_LINE`).
+#[inline(always)]
+pub fn remember(addr: usize) {
+    let offset = addr.wrapping_sub(BARRIER.eval_base.load(Relaxed));
+    if offset < BARRIER.eval_len.load(Relaxed) {
+        // SAFETY: the card table covers the committed part of the range, and the cell is in a committed block.
+        unsafe { *((BARRIER.eval_cards.load(Relaxed) + (offset >> CARD_SHIFT)) as *mut u8) = 1 };
+        return;
+    }
+    let offset = addr.wrapping_sub(BARRIER.program_base.load(Relaxed));
+    if offset < BARRIER.program_len.load(Relaxed) {
+        // SAFETY: as above.
+        unsafe { *((BARRIER.program_cards.load(Relaxed) + (offset >> CARD_SHIFT)) as *mut u8) = 1 };
+    }
+}
+
 fn ranges() -> &'static Ranges {
     RANGES.get_or_init(|| {
         // Under an address-space limit, leave most of it to the program heap's bump
         // arena, the system allocator and the stack.
         let limit = address_space_limit();
-        Ranges {
+        let ranges = Ranges {
             program: Range::reserve("program", PROGRAM_RESERVE, limit / 16),
             eval: Range::reserve("evaluator", EVAL_RESERVE, limit / 4),
+        };
+        if config().generational && config().mode != GcMode::Off {
+            BARRIER.eval_base.store(ranges.eval.base, Relaxed);
+            BARRIER.eval_cards.store(ranges.eval.cards, Relaxed);
+            BARRIER.eval_len.store(ranges.eval.len, Relaxed);
+            BARRIER.program_base.store(ranges.program.base, Relaxed);
+            BARRIER.program_cards.store(ranges.program.cards, Relaxed);
+            BARRIER.program_len.store(ranges.program.len, Relaxed);
         }
+        ranges
     })
 }
 
@@ -396,6 +474,14 @@ struct ThreadHeap {
     /// Evaluator slot bytes live after the last collection.
     live_bytes: usize,
     collections: u32,
+    /// Generational: evaluator slot bytes live after the last major collection.
+    major_live_bytes: usize,
+    /// The next collection must be major: a mark was interrupted, so mark bits
+    /// no longer tell old objects apart.
+    force_major: bool,
+    /// The last sweep left survivors marked (generational), so a major collection
+    /// clears the marks first.
+    sticky_marks: bool,
 }
 
 /// The heap, and whether something is using it: allocation, root registration
@@ -419,6 +505,9 @@ thread_local! {
             since_gc: 0,
             live_bytes: 0,
             collections: 0,
+            major_live_bytes: 0,
+            force_major: true,
+            sticky_marks: false,
         }),
     }));
     /// This thread's block owner id.
@@ -570,6 +659,8 @@ unsafe fn new_block(range: &Range, class: &mut Class, owner: u32, eval: bool) ->
     meta.recip = info.recip;
     meta.count = info.count;
     meta.bump = 0;
+    meta.scanned = 0;
+    unsafe { range.cards(block) }.fill(0);
     if eval {
         let words = info.count.div_ceil(64);
         let need = 3 * words;
@@ -768,12 +859,14 @@ impl Tracer {
 
 /// Mark-stack entries handed between threads at a time.
 const PACKET: usize = 512;
+/// Root objects a marking thread takes at a time.
+const ROOT_CHUNK: usize = 64;
 
 /// The work of a parallel mark: root objects to scan, donated mark-stack
 /// packets, and the threads waiting for one.
 struct MarkShared {
-    /// Program blocks to scan as roots: base, slots in use, slot size, trace.
-    roots: Vec<(usize, usize, usize, TraceFn)>,
+    /// Root objects, taken `ROOT_CHUNK` at a time.
+    roots: Vec<(usize, TraceFn)>,
     next_root: AtomicUsize,
     pool: Mutex<Pool>,
     /// Signalled when a packet arrives and when the mark ends.
@@ -784,7 +877,6 @@ struct MarkShared {
     threads: usize,
     abort: AtomicBool,
     panic: Mutex<Option<Box<dyn std::any::Any + Send>>>,
-    scanned: AtomicUsize,
     edges: AtomicUsize,
 }
 
@@ -799,19 +891,18 @@ struct Pool {
 /// One thread's part of a parallel mark: scan root objects and trace until every
 /// thread runs out of work.
 fn mark_work(t: &mut Tracer, shared: &MarkShared) {
-    let mut scanned = 0;
     'work: loop {
         t.drain();
         if shared.abort.load(Relaxed) {
             break;
         }
-        let i = shared.next_root.fetch_add(1, Relaxed);
-        if let Some(&(base, count, slot, trace)) = shared.roots.get(i) {
-            for k in 0..count {
-                // SAFETY: slot `k` of a program block holds an object of the type `trace` was made for.
-                unsafe { trace(base + k * slot, t) };
+        let start = shared.next_root.fetch_add(ROOT_CHUNK, Relaxed).min(shared.roots.len());
+        let chunk = &shared.roots[start..(start + ROOT_CHUNK).min(shared.roots.len())];
+        if !chunk.is_empty() {
+            for &(addr, trace) in chunk {
+                // SAFETY: a root entry pairs an object with the trace function of its type.
+                unsafe { trace(addr, t) };
             }
-            scanned += count;
             continue;
         }
         let mut pool = lock(&shared.pool);
@@ -837,7 +928,6 @@ fn mark_work(t: &mut Tracer, shared: &MarkShared) {
             pool = shared.wake.wait(pool).unwrap_or_else(PoisonError::into_inner);
         }
     }
-    shared.scanned.fetch_add(scanned, Relaxed);
     shared.edges.fetch_add(t.edges, Relaxed);
 }
 
@@ -987,11 +1077,19 @@ pub fn collect_if_due() -> bool {
     }
     let check = config.mode == GcMode::Check;
     with_heap(|heap| {
-        let threshold = ((heap.live_bytes as f64 * config.ratio) as usize).max(config.min_bytes);
+        // Generational: a minor collection every `min_bytes`, a major one once the
+        // old objects grew by `major_ratio`. Otherwise a full one at `max(ratio × live, min_bytes)`.
+        let threshold = if config.generational {
+            config.min_bytes
+        } else {
+            ((heap.live_bytes as f64 * config.ratio) as usize).max(config.min_bytes)
+        };
         if heap.since_gc == 0 || heap.since_gc < threshold {
             return false;
         }
-        heap.collect(check, config.log, config.threads);
+        let old_limit = (heap.major_live_bytes as f64 * (1.0 + config.major_ratio)) as usize;
+        let minor = config.generational && !heap.force_major && heap.live_bytes < old_limit.max(config.min_bytes);
+        heap.collect(Collection { check, log: config.log, threads: config.threads, minor, generational: config.generational });
         true
     })
 }
@@ -1003,7 +1101,8 @@ pub fn collect(check: bool) {
     }
     let log = config().log;
     let threads = config().threads;
-    with_heap(|heap| heap.collect(check, log, threads));
+    let generational = config().generational;
+    with_heap(|heap| heap.collect(Collection { check, log, threads, minor: false, generational }));
 }
 
 thread_local! {
@@ -1077,6 +1176,22 @@ fn rss_in(range: &Range) -> usize {
     total
 }
 
+/// Calls `f` once for every slot below `limit` that overlaps a marked card.
+fn for_card_slots(cards: &[u8], slot: usize, limit: usize, mut f: impl FnMut(usize)) {
+    let mut next = 0;
+    for (c, &card) in cards.iter().enumerate() {
+        if card == 0 {
+            continue;
+        }
+        let first = ((c << CARD_SHIFT) / slot).max(next);
+        let last = ((((c + 1) << CARD_SHIFT) - 1) / slot + 1).min(limit);
+        for i in first..last {
+            f(i);
+        }
+        next = next.max(last);
+    }
+}
+
 /// Per-class counts of one sweep, for `PYRIGHT_RS_GC_LOG=2`.
 struct ClassStat {
     name: &'static str,
@@ -1085,8 +1200,24 @@ struct ClassStat {
     freed: usize,
 }
 
+/// How one collection runs.
+#[derive(Clone, Copy)]
+struct Collection {
+    check: bool,
+    log: u8,
+    threads: usize,
+    /// Generational only: trace from young objects and written cards, keep old objects.
+    minor: bool,
+    /// Mark bits survive the sweep, so survivors are old at the next collection.
+    generational: bool,
+}
+
 impl ThreadHeap {
-    fn collect(&mut self, check: bool, log: u8, threads: usize) {
+    /// A collection: major (`minor` false) marks everything the roots reach; minor
+    /// marks only from young objects and the old objects on written cards, and
+    /// keeps every old object (`docs/collector-design.md`, "generational collection").
+    fn collect(&mut self, c: Collection) {
+        let Collection { check, log, threads, minor, generational } = c;
         let start = Instant::now();
         let before = if log > 0 { (rss_bytes(), malloc_bytes()) } else { (0, 0) };
         let ranges = ranges();
@@ -1102,34 +1233,45 @@ impl ThreadHeap {
             shared: ptr::null(),
         };
 
+        let roots = self.root_objects(check, minor);
+        let scanned = roots.len();
         // A panic while marking (check mode's assertions, a borrowed RefCell) must not
         // leave mark bits behind: the next collection would skip those objects' children.
+        // After it, mark bits no longer tell old objects apart, so the next collection is major.
         let marked = catch_unwind(AssertUnwindSafe(|| {
-            if threads == 1 {
-                return self.mark(&mut t, check);
-            }
-            let scanned = self.mark_parallel(&mut t, check, threads);
-            if check {
-                self.verify_parallel_mark(&mut t);
-            }
-            scanned
-        }));
-        let scanned = match marked {
-            Ok(scanned) => scanned,
-            Err(panic) => {
+            if !minor && self.sticky_marks {
                 self.clear_marks();
-                resume_unwind(panic);
             }
-        };
+            let old = if check { self.marks() } else { Vec::new() };
+            self.mark_from(&mut t, &roots, threads);
+            if check && threads > 1 {
+                let parallel = self.marks();
+                self.set_marks(&old);
+                self.mark_from(&mut t, &roots, 1);
+                self.compare_marks(&parallel, "the parallel mark differs from the serial one");
+            }
+            if check && minor {
+                self.verify_minor(&mut t);
+            }
+        }));
+        if let Err(panic) = marked {
+            self.clear_marks();
+            self.force_major = true;
+            resume_unwind(panic);
+        }
         let mark_ms = start.elapsed().as_millis();
 
         // A panic while sweeping leaves blocks half-swept; nothing can be trusted after it.
         let mut stats = Vec::new();
-        let swept = catch_unwind(AssertUnwindSafe(|| self.sweep(check, (log > 1).then_some(&mut stats))));
+        let swept = catch_unwind(AssertUnwindSafe(|| self.sweep(check, generational, (log > 1).then_some(&mut stats))));
         let Ok((freed, live_bytes)) = swept else {
             eprintln!("collector: a drop panicked during the sweep; aborting");
             std::process::abort();
         };
+        self.sticky_marks = generational;
+        if generational {
+            self.clear_cards();
+        }
 
         self.collections += 1;
         if log > 0 {
@@ -1140,11 +1282,12 @@ impl ThreadHeap {
                 (before, after) => format!("{} -> {} MiB", before >> 20, after >> 20),
             };
             eprintln!(
-                "gc {}: at {:.1} s, {} ms ({} ms mark), {} program objects scanned, {} objects freed, \
+                "gc {}{}: at {:.1} s, {} ms ({} ms mark), {} root objects scanned, {} objects freed, \
                  evaluator slots {} MiB live (+{} MiB allocated since the last collection) in {} MiB of blocks, \
                  typed program blocks {} MiB, program arena {} MiB in {} MiB of chunks, malloc {}, \
                  rss {} -> {} MiB (evaluator range {} MiB, program range {} MiB)",
                 self.collections,
+                if minor { " minor" } else if generational { " major" } else { "" },
                 START.get_or_init(Instant::now).elapsed().as_secs_f64(),
                 start.elapsed().as_millis(),
                 mark_ms,
@@ -1179,52 +1322,97 @@ impl ThreadHeap {
             }
         }
         self.live_bytes = live_bytes;
+        if !minor {
+            self.major_live_bytes = live_bytes;
+            self.force_major = false;
+        }
         self.since_gc = 0;
     }
 
-    /// Marks everything the roots reach. Returns the program objects scanned.
-    fn mark(&self, t: &mut Tracer, check: bool) -> usize {
-        let program = &ranges().program;
-        // The program heap is never collected, so each of its objects is a root.
-        let mut scanned = 0usize;
-        for class in self.program.iter().flatten() {
-            if !class.info.holds_eval && !check {
-                continue;
-            }
-            let slot = class.info.slot as usize;
-            for &block in &class.blocks {
-                let base = program.block_base(block);
-                let count = unsafe { program.meta(block).bump } as usize;
-                for i in 0..count {
-                    unsafe { (class.info.trace)(base + i * slot, t) };
-                }
-                scanned += count;
-                t.drain();
-            }
-        }
-        for root in &self.roots {
-            root(t);
-            t.drain();
-        }
-        scanned
-    }
-
-    /// Marks on `threads` threads: this one and parked helpers. Same result as [`Self::mark`].
-    fn mark_parallel(&self, t: &mut Tracer, check: bool, threads: usize) -> usize {
-        let program = &ranges().program;
+    /// The objects a collection traces from, besides the registered roots. Major:
+    /// every program object whose type can hold an evaluator handle (in check mode,
+    /// every program object). Minor: the program objects allocated since the last
+    /// collection, and the old program and evaluator objects on written cards.
+    fn root_objects(&self, check: bool, minor: bool) -> Vec<(usize, TraceFn)> {
+        let ranges = ranges();
         let mut roots = Vec::new();
         for class in self.program.iter().flatten() {
             if !class.info.holds_eval && !check {
                 continue;
             }
-            let slot = class.info.slot as usize;
+            // Check mode scans the program types that cannot hold an evaluator handle
+            // in full, to verify that claim; the barrier never sees them.
+            let precise = minor && class.info.holds_eval;
+            let (slot, trace) = (class.info.slot as usize, class.info.trace);
             for &block in &class.blocks {
-                let count = unsafe { program.meta(block).bump } as usize;
-                roots.push((program.block_base(block), count, slot, class.info.trace));
+                // SAFETY: a block of this class, owned by this thread.
+                let meta = unsafe { ranges.program.meta(block) };
+                let base = ranges.program.block_base(block);
+                let young = if precise { meta.scanned as usize } else { 0 };
+                if precise {
+                    let cards = unsafe { ranges.program.cards(block) };
+                    for_card_slots(cards, slot, young, |i| roots.push((base + i * slot, trace)));
+                }
+                roots.extend((young..meta.bump as usize).map(|i| (base + i * slot, trace)));
             }
         }
+        if minor {
+            for class in self.eval.iter().flatten() {
+                let (slot, trace) = (class.info.slot as usize, class.info.trace);
+                for &block in &class.blocks {
+                    // SAFETY: as above.
+                    let meta = unsafe { ranges.eval.meta(block) };
+                    let base = ranges.eval.block_base(block);
+                    let cards = unsafe { ranges.eval.cards(block) };
+                    let marks = unsafe { std::slice::from_raw_parts(meta.bits.add(meta.words as usize), meta.words as usize) };
+                    // Old objects only: a young one is traced when something reaches it.
+                    for_card_slots(cards, slot, meta.count as usize, |i| {
+                        if marks[i / 64] & (1 << (i % 64)) != 0 {
+                            roots.push((base + i * slot, trace));
+                        }
+                    });
+                }
+            }
+        }
+        roots
+    }
+
+    /// Generational: after a collection every card is clean and every program object old.
+    fn clear_cards(&self) {
+        let ranges = ranges();
+        for class in self.program.iter().flatten() {
+            for &block in &class.blocks {
+                // SAFETY: a block of this class, owned by this thread.
+                let meta = unsafe { ranges.program.meta(block) };
+                meta.scanned = meta.bump;
+                unsafe { ranges.program.cards(block) }.fill(0);
+            }
+        }
+        for class in self.eval.iter().flatten() {
+            for &block in &class.blocks {
+                unsafe { ranges.eval.cards(block) }.fill(0);
+            }
+        }
+    }
+
+    /// Marks everything `roots` and the registered roots reach, on `threads` threads.
+    fn mark_from(&self, t: &mut Tracer, roots: &[(usize, TraceFn)], threads: usize) {
+        if threads == 1 {
+            for chunk in roots.chunks(ROOT_CHUNK) {
+                for &(addr, trace) in chunk {
+                    // SAFETY: a root entry pairs an object with the trace function of its type.
+                    unsafe { trace(addr, t) };
+                }
+                t.drain();
+            }
+            for root in &self.roots {
+                root(t);
+                t.drain();
+            }
+            return;
+        }
         let shared = MarkShared {
-            roots,
+            roots: roots.to_vec(),
             next_root: AtomicUsize::new(0),
             pool: Mutex::new(Pool::default()),
             wake: std::sync::Condvar::new(),
@@ -1233,17 +1421,16 @@ impl ThreadHeap {
             threads,
             abort: AtomicBool::new(false),
             panic: Mutex::new(None),
-            scanned: AtomicUsize::new(0),
             edges: AtomicUsize::new(0),
         };
         t.shared = &shared;
         // The registered roots trace thread-locals, so they run on this thread.
-        let roots = catch_unwind(AssertUnwindSafe(|| {
+        let registered = catch_unwind(AssertUnwindSafe(|| {
             for root in &self.roots {
                 root(t);
             }
         }));
-        if let Err(panic) = roots {
+        if let Err(panic) = registered {
             t.shared = ptr::null();
             resume_unwind(panic);
         }
@@ -1263,29 +1450,70 @@ impl ThreadHeap {
         if let Some(panic) = lock(&shared.panic).take() {
             resume_unwind(panic);
         }
-        shared.scanned.load(Relaxed)
     }
 
-    /// Check mode: marks again on one thread and panics when the parallel mark differs.
-    fn verify_parallel_mark(&self, t: &mut Tracer) {
-        let eval = &ranges().eval;
-        let mut parallel = Vec::new();
+    /// Check mode, minor collection: marks everything again from all roots and
+    /// panics on an object the minor mark missed, that is a write the barrier did
+    /// not see. Then restores the minor mark, which keeps every old object.
+    fn verify_minor(&self, t: &mut Tracer) {
+        let minor = self.marks();
+        self.clear_marks();
+        let roots = self.root_objects(true, false);
+        self.mark_from(t, &roots, 1);
+        let full = self.marks();
+        let mut k = 0;
         for class in self.eval.iter().flatten() {
-            for &block in &class.blocks {
-                let meta = unsafe { eval.meta(block) };
-                let words = meta.words as usize;
-                parallel.push(unsafe { std::slice::from_raw_parts(meta.bits.add(words), words) }.to_vec());
+            for _ in &class.blocks {
+                for (w, (&f, &m)) in full[k].iter().zip(&minor[k]).enumerate() {
+                    if f & !m != 0 {
+                        let i = w * 64 + (f & !m).trailing_zeros() as usize;
+                        panic!(
+                            "collector check: a minor collection missed a reachable {} (slot {i}): a write the barrier did not see",
+                            class.info.name
+                        );
+                    }
+                }
+                k += 1;
             }
         }
-        self.clear_marks();
-        self.mark(t, true);
+        self.set_marks(&minor);
+    }
+
+    /// The mark bits of every evaluator block, in class and block order.
+    fn marks(&self) -> Vec<Vec<u64>> {
+        let eval = &ranges().eval;
+        let mut marks = Vec::new();
+        for class in self.eval.iter().flatten() {
+            for &block in &class.blocks {
+                // SAFETY: a block of this class, owned by this thread, with its bitmaps.
+                let meta = unsafe { eval.meta(block) };
+                let words = meta.words as usize;
+                marks.push(unsafe { std::slice::from_raw_parts(meta.bits.add(words), words) }.to_vec());
+            }
+        }
+        marks
+    }
+
+    fn set_marks(&self, marks: &[Vec<u64>]) {
+        let eval = &ranges().eval;
         let mut k = 0;
         for class in self.eval.iter().flatten() {
             for &block in &class.blocks {
+                // SAFETY: as in `marks`; `marks` came from the same blocks.
                 let meta = unsafe { eval.meta(block) };
                 let words = meta.words as usize;
-                let serial = unsafe { std::slice::from_raw_parts(meta.bits.add(words), words) };
-                assert!(serial == parallel[k], "collector check: the parallel mark differs from the serial one in a block of {}", meta.name);
+                unsafe { std::slice::from_raw_parts_mut(meta.bits.add(words), words) }.copy_from_slice(&marks[k]);
+                k += 1;
+            }
+        }
+    }
+
+    fn compare_marks(&self, expected: &[Vec<u64>], what: &str) {
+        let mut k = 0;
+        let actual = self.marks();
+        for class in self.eval.iter().flatten() {
+            for _ in &class.blocks {
+                assert!(actual[k] == expected[k], "collector check: {what} in a block of {}", class.info.name);
                 k += 1;
             }
         }
@@ -1304,7 +1532,7 @@ impl ThreadHeap {
 
     /// Drops every live, unmarked evaluator object. Returns the objects freed and the
     /// slot bytes still live.
-    fn sweep(&mut self, check: bool, mut stats: Option<&mut Vec<ClassStat>>) -> (usize, usize) {
+    fn sweep(&mut self, check: bool, sticky: bool, mut stats: Option<&mut Vec<ClassStat>>) -> (usize, usize) {
         let eval = &ranges().eval;
         let (mut freed, mut live_bytes) = (0usize, 0usize);
         for class in self.eval.iter_mut().flatten() {
@@ -1336,7 +1564,8 @@ impl ThreadHeap {
                             freed += 1;
                         }
                         *meta.bits.add(w) = marked;
-                        *meta.bits.add(words + w) = 0;
+                        // Generational: a survivor stays marked, which makes it old.
+                        *meta.bits.add(words + w) = if sticky { marked } else { 0 };
                         live += marked.count_ones() as usize;
                     }
                 }
@@ -1363,8 +1592,9 @@ impl ThreadHeap {
 
 #[cfg(test)]
 mod tests {
-    use std::cell::Cell;
     use std::rc::Rc;
+
+    use crate::cell::Cell;
 
     use super::*;
     use crate::P;
@@ -1439,9 +1669,9 @@ mod tests {
     }
 
     thread_local! {
-        static STACK: std::cell::RefCell<Vec<P<Node>>> = {
+        static STACK: crate::cell::RefCell<Vec<P<Node>>> = {
             add_root(|t| STACK.with(|s| s.trace(t)));
-            std::cell::RefCell::new(Vec::new())
+            crate::cell::RefCell::new(Vec::new())
         };
     }
 
@@ -1497,7 +1727,7 @@ mod tests {
     #[trace(eval)]
     struct Cyclic {
         next: Cell<Option<P<Cyclic>>>,
-        extra: std::cell::RefCell<Option<P<Cyclic>>>,
+        extra: crate::cell::RefCell<Option<P<Cyclic>>>,
         val: u32,
     }
 
@@ -1508,7 +1738,7 @@ mod tests {
     }
 
     fn cyclic(next: Option<P<Cyclic>>, val: u32) -> P<Cyclic> {
-        P::new_eval(Cyclic { next: Cell::new(next), extra: std::cell::RefCell::new(None), val })
+        P::new_eval(Cyclic { next: Cell::new(next), extra: crate::cell::RefCell::new(None), val })
     }
 
     /// A panic while marking clears the marks it set; otherwise the next collection
@@ -1558,7 +1788,7 @@ mod tests {
 
     #[derive(jsrt::Trace)]
     struct Kept {
-        v: std::cell::RefCell<Vec<P<Node>>>,
+        v: crate::cell::RefCell<Vec<P<Node>>>,
     }
 
     /// Blocks another thread released are reused by a type with another slot size,
@@ -1575,7 +1805,7 @@ mod tests {
         .join()
         .unwrap();
         let drops = Rc::new(());
-        let kept = P::new(Kept { v: std::cell::RefCell::new(Vec::new()) });
+        let kept = P::new(Kept { v: crate::cell::RefCell::new(Vec::new()) });
         let mut reused = 0;
         for id in 0..40_000u32 {
             let n = node(None, &drops, id);
@@ -1614,18 +1844,94 @@ mod tests {
                 root.node.set(chain);
             }
         }
-        with_heap(|heap| heap.collect(false, 0, 4));
+        with_heap(|heap| heap.collect(Collection { check: false, log: 0, threads: 4, minor: false, generational: false }));
         assert_eq!(Rc::strong_count(&drops), 1 + 1000 * 100);
         for root in roots.iter().step_by(2) {
             root.node.set(root.node.get().unwrap().next.get());
         }
-        with_heap(|heap| heap.collect(false, 0, 1));
+        with_heap(|heap| heap.collect(Collection { check: false, log: 0, threads: 1, minor: false, generational: false }));
         assert_eq!(Rc::strong_count(&drops), 1 + 1000 * 99);
         for root in &roots {
             root.node.set(None);
         }
-        with_heap(|heap| heap.collect(false, 0, 4));
+        with_heap(|heap| heap.collect(Collection { check: false, log: 0, threads: 4, minor: false, generational: false }));
         assert_eq!(Rc::strong_count(&drops), 1);
+    }
+
+    fn generational(minor: bool, check: bool) -> Collection {
+        Collection { check, log: 0, threads: 4, minor, generational: true }
+    }
+
+    /// Turns the write barrier on, as `PYRIGHT_RS_GC_GENERATIONAL=1` does at start.
+    fn enable_barrier() {
+        let ranges = ranges();
+        BARRIER.eval_base.store(ranges.eval.base, Relaxed);
+        BARRIER.eval_cards.store(ranges.eval.cards, Relaxed);
+        BARRIER.eval_len.store(ranges.eval.len, Relaxed);
+        BARRIER.program_base.store(ranges.program.base, Relaxed);
+        BARRIER.program_cards.store(ranges.program.cards, Relaxed);
+        BARRIER.program_len.store(ranges.program.len, Relaxed);
+    }
+
+    /// A minor collection frees young garbage, keeps young objects that an old one
+    /// was given through the barrier, and keeps old garbage until a major collection.
+    #[test]
+    fn minor_collection_keeps_old_objects_and_barriered_young_ones() {
+        let _serial = serial();
+        enable_barrier();
+        let drops = Rc::new(());
+        let root = P::new(Holder { node: Cell::new(None) });
+        let other = P::new(Holder { node: Cell::new(None) });
+        let old = node(None, &drops, 1);
+        root.node.set(Some(old));
+        other.node.set(Some(node(None, &drops, 2)));
+        with_heap(|heap| heap.collect(generational(false, false)));
+        assert_eq!(Rc::strong_count(&drops), 3);
+
+        // Both are old now. Cut one loose: it stays until a major collection. Give
+        // the other a young child through the barrier, next to young garbage.
+        other.node.set(None);
+        let young = node(None, &drops, 3);
+        old.next.set(Some(young));
+        node(None, &drops, 4);
+        with_heap(|heap| heap.collect(generational(true, false)));
+        assert_eq!(Rc::strong_count(&drops), 4, "young garbage freed, old garbage kept");
+        assert_eq!(root.node.get().unwrap().next.get().unwrap().id, 3);
+
+        // A young program object is a root at the next minor collection.
+        let fresh = P::new(Holder { node: Cell::new(Some(node(None, &drops, 5))) });
+        with_heap(|heap| heap.collect(generational(true, false)));
+        assert_eq!(fresh.node.get().unwrap().id, 5);
+        assert_eq!(Rc::strong_count(&drops), 5);
+
+        with_heap(|heap| heap.collect(generational(false, false)));
+        assert_eq!(Rc::strong_count(&drops), 4, "the major collection frees old garbage");
+        root.node.set(None);
+        fresh.node.set(None);
+        with_heap(|heap| heap.collect(generational(false, false)));
+        assert_eq!(Rc::strong_count(&drops), 1);
+    }
+
+    /// Check mode re-marks after a minor collection and panics on a young object
+    /// that an old one reached through a write the barrier did not see.
+    #[test]
+    fn check_mode_catches_a_write_the_barrier_missed() {
+        let _serial = serial();
+        enable_barrier();
+        let drops = Rc::new(());
+        let root = P::new(Holder { node: Cell::new(None) });
+        let old = node(None, &drops, 1);
+        root.node.set(Some(old));
+        with_heap(|heap| heap.collect(generational(false, true)));
+        let young = node(None, &drops, 2);
+        // SAFETY: a test of the check: writes past the barrier, as a cell without one would.
+        unsafe { ptr::write(ptr::from_ref(&old.next).cast_mut().cast::<Option<P<Node>>>(), Some(young)) };
+        let unwound = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| with_heap(|heap| heap.collect(generational(true, true)))));
+        let message = unwound.expect_err("check mode missed the unseen write");
+        let message = message.downcast_ref::<String>().cloned().unwrap_or_default();
+        assert!(message.contains("a write the barrier did not see"), "{message}");
+        root.node.set(None);
+        with_heap(|heap| heap.collect(generational(false, true)));
     }
 
     #[derive(jsrt::Trace)]
@@ -1656,7 +1962,7 @@ mod tests {
         let _serial = serial();
         let roots: Vec<_> = (0..4096).map(|_| P::new(Holder { node: Cell::new(None) })).collect();
         let _root = P::new(AllocatingRoot(AllocatesWhileTraced));
-        let unwound = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| with_heap(|heap| heap.collect(false, 0, 4))));
+        let unwound = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| with_heap(|heap| heap.collect(Collection { check: false, log: 0, threads: 4, minor: false, generational: false }))));
         let message = unwound.expect_err("the allocation did not panic");
         let message = message.downcast_ref::<String>().map(String::as_str).or(message.downcast_ref::<&str>().copied());
         assert_eq!(message, Some("collector: the heap was used inside an allocation or a collection"));

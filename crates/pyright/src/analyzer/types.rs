@@ -19,7 +19,7 @@ use crate::parser::parse_nodes::{
     ArgumentNode, ClassNode, ExpressionNode, NameNode, ParamCategory, TypeAnnotationNode,
 };
 use jsrt::{JsBigInt, JsMap, JsSet, NumberValue, P, flag_ops};
-use std::cell::{Cell, RefCell, RefMut};
+use jsrt::cell::{Cell, RefCell, RefMut};
 use std::ops::Deref;
 use std::rc::Rc;
 use jsrt::OptionRefCell;
@@ -2457,14 +2457,14 @@ impl FunctionDetailsSharedCold {
 }
 
 impl FunctionDetailsShared {
-    pub fn cold(&self) -> std::cell::Ref<'_, FunctionDetailsSharedCold> {
-        std::cell::Ref::map(self.cold.borrow(), |cold| {
+    pub fn cold(&self) -> jsrt::cell::Ref<'_, FunctionDetailsSharedCold> {
+        jsrt::cell::Ref::map(self.cold.borrow(), |cold| {
             cold.as_deref().unwrap_or(&FunctionDetailsSharedCold::EMPTY)
         })
     }
 
-    pub fn cold_mut(&self) -> std::cell::RefMut<'_, FunctionDetailsSharedCold> {
-        std::cell::RefMut::map(self.cold.borrow_mut(), |cold| {
+    pub fn cold_mut(&self) -> jsrt::cell::RefMut<'_, FunctionDetailsSharedCold> {
+        jsrt::cell::RefMut::map(self.cold.borrow_mut(), |cold| {
             &mut **cold.get_or_insert_with(Default::default)
         })
     }

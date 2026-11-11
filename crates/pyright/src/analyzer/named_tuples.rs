@@ -62,8 +62,8 @@ use jsrt::JsString;
 use jsrt::P;
 use jsrt::js_regex::WHITESPACE_IN_CLASS;
 use regex::Regex;
-use std::cell::Cell;
-use std::cell::RefCell;
+use jsrt::cell::Cell;
+use jsrt::cell::RefCell;
 use std::sync::LazyLock;
 
 // analyzer/namedTuples.ts:52

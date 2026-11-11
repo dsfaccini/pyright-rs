@@ -34,7 +34,7 @@ use crate::common::diagnostic::{
 use crate::common::diagnostic_rules::DiagnosticRule;
 use crate::parser::parse_nodes::{ExpressionNode, ParamCategory};
 use jsrt::P;
-use std::cell::Cell;
+use jsrt::cell::Cell;
 
 // analyzer/constructors.ts:66
 // Fetches and binds the __new__ method from a class.

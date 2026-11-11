@@ -68,6 +68,25 @@ pub unsafe trait Trace {
 - Helper threads are started on the first parallel mark and parked on a condition variable between collections. A panic on any thread (a borrowed `RefCell`, a check-mode assertion) stops the others and unwinds on the collecting thread, which clears the marks as for a serial mark.
 - The set of marked objects is reachability, so it does not depend on the thread count; the sweep visits blocks in the same order as before.
 
+## write barrier
+
+- `jsrt::cell::{Cell, RefCell, OnceCell}` wrap the std cells with the same API. Before a write that can store an evaluator handle (`Cell::set`, `replace`, `take`, `swap`; `RefCell::borrow_mut`, `try_borrow_mut`, `replace`, `replace_with`, `take`, `swap`; `OnceCell::set`, `get_or_init` on an empty cell), they call `jsrt::heap::remember` with the cell's address. A cell whose value type has `HOLDS_EVAL` false skips the call at compile time.
+- `remember` marks a card: one byte per 512 bytes of each reserved range, in a card table reserved next to the block metadata and committed with the blocks. An address outside the typed blocks (the stack, a buffer) marks nothing. With generational collection off, the barrier's range lengths stay 0 and it marks nothing.
+- A mutable borrow marks the card when it starts; no collection runs while a borrow is live, so writes through the `RefMut` are covered.
+- The barrier finds the written object by the cell's address, so no heap object may keep such a cell in a buffer it owns. `Trace` carries two consts the derive computes: `HAS_CELL` (holds a cell that can hold an evaluator handle) and `CELL_OUT_OF_LINE` (such a cell sits behind a `Vec`, `Box`, `Rc`, `VecDeque` or map). `P::new_eval` and `P::new` assert `!CELL_OUT_OF_LINE` at compile time. `OptionRefCell` boxes its `RefCell` but runs the barrier on its own address, so it counts as in line. A `#[trace(holds_eval)]` type claims no cells (the const would be a cycle): it must hold none.
+- The std cells' `Trace` impls assert at compile time that their value holds no evaluator handle, so a std cell in a heap object is a compile error.
+
+## generational collection
+
+`PYRIGHT_RS_GC_GENERATIONAL=1` turns it on.
+
+- **Sticky marks.** The sweep leaves every survivor marked. A marked object is old; an object allocated since the last collection is unmarked, so young.
+- **Minor collection.** Traces from the registered roots, the program objects allocated since the last collection (each program block keeps the slots a collection traced), and the old program and evaluator objects on marked cards. Marking stops at old objects, which are already marked. The sweep drops only unmarked objects, so old objects survive, garbage or not.
+- **Major collection.** Clears every mark bit and traces from every root, as without generations.
+- **When.** A collection is due every `PYRIGHT_RS_GC_MIN_MIB` of evaluator slots. It is major when the live slot bytes reach `(1 + PYRIGHT_RS_GC_MAJOR_RATIO) ×` those after the last major collection (default ratio 1), and the first time. A mark interrupted by a panic leaves marks that no longer tell old objects apart, so the next collection is major.
+- Every collection ends with clean cards and every program object old.
+- Old garbage waits for a major collection; a young object that only old garbage reaches survives until then too.
+
 ## sweep
 
 - A live, unmarked evaluator slot is dropped in place. `drop_in_place` frees the `Vec`, `String` and map buffers it owns, and releases its `Rc`s. Its live bit clears, so the allocation cursor hands the slot out again.
@@ -95,7 +114,8 @@ pub unsafe trait Trace {
   - marking a handle to a free or dead slot panics;
   - every program object goes to a typed block, and the root scan visits every field of every one, and panics when an evaluator handle sits in a `#[trace(program)]` field, behind a `&'static`, or in a `P<T>` whose `T` lacks `EVAL`;
   - collections run on the floor alone (above), so they run often;
-  - a parallel mark is followed by a serial one, and the collection panics when their mark bits differ.
+  - a parallel mark is followed by a serial one, and the collection panics when their mark bits differ;
+  - a minor collection's mark is followed by a full one from every root, and the collection panics on an object the full mark reaches but the minor one missed: a write the barrier did not see. The minor mark is then restored, so old garbage stays as in `on`.
 
 The `P` hooks are compiled only into a `gc-check` build: as a runtime flag, the load on every dereference cost about 5% wall time on the samples corpus (1.88 s against 1.80 s without it, collection off).
 

@@ -1,6 +1,6 @@
 //! Port of `packages/pyright-internal/src/common/textRangeCollection.ts`.
 
-use std::cell::Cell;
+use jsrt::cell::Cell;
 
 use super::text_range::{HasTextRange, TextRange};
 

@@ -16,7 +16,7 @@ use crate::analyzer::types::{
     TypeCondition, TypeSameOptions, TypeVarType, Variance,
 };
 use jsrt::{JsMap, JsSet, P, SmallJsSet, flag_ops};
-use std::cell::{Cell, RefCell};
+use jsrt::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 // analyzer/typeUtils.ts:78
@@ -4383,9 +4383,9 @@ pub(crate) fn transform_type_pair_recursive(
             let transformed_type = FunctionType::clone(source_function, false, None);
             transformed_type.d().priv_.borrow_mut().specialized_types =
                 Some(P::new_eval(crate::analyzer::types::SpecializedFunctionTypes {
-                    parameter_types: std::cell::Cell::new(P::new_eval(RefCell::new(parameter_types))),
-                    parameter_default_types: std::cell::Cell::new(Some(P::new_eval(RefCell::new(parameter_default_types)))),
-                    return_type: std::cell::Cell::new(return_type),
+                    parameter_types: jsrt::cell::Cell::new(P::new_eval(RefCell::new(parameter_types))),
+                    parameter_default_types: jsrt::cell::Cell::new(Some(P::new_eval(RefCell::new(parameter_default_types)))),
+                    return_type: jsrt::cell::Cell::new(return_type),
                 }));
             return transformed_type.0;
         }
@@ -4447,16 +4447,16 @@ pub(crate) fn transform_type_pair_recursive(
                 kind: source_shared.kind,
                 name: RefCell::new(source_shared.name.borrow().clone()),
                 constraints: RefCell::new(constraints),
-                bound_type: std::cell::Cell::new(bound_type),
-                is_default_explicit: std::cell::Cell::new(source_shared.is_default_explicit.get()),
-                default_type: std::cell::Cell::new(default_type),
-                declared_variance: std::cell::Cell::new(source_shared.declared_variance.get()),
-                is_synthesized: std::cell::Cell::new(source_shared.is_synthesized.get()),
-                is_synthesized_self: std::cell::Cell::new(source_shared.is_synthesized_self.get()),
-                synthesized_index: std::cell::Cell::new(source_shared.synthesized_index.get()),
-                is_exempt_from_bound_check: std::cell::Cell::new(source_shared.is_exempt_from_bound_check.get()),
-                is_type_param_syntax: std::cell::Cell::new(source_shared.is_type_param_syntax.get()),
-                recursive_alias: std::cell::Cell::new(source_shared.recursive_alias.get()),
+                bound_type: jsrt::cell::Cell::new(bound_type),
+                is_default_explicit: jsrt::cell::Cell::new(source_shared.is_default_explicit.get()),
+                default_type: jsrt::cell::Cell::new(default_type),
+                declared_variance: jsrt::cell::Cell::new(source_shared.declared_variance.get()),
+                is_synthesized: jsrt::cell::Cell::new(source_shared.is_synthesized.get()),
+                is_synthesized_self: jsrt::cell::Cell::new(source_shared.is_synthesized_self.get()),
+                synthesized_index: jsrt::cell::Cell::new(source_shared.synthesized_index.get()),
+                is_exempt_from_bound_check: jsrt::cell::Cell::new(source_shared.is_exempt_from_bound_check.get()),
+                is_type_param_syntax: jsrt::cell::Cell::new(source_shared.is_type_param_syntax.get()),
+                recursive_alias: jsrt::cell::Cell::new(source_shared.recursive_alias.get()),
             });
             TypeVarType(transformed_type).d().shared.set(transformed_shared);
             return transformed_type;
@@ -5102,9 +5102,9 @@ pub trait TypeVarTransformer {
             let mut types_required_specialization = declared_return_type != specialized_return_type;
 
             let specialized_params = P::new_eval(crate::analyzer::types::SpecializedFunctionTypes {
-                parameter_types: std::cell::Cell::new(P::new_eval(RefCell::new(Vec::new()))),
-                parameter_default_types: std::cell::Cell::new(None),
-                return_type: std::cell::Cell::new(specialized_return_type),
+                parameter_types: jsrt::cell::Cell::new(P::new_eval(RefCell::new(Vec::new()))),
+                parameter_default_types: jsrt::cell::Cell::new(None),
+                return_type: jsrt::cell::Cell::new(specialized_return_type),
             });
 
             let param_spec = FunctionType::get_param_spec_from_args_kwargs(function_type);

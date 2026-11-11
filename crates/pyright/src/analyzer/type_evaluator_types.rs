@@ -19,7 +19,7 @@ use crate::parser::parse_nodes::{
     PatternClassNode,
 };
 use jsrt::{P, flag_ops};
-use std::cell::{Cell, RefCell};
+use jsrt::cell::{Cell, RefCell};
 
 // analyzer/typeEvaluatorTypes.ts:59
 pub const MAX_SUBTYPES_FOR_INFERRED_TYPE: u32 = 64;
@@ -162,14 +162,14 @@ impl TypeResultCold {
 }
 
 impl TypeResult {
-    pub fn cold(&self) -> std::cell::Ref<'_, TypeResultCold> {
-        std::cell::Ref::map(self.cold.borrow(), |cold| {
+    pub fn cold(&self) -> jsrt::cell::Ref<'_, TypeResultCold> {
+        jsrt::cell::Ref::map(self.cold.borrow(), |cold| {
             cold.as_deref().unwrap_or(&TypeResultCold::EMPTY)
         })
     }
 
-    pub fn cold_mut(&self) -> std::cell::RefMut<'_, TypeResultCold> {
-        std::cell::RefMut::map(self.cold.borrow_mut(), |cold| {
+    pub fn cold_mut(&self) -> jsrt::cell::RefMut<'_, TypeResultCold> {
+        jsrt::cell::RefMut::map(self.cold.borrow_mut(), |cold| {
             &mut **cold.get_or_insert_with(Default::default)
         })
     }

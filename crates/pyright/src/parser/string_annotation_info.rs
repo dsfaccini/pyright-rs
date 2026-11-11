@@ -5,7 +5,7 @@
 //! in the arena: `StringAnnotationInfo` reads it, `StringAnnotationInfoWriter`
 //! writes it. Handles compare by identity, like the TypeScript objects.
 
-use std::cell::RefCell;
+use jsrt::cell::RefCell;
 
 use jsrt::{JsMap, P};
 

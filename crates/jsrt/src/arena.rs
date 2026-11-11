@@ -102,6 +102,7 @@ impl<T: Trace + 'static> P<T> {
     /// Moves `value` into the current thread's program heap, which is never
     /// collected. Drop never runs for it.
     pub fn new(value: T) -> P<T> {
+        const { assert!(!T::CELL_OUT_OF_LINE, "the write barrier cannot find this type's objects: a cell holding evaluator handles sits in a buffer") };
         ALLOCATED.with(|n| n.set(n.get() + size_of::<T>()));
         record::<T>(false);
         if heap::typed_program::<T>() {
@@ -120,6 +121,7 @@ impl<T: Trace + 'static> P<T> {
     /// drops it once no root reaches it. `T` needs `#[trace(eval)]`.
     pub fn new_eval(value: T) -> P<T> {
         const { assert!(T::EVAL, "P::new_eval needs #[trace(eval)] on the type") };
+        const { assert!(!T::CELL_OUT_OF_LINE, "the write barrier cannot find this type's objects: a cell holding evaluator handles sits in a buffer") };
         EVAL_ALLOCATED.with(|n| n.set(n.get() + size_of::<T>()));
         record::<T>(true);
         let slot = heap::alloc::<T>(true);

@@ -40,7 +40,7 @@ use crate::parser::parse_nodes::{NameNode, ParseNodeType};
 use crate::parser::tokenizer_types::OperatorType;
 use jsrt::JsBigInt;
 use jsrt::{JsMap, P};
-use std::cell::Cell;
+use jsrt::cell::Cell;
 
 thread_local! {
     // analyzer/operations.ts:67

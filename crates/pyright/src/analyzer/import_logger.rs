@@ -1,6 +1,6 @@
 //! Port of `packages/pyright-internal/src/analyzer/importLogger.ts`.
 
-use std::cell::RefCell;
+use jsrt::cell::RefCell;
 
 // analyzer/importLogger.ts:10
 #[derive(Default)]

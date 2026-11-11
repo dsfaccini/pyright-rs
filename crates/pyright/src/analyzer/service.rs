@@ -9,7 +9,7 @@
 //! Here `scheduleReanalysis` sets `analysis_timer`, and `run_timers` fires it
 //! once the caller's synchronous work is done, as Node's event loop would.
 
-use std::cell::{Cell, RefCell};
+use jsrt::cell::{Cell, RefCell};
 
 use jsrt::{JsSet, P};
 use regex::Regex;
@@ -87,9 +87,9 @@ pub struct AnalyzerService {
     execution_root_uri: Cell<Uri>,
     primary_config_file_uri: Cell<Option<Uri>>,
     extended_config_file_uris: RefCell<Vec<Uri>>,
-    command_line_options: RefCell<Option<CommandLineOptions>>,
+    command_line_options: std::cell::RefCell<Option<CommandLineOptions>>,
     require_tracked_file_update: Cell<bool>,
-    source_enumerator: RefCell<Option<SourceEnumerator>>,
+    source_enumerator: std::cell::RefCell<Option<SourceEnumerator>>,
     /// The pending `_analyzeTimer`.
     analysis_timer: Cell<bool>,
 }
@@ -125,9 +125,9 @@ impl AnalyzerService {
             execution_root_uri: Cell::new(Uri::empty()),
             primary_config_file_uri: Cell::new(None),
             extended_config_file_uris: RefCell::new(Vec::new()),
-            command_line_options: RefCell::new(None),
+            command_line_options: std::cell::RefCell::new(None),
             require_tracked_file_update: Cell::new(true),
-            source_enumerator: RefCell::new(None),
+            source_enumerator: std::cell::RefCell::new(None),
             analysis_timer: Cell::new(false),
         }
     }

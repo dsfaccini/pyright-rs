@@ -78,8 +78,8 @@ use jsrt::JsSet;
 use jsrt::JsString;
 use jsrt::P;
 use jsrt::number::number_to_string;
-use std::cell::Cell;
-use std::cell::RefCell;
+use jsrt::cell::Cell;
+use jsrt::cell::RefCell;
 
 // analyzer/typedDicts.ts:79
 // Creates a new custom TypedDict "alternate syntax" factory class.

@@ -24,7 +24,7 @@ use crate::parser::parse_nodes::{
     TypeParameterNode,
 };
 use jsrt::P;
-use std::cell::{Cell, RefCell};
+use jsrt::cell::{Cell, RefCell};
 
 // analyzer/declarationUtils.ts:20
 #[derive(Clone)]

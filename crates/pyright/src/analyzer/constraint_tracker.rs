@@ -7,7 +7,7 @@ use crate::analyzer::types::TypeSameOptions;
 use crate::analyzer::types::is_type_same;
 use crate::analyzer::types::{Type, TypeVarType};
 use jsrt::{JsSet, LazyJsMap, NonEmptyList, P};
-use std::cell::RefCell;
+use jsrt::cell::RefCell;
 use std::rc::Rc;
 
 // analyzer/constraintTracker.ts:24

@@ -6,7 +6,7 @@
 //! in the arena as `P<Declaration>`. Optional fields are `Option`: the oracle
 //! prints a field only when the object literal set it.
 
-use std::cell::{Cell, RefCell};
+use jsrt::cell::{Cell, RefCell};
 
 use jsrt::{JsMap, P};
 

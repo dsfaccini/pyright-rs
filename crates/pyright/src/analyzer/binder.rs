@@ -4,7 +4,7 @@
 //! trait. The TypeScript callbacks that run with `this` bound (scope bodies,
 //! deferred bindings, tracked flow expressions) are `FnOnce(&mut Binder)`.
 
-use std::cell::{Cell, RefCell};
+use jsrt::cell::{Cell, RefCell};
 
 use jsrt::{JsMap, JsSet, P};
 

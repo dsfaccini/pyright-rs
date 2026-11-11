@@ -7,7 +7,7 @@
 //! `FlowAssignment`, ...) with `cast` and `d()`, as parse nodes do.
 
 use jsrt::flag_ops;
-use std::cell::{Cell, RefCell};
+use jsrt::cell::{Cell, RefCell};
 use std::ops::Deref;
 
 use jsrt::{JsSet, P};

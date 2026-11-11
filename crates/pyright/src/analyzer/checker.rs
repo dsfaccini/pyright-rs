@@ -2881,9 +2881,9 @@ impl Checker {
             std::cell::RefCell::new(jsrt::JsMap::default());
         let class_type_var_usage: std::cell::RefCell<jsrt::JsMap<String, TypeVarUsageInfo>> =
             std::cell::RefCell::new(jsrt::JsMap::default());
-        let exempt_bound_type_var = std::cell::Cell::new(true);
-        let cur_param_node: std::cell::Cell<Option<parser::parse_nodes::ParameterNode>> =
-            std::cell::Cell::new(None);
+        let exempt_bound_type_var = jsrt::cell::Cell::new(true);
+        let cur_param_node: jsrt::cell::Cell<Option<parser::parse_nodes::ParameterNode>> =
+            jsrt::cell::Cell::new(None);
 
         // Is this a constructor (an __init__ method) for a generic class?
         let mut constructor_class: Option<ClassType> = None;

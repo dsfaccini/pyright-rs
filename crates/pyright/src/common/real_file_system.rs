@@ -3,7 +3,7 @@
 //! Zip and egg archives are not read: pyright's yarn `ZipOpenFS` treats a
 //! `.zip`/`.egg` file with zip magic as a directory; here it stays a file.
 
-use std::cell::Cell;
+use jsrt::cell::Cell;
 use std::time::UNIX_EPOCH;
 
 use jsrt::JsStr;

@@ -4,7 +4,7 @@
 //! `console.error` write to stderr. `ConsoleWithLogLevel` and the chaining
 //! interfaces serve the language server and are not ported.
 
-use std::cell::Cell;
+use jsrt::cell::Cell;
 use std::io::Write;
 
 // common/console.ts:16

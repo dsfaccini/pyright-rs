@@ -3,7 +3,7 @@
 //! Cache to hold parent directory import result to make sure
 //! we don't repeatedly search folders.
 
-use std::cell::{Cell, RefCell};
+use jsrt::cell::{Cell, RefCell};
 
 use jsrt::{JsMap, P};
 

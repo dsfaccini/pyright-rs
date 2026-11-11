@@ -86,7 +86,7 @@ use crate::parser::parse_nodes::StatementListNode;
 use crate::parser::parse_nodes::StringListNode;
 use crate::parser::parse_nodes::StringNode;
 use jsrt::{FxHashMap, FxHashSet, JsMap, JsSet, P};
-use std::cell::{Cell, OnceCell, RefCell};
+use jsrt::cell::{Cell, OnceCell, RefCell};
 use std::rc::Rc;
 
 // analyzer/codeFlowEngine.ts:81

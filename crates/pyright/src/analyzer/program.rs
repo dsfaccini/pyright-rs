@@ -9,7 +9,7 @@
 //! The evaluator is created only where the constructor, `setConfigOptions` and
 //! `setImportResolver` create it; the CLI never empties the cache.
 
-use std::cell::{Cell, OnceCell, RefCell};
+use jsrt::cell::{Cell, OnceCell, RefCell};
 use std::rc::Rc;
 
 use jsrt::{JsMap, JsSet, P};
@@ -90,7 +90,7 @@ pub struct Program {
     disable_checker: bool,
     /// Captures the `Program`, a program handle.
     #[trace(skip)]
-    look_up_import: OnceCell<ImportLookup>,
+    look_up_import: std::cell::OnceCell<ImportLookup>,
     self_handle: OnceCell<P<Program>>,
     analyzer_node_info_context: P<AnalyzerNodeInfoContextImpl>,
     evaluator: Cell<Option<P<TypeEvaluator>>>,
@@ -114,7 +114,7 @@ impl Program {
             import_resolver: Cell::new(initial_import_resolver),
             parsed_file_count: Cell::new(0),
             disable_checker,
-            look_up_import: OnceCell::new(),
+            look_up_import: std::cell::OnceCell::new(),
             self_handle: OnceCell::new(),
             analyzer_node_info_context: AnalyzerNodeInfoContextImpl::new(),
             evaluator: Cell::new(None),

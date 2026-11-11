@@ -27,6 +27,14 @@ pub unsafe trait Trace {
     /// A std or dependency type can live there when it can hold an evaluator
     /// handle: the evaluator allocates `RefCell<Vec<P<Type>>>` directly.
     const EVAL: bool = Self::HOLDS_EVAL;
+    /// A value of this type holds an interior-mutable cell that can hold an
+    /// evaluator handle.
+    const HAS_CELL: bool = false;
+    /// Such a cell sits behind an indirection (a `Vec`, `Box`, `Rc` or map buffer)
+    /// rather than in the value's own bytes. The write barrier finds a written
+    /// object by the cell's address, so a heap object's type must not have it
+    /// (`P::new_eval` and typed `P::new` check at compile time).
+    const CELL_OUT_OF_LINE: bool = false;
 
     fn trace(&self, t: &mut Tracer);
 
@@ -94,6 +102,8 @@ unsafe impl<T> Trace for PhantomData<T> {
 
 unsafe impl<T: Trace> Trace for Option<T> {
     const HOLDS_EVAL: bool = T::HOLDS_EVAL;
+    const HAS_CELL: bool = T::HAS_CELL;
+    const CELL_OUT_OF_LINE: bool = T::CELL_OUT_OF_LINE;
     #[inline]
     fn trace(&self, t: &mut Tracer) {
         if let Some(v) = self {
@@ -104,6 +114,8 @@ unsafe impl<T: Trace> Trace for Option<T> {
 
 unsafe impl<T: Trace> Trace for [T] {
     const HOLDS_EVAL: bool = T::HOLDS_EVAL;
+    const HAS_CELL: bool = T::HAS_CELL;
+    const CELL_OUT_OF_LINE: bool = T::CELL_OUT_OF_LINE;
     #[inline]
     fn trace(&self, t: &mut Tracer) {
         for v in self {
@@ -114,6 +126,8 @@ unsafe impl<T: Trace> Trace for [T] {
 
 unsafe impl<T: Trace, const N: usize> Trace for [T; N] {
     const HOLDS_EVAL: bool = T::HOLDS_EVAL;
+    const HAS_CELL: bool = T::HAS_CELL;
+    const CELL_OUT_OF_LINE: bool = T::CELL_OUT_OF_LINE;
     #[inline]
     fn trace(&self, t: &mut Tracer) {
         self.as_slice().trace(t);
@@ -122,6 +136,8 @@ unsafe impl<T: Trace, const N: usize> Trace for [T; N] {
 
 unsafe impl<T: Trace> Trace for Vec<T> {
     const HOLDS_EVAL: bool = T::HOLDS_EVAL;
+    const HAS_CELL: bool = T::HAS_CELL;
+    const CELL_OUT_OF_LINE: bool = T::HAS_CELL;
     #[inline]
     fn trace(&self, t: &mut Tracer) {
         self.as_slice().trace(t);
@@ -130,6 +146,8 @@ unsafe impl<T: Trace> Trace for Vec<T> {
 
 unsafe impl<T: Trace> Trace for VecDeque<T> {
     const HOLDS_EVAL: bool = T::HOLDS_EVAL;
+    const HAS_CELL: bool = T::HAS_CELL;
+    const CELL_OUT_OF_LINE: bool = T::HAS_CELL;
     #[inline]
     fn trace(&self, t: &mut Tracer) {
         for v in self {
@@ -140,6 +158,8 @@ unsafe impl<T: Trace> Trace for VecDeque<T> {
 
 unsafe impl<T: ?Sized + Trace> Trace for Box<T> {
     const HOLDS_EVAL: bool = T::HOLDS_EVAL;
+    const HAS_CELL: bool = T::HAS_CELL;
+    const CELL_OUT_OF_LINE: bool = T::HAS_CELL;
     #[inline]
     fn trace(&self, t: &mut Tracer) {
         (**self).trace(t);
@@ -150,16 +170,22 @@ unsafe impl<T: ?Sized + Trace> Trace for Box<T> {
 /// through it ends. A value shared by several holders is traced once per holder.
 unsafe impl<T: ?Sized + Trace> Trace for Rc<T> {
     const HOLDS_EVAL: bool = T::HOLDS_EVAL;
+    const HAS_CELL: bool = T::HAS_CELL;
+    const CELL_OUT_OF_LINE: bool = T::HAS_CELL;
     #[inline]
     fn trace(&self, t: &mut Tracer) {
         (**self).trace(t);
     }
 }
 
+/// The std cells have no write barrier: one that can hold an evaluator handle is a
+/// compile error. Use `jsrt::cell`.
 unsafe impl<T: Copy + Trace> Trace for Cell<T> {
     const HOLDS_EVAL: bool = T::HOLDS_EVAL;
+    const HAS_CELL: bool = T::HOLDS_EVAL;
     #[inline]
     fn trace(&self, t: &mut Tracer) {
+        const { assert!(!T::HOLDS_EVAL, "a std::cell::Cell holds evaluator handles: use jsrt::cell::Cell") };
         self.get().trace(t);
     }
 }
@@ -167,8 +193,11 @@ unsafe impl<T: Copy + Trace> Trace for Cell<T> {
 /// No `RefCell` is mutably borrowed between files, where collection runs.
 unsafe impl<T: ?Sized + Trace> Trace for RefCell<T> {
     const HOLDS_EVAL: bool = T::HOLDS_EVAL;
+    const HAS_CELL: bool = T::HOLDS_EVAL;
+    const CELL_OUT_OF_LINE: bool = T::CELL_OUT_OF_LINE;
     #[inline]
     fn trace(&self, t: &mut Tracer) {
+        const { assert!(!T::HOLDS_EVAL, "a std::cell::RefCell holds evaluator handles: use jsrt::cell::RefCell") };
         // SAFETY: the reference does not outlive this call, and tracing never writes.
         match unsafe { self.try_borrow_unguarded() } {
             Ok(v) => v.trace(t),
@@ -179,8 +208,11 @@ unsafe impl<T: ?Sized + Trace> Trace for RefCell<T> {
 
 unsafe impl<T: Trace> Trace for OnceCell<T> {
     const HOLDS_EVAL: bool = T::HOLDS_EVAL;
+    const HAS_CELL: bool = T::HOLDS_EVAL;
+    const CELL_OUT_OF_LINE: bool = T::CELL_OUT_OF_LINE;
     #[inline]
     fn trace(&self, t: &mut Tracer) {
+        const { assert!(!T::HOLDS_EVAL, "a std::cell::OnceCell holds evaluator handles: use jsrt::cell::OnceCell") };
         if let Some(v) = self.get() {
             v.trace(t);
         }
@@ -189,6 +221,8 @@ unsafe impl<T: Trace> Trace for OnceCell<T> {
 
 unsafe impl<K: Trace, V: Trace, S> Trace for IndexMap<K, V, S> {
     const HOLDS_EVAL: bool = K::HOLDS_EVAL || V::HOLDS_EVAL;
+    const HAS_CELL: bool = K::HAS_CELL || V::HAS_CELL;
+    const CELL_OUT_OF_LINE: bool = K::HAS_CELL || V::HAS_CELL;
     #[inline]
     fn trace(&self, t: &mut Tracer) {
         for (k, v) in self {
@@ -202,6 +236,8 @@ unsafe impl<K: Trace, V: Trace, S> Trace for IndexMap<K, V, S> {
 
 unsafe impl<T: Trace, S> Trace for IndexSet<T, S> {
     const HOLDS_EVAL: bool = T::HOLDS_EVAL;
+    const HAS_CELL: bool = T::HAS_CELL;
+    const CELL_OUT_OF_LINE: bool = T::HAS_CELL;
     #[inline]
     fn trace(&self, t: &mut Tracer) {
         for v in self {
@@ -212,6 +248,8 @@ unsafe impl<T: Trace, S> Trace for IndexSet<T, S> {
 
 unsafe impl<K: Trace, V: Trace, S> Trace for HashMap<K, V, S> {
     const HOLDS_EVAL: bool = K::HOLDS_EVAL || V::HOLDS_EVAL;
+    const HAS_CELL: bool = K::HAS_CELL || V::HAS_CELL;
+    const CELL_OUT_OF_LINE: bool = K::HAS_CELL || V::HAS_CELL;
     #[inline]
     fn trace(&self, t: &mut Tracer) {
         for (k, v) in self {
@@ -225,6 +263,8 @@ unsafe impl<K: Trace, V: Trace, S> Trace for HashMap<K, V, S> {
 
 unsafe impl<T: Trace, S> Trace for HashSet<T, S> {
     const HOLDS_EVAL: bool = T::HOLDS_EVAL;
+    const HAS_CELL: bool = T::HAS_CELL;
+    const CELL_OUT_OF_LINE: bool = T::HAS_CELL;
     #[inline]
     fn trace(&self, t: &mut Tracer) {
         for v in self {
@@ -237,6 +277,8 @@ macro_rules! tuple {
     ($($a:ident $i:tt),*) => {
         unsafe impl<$($a: Trace),*> Trace for ($($a,)*) {
             const HOLDS_EVAL: bool = false $(|| $a::HOLDS_EVAL)*;
+            const HAS_CELL: bool = false $(|| $a::HAS_CELL)*;
+            const CELL_OUT_OF_LINE: bool = false $(|| $a::CELL_OUT_OF_LINE)*;
             #[inline]
             fn trace(&self, t: &mut Tracer) {
                 $(if $a::HOLDS_EVAL || t.checking() { self.$i.trace(t); })*

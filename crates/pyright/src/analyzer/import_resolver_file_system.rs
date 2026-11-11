@@ -1,6 +1,6 @@
 //! Port of `packages/pyright-internal/src/analyzer/importResolverFileSystem.ts`.
 
-use std::cell::RefCell;
+use jsrt::cell::RefCell;
 
 use jsrt::{FxHashMap, JsSet, P};
 

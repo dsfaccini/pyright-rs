@@ -57,7 +57,7 @@ use crate::parser::parse_nodes::{
     TypeParameterNode, UnpackNode, WithItemNode, YieldFromNode, YieldNode,
 };
 use jsrt::{FxHashMap, JsMap, JsSet, JsString, P};
-use std::cell::{Cell, OnceCell, RefCell};
+use jsrt::cell::{Cell, OnceCell, RefCell};
 use std::rc::Rc;
 
 // analyzer/typeEvaluator.ts:391

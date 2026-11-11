@@ -47,7 +47,7 @@ fn flags(attrs: &[Attribute]) -> syn::Result<Flags> {
 }
 
 /// The match pattern binding every field, and the statements tracing them.
-fn fields(fields: &Fields, holds: &mut Vec<TokenStream2>) -> syn::Result<(TokenStream2, TokenStream2)> {
+fn fields(fields: &Fields, holds: &mut Vec<TokenStream2>, cells: &mut Vec<TokenStream2>, outs: &mut Vec<TokenStream2>) -> syn::Result<(TokenStream2, TokenStream2)> {
     let mut binds = Vec::new();
     let mut body = Vec::new();
     for (i, field) in fields.iter().enumerate() {
@@ -68,6 +68,8 @@ fn fields(fields: &Fields, holds: &mut Vec<TokenStream2>) -> syn::Result<(TokenS
             continue;
         }
         holds.push(quote!(<#ty as ::jsrt::Trace>::HOLDS_EVAL));
+        cells.push(quote!(<#ty as ::jsrt::Trace>::HAS_CELL));
+        outs.push(quote!(<#ty as ::jsrt::Trace>::CELL_OUT_OF_LINE));
         body.push(quote! {
             if <#ty as ::jsrt::Trace>::HOLDS_EVAL || __t.checking() { ::jsrt::Trace::trace(#bind, __t); }
         });
@@ -84,16 +86,18 @@ fn expand(mut input: DeriveInput) -> syn::Result<TokenStream2> {
     let container = flags(&input.attrs)?;
     let name = &input.ident;
     let mut holds = Vec::new();
+    let mut cells = Vec::new();
+    let mut outs = Vec::new();
     let arms = match &input.data {
         Data::Struct(data) => {
-            let (pattern, body) = fields(&data.fields, &mut holds)?;
+            let (pattern, body) = fields(&data.fields, &mut holds, &mut cells, &mut outs)?;
             vec![quote!(Self #pattern => { #body })]
         }
         Data::Enum(data) => {
             let mut arms = Vec::new();
             for variant in &data.variants {
                 let ident = &variant.ident;
-                let (pattern, body) = fields(&variant.fields, &mut holds)?;
+                let (pattern, body) = fields(&variant.fields, &mut holds, &mut cells, &mut outs)?;
                 arms.push(quote!(Self::#ident #pattern => { #body }));
             }
             arms
@@ -102,6 +106,10 @@ fn expand(mut input: DeriveInput) -> syn::Result<TokenStream2> {
     };
     let holds_eval = if container.holds_eval { quote!(true) } else { quote!(false #(|| #holds)*) };
     let eval = container.eval;
+    // `#[trace(holds_eval)]` breaks a const cycle, so the type claims no cells:
+    // such a type must hold none.
+    let has_cell = if container.holds_eval { quote!(false) } else { quote!(false #(|| #cells)*) };
+    let out_of_line = if container.holds_eval { quote!(false) } else { quote!(false #(|| #outs)*) };
 
     // A generic type has no per-instantiation static; the heap falls back to a TypeId map.
     let class_slot = if input.generics.params.is_empty() {
@@ -127,6 +135,8 @@ fn expand(mut input: DeriveInput) -> syn::Result<TokenStream2> {
         unsafe impl #impl_generics ::jsrt::Trace for #name #ty_generics #where_clause {
             const HOLDS_EVAL: bool = #holds_eval;
             const EVAL: bool = #eval;
+            const HAS_CELL: bool = #has_cell;
+            const CELL_OUT_OF_LINE: bool = #out_of_line;
             #class_slot
             #[allow(unused_variables)]
             fn trace(&self, __t: &mut ::jsrt::Tracer) {
