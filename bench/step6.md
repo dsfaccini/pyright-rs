@@ -78,5 +78,6 @@ Five agents work from this baseline: `hot` (CPU hotspots), `build` (compiler and
 |---|---|---|---|
 | 308f470 | baseline | 388.7 G instructions, 52.3 s, 11.8 GB | 13.95 G, 1.24 s, 0.68 GB |
 | 6094c4c | fat LTO (`build`) and 28 hotspot fixes (`hot`) | 282.6 G instructions (−27.3%), 42.7 s, 11.4 GB | 10.16 G (−27.2%), 1.00 s, 0.65 GB |
+| eb9865f, `dist` | `bench/build-dist.sh`: PGO trained on the seven small corpora, BOLT, `panic = "abort"`, x86-64-v2 | 229.7 G instructions (−40.9%), 39.5 s, 11.4 GB | 8.18 G (−41.4%), 0.81 s, 0.66 GB |
 
-At 6094c4c `CHECK_MEMORY_MAX=30G oracle/corpus/check.sh` passes on pydantic-ai: output and all 40,176 dumps identical.
+At 6094c4c `CHECK_MEMORY_MAX=30G oracle/corpus/check.sh` passes on pydantic-ai: output and all 40,176 dumps identical. The eb9865f `dist` binary passes all eight corpora the same way (`PYRIGHT_RS_BIN=target/dist/pyright-rs`). pydantic-ai never trained the PGO profile.
