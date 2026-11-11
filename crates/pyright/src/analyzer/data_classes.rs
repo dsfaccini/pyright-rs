@@ -3,6 +3,7 @@
 //! Evaluator code: allocate with `P::new_eval` (docs/porting.md, "memory").
 
 use crate::analyzer::analyzer_node_info::AnalyzerNodeInfoAccessor;
+use std::rc::Rc;
 use crate::analyzer::constraint_solution::ConstraintSolution;
 use crate::analyzer::constraint_tracker::ConstraintTracker;
 use crate::analyzer::constructors::create_function_from_constructor;
@@ -185,7 +186,7 @@ pub fn synthesize_data_class_slots(evaluator: &TypeEvaluator, class_type: ClassT
         });
 
         if variable_decl.is_none() {
-            variable_decl = symbol.get_declarations().into_iter().find(|decl| {
+            variable_decl = symbol.get_declarations().iter().copied().find(|decl| {
                 decl.type_ == DeclarationType::Variable
                     && decl
                         .variable()
@@ -422,7 +423,7 @@ pub fn synthesize_data_class_methods(
 
         // See if this is an unannotated (inferred) Final value.
         if class_var_decl.is_none() {
-            class_var_decl = symbol.get_declarations().into_iter().find(|decl| {
+            class_var_decl = symbol.get_declarations().iter().copied().find(|decl| {
                 decl.type_ == DeclarationType::Variable
                     && decl
                         .variable()
@@ -1555,7 +1556,7 @@ pub(crate) fn get_converter_input_type(
                     input_constraints,
                     Some(&ApplyTypeVarOptions {
                         replace_unsolved: Some(ApplyTypeVarOptionsReplaceUnsolved {
-                            scope_ids: get_type_var_scope_ids(type_var.0),
+                            scope_ids: Rc::from(get_type_var_scope_ids(type_var.0)),
                             tuple_class_type: evaluator.get_tuple_class_type(),
                             unsolved_exempt_type_vars: None,
                             use_unknown: None,
@@ -1707,7 +1708,7 @@ pub(crate) fn get_descriptor_for_converter_field(
 
     // Make the descriptor generic, copying the type parameters from the dataclass.
     let dataclass_type_params: Vec<TypeVarType> =
-        dataclass.d().shared.get().type_params.borrow().clone();
+        dataclass.d().shared.get().type_params.borrow().to_vec();
     let descriptor_type_params: Vec<TypeVarType> = dataclass_type_params
         .iter()
         .map(|type_parm| {
@@ -1721,7 +1722,7 @@ pub(crate) fn get_descriptor_for_converter_field(
             type_param
         })
         .collect();
-    *descriptor_class.d().shared.get().type_params.borrow_mut() = descriptor_type_params;
+    *descriptor_class.d().shared.get().type_params.borrow_mut() = Rc::new(descriptor_type_params);
 
     let descriptor_type_args: Vec<P<Type>> = descriptor_class
         .d()
@@ -1733,18 +1734,18 @@ pub(crate) fn get_descriptor_for_converter_field(
         .map(|type_param| type_param.0)
         .collect();
     let dataclass_type_params: Vec<TypeVarType> =
-        dataclass.d().shared.get().type_params.borrow().clone();
+        dataclass.d().shared.get().type_params.borrow().to_vec();
     let solution = build_solution(&dataclass_type_params, Some(&descriptor_type_args));
     let get_type = apply_solved_type_vars(get_type, &solution, &ApplyTypeVarOptions::default());
     let set_type = apply_solved_type_vars(set_type, &solution, &ApplyTypeVarOptions::default());
 
     let object_type = evaluator.get_built_in_type(dataclass_node, "object");
-    descriptor_class
+    Rc::make_mut(&mut *descriptor_class
         .d()
         .shared
         .get()
         .base_classes
-        .borrow_mut()
+        .borrow_mut())
         .push(object_type);
     compute_mro_linearization(descriptor_class);
 
@@ -2321,7 +2322,7 @@ pub(crate) fn apply_data_class_behavior_override_value(
             }
 
             let base_classes: Vec<P<Type>> =
-                class_type.d().shared.get().base_classes.borrow().clone();
+                class_type.d().shared.get().base_classes.borrow().to_vec();
             for base_class in base_classes {
                 if is_instantiable_class(base_class)
                     && ClassType::is_data_class(ClassType(base_class))

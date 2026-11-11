@@ -806,7 +806,7 @@ pub(crate) fn print_union_type(
                 let mut indices_covered_by_type_alias: JsSet<usize> = JsSet::default();
 
                 let source_subtypes = type_alias_source.d().priv_.borrow().subtypes.clone();
-                for &source_subtype in &source_subtypes {
+                for &source_subtype in source_subtypes.iter() {
                     let mut found_match = false;
                     let source_subtype_instance =
                         analyzer::type_utils::convert_to_instance(source_subtype, true);
@@ -1347,7 +1347,7 @@ pub(crate) fn print_object_type_for_class_internal(
                         .any(|type_param| !is_unknown(type_param.0)))
             {
                 let mut type_param_strings: Vec<String> = Vec::new();
-                for type_param in &type_params {
+                for type_param in type_params.iter() {
                     type_param_strings.push(print_type_internal(
                         type_param.0,
                         print_type_flags,
@@ -1844,7 +1844,7 @@ impl UniqueNameMap {
                                 self.build(type_arg.type_, recursion_types, recursion_count);
                             }
                         } else if let Some(type_args) = type_args {
-                            for &type_arg in &type_args {
+                            for &type_arg in type_args.iter() {
                                 self.build(type_arg, recursion_types, recursion_count);
                             }
                         }

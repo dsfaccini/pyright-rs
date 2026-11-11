@@ -3,6 +3,7 @@
 //! Evaluator code: allocate with `P::new_eval` (docs/porting.md, "memory").
 
 use crate::analyzer::analyzer_node_info::AnalyzerNodeInfoAccessor;
+use std::rc::Rc;
 use crate::analyzer::parse_tree_utils::get_class_full_name;
 use crate::analyzer::parse_tree_utils::get_type_source_id;
 use crate::analyzer::type_evaluator::TypeEvaluator;
@@ -107,12 +108,12 @@ pub fn create_sentinel_type(
         None,
     );
 
-    class_type
+    Rc::make_mut(&mut *class_type
         .d()
         .shared
         .get()
         .base_classes
-        .borrow_mut()
+        .borrow_mut())
         .push(sentinel_base_class.0);
     compute_mro_linearization(class_type);
     class_type = ClassType::clone_with_literal(

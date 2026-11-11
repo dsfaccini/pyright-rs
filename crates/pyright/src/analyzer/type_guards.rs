@@ -2225,9 +2225,9 @@ pub(crate) fn narrow_type_for_instance(
                                                 Some(&ApplyTypeVarOptions {
                                                     replace_unsolved: Some(
                                                         ApplyTypeVarOptionsReplaceUnsolved {
-                                                            scope_ids: get_type_var_scope_ids(
+                                                            scope_ids: Rc::from(get_type_var_scope_ids(
                                                                 filter_type,
-                                                            ),
+                                                            )),
                                                             tuple_class_type: evaluator
                                                                 .get_tuple_class_type(),
                                                             unsolved_exempt_type_vars: None,
@@ -2411,7 +2411,7 @@ pub(crate) fn narrow_type_for_instance(
                         concrete_var_shared.doc_string.as_deref(),
                     );
                     *new_class_type.d().shared.get().base_classes.borrow_mut() =
-                        vec![concrete_var_type.0];
+                        Rc::new(vec![concrete_var_type.0]);
                     compute_mro_linearization(new_class_type);
 
                     let new_class_type = class_of(add_condition_to_type(

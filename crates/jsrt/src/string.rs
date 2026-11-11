@@ -75,6 +75,10 @@ impl From<Vec<u16>> for JsString {
 
 impl From<&str> for JsString {
     fn from(s: &str) -> Self {
+        // ASCII text, such as most source files, widens byte by byte.
+        if s.is_ascii() {
+            return JsString(s.bytes().map(u16::from).collect());
+        }
         s.encode_utf16().collect()
     }
 }
@@ -639,6 +643,9 @@ fn is_char_start(b: u8) -> bool {
 
 /// UTF-16 length of a `str`.
 fn units_in(s: &str) -> usize {
+    if s.is_ascii() {
+        return s.len();
+    }
     s.bytes()
         .map(|b| usize::from(is_char_start(b)) + usize::from(b >= 0xF0))
         .sum()

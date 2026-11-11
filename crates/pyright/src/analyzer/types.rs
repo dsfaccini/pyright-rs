@@ -909,13 +909,13 @@ pub struct ClassDetailsShared {
     pub file_uri: Uri,
     pub flags: Cell<ClassTypeFlags>,
     pub type_source_id: i32,
-    pub base_classes: RefCell<Vec<P<Type>>>,
-    pub mro: RefCell<Vec<P<Type>>>,
+    pub base_classes: RefCell<Rc<Vec<P<Type>>>>,
+    pub mro: RefCell<Rc<Vec<P<Type>>>>,
     pub declaration: Cell<Option<P<Declaration>>>,
     pub declared_metaclass: Cell<Option<P<Type>>>,
     pub effective_metaclass: Cell<Option<P<Type>>>,
     pub fields: Cell<SymbolTable>,
-    pub type_params: RefCell<Vec<TypeVarType>>,
+    pub type_params: RefCell<Rc<Vec<TypeVarType>>>,
     pub type_var_scope_id: RefCell<Option<String>>,
     pub doc_string: Option<String>,
     pub data_class_entries: RefCell<Option<Vec<P<DataClassEntry>>>>,
@@ -958,7 +958,7 @@ pub struct PropertyMethodInfo {
 #[derive(Clone, Default)]
 #[derive(jsrt::Trace)]
 pub struct ClassDetailsPriv {
-    pub type_args: Option<Vec<P<Type>>>,
+    pub type_args: Option<Rc<[P<Type>]>>,
     pub is_empty_container: Option<bool>,
     pub tuple_type_args: Option<P<RefCell<Vec<TupleTypeArg>>>>,
     pub is_unpacked: Option<bool>,
@@ -1100,13 +1100,13 @@ impl ClassType {
                     file_uri: *file_uri,
                     flags: Cell::new(flags),
                     type_source_id,
-                    base_classes: RefCell::new(Vec::new()),
-                    mro: RefCell::new(Vec::new()),
+                    base_classes: RefCell::new(Rc::new(Vec::new())),
+                    mro: RefCell::new(Rc::new(Vec::new())),
                     declaration: Cell::new(None),
                     declared_metaclass: Cell::new(declared_metaclass),
                     effective_metaclass: Cell::new(effective_metaclass),
                     fields: Cell::new(SymbolTable::new()),
-                    type_params: RefCell::new(Vec::new()),
+                    type_params: RefCell::new(Rc::new(Vec::new())),
                     type_var_scope_id: RefCell::new(None),
                     doc_string: doc_string.map(str::to_string),
                     data_class_entries: RefCell::new(None),
@@ -1209,7 +1209,7 @@ impl ClassType {
 
         priv_.type_args = match type_args {
             Some([]) => None,
-            Some(type_args) => Some(type_args.to_vec()),
+            Some(type_args) => Some(Rc::from(type_args)),
             None => None,
         };
 
@@ -1486,6 +1486,7 @@ impl ClassType {
     }
 
     // analyzer/types.ts:1167
+    #[inline]
     pub fn is_built_in(class_type: ClassType, class_name: Option<&[&str]>) -> bool {
         let shared = class_type.d().shared.get();
         if !shared.flags.get().any(ClassTypeFlags::BuiltIn) {
@@ -1493,14 +1494,21 @@ impl ClassType {
         }
 
         if let Some(class_name) = class_name {
-            let priv_ = class_type.d().priv_.borrow();
-            let alias_name = priv_.cold().alias_name.as_deref();
-            return class_name.iter().any(|&name| {
-                name == shared.name || name == shared.full_name || Some(name) == alias_name
-            });
+            return ClassType::is_built_in_named(class_type, &shared, class_name);
         }
 
         true
+    }
+
+    /// The name test of `is_built_in`. The alias name sits in the cold half, so
+    /// it is read only when no name matches `name` or `fullName`.
+    fn is_built_in_named(class_type: ClassType, shared: &ClassDetailsShared, class_name: &[&str]) -> bool {
+        if class_name.iter().any(|&name| name == shared.name || name == shared.full_name) {
+            return true;
+        }
+        let priv_ = class_type.d().priv_.borrow();
+        let alias_name = priv_.cold().alias_name.as_deref();
+        alias_name.is_some_and(|alias_name| class_name.contains(&alias_name))
     }
 
     // analyzer/types.ts:1185
@@ -1823,7 +1831,7 @@ impl ClassType {
         // most-derived known candidate so transitive conflicts are still reported.
         let mro = class_type.d().shared.get().mro.borrow().clone();
         let candidates: Vec<ClassType> = mro
-            .into_iter()
+            .iter().copied()
             .filter(|mro_class| {
                 is_instantiable_class(*mro_class)
                     && ClassType::is_disjoint_base(ClassType(*mro_class))
@@ -1839,7 +1847,7 @@ impl ClassType {
         candidates.iter().copied().find(|candidate| {
             candidates.iter().all(|other_candidate| {
                 let mro = candidate.d().shared.get().mro.borrow().clone();
-                mro.into_iter().any(|mro_class| {
+                mro.iter().copied().any(|mro_class| {
                     is_instantiable_class(mro_class)
                         && ClassType::is_same_generic_class(
                             ClassType(mro_class),
@@ -1963,7 +1971,7 @@ impl ClassType {
     }
 
     // analyzer/types.ts:1371
-    pub fn get_type_params(class_type: ClassType) -> Vec<TypeVarType> {
+    pub fn get_type_params(class_type: ClassType) -> Rc<Vec<TypeVarType>> {
         class_type.d().shared.get().type_params.borrow().clone()
     }
 
@@ -2103,13 +2111,14 @@ impl ClassType {
 
         // Compare most of the details fields. We intentionally skip the isAbstractClass
         // flag because it gets set dynamically.
-        if class1_details.full_name != class2_details.full_name
-            || class1_details.flags.get() != class2_details.flags.get()
+        // The tests have no side effects, so the string comparison, the costly one, runs last.
+        if class1_details.flags.get() != class2_details.flags.get()
             || class1_details.type_source_id != class2_details.type_source_id
             || class1_details.base_classes.borrow().len()
                 != class2_details.base_classes.borrow().len()
             || class1_details.type_params.borrow().len()
                 != class2_details.type_params.borrow().len()
+            || class1_details.full_name != class2_details.full_name
         {
             return false;
         }
@@ -2250,7 +2259,7 @@ impl ClassType {
         }
 
         let base_classes = subclass_type.d().shared.get().base_classes.borrow().clone();
-        for base_class in base_classes {
+        for base_class in base_classes.iter().copied() {
             if is_instantiable_class(base_class) {
                 if ClassType::is_derived_from(
                     ClassType(base_class),
@@ -2275,7 +2284,7 @@ impl ClassType {
 
     // analyzer/types.ts:1584
     pub fn get_reverse_mro(class_type: ClassType) -> Vec<P<Type>> {
-        let mut mro = class_type.d().shared.get().mro.borrow().clone();
+        let mut mro = class_type.d().shared.get().mro.borrow().to_vec();
         mro.reverse();
         mro
     }
@@ -4039,7 +4048,7 @@ pub struct LiteralTypes {
 #[derive(Clone)]
 #[derive(jsrt::Trace)]
 pub struct UnionDetailsPriv {
-    pub subtypes: Vec<UnionableType>,
+    pub subtypes: Rc<Vec<UnionableType>>,
     pub literal_instances: LiteralTypes,
     pub literal_classes: LiteralTypes,
     pub type_alias_sources: Option<Box<JsSet<UnionType>>>,
@@ -4093,7 +4102,7 @@ impl UnionType {
             cached: OptionRefCell::new(),
             d: TypeDetails::Union(UnionTypeDetails {
                 priv_: RefCell::new(UnionDetailsPriv {
-                    subtypes: Vec::new(),
+                    subtypes: Rc::default(),
                     literal_instances: LiteralTypes {
                         literal_str_map: None,
                         literal_int_map: None,
@@ -4178,7 +4187,7 @@ impl UnionType {
         union_type
             .flags
             .set(union_type.flags.get() & new_type.flags.get());
-        union_type.d().priv_.borrow_mut().subtypes.push(new_type);
+        Rc::make_mut(&mut union_type.d().priv_.borrow_mut().subtypes).push(new_type);
 
         if let Some(type_var) = TypeVarType::cast(new_type) {
             let has_recursive_alias_name = type_var
@@ -4597,7 +4606,7 @@ impl TypeVarType {
                 &scope_id,
                 scope_name.as_deref().unwrap_or(""),
             );
-            new_instance.d().priv_.borrow_mut().name_with_scope = Some(name_with_scope.into());
+            new_instance.d().priv_.borrow_mut().name_with_scope = Some(name_with_scope);
         }
 
         new_instance
@@ -4611,12 +4620,13 @@ impl TypeVarType {
         scope_type: Option<TypeVarScopeType>,
     ) -> TypeVarType {
         let new_instance = TypeVarType(TypeBase::clone_type(type_.0));
-        let name = type_.d().shared.get().name.borrow().clone();
-        let mut priv_ = new_instance.d().priv_.borrow_mut();
-        priv_.name_with_scope = Some(
-            TypeVarType::make_name_with_scope(&name, &scope_id, scope_name.as_deref().unwrap_or(""))
-                .into(),
+        let name_with_scope = TypeVarType::make_name_with_scope(
+            &type_.d().shared.get().name.borrow(),
+            &scope_id,
+            scope_name.as_deref().unwrap_or(""),
         );
+        let mut priv_ = new_instance.d().priv_.borrow_mut();
+        priv_.name_with_scope = Some(name_with_scope);
         priv_.scope_id = Some(scope_id.into());
         priv_.scope_name = scope_name.map(Into::into);
         priv_.scope_type = scope_type;
@@ -4750,12 +4760,12 @@ impl TypeVarType {
     }
 
     // analyzer/types.ts:3120
-    pub fn make_name_with_scope(name: &str, scope_id: &str, scope_name: &str) -> String {
+    pub fn make_name_with_scope(name: &str, scope_id: &str, scope_name: &str) -> Rc<str> {
         // We include the scopeName here even though it's normally already part
         // of the scopeId. There are cases where it can diverge, specifically
         // in scenarios involving higher-order functions that return generic
         // callable types. See adjustCallableReturnType for details.
-        format!("{name}.{scope_id}.{scope_name}")
+        Rc::from([name, ".", scope_id, ".", scope_name].concat())
     }
 
     // analyzer/types.ts:3134
@@ -4849,12 +4859,12 @@ impl TypeVarType {
     }
 
     // analyzer/types.ts:3204
-    pub fn get_name_with_scope(type_var_type: TypeVarType) -> String {
+    pub fn get_name_with_scope(type_var_type: TypeVarType) -> Rc<str> {
         // If there is no name with scope, fall back on the (unscoped) name.
         let name_with_scope = type_var_type.d().priv_.borrow().name_with_scope.clone();
         match name_with_scope {
-            Some(name_with_scope) if !name_with_scope.is_empty() => name_with_scope.to_string(),
-            _ => type_var_type.d().shared.get().name.borrow().clone(),
+            Some(name_with_scope) if !name_with_scope.is_empty() => name_with_scope,
+            _ => Rc::from(type_var_type.d().shared.get().name.borrow().as_str()),
         }
     }
 
@@ -5234,33 +5244,37 @@ pub fn is_type_same(
                 || !ClassType::is_pseudo_generic_class(class_type1)
             {
                 // Make sure the type args match.
-                let type1_tuple_type_args = class_type1.d().priv_.borrow().tuple_type_args.map(|tuple_type_args| tuple_type_args.borrow().clone());
-                let type2_tuple_type_args = class_type2.d().priv_.borrow().tuple_type_args.map(|tuple_type_args| tuple_type_args.borrow().clone());
+                let type1_tuple_type_args = class_type1.d().priv_.borrow().tuple_type_args;
+                let type2_tuple_type_args = class_type2.d().priv_.borrow().tuple_type_args;
 
                 if let (Some(type1_tuple_type_args), Some(type2_tuple_type_args)) =
-                    (&type1_tuple_type_args, &type2_tuple_type_args)
+                    (type1_tuple_type_args, type2_tuple_type_args)
                 {
-                    if type1_tuple_type_args.len() != type2_tuple_type_args.len() {
+                    if type1_tuple_type_args.borrow().len() != type2_tuple_type_args.borrow().len() {
                         return false;
                     }
 
                     // TypeScript skips this loop when both arrays are the same object; the loop
-                    // returns true for that case too.
-                    for i in 0..type1_tuple_type_args.len() {
-                        if !is_type_same(
-                            type1_tuple_type_args[i].type_,
-                            type2_tuple_type_args[i].type_,
-                            recursive_options,
-                            recursion_count,
-                        ) {
+                    // returns true for that case too. It reads the live arrays: their length on
+                    // each pass, each element when the loop reaches it.
+                    let mut i = 0;
+                    while i < type1_tuple_type_args.borrow().len() {
+                        let (type1_arg_type, type1_is_unbounded) = {
+                            let args = type1_tuple_type_args.borrow();
+                            (args[i].type_, args[i].is_unbounded)
+                        };
+                        let (type2_arg_type, type2_is_unbounded) = {
+                            let args = type2_tuple_type_args.borrow();
+                            (args[i].type_, args[i].is_unbounded)
+                        };
+                        if !is_type_same(type1_arg_type, type2_arg_type, recursive_options, recursion_count) {
                             return false;
                         }
 
-                        if type1_tuple_type_args[i].is_unbounded
-                            != type2_tuple_type_args[i].is_unbounded
-                        {
+                        if type1_is_unbounded != type2_is_unbounded {
                             return false;
                         }
+                        i += 1;
                     }
                 } else {
                     let type1_type_args = class_type1.d().priv_.borrow().type_args.clone();
@@ -5270,8 +5284,8 @@ pub fn is_type_same(
                     // the loop returns true for those cases too.
                     let type_arg_count = type1_type_args
                         .as_ref()
-                        .map_or(0, Vec::len)
-                        .max(type2_type_args.as_ref().map_or(0, Vec::len));
+                        .map_or(0, |a| a.len())
+                        .max(type2_type_args.as_ref().map_or(0, |a| a.len()));
 
                     for i in 0..type_arg_count {
                         // Assume that missing type args are "Unknown".
@@ -5335,10 +5349,9 @@ pub fn is_type_same(
             let shared2 = function_type2.d().shared.get();
             let params1_array = shared1.parameters.get();
             let params2_array = shared2.parameters.get();
-            let params1 = params1_array.borrow().clone();
-            let params2 = params2_array.borrow().clone();
+            let params_len = params1_array.borrow().len();
 
-            if params1.len() != params2.len() {
+            if params_len != params2_array.borrow().len() {
                 return false;
             }
 
@@ -5364,19 +5377,22 @@ pub fn is_type_same(
 
             if !have_same_param_signature {
                 // `findIndex` returns -1, never undefined, when there is no separator.
-                let position_only_index1 = params1
+                let position_only_index1 = params1_array
+                    .borrow()
                     .iter()
                     .position(is_position_only_separator)
                     .map_or(-1, |index| index as i64);
-                let position_only_index2 = params2
+                let position_only_index2 = params2_array
+                    .borrow()
                     .iter()
                     .position(is_position_only_separator)
                     .map_or(-1, |index| index as i64);
 
-                // Make sure the parameter details match.
-                for i in 0..params1.len() {
-                    let param1 = &params1[i];
-                    let param2 = &params2[i];
+                // Make sure the parameter details match. Each parameter is read when the loop
+                // reaches it, as TypeScript reads the arrays.
+                for i in 0..params_len {
+                    let param1 = &params1_array.borrow()[i].clone();
+                    let param2 = &params2_array.borrow()[i].clone();
 
                     if param1.category != param2.category {
                         return false;
@@ -5686,7 +5702,7 @@ pub fn remove_from_union(
 pub fn find_subtype(type_: P<Type>, filter: &mut dyn FnMut(P<Type>) -> bool) -> Option<P<Type>> {
     if let Some(union) = UnionType::cast(type_) {
         let subtypes = union.d().priv_.borrow().subtypes.clone();
-        return subtypes.into_iter().find(|subtype| filter(*subtype));
+        return subtypes.iter().copied().find(|subtype| filter(*subtype));
     }
 
     if filter(type_) { Some(type_) } else { None }
@@ -6010,7 +6026,7 @@ pub(crate) fn _add_type_if_unique(
                     None,
                     None,
                 );
-                union_type.d().priv_.borrow_mut().subtypes[i] = specialized.0;
+                Rc::make_mut(&mut union_type.d().priv_.borrow_mut().subtypes)[i] = specialized.0;
                 return;
             }
         }
@@ -6049,7 +6065,7 @@ pub(crate) fn _add_type_if_unique(
                     if matches!(literal, Some(LiteralValue::Boolean(value)) if value == negated) {
                         let replacement =
                             ClassType::clone_with_literal(class_type, /* value */ None);
-                        union_type.d().priv_.borrow_mut().subtypes[i] = replacement.0;
+                        Rc::make_mut(&mut union_type.d().priv_.borrow_mut().subtypes)[i] = replacement.0;
                         return;
                     }
                 }
@@ -6067,7 +6083,7 @@ pub(crate) fn _add_type_if_unique(
                     if ClassType::is_typed_dict_narrower(class_to_add, class_type) {
                         return;
                     } else if ClassType::is_typed_dict_narrower(class_type, class_to_add) {
-                        union_type.d().priv_.borrow_mut().subtypes[i] = type_to_add;
+                        Rc::make_mut(&mut union_type.d().priv_.borrow_mut().subtypes)[i] = type_to_add;
                         return;
                     }
                 }
@@ -6173,7 +6189,7 @@ impl CalculateInheritedSlotsNamesDeferred {
             let mut extended_slots_names = local_slots_names;
 
             let base_classes = shared.base_classes.borrow().clone();
-            for base_class in base_classes {
+            for base_class in base_classes.iter().copied() {
                 if is_instantiable_class(base_class) {
                     let base_class = ClassType(base_class);
                     if !ClassType::is_built_in(base_class, Some(&["object"]))

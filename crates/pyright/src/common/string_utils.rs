@@ -38,11 +38,17 @@ pub fn get_string_fingerprint(contents: &str) -> StringFingerprint {
     let mut primary: i32 = 0;
     let mut secondary: i32 = 0x811c9dc5_u32 as i32;
 
-    for code_unit in contents.encode_utf16() {
+    let mut add = |code_unit: u16| {
         primary = (primary << 5)
             .wrapping_sub(primary)
             .wrapping_add(code_unit as i32);
         secondary = (secondary ^ code_unit as i32).wrapping_mul(0x01000193);
+    };
+    // In ASCII text each byte is one UTF-16 code unit.
+    if contents.is_ascii() {
+        contents.bytes().for_each(|byte| add(u16::from(byte)));
+    } else {
+        contents.encode_utf16().for_each(add);
     }
 
     StringFingerprint { primary, secondary }

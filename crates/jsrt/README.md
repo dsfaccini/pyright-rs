@@ -11,6 +11,8 @@ Every helper is tested against Node 26 through fixtures in `fixtures/`. Regenera
 | object reference, `===` on objects | `P<T>` (`P::new`, `==` is identity) |
 | `Map`, `Set` | `JsMap`, `JsSet` (delete with `shift_remove`) |
 | lookup-only map or set | `FxHashMap`, `FxHashSet` (never iterate) |
+| `Map` that most owners leave empty and the rest fill with a few entries | `LazyJsMap` (one pointer while empty, searched linearly) |
+| `Set` that holds a few elements at a time | `SmallJsSet` (searched linearly) |
 
 ## arrays
 
@@ -49,6 +51,7 @@ On `str`, `js_slice`, `js_substring`, `js_substr` and `js_split` return `Cow<str
 | JavaScript | Rust |
 |---|---|
 | `String(x)`, `x.toString()`, `${x}` for a number | `number::number_to_string(x)` |
+| `` s += `${n}` `` for an integer, without allocating | `number::push_integer(&mut s, n)` |
 | `x.toString(radix)` | `number::number_to_string_radix(x, radix)` |
 | `parseInt(s, radix)` | `number::parse_int(s, radix)` (0 for an omitted radix) |
 | `parseFloat(s)` | `number::parse_float(s)` |

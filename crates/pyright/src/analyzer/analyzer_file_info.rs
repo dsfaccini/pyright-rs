@@ -44,7 +44,7 @@ pub struct LookupImportOptions {
 #[derive(jsrt::Trace)]
 pub struct ImportLookupResult {
     pub symbol_table: SymbolTable,
-    pub dunder_all_names: Option<Vec<String>>,
+    pub dunder_all_names: Option<Rc<[String]>>,
     pub uses_unsupported_dunder_all_form: bool,
     /// A getter in TypeScript: computed when read.
     /// Captures a module node, a program handle.

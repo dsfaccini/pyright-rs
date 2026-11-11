@@ -8,6 +8,7 @@ use crate::analyzer::types::is_type_same;
 use crate::analyzer::types::{Type, TypeVarType};
 use jsrt::{JsSet, LazyJsMap, P};
 use std::cell::RefCell;
+use std::rc::Rc;
 
 // analyzer/constraintTracker.ts:24
 pub(crate) const MAX_CONSTRAINT_SET_COUNT: u32 = 1024;
@@ -26,7 +27,7 @@ pub struct TypeVarConstraints {
 #[derive(jsrt::Trace)]
 #[trace(eval)]
 pub struct ConstraintSet {
-    pub(crate) _type_var_map: RefCell<LazyJsMap<String, TypeVarConstraints>>,
+    pub(crate) _type_var_map: RefCell<LazyJsMap<Rc<str>, TypeVarConstraints>>,
     pub(crate) _scope_ids: RefCell<Option<Box<JsSet<String>>>>,
 }
 // Most sets stay empty: the map and the scope ids are allocated on first insert (PLAN.md step 6).
@@ -45,9 +46,10 @@ impl ConstraintSet {
     pub fn clone_(&self) -> P<ConstraintSet> {
         let constraint_set = ConstraintSet::new();
 
-        let entries: Vec<TypeVarConstraints> =
-            self._type_var_map.borrow().values().cloned().collect();
-        for value in entries {
+        // Map.forEach visits entries live: read each one by index.
+        let mut index = 0;
+        while let Some(value) = self.entry_at(index) {
+            index += 1;
             constraint_set.set_bounds(
                 value.type_var,
                 value.lower_bound,
@@ -91,7 +93,7 @@ impl ConstraintSet {
         }
 
         let mut is_same = true;
-        let entries: Vec<(String, TypeVarConstraints)> = self
+        let entries: Vec<(Rc<str>, TypeVarConstraints)> = self
             ._type_var_map
             .borrow()
             .iter()
@@ -122,9 +124,9 @@ impl ConstraintSet {
         let mut score = 0.0;
 
         // Sum the scores for the defined type vars.
-        let entries: Vec<TypeVarConstraints> =
-            self._type_var_map.borrow().values().cloned().collect();
-        for entry in entries {
+        let mut index = 0;
+        while let Some(entry) = self.entry_at(index) {
+            index += 1;
             // Add 1 to the score for each type variable defined.
             score += 1.0;
 
@@ -165,14 +167,15 @@ impl ConstraintSet {
         // Map.forEach visits entries added during the walk; copy each entry out
         // so the callback can reach back into this set.
         let mut index = 0;
-        loop {
-            let entry = match self._type_var_map.borrow().get_index(index) {
-                Some((_, entry)) => entry.clone(),
-                None => break,
-            };
+        while let Some(entry) = self.entry_at(index) {
             cb(&entry);
             index += 1;
         }
+    }
+
+    /// The entry at `index` in insertion order, copied out of the map.
+    fn entry_at(&self, index: usize) -> Option<TypeVarConstraints> {
+        self._type_var_map.borrow().get_index(index).map(|(_, entry)| entry.clone())
     }
 
     // analyzer/constraintTracker.ts:139
@@ -218,9 +221,9 @@ impl ConstraintSet {
 
     // analyzer/constraintTracker.ts:174
     pub fn has_unification_vars(&self) -> bool {
-        let entries: Vec<TypeVarConstraints> =
-            self._type_var_map.borrow().values().cloned().collect();
-        for entry in entries {
+        let mut index = 0;
+        while let Some(entry) = self.entry_at(index) {
+            index += 1;
             if TypeVarType::is_unification(entry.type_var).unwrap_or(false) {
                 return true;
             }

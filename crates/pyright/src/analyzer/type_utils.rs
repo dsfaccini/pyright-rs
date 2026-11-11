@@ -15,7 +15,7 @@ use crate::analyzer::types::{
     ClassType, ClassTypeFlags, FunctionType, ModuleType, SignatureWithOffsets, TupleTypeArg, Type,
     TypeCondition, TypeSameOptions, TypeVarType, Variance,
 };
-use jsrt::{JsMap, JsSet, P, flag_ops};
+use jsrt::{JsMap, JsSet, P, SmallJsSet, flag_ops};
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
@@ -321,7 +321,7 @@ pub fn map_subtypes(
     if crate::analyzer::types::is_union(type_) {
         let union_subtypes = crate::analyzer::types::UnionType(type_).d().priv_.borrow().subtypes.clone();
         let subtypes = if options.is_some_and(|options| options.sort_subtypes.unwrap_or(false)) {
-            sort_types(&union_subtypes)
+            Rc::new(sort_types(&union_subtypes))
         } else {
             union_subtypes
         };
@@ -781,7 +781,7 @@ pub fn do_for_each_subtype(
 ) {
     if crate::analyzer::types::is_union(type_) {
         let union_subtypes = crate::analyzer::types::UnionType(type_).d().priv_.borrow().subtypes.clone();
-        let subtypes = if sort_subtypes { sort_types(&union_subtypes) } else { union_subtypes };
+        let subtypes = if sort_subtypes { Rc::new(sort_types(&union_subtypes)) } else { union_subtypes };
         for (index, subtype) in subtypes.iter().enumerate() {
             callback(*subtype, i32::try_from(index).unwrap(), &subtypes);
         }
@@ -1089,7 +1089,8 @@ pub fn transform_possible_recursive_type_alias(
     let recursion_count = recursion_count + 1;
 
     if let Some(type_) = type_ {
-        let alias_info = type_.props.borrow().as_ref().and_then(|props| props.type_alias_info.clone());
+        // `type.props?.typeAliasInfo`, read where a branch needs it: cloning it copies its type args.
+        let alias_info = || type_.props.borrow().as_ref().and_then(|props| props.type_alias_info.clone());
 
         if crate::analyzer::types::is_type_var(type_) {
             let shared = TypeVarType(type_).d().shared.get();
@@ -1097,6 +1098,7 @@ pub fn transform_possible_recursive_type_alias(
             let bound_type = shared.bound_type.get();
             if let (Some(recursive_alias), Some(bound_type)) = (recursive_alias, bound_type) {
                 if !recursive_alias.name.is_empty() {
+                    let alias_info = alias_info();
                     let unspecialized_type = if crate::analyzer::types::TypeBase::is_instance(type_) {
                         convert_to_instance(bound_type, true)
                     } else {
@@ -1122,6 +1124,7 @@ pub fn transform_possible_recursive_type_alias(
         if crate::analyzer::types::is_union(type_)
             && crate::analyzer::types::UnionType(type_).d().priv_.borrow().includes_recursive_type_alias
         {
+            let alias_info = alias_info();
             let mut new_type = map_subtypes(
                 type_,
                 &mut |subtype| transform_possible_recursive_type_alias(Some(subtype), recursion_count),
@@ -1336,7 +1339,7 @@ pub fn get_specialized_tuple_type(type_: P<Type>) -> Option<ClassType> {
     // See if this class derives from Tuple or tuple. If it does, we'll assume that it
     // hasn't been overridden in a way that changes the behavior of the tuple class.
     let mro = class_type.d().shared.get().mro.borrow().clone();
-    let tuple_class = mro.into_iter().find(|mro_class| {
+    let tuple_class = mro.iter().copied().find(|mro_class| {
         crate::analyzer::types::is_instantiable_class(*mro_class) && is_tuple_class(ClassType(*mro_class))
     })?;
     if !crate::analyzer::types::is_instantiable_class(tuple_class) {
@@ -1463,7 +1466,7 @@ pub fn contains_literal_type(type_: P<Type>, include_type_args: bool) -> bool {
                         let priv_ = class_type.d().priv_.borrow();
                         match &priv_.tuple_type_args {
                             Some(tuple_type_args) => Some(tuple_type_args.borrow().iter().map(|t| t.type_).collect::<Vec<_>>()),
-                            None => priv_.type_args.clone(),
+                            None => priv_.type_args.clone().map(|a| a.to_vec()),
                         }
                     };
                     if let Some(type_args) = type_args {
@@ -1942,7 +1945,7 @@ pub fn get_protocol_symbols_recursive(
     }
 
     let base_classes = class_type.d().shared.get().base_classes.borrow().clone();
-    for base_class in base_classes {
+    for base_class in base_classes.iter().copied() {
         if crate::analyzer::types::is_class(base_class) && ClassType(base_class).d().shared.get().flags.get().any(class_flags) {
             get_protocol_symbols_recursive(ClassType(base_class), symbol_map, class_flags, recursion_count + 1);
         }
@@ -2002,7 +2005,7 @@ pub fn get_container_depth(type_: P<Type>, recursion_count: u32) -> u32 {
             );
         }
     } else if let Some(type_args) = type_args {
-        for type_arg in type_args {
+        for type_arg in type_args.iter().copied() {
             do_for_each_subtype(
                 type_arg,
                 &mut |subtype, _, _| {
@@ -2080,15 +2083,14 @@ pub fn get_class_member_iterator(
     member_name: &str,
     flags: MemberAccessFlags,
     skip_mro_class: Option<ClassType>,
-) -> Box<dyn Iterator<Item = ClassMember>> {
+) -> impl Iterator<Item = ClassMember> + '_ {
     // A TypeScript generator: each `next()` runs the body up to its next `yield`, so the
     // MRO walk and its partial specializations happen only as far as the caller reads.
-    let member_name = member_name.to_string();
     let declared_types_only = flags.any(MemberAccessFlags::DeclaredTypesOnly);
     let mut skipped_undeclared_type = false;
     let mut started = false;
     let mut finished = false;
-    let mut class_itr: Option<Box<dyn Iterator<Item = Vec<P<Type>>>>> = None;
+    let mut class_itr = None;
     // The MRO class being searched, its specialized form and symbol table, whether its typed
     // dict entries are skipped, and whether its instance members were looked at yet.
     let mut current: Option<(P<Type>, ClassType, SymbolTable, bool, bool)> = None;
@@ -2106,7 +2108,7 @@ pub fn get_class_member_iterator(
         skipped_undeclared_type: false,
     };
 
-    Box::new(std::iter::from_fn(move || {
+    std::iter::from_fn(move || {
         if finished {
             return None;
         }
@@ -2155,7 +2157,7 @@ pub fn get_class_member_iterator(
                     current = Some((mro_class, specialized_mro_class, member_fields, skip_td_entry, true));
 
                     if !flags.any(MemberAccessFlags::SkipInstanceMembers) {
-                        let symbol = member_fields.get(&member_name);
+                        let symbol = member_fields.get(member_name);
 
                         if let Some(symbol) = symbol {
                             if symbol.is_instance_member() && !skip_td_entry {
@@ -2172,7 +2174,7 @@ pub fn get_class_member_iterator(
                                         ),
                                         class_type: specialized_mro_class.0,
                                         unspecialized_class_type: mro_class,
-                                        is_read_only: is_member_read_only(specialized_mro_class, &member_name),
+                                        is_read_only: is_member_read_only(specialized_mro_class, member_name),
                                         is_type_declared: has_declared_type,
                                         skipped_undeclared_type,
                                     });
@@ -2187,7 +2189,7 @@ pub fn get_class_member_iterator(
                 // Next look at class members.
                 current = None;
                 if !flags.any(MemberAccessFlags::SkipClassMembers) {
-                    let mut symbol = member_fields.get(&member_name);
+                    let mut symbol = member_fields.get(member_name);
 
                     if let Some(found_symbol) = symbol {
                         if found_symbol.is_class_member() && !skip_td_entry {
@@ -2257,12 +2259,10 @@ pub fn get_class_member_iterator(
                 continue;
             }
 
-            let Some(next_class) = class_itr.as_mut().and_then(|class_itr| class_itr.next()) else {
+            let Some((mro_class, specialized_mro_class)) = class_itr.as_mut().and_then(|class_itr| class_itr.next()) else {
                 finished = true;
                 return None;
             };
-            let mro_class = next_class[0];
-            let specialized_mro_class = next_class[1];
 
             if !crate::analyzer::types::is_instantiable_class(mro_class) {
                 if !declared_types_only {
@@ -2292,10 +2292,10 @@ pub fn get_class_member_iterator(
                     .get()
                     .typed_dict_entries
                     .get()
-                    .is_some_and(|entries| entries.known_items.borrow().contains_key(&member_name));
+                    .is_some_and(|entries| entries.known_items.borrow().contains_key(member_name));
             current = Some((mro_class, specialized_mro_class, member_fields, skip_td_entry, false));
         }
-    }))
+    })
 }
 
 // analyzer/typeUtils.ts:1970
@@ -2320,7 +2320,7 @@ pub fn get_class_iterator(
     class_type: P<Type>,
     flags: ClassIteratorFlags,
     skip_mro_class: Option<ClassType>,
-) -> Box<dyn Iterator<Item = Vec<P<Type>>>> {
+) -> impl Iterator<Item = (P<Type>, P<Type>)> {
     // A TypeScript generator: each `next()` runs the body up to its next `yield`. The MRO is
     // read by index, as `for..of` reads a live array.
     let mut started = false;
@@ -2328,7 +2328,7 @@ pub fn get_class_iterator(
     let mut index = 0;
     let mut found_skip_mro_class = skip_mro_class.is_none();
 
-    Box::new(std::iter::from_fn(move || {
+    std::iter::from_fn(move || {
         if finished {
             return None;
         }
@@ -2393,9 +2393,9 @@ pub fn get_class_iterator(
                 finished = true;
             }
 
-            return Some(vec![mro_class, specialized_mro_class]);
+            return Some((mro_class, specialized_mro_class));
         }
-    }))
+    })
 }
 
 // analyzer/typeUtils.ts:2035
@@ -2529,7 +2529,7 @@ pub fn get_type_var_args_recursive(type_: P<Type>, recursion_count: u32) -> Vec<
             let priv_ = ClassType(type_).d().priv_.borrow();
             match &priv_.tuple_type_args {
                 Some(tuple_type_args) => Some(tuple_type_args.borrow().iter().map(|e| e.type_).collect::<Vec<_>>()),
-                None => priv_.type_args.clone(),
+                None => priv_.type_args.clone().map(|a| a.to_vec()),
             }
         };
         if let Some(type_args) = type_args {
@@ -2611,7 +2611,7 @@ pub fn specialize_with_default_type_args(type_: ClassType) -> ClassType {
         &solution,
         &ApplyTypeVarOptions {
             replace_unsolved: Some(ApplyTypeVarOptionsReplaceUnsolved {
-                scope_ids: vec![type_var_scope_id.unwrap()],
+                scope_ids: vec![type_var_scope_id.unwrap()].into(),
                 tuple_class_type: None,
                 unsolved_exempt_type_vars: None,
                 use_unknown: None,
@@ -2638,7 +2638,7 @@ pub fn build_solution_from_specialized_class(class_type: ClassType) -> Rc<Constr
             true,
         )]);
     } else {
-        type_args = class_type.d().priv_.borrow().type_args.clone();
+        type_args = class_type.d().priv_.borrow().type_args.clone().map(|a| a.to_vec());
     }
 
     build_solution(&type_params, type_args.as_deref())
@@ -2700,7 +2700,7 @@ pub fn derives_from_class_recursive(
     }
 
     let base_classes = class_type.d().shared.get().base_classes.borrow().clone();
-    for base_class in base_classes {
+    for base_class in base_classes.iter().copied() {
         if crate::analyzer::types::is_instantiable_class(base_class) {
             if derives_from_class_recursive(ClassType(base_class), base_class_to_find, ignore_unknown) {
                 return true;
@@ -2723,10 +2723,12 @@ pub fn synthesize_type_var_for_self_cls(class_type: ClassType, is_cls_param: boo
     shared.is_synthesized_self.set(true);
     self_type.d().priv_.borrow_mut().scope_id = Some(scope_id.as_str().into());
     self_type.d().priv_.borrow_mut().scope_name = Some("".into());
-    let name = shared.name.borrow().clone();
-    let scope_name = self_type.d().priv_.borrow().scope_name.as_deref().unwrap_or_default().to_string();
-    let name_with_scope = TypeVarType::make_name_with_scope(&name, &scope_id, &scope_name);
-    self_type.d().priv_.borrow_mut().name_with_scope = Some(name_with_scope.into());
+    let name_with_scope = TypeVarType::make_name_with_scope(
+        &shared.name.borrow(),
+        &scope_id,
+        self_type.d().priv_.borrow().scope_name.as_deref().unwrap_or_default(),
+    );
+    self_type.d().priv_.borrow_mut().name_with_scope = Some(name_with_scope);
 
     let include_subclasses = class_type.d().priv_.borrow().include_subclasses.unwrap_or(false);
     let bound_type = ClassType::specialize(class_type, None, Some(false), include_subclasses, None, None);
@@ -3016,7 +3018,7 @@ pub fn get_members_for_class(
     include_instance_vars: bool,
 ) {
     let mro = class_type.d().shared.get().mro.borrow().clone();
-    for mro_class in mro {
+    for mro_class in mro.iter().copied() {
         if crate::analyzer::types::is_instantiable_class(mro_class) {
             // Add any new member variables from this class.
             let is_class_typed_dict = ClassType::is_typed_dict_class(ClassType(mro_class));
@@ -3056,7 +3058,7 @@ pub fn get_members_for_class(
         if let Some(metaclass) = metaclass {
             if crate::analyzer::types::is_instantiable_class(metaclass) {
                 let metaclass_mro = ClassType(metaclass).d().shared.get().mro.borrow().clone();
-                for mro_class in metaclass_mro {
+                for mro_class in metaclass_mro.iter().copied() {
                     if crate::analyzer::types::is_instantiable_class(mro_class) {
                         ClassType::get_symbol_table(ClassType(mro_class)).for_each(|symbol, name| {
                             let existing_symbol = symbol_table.get(name);
@@ -3232,7 +3234,7 @@ pub fn contains_any_or_unknown(type_: P<Type>, recurse: bool) -> Option<P<Type>>
                         let priv_ = type_.d().priv_.borrow();
                         match &priv_.tuple_type_args {
                             Some(tuple_type_args) => Some(tuple_type_args.borrow().iter().map(|t| t.type_).collect::<Vec<_>>()),
-                            None => priv_.type_args.clone(),
+                            None => priv_.type_args.clone().map(|a| a.to_vec()),
                         }
                     };
                     if let Some(type_args) = type_args {
@@ -3347,7 +3349,7 @@ pub fn is_partly_unknown(type_: P<Type>, recursion_count: u32) -> bool {
                 let priv_ = class_type.d().priv_.borrow();
                 match &priv_.tuple_type_args {
                     Some(tuple_type_args) => Some(tuple_type_args.borrow().iter().map(|t| t.type_).collect::<Vec<_>>()),
-                    None => priv_.type_args.clone(),
+                    None => priv_.type_args.clone().map(|a| a.to_vec()),
                 }
             };
             if let Some(type_args) = type_args {
@@ -3447,7 +3449,7 @@ pub fn combine_same_sized_tuples(type_: P<Type>, tuple_type: Option<P<Type>>) ->
                     // tuple with a known size. This includes named tuples.
                     let mro = ClassType(subtype).d().shared.get().mro.borrow().clone();
                     tuple_class = mro
-                        .into_iter()
+                        .iter().copied()
                         .find(|mro_class| {
                             crate::analyzer::types::is_class(*mro_class)
                                 && is_tuple_class(ClassType(*mro_class))
@@ -3626,7 +3628,7 @@ pub fn get_generator_type_args(return_type: P<Type>) -> Option<Vec<P<Type>>> {
     if crate::analyzer::types::is_class_instance(return_type) {
         let class_type = ClassType(return_type);
         if ClassType::is_built_in(class_type, Some(&["Generator", "AsyncGenerator"])) {
-            return class_type.d().priv_.borrow().type_args.clone();
+            return class_type.d().priv_.borrow().type_args.clone().map(|a| a.to_vec());
         } else if ClassType::is_built_in(class_type, Some(&["AwaitableGenerator"])) {
             // AwaitableGenerator has four type arguments, and the first 3
             // correspond to the generator.
@@ -3969,7 +3971,7 @@ pub fn compute_mro_linearization(class_type: ClassType) -> bool {
     let shared = class_type.d().shared.get();
 
     // Clear out any existing MRO information.
-    *shared.mro.borrow_mut() = Vec::new();
+    *shared.mro.borrow_mut() = Rc::new(Vec::new());
 
     let base_classes = shared.base_classes.borrow().clone();
     let filtered_base_classes: Vec<P<Type>> = base_classes
@@ -4047,7 +4049,7 @@ pub fn compute_mro_linearization(class_type: ClassType) -> bool {
         specialized_class_type = crate::analyzer::types::UnknownType::create(false).0;
     }
 
-    shared.mro.borrow_mut().push(specialized_class_type);
+    Rc::make_mut(&mut *shared.mro.borrow_mut()).push(specialized_class_type);
 
     // Helper function that returns true if the specified searchClass
     // is found in the "tail" (i.e. in elements 1 through n) of any
@@ -4099,14 +4101,14 @@ pub fn compute_mro_linearization(class_type: ClassType) -> bool {
                     if !crate::analyzer::types::is_class(head) && !crate::analyzer::types::is_any_or_unknown(head) {
                         head = crate::analyzer::types::UnknownType::create(false).0;
                     }
-                    shared.mro.borrow_mut().push(head);
+                    Rc::make_mut(&mut *shared.mro.borrow_mut()).push(head);
                     class_lists_to_merge[i].remove(0);
                     break;
                 }
 
                 if !is_in_tail(ClassType(first), &class_lists_to_merge) {
                     found_valid_head = true;
-                    shared.mro.borrow_mut().push(first);
+                    Rc::make_mut(&mut *shared.mro.borrow_mut()).push(first);
                     filter_class(ClassType(first), &mut class_lists_to_merge);
                     break;
                 }
@@ -4132,10 +4134,10 @@ pub fn compute_mro_linearization(class_type: ClassType) -> bool {
                 if !crate::analyzer::types::is_class(head) && !crate::analyzer::types::is_any_or_unknown(head) {
                     head = crate::analyzer::types::UnknownType::create(false).0;
                 }
-                shared.mro.borrow_mut().push(head);
+                Rc::make_mut(&mut *shared.mro.borrow_mut()).push(head);
                 class_lists_to_merge[non_empty_list].remove(0);
             } else {
-                shared.mro.borrow_mut().push(first);
+                Rc::make_mut(&mut *shared.mro.borrow_mut()).push(first);
                 filter_class(ClassType(first), &mut class_lists_to_merge);
             }
         }
@@ -4507,7 +4509,7 @@ pub(crate) fn transform_type_pair_recursive(
             }
 
             let transformed_type = crate::analyzer::types::TypeBase::clone_type(source_type);
-            crate::analyzer::types::UnionType(transformed_type).d().priv_.borrow_mut().subtypes = subtypes;
+            crate::analyzer::types::UnionType(transformed_type).d().priv_.borrow_mut().subtypes = Rc::new(subtypes);
             return transformed_type;
         }
 
@@ -4588,7 +4590,7 @@ pub(crate) fn transform_type_pair_recursive(
             let transformed_type = crate::analyzer::types::TypeBase::clone_type(source_type);
             {
                 let mut priv_ = ClassType(transformed_type).d().priv_.borrow_mut();
-                priv_.type_args = type_args;
+                priv_.type_args = type_args.map(Rc::from);
                 priv_.tuple_type_args = tuple_type_args
                     .map(|tuple_type_args| P::new_eval(RefCell::new(tuple_type_args)));
             }
@@ -4604,9 +4606,9 @@ pub(crate) fn transform_type_pair_recursive(
 // analyzer/typeUtils.ts:3687
 pub trait TypeVarTransformer {
     // analyzer/typeUtils.ts:3688
-    fn _pending_type_var_transformations(&self) -> &JsSet<String>;
+    fn _pending_type_var_transformations(&self) -> &SmallJsSet<Rc<str>>;
 
-    fn _pending_type_var_transformations_mut(&mut self) -> &mut JsSet<String>;
+    fn _pending_type_var_transformations_mut(&mut self) -> &mut SmallJsSet<Rc<str>>;
 
     // analyzer/typeUtils.ts:3689
     fn _pending_function_transformations(&self) -> &Vec<P<Type>>;
@@ -4614,7 +4616,7 @@ pub trait TypeVarTransformer {
     fn _pending_function_transformations_mut(&mut self) -> &mut Vec<P<Type>>;
 
     // analyzer/typeUtils.ts:3691
-    fn pending_type_var_transformations(&self) -> JsSet<String> {
+    fn pending_type_var_transformations(&self) -> SmallJsSet<Rc<str>> {
         self._pending_type_var_transformations().clone()
     }
 
@@ -4731,7 +4733,7 @@ pub trait TypeVarTransformer {
 
                 let scope_id = type_var.d().priv_.borrow().scope_id.clone();
                 if let Some(scope_id) = scope_id.filter(|id| !id.is_empty()) {
-                    self._pending_type_var_transformations_mut().insert(scope_id.to_string());
+                    self._pending_type_var_transformations_mut().insert(scope_id.clone());
                     replacement_type = self.apply(replacement_type, recursion_count);
                     self._pending_type_var_transformations_mut().shift_remove(&*scope_id);
                 }
@@ -5048,9 +5050,10 @@ pub trait TypeVarTransformer {
 
         if new_type_args.is_none() {
             let class_type_args = class_type.d().priv_.borrow().type_args.clone();
-            let type_args: Vec<P<Type>> = class_type_args
-                .clone()
-                .unwrap_or_else(|| type_params.iter().map(|type_param| type_param.0).collect());
+            let type_args: Vec<P<Type>> = match &class_type_args {
+                Some(class_type_args) => class_type_args.to_vec(),
+                None => type_params.iter().map(|type_param| type_param.0).collect(),
+            };
 
             if class_type_args.is_none() {
                 is_type_arg_explicit = false;
@@ -5330,18 +5333,18 @@ pub trait TypeVarTransformer {
 
 // analyzer/typeUtils.ts:4263
 pub struct TypeVarDefaultValidator {
-    pub(crate) _pending_type_var_transformations: JsSet<String>,
+    pub(crate) _pending_type_var_transformations: SmallJsSet<Rc<str>>,
     pub(crate) _pending_function_transformations: Vec<P<Type>>,
     pub(crate) _live_type_params: Vec<TypeVarType>,
     pub(crate) _invalid_type_vars: JsSet<String>,
 }
 
 impl TypeVarTransformer for TypeVarDefaultValidator {
-    fn _pending_type_var_transformations(&self) -> &JsSet<String> {
+    fn _pending_type_var_transformations(&self) -> &SmallJsSet<Rc<str>> {
         &self._pending_type_var_transformations
     }
 
-    fn _pending_type_var_transformations_mut(&mut self) -> &mut JsSet<String> {
+    fn _pending_type_var_transformations_mut(&mut self) -> &mut SmallJsSet<Rc<str>> {
         &mut self._pending_type_var_transformations
     }
 
@@ -5380,7 +5383,7 @@ impl TypeVarDefaultValidator {
     // analyzer/typeUtils.ts:4264
     pub fn new(_live_type_params: Vec<TypeVarType>, _invalid_type_vars: JsSet<String>) -> Self {
         TypeVarDefaultValidator {
-            _pending_type_var_transformations: JsSet::default(),
+            _pending_type_var_transformations: SmallJsSet::default(),
             _pending_function_transformations: Vec::new(),
             _live_type_params,
             _invalid_type_vars,
@@ -5390,18 +5393,18 @@ impl TypeVarDefaultValidator {
 
 // analyzer/typeUtils.ts:4278
 pub struct UniqueFunctionSignatureTransformer {
-    pub(crate) _pending_type_var_transformations: JsSet<String>,
+    pub(crate) _pending_type_var_transformations: SmallJsSet<Rc<str>>,
     pub(crate) _pending_function_transformations: Vec<P<Type>>,
     pub(crate) _signature_tracker: P<UniqueSignatureTracker>,
     pub(crate) _expression_offset: i32,
 }
 
 impl TypeVarTransformer for UniqueFunctionSignatureTransformer {
-    fn _pending_type_var_transformations(&self) -> &JsSet<String> {
+    fn _pending_type_var_transformations(&self) -> &SmallJsSet<Rc<str>> {
         &self._pending_type_var_transformations
     }
 
-    fn _pending_type_var_transformations_mut(&mut self) -> &mut JsSet<String> {
+    fn _pending_type_var_transformations_mut(&mut self) -> &mut SmallJsSet<Rc<str>> {
         &mut self._pending_type_var_transformations
     }
 
@@ -5443,11 +5446,11 @@ impl TypeVarTransformer for UniqueFunctionSignatureTransformer {
             // `doForEachConstraintSet` and `transformTypeVar`, which this class does not override.
             struct Super<'a>(&'a mut UniqueFunctionSignatureTransformer);
             impl TypeVarTransformer for Super<'_> {
-                fn _pending_type_var_transformations(&self) -> &JsSet<String> {
+                fn _pending_type_var_transformations(&self) -> &SmallJsSet<Rc<str>> {
                     self.0._pending_type_var_transformations()
                 }
 
-                fn _pending_type_var_transformations_mut(&mut self) -> &mut JsSet<String> {
+                fn _pending_type_var_transformations_mut(&mut self) -> &mut SmallJsSet<Rc<str>> {
                     self.0._pending_type_var_transformations_mut()
                 }
 
@@ -5510,7 +5513,7 @@ impl UniqueFunctionSignatureTransformer {
     // analyzer/typeUtils.ts:4279
     pub fn new(_signature_tracker: P<UniqueSignatureTracker>, _expression_offset: i32) -> Self {
         UniqueFunctionSignatureTransformer {
-            _pending_type_var_transformations: JsSet::default(),
+            _pending_type_var_transformations: SmallJsSet::default(),
             _pending_function_transformations: Vec::new(),
             _signature_tracker,
             _expression_offset,
@@ -5520,17 +5523,17 @@ impl UniqueFunctionSignatureTransformer {
 
 // analyzer/typeUtils.ts:4342
 pub struct BoundTypeVarTransform {
-    pub(crate) _pending_type_var_transformations: JsSet<String>,
+    pub(crate) _pending_type_var_transformations: SmallJsSet<Rc<str>>,
     pub(crate) _pending_function_transformations: Vec<P<Type>>,
     pub(crate) _scope_ids: Option<Vec<String>>,
 }
 
 impl TypeVarTransformer for BoundTypeVarTransform {
-    fn _pending_type_var_transformations(&self) -> &JsSet<String> {
+    fn _pending_type_var_transformations(&self) -> &SmallJsSet<Rc<str>> {
         &self._pending_type_var_transformations
     }
 
-    fn _pending_type_var_transformations_mut(&mut self) -> &mut JsSet<String> {
+    fn _pending_type_var_transformations_mut(&mut self) -> &mut SmallJsSet<Rc<str>> {
         &mut self._pending_type_var_transformations
     }
 
@@ -5560,7 +5563,7 @@ impl BoundTypeVarTransform {
     // analyzer/typeUtils.ts:4343
     pub fn new(_scope_ids: Option<Vec<String>>) -> Self {
         BoundTypeVarTransform {
-            _pending_type_var_transformations: JsSet::default(),
+            _pending_type_var_transformations: SmallJsSet::default(),
             _pending_function_transformations: Vec::new(),
             _scope_ids,
         }
@@ -5589,17 +5592,17 @@ impl BoundTypeVarTransform {
 
 // analyzer/typeUtils.ts:4375
 pub struct FreeTypeVarTransform {
-    pub(crate) _pending_type_var_transformations: JsSet<String>,
+    pub(crate) _pending_type_var_transformations: SmallJsSet<Rc<str>>,
     pub(crate) _pending_function_transformations: Vec<P<Type>>,
     pub(crate) _scope_ids: Vec<String>,
 }
 
 impl TypeVarTransformer for FreeTypeVarTransform {
-    fn _pending_type_var_transformations(&self) -> &JsSet<String> {
+    fn _pending_type_var_transformations(&self) -> &SmallJsSet<Rc<str>> {
         &self._pending_type_var_transformations
     }
 
-    fn _pending_type_var_transformations_mut(&mut self) -> &mut JsSet<String> {
+    fn _pending_type_var_transformations_mut(&mut self) -> &mut SmallJsSet<Rc<str>> {
         &mut self._pending_type_var_transformations
     }
 
@@ -5632,7 +5635,7 @@ impl FreeTypeVarTransform {
     // analyzer/typeUtils.ts:4376
     pub fn new(_scope_ids: Vec<String>) -> Self {
         FreeTypeVarTransform {
-            _pending_type_var_transformations: JsSet::default(),
+            _pending_type_var_transformations: SmallJsSet::default(),
             _pending_function_transformations: Vec::new(),
             _scope_ids,
         }
@@ -5651,7 +5654,7 @@ impl FreeTypeVarTransform {
 
 // analyzer/typeUtils.ts:4399
 pub struct ApplySolvedTypeVarsTransformer {
-    pub(crate) _pending_type_var_transformations: JsSet<String>,
+    pub(crate) _pending_type_var_transformations: SmallJsSet<Rc<str>>,
     pub(crate) _pending_function_transformations: Vec<P<Type>>,
     pub(crate) _is_solving_default_type: bool,
     pub(crate) _active_constraint_set_index: Option<i32>,
@@ -5660,11 +5663,11 @@ pub struct ApplySolvedTypeVarsTransformer {
 }
 
 impl TypeVarTransformer for ApplySolvedTypeVarsTransformer {
-    fn _pending_type_var_transformations(&self) -> &JsSet<String> {
+    fn _pending_type_var_transformations(&self) -> &SmallJsSet<Rc<str>> {
         &self._pending_type_var_transformations
     }
 
-    fn _pending_type_var_transformations_mut(&mut self) -> &mut JsSet<String> {
+    fn _pending_type_var_transformations_mut(&mut self) -> &mut SmallJsSet<Rc<str>> {
         &mut self._pending_type_var_transformations
     }
 
@@ -5733,7 +5736,10 @@ impl TypeVarTransformer for ApplySolvedTypeVarsTransformer {
                 // it represents an instance of a type. If the replacement includes
                 // a generic class that has not been specialized, specialize it
                 // now with default type arguments.
-                let replace_unsolved = self._options.replace_unsolved.clone();
+                // The callback reads two fields of `replaceUnsolved`; copy just those.
+                let replace_unsolved = self._options.replace_unsolved.as_ref().map(|replace_unsolved| {
+                    (replace_unsolved.use_unknown.unwrap_or(false), replace_unsolved.tuple_class_type)
+                });
                 replacement = map_subtypes(
                     replacement,
                     &mut |subtype| {
@@ -5752,9 +5758,9 @@ impl TypeVarTransformer for ApplySolvedTypeVarsTransformer {
                             // `subtype.shared.typeParams` is always an array, so only the type
                             // arguments decide.
                             if ClassType(subtype).d().priv_.borrow().type_args.is_none() {
-                                if let Some(replace_unsolved) = &replace_unsolved {
-                                    return Some(if replace_unsolved.use_unknown.unwrap_or(false) {
-                                        specialize_with_unknown_type_args(ClassType(subtype), replace_unsolved.tuple_class_type).0
+                                if let Some((use_unknown, tuple_class_type)) = replace_unsolved {
+                                    return Some(if use_unknown {
+                                        specialize_with_unknown_type_args(ClassType(subtype), tuple_class_type).0
                                     } else {
                                         specialize_with_default_type_args(ClassType(subtype)).0
                                     });
@@ -6024,7 +6030,7 @@ impl ApplySolvedTypeVarsTransformer {
     // analyzer/typeUtils.ts:4403
     pub fn new(_solution: Rc<ConstraintSolution>, _options: ApplyTypeVarOptions) -> Self {
         ApplySolvedTypeVarsTransformer {
-            _pending_type_var_transformations: JsSet::default(),
+            _pending_type_var_transformations: SmallJsSet::default(),
             _pending_function_transformations: Vec::new(),
             _is_solving_default_type: false,
             _active_constraint_set_index: None,
@@ -6114,18 +6120,18 @@ impl ApplySolvedTypeVarsTransformer {
 
 // analyzer/typeUtils.ts:4728
 pub struct UnificationTypeTransformer {
-    pub(crate) _pending_type_var_transformations: JsSet<String>,
+    pub(crate) _pending_type_var_transformations: SmallJsSet<Rc<str>>,
     pub(crate) _pending_function_transformations: Vec<P<Type>>,
     pub(crate) _live_type_var_scopes: Vec<String>,
     pub(crate) _usage_offset: Option<i32>,
 }
 
 impl TypeVarTransformer for UnificationTypeTransformer {
-    fn _pending_type_var_transformations(&self) -> &JsSet<String> {
+    fn _pending_type_var_transformations(&self) -> &SmallJsSet<Rc<str>> {
         &self._pending_type_var_transformations
     }
 
-    fn _pending_type_var_transformations_mut(&mut self) -> &mut JsSet<String> {
+    fn _pending_type_var_transformations_mut(&mut self) -> &mut SmallJsSet<Rc<str>> {
         &mut self._pending_type_var_transformations
     }
 
@@ -6155,7 +6161,7 @@ impl UnificationTypeTransformer {
     // analyzer/typeUtils.ts:4729
     pub fn new(_live_type_var_scopes: Vec<String>, _usage_offset: Option<i32>) -> Self {
         UnificationTypeTransformer {
-            _pending_type_var_transformations: JsSet::default(),
+            _pending_type_var_transformations: SmallJsSet::default(),
             _pending_function_transformations: Vec::new(),
             _live_type_var_scopes,
             _usage_offset,
@@ -6180,7 +6186,8 @@ impl UnificationTypeTransformer {
 // Inline object type at ApplyTypeVarOptions.replaceUnsolved.
 #[derive(Clone)]
 pub struct ApplyTypeVarOptionsReplaceUnsolved {
-    pub scope_ids: Vec<String>,
+    /// Shared: `applySolvedTypeVars` hands its options to the transformer it builds.
+    pub scope_ids: Rc<[String]>,
     pub tuple_class_type: Option<ClassType>,
     pub unsolved_exempt_type_vars: Option<Vec<TypeVarType>>,
     pub use_unknown: Option<bool>,

@@ -56,7 +56,7 @@ use crate::parser::parse_nodes::{
     StringListNode, StringNode, TypeAliasNode, TypeAnnotationNode, TypeParameterListNode,
     TypeParameterNode, UnpackNode, WithItemNode, YieldFromNode, YieldNode,
 };
-use jsrt::{JsMap, JsSet, JsString, P};
+use jsrt::{FxHashMap, JsMap, JsSet, JsString, P};
 use std::cell::{Cell, OnceCell, RefCell};
 use std::rc::Rc;
 
@@ -367,11 +367,14 @@ pub struct TypeEvaluator {
     // analyzer/typeEvaluator.ts:675
     pub(crate) code_flow_analyzer_cache: RefCell<JsMap<u32, Vec<CodeFlowAnalyzerCacheEntry>>>,
     // analyzer/typeEvaluator.ts:676
-    pub(crate) type_cache: Cell<P<RefCell<JsMap<u32, TypeCacheEntry>>>>,
+    pub(crate) type_cache: Cell<P<RefCell<FxHashMap<u32, TypeCacheEntry>>>>,
     // analyzer/typeEvaluator.ts:677
     pub(crate) type_form_type_cache: Cell<P<RefCell<JsMap<u32, Vec<TypeFormTypeCacheEntry>>>>>,
     // analyzer/typeEvaluator.ts:678
-    pub(crate) effective_type_cache: RefCell<JsMap<u32, JsMap<String, P<EffectiveTypeResult>>>>,
+    /// Keyed by symbol id, then by `effectiveTypeCacheKey`, the string
+    /// `${usageNodeId ?? '.'}${useLastDecl ? '*' : ''}`, held as the pair it encodes. Nothing
+    /// iterates either map.
+    pub(crate) effective_type_cache: RefCell<FxHashMap<u32, FxHashMap<(Option<u32>, bool), P<EffectiveTypeResult>>>>,
     // analyzer/typeEvaluator.ts:679
     pub(crate) expected_type_cache: RefCell<JsMap<u32, ExpectedTypeCacheEntry>>,
     // analyzer/typeEvaluator.ts:680
@@ -388,7 +391,7 @@ pub struct TypeEvaluator {
     pub(crate) return_type_inference_context_stack: RefCell<Vec<ReturnTypeInferenceContext>>,
     // analyzer/typeEvaluator.ts:686
     pub(crate) return_type_inference_type_cache:
-        Cell<Option<P<RefCell<JsMap<u32, TypeCacheEntry>>>>>,
+        Cell<Option<P<RefCell<FxHashMap<u32, TypeCacheEntry>>>>>,
     // analyzer/typeEvaluator.ts:687
     pub(crate) return_type_inference_type_form_type_cache:
         Cell<Option<P<RefCell<JsMap<u32, Vec<TypeFormTypeCacheEntry>>>>>>,
@@ -417,7 +420,7 @@ pub fn create_type_evaluator(
     ));
     let speculative_type_tracker = P::new_eval(RefCell::new(SpeculativeTypeTracker {
         _speculative_context_stack: Vec::new(),
-        _speculative_type_cache: JsMap::default(),
+        _speculative_type_cache: FxHashMap::default(),
         _active_dependent_types: Vec::new(),
     }));
 
@@ -451,9 +454,9 @@ pub fn create_type_evaluator(
         assign_class_to_self_stack: RefCell::new(Vec::new()),
         function_recursion_map: RefCell::new(JsMap::default()),
         code_flow_analyzer_cache: RefCell::new(JsMap::default()),
-        type_cache: Cell::new(P::new_eval(RefCell::new(JsMap::default()))),
+        type_cache: Cell::new(P::new_eval(RefCell::new(FxHashMap::default()))),
         type_form_type_cache: Cell::new(P::new_eval(RefCell::new(JsMap::default()))),
-        effective_type_cache: RefCell::new(JsMap::default()),
+        effective_type_cache: RefCell::new(FxHashMap::default()),
         expected_type_cache: RefCell::new(JsMap::default()),
         asymmetric_accessor_assignment_cache: RefCell::new(JsSet::default()),
         deferred_class_completions: RefCell::new(Vec::new()),
@@ -539,9 +542,9 @@ impl TypeEvaluator {
     pub fn dispose_evaluator(&self) {
         *self.function_recursion_map.borrow_mut() = JsMap::default();
         *self.code_flow_analyzer_cache.borrow_mut() = JsMap::default();
-        self.type_cache.set(P::new_eval(RefCell::new(JsMap::default())));
+        self.type_cache.set(P::new_eval(RefCell::new(FxHashMap::default())));
         self.type_form_type_cache.set(P::new_eval(RefCell::new(JsMap::default())));
-        *self.effective_type_cache.borrow_mut() = JsMap::default();
+        *self.effective_type_cache.borrow_mut() = FxHashMap::default();
         *self.expected_type_cache.borrow_mut() = JsMap::default();
         *self.asymmetric_accessor_assignment_cache.borrow_mut() = JsSet::default();
     }
@@ -901,14 +904,13 @@ impl TypeEvaluator {
     // analyzer/typeEvaluator.ts:994
     pub(crate) fn pop_symbol_resolution(&self, symbol: P<Symbol>) -> bool {
         let popped_entry = self.symbol_resolution_stack.borrow_mut().pop();
-        common::debug::assert(
-            popped_entry.as_ref().is_some_and(|entry| entry.symbol_id == symbol.id),
-            Some(&format!(
-                "Symbol resolution stack mismatch: expected symbol {}, got {}",
+        if !popped_entry.as_ref().is_some_and(|entry| entry.symbol_id == symbol.id) {
+            common::debug::fail(Some(&format!(
+                "False expression: Symbol resolution stack mismatch: expected symbol {}, got {}",
                 symbol.id,
                 popped_entry.as_ref().map_or("empty stack".to_string(), |entry| entry.symbol_id.to_string())
-            )),
-        );
+            )));
+        }
         popped_entry.unwrap().is_result_valid
     }
 
@@ -966,7 +968,7 @@ impl TypeEvaluator {
                         self.infer_variance_for_class(class_type_result.class_type);
 
                         let type_params = class_type_result.class_type.d().shared.get().type_params.borrow().clone();
-                        let type_param = type_params.into_iter().find(|param| {
+                        let type_param = type_params.iter().copied().find(|param| {
                             analyzer::types::is_type_same(
                                 param.0,
                                 type_var_type.0,
@@ -1221,7 +1223,7 @@ impl TypeEvaluator {
                     Some(type_class),
                     None,
                 );
-                any_class.d().shared.get().base_classes.borrow_mut().push(object_class);
+                Rc::make_mut(&mut *any_class.d().shared.get().base_classes.borrow_mut()).push(object_class);
                 analyzer::type_utils::compute_mro_linearization(any_class);
                 let any_special_form = analyzer::types::AnyType::create_special_form();
 
@@ -3838,7 +3840,7 @@ impl TypeEvaluator {
                     let symbol = symbol_with_scope.symbol;
                     return symbol
                         .get_declarations()
-                        .into_iter()
+                        .iter().copied()
                         .find(|decl| self.is_explicit_type_alias_declaration(*decl))
                         .is_some();
                 }
@@ -5452,7 +5454,7 @@ impl TypeEvaluator {
                             if let Some(member_symbol) = member_symbol {
                                 let class_level_decls: Vec<P<Declaration>> = member_symbol
                                     .get_declarations()
-                                    .into_iter()
+                                    .iter().copied()
                                     .filter(|decl| {
                                         analyzer::parse_tree_utils::get_enclosing_function(
                                             decl.node.get(),
@@ -6180,7 +6182,7 @@ impl TypeEvaluator {
                                             .borrow()
                                             .name_with_scope
                                             .as_deref()
-                                            == Some(type_var_name.as_str())
+                                            == Some(&*type_var_name)
                                     });
 
                                 // If this type variable is being constrained to a single index,
@@ -6375,7 +6377,7 @@ impl TypeEvaluator {
                 .and_then(|options| options.sort_subtypes)
                 .unwrap_or(false)
             {
-                analyzer::type_utils::sort_types(&union_subtypes)
+                Rc::new(analyzer::type_utils::sort_types(&union_subtypes))
             } else {
                 union_subtypes
             };
@@ -7970,7 +7972,7 @@ impl TypeEvaluator {
                 if let Some(class_type_info) = class_type_info {
                     if !ClassType::is_partially_evaluated(class_type_info.class_type) {
                         type_params_for_scope =
-                            Some(class_type_info.class_type.d().shared.get().type_params.borrow().clone());
+                            Some(class_type_info.class_type.d().shared.get().type_params.borrow().to_vec());
                     }
                 }
 
@@ -9376,7 +9378,7 @@ impl TypeEvaluator {
                 let final_var_type_decl = member_info
                     .symbol
                     .get_declarations()
-                    .into_iter()
+                    .iter().copied()
                     .find(|decl| self.is_final_variable_declaration(*decl));
 
                 if let Some(final_var_type_decl) = final_var_type_decl {
@@ -10721,7 +10723,7 @@ impl TypeEvaluator {
                         type_class_type: None,
                         replace_unsolved: Some(
                             analyzer::type_utils::ApplyTypeVarOptionsReplaceUnsolved {
-                                scope_ids: vec![alias_info.shared.type_var_scope_id.clone()],
+                                scope_ids: vec![alias_info.shared.type_var_scope_id.clone()].into(),
                                 tuple_class_type: self.get_tuple_class_type(),
                                 unsolved_exempt_type_vars: None,
                                 use_unknown: None,
@@ -10776,7 +10778,7 @@ impl TypeEvaluator {
                     type_class_type: None,
                     replace_unsolved: Some(
                         analyzer::type_utils::ApplyTypeVarOptionsReplaceUnsolved {
-                            scope_ids: vec![alias_info.shared.type_var_scope_id.clone()],
+                            scope_ids: vec![alias_info.shared.type_var_scope_id.clone()].into(),
                             tuple_class_type: self.get_tuple_class_type(),
                             unsolved_exempt_type_vars: None,
                             use_unknown: None,
@@ -11086,7 +11088,7 @@ impl TypeEvaluator {
                             type_class_type: None,
                             replace_unsolved: Some(
                                 analyzer::type_utils::ApplyTypeVarOptionsReplaceUnsolved {
-                                    scope_ids: vec![alias_info.shared.type_var_scope_id.clone()],
+                                    scope_ids: vec![alias_info.shared.type_var_scope_id.clone()].into(),
                                     tuple_class_type: self.get_tuple_class_type(),
                                     unsolved_exempt_type_vars: None,
                                     use_unknown: None,
@@ -13319,7 +13321,7 @@ impl TypeEvaluator {
                                 );
                             }
                         } else {
-                            for type_arg in type_args {
+                            for type_arg in type_args.iter().copied() {
                                 self.collect_literal_enum_classes(
                                     type_arg,
                                     literal_enum_classes,
@@ -14964,9 +14966,9 @@ impl TypeEvaluator {
                             type_class_type: None,
                             replace_unsolved: Some(
                                 analyzer::type_utils::ApplyTypeVarOptionsReplaceUnsolved {
-                                    scope_ids: analyzer::type_utils::get_type_var_scope_ids(
+                                    scope_ids: Rc::from(analyzer::type_utils::get_type_var_scope_ids(
                                         bound_to_type.0,
-                                    ),
+                                    )),
                                     tuple_class_type: self.get_tuple_class_type(),
                                     unsolved_exempt_type_vars: None,
                                     use_unknown: None,
@@ -15312,7 +15314,7 @@ impl TypeEvaluator {
                 dest_class
             };
             let mro = src_class.d().shared.get().mro.borrow().clone();
-            let base_class = mro.into_iter().find(|mro_class| {
+            let base_class = mro.iter().copied().find(|mro_class| {
                 analyzer::types::is_class(*mro_class)
                     && ClassType::is_same_generic_class(
                         instantiable_dest_type,
@@ -17280,12 +17282,12 @@ impl TypeEvaluator {
                         let base_classes =
                             self.get_base_classes_from_type_call(ClassType(base_tuple_type));
                         if let Some(base_classes) = base_classes {
-                            new_class_type
+                            Rc::make_mut(&mut *new_class_type
                                 .d()
                                 .shared
                                 .get()
                                 .base_classes
-                                .borrow_mut()
+                                .borrow_mut())
                                 .extend(base_classes);
                         }
                     }
@@ -17300,12 +17302,12 @@ impl TypeEvaluator {
                     .is_empty()
                 {
                     let object_type = self.get_built_in_type(error_node, "object");
-                    new_class_type
+                    Rc::make_mut(&mut *new_class_type
                         .d()
                         .shared
                         .get()
                         .base_classes
-                        .borrow_mut()
+                        .borrow_mut())
                         .push(object_type);
                 }
                 new_class_type
@@ -19435,9 +19437,9 @@ impl TypeEvaluator {
                         type_class_type: None,
                         replace_unsolved: Some(
                             analyzer::type_utils::ApplyTypeVarOptionsReplaceUnsolved {
-                                scope_ids: analyzer::type_utils::get_type_var_scope_ids(
+                                scope_ids: Rc::from(analyzer::type_utils::get_type_var_scope_ids(
                                     return_type,
-                                ),
+                                )),
                                 use_unknown: Some(true),
                                 tuple_class_type: self.get_tuple_class_type(),
                                 unsolved_exempt_type_vars: None,
@@ -19839,7 +19841,7 @@ impl TypeEvaluator {
             Some(&ApplyTypeVarOptions {
                 type_class_type: None,
                 replace_unsolved: Some(analyzer::type_utils::ApplyTypeVarOptionsReplaceUnsolved {
-                    scope_ids: analyzer::type_utils::get_type_var_scope_ids(type_.0),
+                    scope_ids: Rc::from(analyzer::type_utils::get_type_var_scope_ids(type_.0)),
                     unsolved_exempt_type_vars: Some(
                         self.get_unknown_exempt_type_vars_for_return_type(type_, return_type),
                     ),
@@ -21176,7 +21178,7 @@ impl TypeEvaluator {
                 Some(&ApplyTypeVarOptions {
                     replace_unsolved: Some(
                         analyzer::type_utils::ApplyTypeVarOptionsReplaceUnsolved {
-                            scope_ids: analyzer::type_utils::get_type_var_scope_ids(type_var.0),
+                            scope_ids: Rc::from(analyzer::type_utils::get_type_var_scope_ids(type_var.0)),
                             tuple_class_type: self.get_tuple_class_type(),
                             unsolved_exempt_type_vars: None,
                             use_unknown: None,
@@ -22088,12 +22090,12 @@ impl TypeEvaluator {
         } else {
             base_class
         };
-        class_type
+        Rc::make_mut(&mut *class_type
             .d()
             .shared
             .get()
             .base_classes
-            .borrow_mut()
+            .borrow_mut())
             .push(base_class_entry);
         analyzer::type_utils::compute_mro_linearization(class_type);
 
@@ -22263,12 +22265,12 @@ impl TypeEvaluator {
             base_tuple_type.d().shared.get().effective_metaclass.get(),
             None,
         );
-        class_type
+        Rc::make_mut(&mut *class_type
             .d()
             .shared
             .get()
             .base_classes
-            .borrow_mut()
+            .borrow_mut())
             .extend(base_classes);
 
         if !analyzer::type_utils::compute_mro_linearization(class_type) {
@@ -24051,7 +24053,7 @@ impl TypeEvaluator {
                     type_class_type: None,
                     replace_unsolved: Some(
                         analyzer::type_utils::ApplyTypeVarOptionsReplaceUnsolved {
-                            scope_ids: Vec::new(),
+                            scope_ids: Rc::from(Vec::new()),
                             tuple_class_type: self.get_tuple_class_type(),
                             unsolved_exempt_type_vars: None,
                             use_unknown: None,
@@ -24565,7 +24567,7 @@ impl TypeEvaluator {
                                     type_class_type: None,
                                     replace_unsolved: Some(
                                         analyzer::type_utils::ApplyTypeVarOptionsReplaceUnsolved {
-                                            scope_ids: Vec::new(),
+                                            scope_ids: Rc::from(Vec::new()),
                                             tuple_class_type: self.get_tuple_class_type(),
                                             unsolved_exempt_type_vars: None,
                                             use_unknown: None,
@@ -27181,7 +27183,7 @@ impl TypeEvaluator {
                 Some(analyzer::types::TypeVarScopeType::Class),
             );
             type_param.d().shared.get().declared_variance.set(type_param_variance);
-            special_class_type.d().shared.get().type_params.borrow_mut().push(type_param);
+            Rc::make_mut(&mut *special_class_type.d().shared.get().type_params.borrow_mut()).push(type_param);
         }
 
         let special_built_in_class_declaration = self
@@ -27239,7 +27241,7 @@ impl TypeEvaluator {
                     special_class_type = ClassType::clone_for_typing_alias(ClassType(base_class), assigned_name.to_string());
                 } else {
                     let shared = special_class_type.d().shared.get();
-                    shared.base_classes.borrow_mut().push(base_class);
+                    Rc::make_mut(&mut *shared.base_classes.borrow_mut()).push(base_class);
                     shared
                         .effective_metaclass
                         .set(ClassType(base_class).d().shared.get().effective_metaclass.get());
@@ -27248,7 +27250,7 @@ impl TypeEvaluator {
             }
             None => {
                 let shared = special_class_type.d().shared.get();
-                shared.base_classes.borrow_mut().push(analyzer::types::UnknownType::create(false).0);
+                Rc::make_mut(&mut *shared.base_classes.borrow_mut()).push(analyzer::types::UnknownType::create(false).0);
                 shared.effective_metaclass.set(Some(analyzer::types::UnknownType::create(false).0));
                 analyzer::type_utils::compute_mro_linearization(special_class_type);
             }
@@ -27317,12 +27319,12 @@ impl TypeEvaluator {
         // though it derives from 'str'.
         if assigned_name == "LiteralString" {
             let str_class = self.prefetched.borrow().as_ref().and_then(|p| p.str_class);
-            ClassType(special_type)
+            Rc::make_mut(&mut *ClassType(special_type)
                 .d()
                 .shared
                 .get()
                 .base_classes
-                .borrow_mut()
+                .borrow_mut())
                 .push(str_class.unwrap_or_else(|| analyzer::types::AnyType::create(false).0));
             analyzer::type_utils::compute_mro_linearization(ClassType(special_type));
 
@@ -27875,7 +27877,7 @@ impl TypeEvaluator {
             doc_string.as_deref(),
         );
 
-        *new_class_type.d().shared.get().base_classes.borrow_mut() = vec![type1.0, type2.0];
+        *new_class_type.d().shared.get().base_classes.borrow_mut() = Rc::new(vec![type1.0, type2.0]);
         analyzer::type_utils::compute_mro_linearization(new_class_type);
 
         let condition1 = type1.props.borrow().as_ref().and_then(|p| p.condition.clone());
@@ -28207,7 +28209,7 @@ impl TypeEvaluator {
                         );
                     }
 
-                    shared.base_classes.borrow_mut().push(arg_type);
+                    Rc::make_mut(&mut *shared.base_classes.borrow_mut()).push(arg_type);
                     if analyzer::types::is_instantiable_class(arg_type) {
                         let arg_class = ClassType(arg_type);
                         if ClassType::is_enum_class(arg_class) {
@@ -28465,7 +28467,7 @@ impl TypeEvaluator {
         {
             // If there are no other (known) base classes, the class implicitly derives from object.
             let object_type = self.get_built_in_type(node.0, "object");
-            shared.base_classes.borrow_mut().push(object_type);
+            Rc::make_mut(&mut *shared.base_classes.borrow_mut()).push(object_type);
         }
 
         // If genericTypeParams or protocolTypeParams are provided,
@@ -28476,7 +28478,7 @@ impl TypeEvaluator {
                 self.verify_generic_type_params(name_node.0, &type_params, generic_type_params);
             }
         }
-        *shared.type_params.borrow_mut() = generic_type_params.unwrap_or_else(|| type_params.clone());
+        *shared.type_params.borrow_mut() = Rc::new(generic_type_params.unwrap_or_else(|| type_params.clone()));
 
         // Determine if one or more type parameters is autovariance.
         let class_type_params = shared.type_params.borrow().clone();
@@ -28647,7 +28649,7 @@ impl TypeEvaluator {
                                     )
                                 })
                                 .collect();
-                            *shared.type_params.borrow_mut() = pseudo_type_params;
+                            *shared.type_params.borrow_mut() = Rc::new(pseudo_type_params);
                         }
                     }
                 }
@@ -29156,7 +29158,7 @@ impl TypeEvaluator {
 
         if effective_metaclass.is_none_or(analyzer::types::is_instantiable_class) {
             let base_classes = shared.base_classes.borrow().clone();
-            for base_class in base_classes {
+            for base_class in base_classes.iter().copied() {
                 if analyzer::types::is_instantiable_class(base_class) {
                     let base_class_meta = ClassType(base_class)
                         .d()
@@ -30304,7 +30306,7 @@ impl TypeEvaluator {
                                             type_class_type: None,
                                             replace_unsolved: Some(
                                                 analyzer::type_utils::ApplyTypeVarOptionsReplaceUnsolved {
-                                                    scope_ids,
+                                                    scope_ids: Rc::from(scope_ids),
                                                     tuple_class_type: self.get_tuple_class_type(),
                                                     unsolved_exempt_type_vars: None,
                                                     use_unknown: None,
@@ -31604,7 +31606,7 @@ impl TypeEvaluator {
             alias_decl = symbol_with_scope
                 .symbol
                 .get_declarations()
-                .into_iter()
+                .iter().copied()
                 .find(|decl| decl.type_ == analyzer::declaration::DeclarationType::Alias);
         }
 
@@ -32683,7 +32685,7 @@ impl TypeEvaluator {
 
         // Make sure the argument list count is correct.
         let type_params =
-            if ClassType::is_pseudo_generic_class(class_type) { vec![] } else { ClassType::get_type_params(class_type) };
+            if ClassType::is_pseudo_generic_class(class_type) { vec![] } else { ClassType::get_type_params(class_type).to_vec() };
 
         // If there are no type parameters or args, the class is already specialized.
         // No need to do any more work.
@@ -32905,7 +32907,7 @@ impl TypeEvaluator {
                 Some(&ApplyTypeVarOptions {
                     type_class_type: None,
                     replace_unsolved: Some(analyzer::type_utils::ApplyTypeVarOptionsReplaceUnsolved {
-                        scope_ids: analyzer::type_utils::get_type_var_scope_ids(class_type.0),
+                        scope_ids: Rc::from(analyzer::type_utils::get_type_var_scope_ids(class_type.0)),
                         tuple_class_type: self.get_tuple_class_type(),
                         unsolved_exempt_type_vars: None,
                         use_unknown: None,
@@ -33320,7 +33322,7 @@ impl TypeEvaluator {
         if honor_code_flow && scope_type_honors_code_flow {
             if let Some(found) = symbol_with_scope.clone() {
                 // Filter the declarations based on flow reachability.
-                let reachable_decl = found.symbol.get_declarations().into_iter().find(|&decl| {
+                let reachable_decl = found.symbol.get_declarations().iter().copied().find(|&decl| {
                     if decl.type_ != analyzer::declaration::DeclarationType::Alias && decl.type_ != analyzer::declaration::DeclarationType::Intrinsic {
                         // Determine if the declaration is in the same execution scope as the "usageNode" node.
                         let mut usage_scope_node = analyzer::parse_tree_utils::get_execution_scope_node(node, reader);
@@ -33568,7 +33570,7 @@ impl TypeEvaluator {
                     if let Some(function_scope) = function_scope {
                         let param_symbol = function_scope.look_up_symbol(param_name);
                         if let Some(param_symbol) = param_symbol {
-                            return param_symbol.get_declarations().into_iter().find(|decl| {
+                            return param_symbol.get_declarations().iter().copied().find(|decl| {
                                 decl.type_ == analyzer::declaration::DeclarationType::Param
                             });
                         }
@@ -33584,7 +33586,7 @@ impl TypeEvaluator {
                                 None,
                             );
                             if let Some(lookup_results) = lookup_results {
-                                return lookup_results.symbol.get_declarations().into_iter().find(|decl| {
+                                return lookup_results.symbol.get_declarations().iter().copied().find(|decl| {
                                     decl.type_ == analyzer::declaration::DeclarationType::Variable
                                 });
                             }
@@ -33688,7 +33690,7 @@ impl TypeEvaluator {
         };
         match typed_decls {
             Some(typed_decls) if !typed_decls.is_empty() => decls.extend(typed_decls),
-            _ => decls.extend(symbol.get_declarations()),
+            _ => decls.extend(symbol.get_declarations().iter().copied()),
         }
 
         let synth_type_info = symbol.get_synthesized_type();
@@ -33830,7 +33832,7 @@ impl TypeEvaluator {
                     let decls_for_this_import: Vec<P<Declaration>> = symbol_in_scope
                         .symbol
                         .get_declarations()
-                        .into_iter()
+                        .iter().copied()
                         .filter(|decl| {
                             decl.type_ == analyzer::declaration::DeclarationType::Alias
                                 && Some(decl.node.get()) == node.parent.get()
@@ -34992,7 +34994,7 @@ impl TypeEvaluator {
     ) -> bool {
         let non_slots_decls: Vec<P<Declaration>> = symbol
             .get_declarations()
-            .into_iter()
+            .iter().copied()
             .filter(|decl| {
                 decl.type_ != analyzer::declaration::DeclarationType::Variable
                     || !decl.variable().unwrap().is_inference_allowed_in_py_typed.get().unwrap_or(false)
@@ -35202,14 +35204,7 @@ impl TypeEvaluator {
         // one replaces it, and such a call is an ancestor of this one), so the flag is enough.
         let had_cache_entries = self.effective_type_cache.borrow().contains_key(&symbol.id);
         let usage_node_id = usage_node.map(|usage_node| usage_node.id.get());
-        let effective_type_cache_key = format!(
-            "{}{}",
-            match usage_node_id {
-                None => ".".to_owned(),
-                Some(usage_node_id) => usage_node_id.to_string(),
-            },
-            if use_last_decl { "*" } else { "" }
-        );
+        let effective_type_cache_key = (usage_node_id, use_last_decl);
         let cache_entry = self
             .effective_type_cache
             .borrow()
@@ -35227,13 +35222,13 @@ impl TypeEvaluator {
             // Add the entry to the cache so we don't need to compute it next time.
             let mut effective_type_cache = self.effective_type_cache.borrow_mut();
             if !had_cache_entries {
-                effective_type_cache.insert(symbol.id, JsMap::default());
+                effective_type_cache.insert(symbol.id, FxHashMap::default());
             }
 
             effective_type_cache
                 .get_mut(&symbol.id)
                 .unwrap()
-                .insert(effective_type_cache_key.clone(), result);
+                .insert(effective_type_cache_key, result);
         };
 
         // Infer the type.
@@ -35398,7 +35393,7 @@ impl TypeEvaluator {
             decls_to_consider.clear();
         }
 
-        let result = self.get_type_of_symbol_for_decls(symbol, &decls_to_consider, &effective_type_cache_key);
+        let result = self.get_type_of_symbol_for_decls(symbol, &decls_to_consider, effective_type_cache_key);
         result.includes_variable_decl.set(Some(includes_variable_decl));
         result.includes_illegal_type_alias_decl.set(Some(includes_illegal_type_alias_decl));
 
@@ -35415,7 +35410,7 @@ impl TypeEvaluator {
         &self,
         symbol: P<Symbol>,
         decls: &[P<Declaration>],
-        type_cache_key: &str,
+        type_cache_key: (Option<u32>, bool),
     ) -> P<EffectiveTypeResult> {
         let mut types_to_combine: Vec<P<Type>> = Vec::new();
         let mut is_incomplete = false;
@@ -35491,7 +35486,7 @@ impl TypeEvaluator {
             .effective_type_cache
             .borrow()
             .get(&symbol.id)
-            .and_then(|cache_entries| cache_entries.get(type_cache_key).copied())
+            .and_then(|cache_entries| cache_entries.get(&type_cache_key).copied())
             .and_then(|cache_entry| cache_entry.evaluation_attempts);
         let evaluation_attempts = previous_evaluation_attempts.unwrap_or(0) + 1;
 
@@ -35971,7 +35966,7 @@ impl TypeEvaluator {
                     .push(ReturnTypeInferenceContext { function_node, code_flow_analyzer });
 
                 // `try` body; the `finally` block follows it.
-                self.return_type_inference_type_cache.set(Some(P::new_eval(RefCell::new(JsMap::default()))));
+                self.return_type_inference_type_cache.set(Some(P::new_eval(RefCell::new(FxHashMap::default()))));
                 self.return_type_inference_type_form_type_cache.set(Some(P::new_eval(RefCell::new(JsMap::default()))));
 
                 let mut all_arg_types_are_unknown = true;
@@ -36410,7 +36405,7 @@ impl TypeEvaluator {
                         .map(|tuple_type_args| tuple_type_args.get().borrow())
                         .as_deref()
                         .map(|tuple_type_args| tuple_type_args.iter().map(|tuple_type_arg| tuple_type_arg.type_).collect())
-                })
+                }).map(|a| a.to_vec())
             };
             let has_gradual_type_arg = specialized_type_args.as_ref().map(|specialized_type_args| {
                 specialized_type_args.iter().any(|&type_arg| {
@@ -36640,7 +36635,7 @@ impl TypeEvaluator {
 
             // Now handle generic base classes.
             let base_classes = dest_type.d().shared.get().base_classes.borrow().clone();
-            for base_class in base_classes {
+            for base_class in base_classes.iter().copied() {
                 if !is_assignable
                     || !analyzer::types::is_instantiable_class(base_class)
                     || ClassType::is_built_in(
@@ -36658,7 +36653,7 @@ impl TypeEvaluator {
 
                 if !ignore_base_class_variance {
                     let type_params = specialized_dest_base_class.d().shared.get().type_params.borrow().clone();
-                    for (index, param) in type_params.into_iter().enumerate() {
+                    for (index, param) in type_params.iter().copied().enumerate() {
                         if analyzer::types::is_param_spec(param.0)
                             || analyzer::types::is_type_var_tuple(param.0)
                             || param.d().shared.get().is_synthesized.get()
@@ -36930,8 +36925,8 @@ impl TypeEvaluator {
                 .as_deref()
                 .map(|tuple_type_args| tuple_type_args.iter().map(|t| t.type_).collect());
         } else {
-            dest_type_args = dest_type.d().priv_.borrow().type_args.clone().unwrap();
-            src_type_args = src_type.d().priv_.borrow().type_args.clone();
+            dest_type_args = dest_type.d().priv_.borrow().type_args.clone().unwrap().to_vec();
+            src_type_args = src_type.d().priv_.borrow().type_args.clone().map(|a| a.to_vec());
         }
 
         let mut is_compatible = true;
@@ -38197,11 +38192,28 @@ impl TypeEvaluator {
     }
 
     // analyzer/typeEvaluator.ts:27089
+    /// `ClassType.isBuiltIn(type, 'TypeForm') || (ClassType.isSpecialBuiltIn(type) && (name === 'TypeForm'
+    /// || aliasName === 'TypeForm'))`, with both calls inlined: every branch needs `name`, `fullName` or
+    /// `aliasName` to be 'TypeForm', so other classes return before the flags are read.
     pub(crate) fn is_type_form_class(&self, type_: ClassType) -> bool {
-        ClassType::is_built_in(type_, Some(&["TypeForm"]))
-            || (ClassType::is_special_built_in(type_, None)
-                && (type_.d().shared.get().name == "TypeForm"
-                    || type_.d().priv_.borrow().cold().alias_name.as_deref() == Some("TypeForm")))
+        let shared = type_.d().shared.get();
+        let priv_ = type_.d().priv_.borrow();
+        let alias_name = priv_.cold().alias_name.as_deref();
+        let name_matches = shared.name == "TypeForm";
+        let alias_matches = alias_name == Some("TypeForm");
+        if !name_matches && !alias_matches && shared.full_name != "TypeForm" {
+            return false;
+        }
+
+        let flags = shared.flags.get();
+        // ClassType.isBuiltIn(type, 'TypeForm')
+        if flags.any(analyzer::types::ClassTypeFlags::BuiltIn) && (name_matches || shared.full_name == "TypeForm" || alias_matches) {
+            return true;
+        }
+        // ClassType.isSpecialBuiltIn(type)
+        let is_special_built_in =
+            flags.any(analyzer::types::ClassTypeFlags::SpecialBuiltIn) || alias_name.is_some_and(|alias_name| !alias_name.is_empty());
+        is_special_built_in && (name_matches || alias_matches)
     }
 
     // analyzer/typeEvaluator.ts:27097
@@ -38695,7 +38707,7 @@ impl TypeEvaluator {
     ) -> bool {
         let concrete_type = self.make_top_level_type_vars_concrete(type_, false, None);
         let other_subtypes: Vec<P<Type>> = if analyzer::types::is_union(other_type) {
-            UnionType::cast(other_type).unwrap().d().priv_.borrow().subtypes.clone()
+            UnionType::cast(other_type).unwrap().d().priv_.borrow().subtypes.to_vec()
         } else {
             vec![other_type]
         };
@@ -39050,7 +39062,7 @@ impl TypeEvaluator {
         // If so, we need to use a slower path.
         if !analyzer::type_utils::requires_specialization(dest_type.0, None, 0) {
             let dest_subtypes = dest_type.d().priv_.borrow().subtypes.clone();
-            for subtype in dest_subtypes {
+            for &subtype in dest_subtypes.iter() {
                 if self.assign_type(
                     subtype,
                     src_type,
@@ -39248,7 +39260,7 @@ impl TypeEvaluator {
                 .unwrap_or_default()
                 .into_iter()
                 .filter(|constraint| {
-                    constraint.type_var.d().priv_.borrow().name_with_scope.as_deref() == Some(dest_type_var_name.as_str())
+                    constraint.type_var.d().priv_.borrow().name_with_scope.as_deref() == Some(&*dest_type_var_name)
                 })
                 .collect();
 
@@ -39259,7 +39271,7 @@ impl TypeEvaluator {
 
             !applicable_conditions.iter().any(|condition| {
                 let condition_name_with_scope = condition.type_var.d().priv_.borrow().name_with_scope.clone();
-                if condition_name_with_scope.as_deref() == Some(TypeVarType::get_name_with_scope(dest_type).as_str()) {
+                if condition_name_with_scope.as_deref() == Some(&*TypeVarType::get_name_with_scope(dest_type)) {
                     if let Some(bound_type) = dest_type.d().shared.get().bound_type.get() {
                         common::debug::assert(
                             condition.constraint_index == 0,
@@ -39317,7 +39329,7 @@ impl TypeEvaluator {
         // Make sure that the protocol class doesn't define any fields that
         // a normal function wouldn't be compatible with.
         let mro = obj_type.d().shared.get().mro.borrow().clone();
-        for mro_class in mro {
+        for mro_class in mro.iter().copied() {
             if analyzer::types::is_class(mro_class) && ClassType::is_protocol_class(ClassType::cast(mro_class).unwrap()) {
                 // Nothing below writes the symbol table, so a snapshot iterates it as the TS does.
                 let fields: Vec<(String, P<Symbol>)> = ClassType::get_symbol_table(ClassType::cast(mro_class).unwrap())
@@ -41841,7 +41853,7 @@ impl TypeEvaluator {
     pub fn is_final_variable(&self, symbol: P<Symbol>) -> bool {
         symbol
             .get_declarations()
-            .into_iter()
+            .iter().copied()
             .any(|decl| self.is_final_variable_declaration(decl))
     }
 

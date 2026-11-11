@@ -183,7 +183,7 @@ pub trait TypeWalker {
                     Some(tuple_type_args) => {
                         Some(tuple_type_args.borrow().iter().map(|t| t.type_).collect::<Vec<_>>())
                     }
-                    None => priv_.type_args.clone(),
+                    None => priv_.type_args.clone().map(|a| a.to_vec()),
                 }
             };
             if let Some(type_args) = type_args {
@@ -206,7 +206,7 @@ pub trait TypeWalker {
     // analyzer/typeWalker.ts:192
     fn visit_union(&mut self, type_: UnionType) {
         let subtypes = type_.d().priv_.borrow().subtypes.clone();
-        for subtype in subtypes {
+        for &subtype in subtypes.iter() {
             self.walk(subtype);
             if self._is_walk_canceled() {
                 break;

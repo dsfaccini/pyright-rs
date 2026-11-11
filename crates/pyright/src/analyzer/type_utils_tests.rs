@@ -1,6 +1,7 @@
 //! Port of `packages/pyright-internal/src/tests/typeUtils.test.ts`.
 
 use crate::analyzer::type_utils::transform_type_pair;
+use std::rc::Rc;
 use crate::analyzer::types::{
     AnyType, ClassType, ClassTypeFlags, FunctionParam, FunctionParamFlags, FunctionType,
     FunctionTypeFlags, TupleTypeArg, Type, TypeVarKind, TypeVarScopeType, TypeVarType, UnionType,
@@ -118,9 +119,9 @@ fn transform_aligned_class_arguments_but_preserve_mismatched_wrappers() {
     let source_other = TypeVarType::create_instance("T", TypeVarKind::TypeVar).0;
     let target_other = TypeVarType::create_instance("T", TypeVarKind::TypeVar).0;
     let source_union = UnionType::create();
-    source_union.d().priv_.borrow_mut().subtypes = vec![source_leaf, source_other];
+    source_union.d().priv_.borrow_mut().subtypes = Rc::new(vec![source_leaf, source_other]);
     let target_union = UnionType::create();
-    target_union.d().priv_.borrow_mut().subtypes = vec![target_leaf, target_other];
+    target_union.d().priv_.borrow_mut().subtypes = Rc::new(vec![target_leaf, target_other]);
 
     let wrapper = ClassType::clone_as_instance(create_class("Wrapper"), true);
     let source_class = ClassType::specialize(
@@ -187,7 +188,7 @@ fn transform_aligned_class_arguments_but_preserve_mismatched_wrappers() {
     );
 
     let short_target_union = UnionType::create();
-    short_target_union.d().priv_.borrow_mut().subtypes = vec![target_leaf];
+    short_target_union.d().priv_.borrow_mut().subtypes = Rc::new(vec![target_leaf]);
     assert_eq!(
         transform_type_pair(
             source_union.0,

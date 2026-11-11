@@ -3,6 +3,7 @@
 //! Evaluator code: allocate with `P::new_eval` (docs/porting.md, "memory").
 
 use crate::analyzer::constraint_solution::ConstraintSolution;
+use std::rc::Rc;
 use crate::analyzer::constraint_solver::add_constraints_for_expected_type;
 use crate::analyzer::constraint_tracker::ConstraintTracker;
 use crate::analyzer::constructor_transform::{
@@ -155,7 +156,7 @@ pub fn validate_constructor_args(
             &ApplyTypeVarOptions {
                 type_class_type: None,
                 replace_unsolved: Some(ApplyTypeVarOptionsReplaceUnsolved {
-                    scope_ids: vec![alias_info.shared.type_var_scope_id.clone()],
+                    scope_ids: vec![alias_info.shared.type_var_scope_id.clone()].into(),
                     tuple_class_type: evaluator.get_tuple_class_type(),
                     unsolved_exempt_type_vars: None,
                     use_unknown: None,
@@ -379,7 +380,7 @@ pub(crate) fn validate_new_and_init_methods(
                     &ApplyTypeVarOptions {
                         type_class_type: None,
                         replace_unsolved: Some(ApplyTypeVarOptionsReplaceUnsolved {
-                            scope_ids: get_type_var_scope_ids(type_.0),
+                            scope_ids: Rc::from(get_type_var_scope_ids(type_.0)),
                             tuple_class_type: evaluator.get_tuple_class_type(),
                             unsolved_exempt_type_vars: None,
                             use_unknown: None,
@@ -885,7 +886,7 @@ pub(crate) fn apply_expected_subtype_for_constructor(
         Some(&ApplyTypeVarOptions {
             type_class_type: None,
             replace_unsolved: Some(ApplyTypeVarOptionsReplaceUnsolved {
-                scope_ids: vec![],
+                scope_ids: vec![].into(),
                 tuple_class_type: evaluator.get_tuple_class_type(),
                 unsolved_exempt_type_vars: None,
                 use_unknown: None,
@@ -936,7 +937,7 @@ pub(crate) fn apply_expected_type_for_constructor(
             Some(&ApplyTypeVarOptions {
                 type_class_type: None,
                 replace_unsolved: Some(ApplyTypeVarOptionsReplaceUnsolved {
-                    scope_ids: vec![],
+                    scope_ids: vec![].into(),
                     tuple_class_type: evaluator.get_tuple_class_type(),
                     unsolved_exempt_type_vars: None,
                     use_unknown: None,
@@ -980,7 +981,7 @@ pub(crate) fn apply_expected_type_for_constructor(
             type_class_type: None,
             replace_unsolved: if default_if_not_found {
                 Some(ApplyTypeVarOptionsReplaceUnsolved {
-                    scope_ids: get_type_var_scope_ids(type_.0),
+                    scope_ids: Rc::from(get_type_var_scope_ids(type_.0)),
                     tuple_class_type: evaluator.get_tuple_class_type(),
                     unsolved_exempt_type_vars: None,
                     use_unknown: None,
@@ -1383,7 +1384,7 @@ pub(crate) fn create_function_from_init_method(
                     Some(&ApplyTypeVarOptions {
                         type_class_type: None,
                         replace_unsolved: Some(ApplyTypeVarOptionsReplaceUnsolved {
-                            scope_ids: get_type_var_scope_ids(object_type.0),
+                            scope_ids: Rc::from(get_type_var_scope_ids(object_type.0)),
                             tuple_class_type: evaluator.get_tuple_class_type(),
                             unsolved_exempt_type_vars: None,
                             use_unknown: None,

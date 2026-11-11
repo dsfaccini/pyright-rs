@@ -72,6 +72,26 @@ impl Hash for NumberValue {
     }
 }
 
+/// Appends `String(n)` for an integer `n`, without the `format!` machinery.
+pub fn push_integer(out: &mut String, n: i64) {
+    if n < 0 {
+        out.push('-');
+    }
+    let mut digits = [0u8; 20];
+    let mut i = digits.len();
+    let mut rest = n.unsigned_abs();
+    loop {
+        i -= 1;
+        digits[i] = b'0' + (rest % 10) as u8;
+        rest /= 10;
+        if rest == 0 {
+            break;
+        }
+    }
+    // Only ASCII digits were written.
+    out.push_str(std::str::from_utf8(&digits[i..]).unwrap());
+}
+
 /// JS `String(x)` for a number: the shortest digits that round-trip, plain
 /// notation from 1e-6 up to 1e21, `0` for `-0`.
 pub fn number_to_string(x: f64) -> String {
@@ -459,5 +479,17 @@ mod tests {
             NumberValue::Number(1.0),
             NumberValue::BigInt(JsBigInt::from(1))
         );
+    }
+
+    #[test]
+    fn push_integer_matches_number_to_string() {
+        for n in [0, 7, -7, 10, 1234567890, -2147483648, i64::MAX, i64::MIN + 1] {
+            let mut out = String::from("x");
+            push_integer(&mut out, n);
+            assert_eq!(out, format!("x{n}"));
+            if n.unsigned_abs() < 1 << 53 {
+                assert_eq!(out[1..], number_to_string(n as f64));
+            }
+        }
     }
 }

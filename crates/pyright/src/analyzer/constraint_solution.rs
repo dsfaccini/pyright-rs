@@ -5,12 +5,13 @@
 use crate::analyzer::types::{Type, TypeVarType};
 use jsrt::{LazyJsMap, P};
 use std::cell::RefCell;
+use std::rc::Rc;
 
 // analyzer/constraintSolution.ts:15
 #[derive(jsrt::Trace)]
 #[trace(eval)]
 pub struct ConstraintSolutionSet {
-    pub(crate) _type_var_map: RefCell<LazyJsMap<String, Option<P<Type>>>>,
+    pub(crate) _type_var_map: RefCell<LazyJsMap<Rc<str>, Option<P<Type>>>>,
 }
 // Most solution sets stay empty: the map is allocated on first insert (PLAN.md step 6).
 const _: () = assert!(size_of::<ConstraintSolutionSet>() <= 16);
