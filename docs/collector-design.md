@@ -97,6 +97,30 @@ On by default; `PYRIGHT_RS_GC_GENERATIONAL=0` turns it off, and every collection
 - A panic while marking (check mode's assertions, a borrowed `RefCell`) clears the marks before it unwinds, so a later collection traces everything again. A panic while sweeping aborts the process.
 - A block left with no live slot returns to the process's free-block pool. Up to `PYRIGHT_RS_GC_WARM_MIB` of such blocks (default 256) keep their pages, and new blocks come from them first, so allocating into them does not fault; `madvise(MADV_DONTNEED)` returns the pages of the rest to the OS.
 
+## sweep cost
+
+Measured on pydantic-ai, release builds, 2026-11-11: the on/off runs at ba5e86f, the experiments as prototypes over its parent 5282561.
+
+- **Collection on against off.** Five interleaved runs each, collection on and `PYRIGHT_RS_GC=off`, same binary, load average 1.9 to 5.1: median wall 32.70 s against 28.30 s, +15.5% (median of the pairwise ratios 1.154). User cycles 164 to 181 G against 122 to 129 G. System time 1.5 to 1.7 s against 3.5 to 3.9 s: with collection off the run faults in 17.6 GiB of fresh pages.
+- **Method.** Single runs moved by up to 40% while other work loaded the devbox to 4 to 11. Two builds are compared by running both at once under one hold of `/tmp/pyright-rs-pydantic-ai.lock`, so both see the same load; pauses come from `PYRIGHT_RS_GC_LOG=1`. Cache misses come from IBS samples of ops that miss L3 (`perf record -e ibs_op/l3missonly=1,cnt_ctl=1,swfilt=1/u`).
+- **Where the pause goes.** Collections pause 2.8 to 2.9 s in all: marking 0.84 s on 8 threads, the sweep 1.95 s on the collecting thread. A minor collection drops about 9.1 M dead objects. The pauses alone are about 10% of the off time.
+- **Mutator costs.** The rest of the gap, about 1.5 s, is the barrier's mark-bit test (about 2.1 G ops) and allocation into reused memory. L3-miss samples: 13,635 on against 2,495 off; outside the collector the mutator rises from 2,078 to 6,770 and mimalloc from 416 to 1,669, mostly `TypeBase::clone_type` writing a reused slot (+818; 460 with an early form of the allocation prefetch, "heap layout") and mimalloc popping a reused block in `_mi_page_malloc_zero` (+741). With collection off every allocation lands in pages the kernel just zeroed.
+- **What a drop waits on.** Pointer chains: 73% of the sweep's cycles on `ConstraintSolutionSet` are the decrement of its `Rc<str>` keys' counts, four loads deep (slot, box, vector buffer, count). `Type::prefetch_owned` waits on the dead object's own slot.
+- **Why the sweep stays on the collecting thread.** Dead objects decrement non-atomic `Rc` counts they share with live objects (`JsString` is an `Rc<[u16]>`, type-variable names are `Rc<str>`, type arguments `Rc<[P<Type>]>`), so no other thread may drop them, during the pause or after it.
+
+Tried and not landed, each paired against the build before it:
+
+- **Lazy sweeping.** The sweep only records dead objects in the third bitmap; allocation drops one before it reuses the slot, the next collection drops the ones left, and marking panics on a handle to one. Pauses 3.0 s to 1.05 s, wall +5 s: the 2 s that left the pause came back as 7 s on the mutator, so one drop at a time there costs about 3.5 times a batched one. With `prefetch_owned` on the next dead slot at each allocation, still +2.1 to +3.3 s, and peak +0.12 GiB.
+- **Deeper sweep prefetching.** Prefetching each dead slot 8 objects ahead of the `prefetch_owned` call: sweep time -2% to +10% over four pairs. `prefetch_owned` 16 objects ahead instead of 4: -1% to -6%. A staged pipeline over each block that also prefetches at depths 1 and 2 (the buffers' buffers, the `Rc` counts): +14% to +16%. Out-of-order execution already overlaps the loads of independent drops, so the extra passes only add work.
+- **16 marking threads** instead of 8: marking -5% to -12%, about 70 ms.
+- **Stamped type-cache entries** (instructions, not wall). A `TypeCacheEntry` records the collections finished when it was made, and a minor collection skips entries made before the last one, whose targets are old: -0.29 G instructions (0.11%), for a change to the evaluator's type.
+
+What would cut the pause further, none tried:
+
+1. **Parallel drops during the pause.** A derived step moves each dead object's `Rc` fields into a list the collecting thread drops after helper threads free the rest. It is a new derive over every evaluator type; every helper free is a cross-thread mimalloc free, about 4 times a local one, whose list the owning thread walks later; a field moved and then dropped again is a double drop that check mode would have to catch.
+2. **Atomic counts** (`Arc`) for the `Rc` kinds dead and live objects share, then a sweeper thread concurrent with the mutator. Every clone and drop in the mutator pays an atomic operation.
+3. **Fewer dead objects that need a drop.** `ConstraintSolutionSet`, `TypeResult`, `DiagnosticAddendum` and `ConstraintSet` are 5.5 M of the 9.1 M dead objects of a minor collection. Allocating such evaluator temporaries outside the collected heap is an evaluator change.
+
 ## trigger
 
 - Generational collection is due every `floor` ("generational collection", **When**). Without generations, collect before each file when the evaluator slot bytes allocated since the last collection reach `max(ratio × live slot bytes after the last collection, floor)`. Defaults: ratio 1, and floor 512 MiB with generations and 1 GiB without; check mode ratio 0 and floor 64 MiB. `PYRIGHT_RS_GC_RATIO` and `PYRIGHT_RS_GC_MIN_MIB` override them; both at 0 collect before every file that follows an allocation.
