@@ -228,7 +228,7 @@ pub(crate) fn apply_struct_unpack_transform(
     // as a string in `literalValue`.
     if !ClassType::is_built_in(
         format_class,
-        Some(&["str".to_string(), "bytes".to_string()]),
+        Some(&["str", "bytes"]),
     ) {
         return result.clone();
     }

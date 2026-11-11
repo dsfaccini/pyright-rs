@@ -1182,7 +1182,7 @@ impl CodeFlowEngine {
             {
                 if ClassType::is_built_in(
                     return_class,
-                    Some(&["Coroutine".to_string(), "CoroutineType".to_string()]),
+                    Some(&["Coroutine", "CoroutineType"]),
                 ) {
                     let type_args = return_class.d().priv_.borrow().type_args.clone();
                     if let Some(type_args) = type_args.filter(|type_args| type_args.len() >= 3) {
@@ -1334,7 +1334,7 @@ impl CodeFlowEngine {
                     {
                         if ClassType::is_built_in(
                             return_class,
-                            Some(&["Coroutine".to_string(), "CoroutineType".to_string()]),
+                            Some(&["Coroutine", "CoroutineType"]),
                         ) {
                             let type_args = return_class.d().priv_.borrow().type_args.clone();
                             if let Some(type_args) =
@@ -1365,7 +1365,7 @@ impl CodeFlowEngine {
                 if let Some(return_class) =
                     ClassType::cast(return_type).filter(|_| is_class_instance(return_type))
                 {
-                    if ClassType::is_built_in(return_class, Some(&["bool".to_string()])) {
+                    if ClassType::is_built_in(return_class, Some(&["bool"])) {
                         let literal_value = return_class.d().priv_.borrow().literal_value.clone();
                         if literal_value.is_none()
                             || matches!(literal_value, Some(LiteralValue::Boolean(true)))

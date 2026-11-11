@@ -305,7 +305,7 @@ pub fn get_type_of_binary_operation(
         if let Some(inference_context) = inference_context {
             let expected_type = inference_context.expected_type.get();
             if is_class_instance(expected_type)
-                && ClassType::is_built_in(ClassType(expected_type), Some(&["list".to_string()]))
+                && ClassType::is_built_in(ClassType(expected_type), Some(&["list"]))
                 && ClassType(expected_type)
                     .d()
                     .priv_
@@ -1463,7 +1463,7 @@ pub(crate) fn custom_metaclass_supports_method(type_: P<Type>, method_name: &str
         return false;
     };
 
-    if ClassType::is_built_in(ClassType(metaclass), Some(&["type".to_string()])) {
+    if ClassType::is_built_in(ClassType(metaclass), Some(&["type"])) {
         return false;
     }
 
@@ -1486,7 +1486,7 @@ pub(crate) fn custom_metaclass_supports_method(type_: P<Type>, method_name: &str
     if is_instantiable_class(member_info.class_type)
         && ClassType::is_built_in(
             ClassType(member_info.class_type),
-            Some(&["type".to_string()]),
+            Some(&["type"]),
         )
     {
         return false;

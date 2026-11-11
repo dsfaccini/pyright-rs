@@ -1486,18 +1486,17 @@ impl ClassType {
     }
 
     // analyzer/types.ts:1167
-    pub fn is_built_in(class_type: ClassType, class_name: Option<&[String]>) -> bool {
+    pub fn is_built_in(class_type: ClassType, class_name: Option<&[&str]>) -> bool {
         let shared = class_type.d().shared.get();
         if !shared.flags.get().any(ClassTypeFlags::BuiltIn) {
             return false;
         }
 
         if let Some(class_name) = class_name {
-            let alias_name = class_type.d().priv_.borrow().cold().alias_name.clone();
-            return class_name.iter().any(|name| {
-                *name == shared.name
-                    || *name == shared.full_name
-                    || Some(name) == alias_name.as_ref()
+            let priv_ = class_type.d().priv_.borrow();
+            let alias_name = priv_.cold().alias_name.as_deref();
+            return class_name.iter().any(|&name| {
+                name == shared.name || name == shared.full_name || Some(name) == alias_name
             });
         }
 
@@ -1809,7 +1808,7 @@ impl ClassType {
 
         let shared = class_type.d().shared.get();
         shared.flags.get().any(ClassTypeFlags::DisjointBase)
-            || ClassType::is_built_in(class_type, Some(&["object".to_string()]))
+            || ClassType::is_built_in(class_type, Some(&["object"]))
             || shared.has_non_empty_slots.get().unwrap_or(false)
     }
 
@@ -2122,13 +2121,13 @@ impl ClassType {
 
         // Special-case NamedTuple and Tuple classes because we rewrite the base classes
         // in these cases.
-        if ClassType::is_built_in(class_type, Some(&["NamedTuple".to_string()]))
-            && ClassType::is_built_in(type2, Some(&["NamedTuple".to_string()]))
+        if ClassType::is_built_in(class_type, Some(&["NamedTuple"]))
+            && ClassType::is_built_in(type2, Some(&["NamedTuple"]))
         {
             return true;
         }
-        if ClassType::is_built_in(class_type, Some(&["tuple".to_string()]))
-            && ClassType::is_built_in(type2, Some(&["tuple".to_string()]))
+        if ClassType::is_built_in(class_type, Some(&["tuple"]))
+            && ClassType::is_built_in(type2, Some(&["tuple"]))
         {
             return true;
         }
@@ -2216,7 +2215,7 @@ impl ClassType {
         // subclasses of object even though they are not explicitly declared
         // that way.
         if ClassType::is_built_in(subclass_type, None)
-            && ClassType::is_built_in(parent_class_type, Some(&["object".to_string()]))
+            && ClassType::is_built_in(parent_class_type, Some(&["object"]))
         {
             if let Some(inheritance_chain) = inheritance_chain.as_deref_mut() {
                 inheritance_chain.push(parent_class_type.0);
@@ -2228,7 +2227,7 @@ impl ClassType {
         // class is type.
         let subclass_depth = TypeBase::get_instantiable_depth(subclass_type.0);
         if subclass_depth > 0 {
-            if ClassType::is_built_in(parent_class_type, Some(&["type".to_string()]))
+            if ClassType::is_built_in(parent_class_type, Some(&["type"]))
                 && TypeBase::get_instantiable_depth(parent_class_type.0) < subclass_depth
             {
                 if let Some(inheritance_chain) = inheritance_chain.as_deref_mut() {
@@ -2241,8 +2240,8 @@ impl ClassType {
         // Handle the case where both source and dest are property objects. This
         // special case is needed because we synthesize a new class for each
         // property declaration.
-        if ClassType::is_built_in(subclass_type, Some(&["property".to_string()]))
-            && ClassType::is_built_in(parent_class_type, Some(&["property".to_string()]))
+        if ClassType::is_built_in(subclass_type, Some(&["property"]))
+            && ClassType::is_built_in(parent_class_type, Some(&["property"]))
         {
             if let Some(inheritance_chain) = inheritance_chain.as_deref_mut() {
                 inheritance_chain.push(subclass_type.0);
@@ -3457,7 +3456,7 @@ impl FunctionType {
     }
 
     // analyzer/types.ts:2346
-    pub fn is_built_in(type_: FunctionType, name: Option<&[String]>) -> bool {
+    pub fn is_built_in(type_: FunctionType, name: Option<&[&str]>) -> bool {
         let shared = type_.d().shared.get();
         if !shared.flags.get().any(FunctionTypeFlags::BuiltIn) {
             return false;
@@ -3466,7 +3465,7 @@ impl FunctionType {
         if let Some(name) = name {
             return name
                 .iter()
-                .any(|name| *name == shared.name || *name == shared.full_name);
+                .any(|&name| name == shared.name || name == shared.full_name);
         }
 
         true
@@ -4133,9 +4132,9 @@ impl UnionType {
                 .is_some_and(|props| props.condition.is_some());
             if let Some(literal_value) = literal_value.filter(|_| !has_condition) {
                 let is_instance = is_class_instance(new_type);
-                let is_str = ClassType::is_built_in(new_class, Some(&["str".to_string()]));
+                let is_str = ClassType::is_built_in(new_class, Some(&["str"]));
                 let is_int =
-                    !is_str && ClassType::is_built_in(new_class, Some(&["int".to_string()]));
+                    !is_str && ClassType::is_built_in(new_class, Some(&["int"]));
                 let is_enum = !is_str && !is_int && ClassType::is_enum_class(new_class);
 
                 let mut union_priv = union_type.d().priv_.borrow_mut();
@@ -4227,14 +4226,14 @@ impl UnionType {
                     &union_priv.literal_classes
                 };
 
-                if ClassType::is_built_in(class_subtype, Some(&["str".to_string()]))
+                if ClassType::is_built_in(class_subtype, Some(&["str"]))
                     && let Some(map) = &literal_maps.literal_str_map
                 {
                     return match &literal_value {
                         LiteralValue::String(value) => map.contains_key(value),
                         _ => false,
                     };
-                } else if ClassType::is_built_in(class_subtype, Some(&["int".to_string()]))
+                } else if ClassType::is_built_in(class_subtype, Some(&["int"]))
                     && let Some(map) = &literal_maps.literal_int_map
                 {
                     return match &literal_value {
@@ -5911,7 +5910,7 @@ pub(crate) fn _add_type_if_unique(
             &union_priv.literal_classes
         };
 
-        if ClassType::is_built_in(class_to_add, Some(&["str".to_string()]))
+        if ClassType::is_built_in(class_to_add, Some(&["str"]))
             && let Some(literal_value) = &literal_value
             && let Some(map) = &literal_maps.literal_str_map
         {
@@ -5924,7 +5923,7 @@ pub(crate) fn _add_type_if_unique(
                 UnionType::add_type(union_type, type_to_add);
             }
             return;
-        } else if ClassType::is_built_in(class_to_add, Some(&["int".to_string()]))
+        } else if ClassType::is_built_in(class_to_add, Some(&["int"]))
             && let Some(literal_value) = &literal_value
             && let Some(map) = &literal_maps.literal_int_map
         {
@@ -6030,9 +6029,9 @@ pub(crate) fn _add_type_if_unique(
 
             // If we're adding Literal[False] or Literal[True] to its
             // opposite, combine them into a non-literal 'bool' type.
-            if ClassType::is_built_in(class_type, Some(&["bool".to_string()]))
+            if ClassType::is_built_in(class_type, Some(&["bool"]))
                 && !has_condition(type_)
-                && ClassType::is_built_in(class_to_add, Some(&["bool".to_string()]))
+                && ClassType::is_built_in(class_to_add, Some(&["bool"]))
                 && !has_condition(type_to_add)
             {
                 let literal_to_add = class_to_add.d().priv_.borrow().literal_value.clone();
@@ -6177,9 +6176,9 @@ impl CalculateInheritedSlotsNamesDeferred {
             for base_class in base_classes {
                 if is_instantiable_class(base_class) {
                     let base_class = ClassType(base_class);
-                    if !ClassType::is_built_in(base_class, Some(&["object".to_string()]))
-                        && !ClassType::is_built_in(base_class, Some(&["type".to_string()]))
-                        && !ClassType::is_built_in(base_class, Some(&["Generic".to_string()]))
+                    if !ClassType::is_built_in(base_class, Some(&["object"]))
+                        && !ClassType::is_built_in(base_class, Some(&["type"]))
+                        && !ClassType::is_built_in(base_class, Some(&["Generic"]))
                     {
                         let inherited_slots_names = ClassType::get_inherited_slots_names(base_class);
                         if let Some(inherited_slots_names) = inherited_slots_names {

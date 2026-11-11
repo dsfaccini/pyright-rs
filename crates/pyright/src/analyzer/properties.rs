@@ -75,7 +75,7 @@ pub fn create_property(
     let file_info = node_info.get_file_info(decorator_node.0);
     let type_metaclass = evaluator.get_built_in_type(decorator_node.0, "type");
     let decorator_shared = decorator_type.d().shared.get();
-    let type_source_id = if ClassType::is_built_in(decorator_type, Some(&["property".to_string()]))
+    let type_source_id = if ClassType::is_built_in(decorator_type, Some(&["property"]))
     {
         get_type_source_id(decorator_node.0)
     } else {

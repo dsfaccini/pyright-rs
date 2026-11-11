@@ -91,7 +91,7 @@ pub fn is_enum_metaclass(class_type: ClassType) -> bool {
         is_class(mro_class)
             && ClassType::is_built_in(
                 ClassType(mro_class),
-                Some(&["EnumMeta".to_string(), "EnumType".to_string()]),
+                Some(&["EnumMeta", "EnumType"]),
             )
     })
 }
@@ -788,7 +788,7 @@ pub fn get_enum_declared_value_type(
         && is_class(declared_value_member.class_type)
         && !ClassType::is_built_in(
             ClassType(declared_value_member.class_type),
-            Some(&["Enum".to_string()]),
+            Some(&["Enum"]),
         )
     {
         value_type = Some(evaluator.get_type_of_member(declared_value_member));
@@ -855,7 +855,7 @@ pub fn get_type_of_enum_member(
             && is_class(member_info.class_type)
             && !ClassType::is_built_in(
                 ClassType(member_info.class_type),
-                Some(&["Enum".to_string()]),
+                Some(&["Enum"]),
             )
         {
             return None;
@@ -1046,7 +1046,7 @@ pub fn get_enum_auto_value_type(evaluator: &TypeEvaluator, node: ExpressionNode)
                 && is_class(member_class_type)
                 && !ClassType::is_built_in(
                     ClassType(member_class_type),
-                    Some(&["Enum".to_string()]),
+                    Some(&["Enum"]),
                 )
                 && let Some(declared_return_type) = FunctionType(member_info.type_.get())
                     .d()
@@ -1068,6 +1068,6 @@ pub(crate) fn is_repr_enum_class(enum_class: ClassType) -> bool {
     let mro = enum_class.d().shared.get().mro.borrow().clone();
     mro.iter().any(|&mro_class| {
         is_class(mro_class)
-            && ClassType::is_built_in(ClassType(mro_class), Some(&["ReprEnum".to_string()]))
+            && ClassType::is_built_in(ClassType(mro_class), Some(&["ReprEnum"]))
     })
 }
