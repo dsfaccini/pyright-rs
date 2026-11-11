@@ -4,7 +4,7 @@
 //! from the spec). A locale that would select another language fails loudly:
 //! see `load_strings_for_locale`.
 
-use jsrt::JsStr;
+use jsrt::{FxHashMap, JsStr};
 use std::cell::RefCell;
 
 use serde_json::Value;
@@ -55,13 +55,17 @@ const EN_US_STRINGS: &str = include_str!("package.nls.en-us.json");
 
 struct LocalizeState {
     default_strings: Option<Value>,
+    /// `default_strings` indexed by every key `getRawStringFromMap` finds a string for,
+    /// which pyright lacks (`PYRIGHT_RS_LOCALIZE_INDEX`).
+    default_index: Option<FxHashMap<String, String>>,
     locale_override: Option<String>,
     initialized: bool,
 }
 
 thread_local! {
-    static STATE: RefCell<LocalizeState> =
-        const { RefCell::new(LocalizeState { default_strings: None, locale_override: None, initialized: false }) };
+    static STATE: RefCell<LocalizeState> = const {
+        RefCell::new(LocalizeState { default_strings: None, default_index: None, locale_override: None, initialized: false })
+    };
 }
 
 // localization/localize.ts:73
@@ -72,15 +76,74 @@ fn get_raw_string_default(key: &str) -> String {
             initialize(&mut state);
         }
 
-        let key_parts: Vec<&str> = key.split('.').collect();
         // The localized map is always empty or English: see `initialize`.
-        match get_raw_string_from_map(state.default_strings.as_ref().unwrap(), &key_parts) {
+        let found = match localize_index_mode() {
+            LocalizeIndexMode::Off => raw_string_from_key(state.default_strings.as_ref().unwrap(), key),
+            mode => {
+                let indexed = state.default_index.as_ref().unwrap().get(key).cloned();
+                if mode == LocalizeIndexMode::Check {
+                    let walked = raw_string_from_key(state.default_strings.as_ref().unwrap(), key);
+                    assert!(indexed == walked, "PYRIGHT_RS_LOCALIZE_INDEX=check: {key:?} indexed {indexed:?}, walked {walked:?}");
+                }
+                indexed
+            }
+        };
+        match found {
             Some(str) => str,
             None => crate::common::debug::fail(Some(&format!(
                 "Missing localized string for key \"{key}\""
             ))),
         }
     })
+}
+
+fn raw_string_from_key(map: &Value, key: &str) -> Option<String> {
+    let key_parts: Vec<&str> = key.split('.').collect();
+    get_raw_string_from_map(map, &key_parts)
+}
+
+/// `PYRIGHT_RS_LOCALIZE_INDEX`: `on` (the default) looks a message up by its whole key in an
+/// index built once from the strings, `off` walks the key's parts through the JSON maps as
+/// pyright does, and `check` does both and panics when they differ.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum LocalizeIndexMode {
+    Off,
+    On,
+    Check,
+}
+
+fn localize_index_mode() -> LocalizeIndexMode {
+    static MODE: std::sync::OnceLock<LocalizeIndexMode> = std::sync::OnceLock::new();
+    *MODE.get_or_init(|| match std::env::var("PYRIGHT_RS_LOCALIZE_INDEX").as_deref() {
+        Err(_) | Ok("") | Ok("on") => LocalizeIndexMode::On,
+        Ok("off") => LocalizeIndexMode::Off,
+        Ok("check") => LocalizeIndexMode::Check,
+        Ok(other) => panic!("PYRIGHT_RS_LOCALIZE_INDEX must be on, off or check, not {other:?}"),
+    })
+}
+
+/// Adds to `index` the string `getRawStringFromMap` returns for each key below `prefix`. A
+/// lookup steps only into truthy values, and splits its key at dots, so a name with a dot is
+/// out of its reach.
+fn index_strings(map: &Value, prefix: &mut String, index: &mut FxHashMap<String, String>) {
+    let Value::Object(entries) = map else {
+        return;
+    };
+    for (name, value) in entries {
+        if !is_truthy(value) || name.contains('.') {
+            continue;
+        }
+        let len = prefix.len();
+        if len != 0 {
+            prefix.push('.');
+        }
+        prefix.push_str(name);
+        if let Some(found) = get_raw_string_from_map(value, &[]) {
+            index.insert(prefix.clone(), found);
+        }
+        index_strings(value, prefix, index);
+        prefix.truncate(len);
+    }
 }
 
 pub fn get_raw_string(key: &str) -> String {
@@ -120,6 +183,11 @@ fn is_truthy(value: &Value) -> bool {
 fn initialize(state: &mut LocalizeState) {
     state.default_strings =
         Some(serde_json::from_str(EN_US_STRINGS).expect("package.nls.en-us.json"));
+    if localize_index_mode() != LocalizeIndexMode::Off {
+        let mut index = FxHashMap::default();
+        index_strings(state.default_strings.as_ref().unwrap(), &mut String::new(), &mut index);
+        state.default_index = Some(index);
+    }
     let current_locale = get_locale_from_env(state.locale_override.as_deref());
     load_strings_for_locale(&current_locale);
     state.initialized = true;
@@ -4984,6 +5052,20 @@ pub use Localizer::DiagnosticAddendum as LocAddendum;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn index_matches_the_walk() {
+        let strings: Value = serde_json::from_str(EN_US_STRINGS).unwrap();
+        let mut index = FxHashMap::default();
+        index_strings(&strings, &mut String::new(), &mut index);
+        assert!(index.len() > 1000);
+        for (key, message) in &index {
+            assert_eq!(raw_string_from_key(&strings, key).as_ref(), Some(message), "{key}");
+        }
+        for key in ["Diagnostic", "Diagnostic.", "", "Diagnostic.noSuchMessage", "Localization.Diagnostic"] {
+            assert_eq!(index.get(key).cloned(), raw_string_from_key(&strings, key), "{key:?}");
+        }
+    }
 
     #[test]
     fn simple_and_parameterized_messages() {

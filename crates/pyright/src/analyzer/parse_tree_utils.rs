@@ -3301,6 +3301,54 @@ pub fn get_variable_doc_string_node(node: ExpressionNode) -> Option<StringListNo
 // file contents change).
 // analyzer/parseTreeUtils.ts:2713
 pub fn get_scope_id_for_node(node: P<ParseNode>, node_info: &dyn AnalyzerNodeInfoReader) -> TypeVarScopeId {
+    // The id depends only on the node's file, start and name, which never change after the
+    // parse, so the port remembers it per node; pyright builds it each time
+    // (`PYRIGHT_RS_SCOPE_ID_CACHE`).
+    thread_local! {
+        static SCOPE_IDS: std::cell::RefCell<jsrt::FxHashMap<P<ParseNode>, TypeVarScopeId>> =
+            std::cell::RefCell::new(jsrt::FxHashMap::default());
+    }
+    let mode = scope_id_cache_mode();
+    if mode == ScopeIdCacheMode::Off {
+        return build_scope_id_for_node(node, node_info);
+    }
+    match SCOPE_IDS.with_borrow(|ids| ids.get(&node).copied()) {
+        Some(scope_id) => {
+            if mode == ScopeIdCacheMode::Check {
+                let built = build_scope_id_for_node(node, node_info);
+                assert!(scope_id == built, "PYRIGHT_RS_SCOPE_ID_CACHE=check: cached {scope_id:?}, built {built:?}");
+            }
+            scope_id
+        }
+        None => {
+            let scope_id = build_scope_id_for_node(node, node_info);
+            SCOPE_IDS.with_borrow_mut(|ids| ids.insert(node, scope_id));
+            scope_id
+        }
+    }
+}
+
+/// `PYRIGHT_RS_SCOPE_ID_CACHE`: `on` (the default) remembers each node's scope id, `off`
+/// builds it on every call, and `check` builds it on every reuse and panics when it differs.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum ScopeIdCacheMode {
+    Off,
+    On,
+    Check,
+}
+
+fn scope_id_cache_mode() -> ScopeIdCacheMode {
+    static MODE: std::sync::OnceLock<ScopeIdCacheMode> = std::sync::OnceLock::new();
+    *MODE.get_or_init(|| match std::env::var("PYRIGHT_RS_SCOPE_ID_CACHE").as_deref() {
+        Err(_) | Ok("") | Ok("on") => ScopeIdCacheMode::On,
+        Ok("off") => ScopeIdCacheMode::Off,
+        Ok("check") => ScopeIdCacheMode::Check,
+        Ok(other) => panic!("PYRIGHT_RS_SCOPE_ID_CACHE must be on, off or check, not {other:?}"),
+    })
+}
+
+/// The body of `getScopeIdForNode`: the text is built in one buffer per thread and interned.
+fn build_scope_id_for_node(node: P<ParseNode>, node_info: &dyn AnalyzerNodeInfoReader) -> TypeVarScopeId {
     let mut name: &str = "";
     if let Some(class_node) = ClassNode::cast(node) {
         name = class_node.d().name.get().d().value();
@@ -3309,7 +3357,6 @@ pub fn get_scope_id_for_node(node: P<ParseNode>, node_info: &dyn AnalyzerNodeInf
     }
 
     let file_info = analyzer_node_info::get_file_info(node, node_info);
-    // The text is built in one buffer per thread and interned.
     thread_local! {
         static SCOPE_ID: std::cell::RefCell<String> = const { std::cell::RefCell::new(String::new()) };
     }
