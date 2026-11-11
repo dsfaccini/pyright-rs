@@ -1874,13 +1874,7 @@ pub fn apply_solved_type_vars(
         return type_;
     }
 
-    // The transformer keeps the solution; TypeScript hands it the same object. A new
-    // ConstraintSolution over the same solution sets stands in for it (the signature takes a
-    // reference, the transformer an Rc).
-    let solution = Rc::new(ConstraintSolution {
-        _solution_sets: solution._solution_sets.clone(),
-    });
-    let mut transformer = ApplySolvedTypeVarsTransformer::new(solution, options.clone());
+    let mut transformer = ApplySolvedTypeVarsTransformer::new(solution.clone(), options.clone());
     transformer.apply(type_, 0)
 }
 
@@ -2623,7 +2617,7 @@ pub fn specialize_with_default_type_args(type_: ClassType) -> ClassType {
 }
 
 // analyzer/typeUtils.ts:2193
-pub fn build_solution_from_specialized_class(class_type: ClassType) -> Rc<ConstraintSolution> {
+pub fn build_solution_from_specialized_class(class_type: ClassType) -> ConstraintSolution {
     let type_params = ClassType::get_type_params(class_type);
     let type_args: Option<Vec<P<Type>>>;
 
@@ -2648,11 +2642,11 @@ pub fn build_solution_from_specialized_class(class_type: ClassType) -> Rc<Constr
 pub fn build_solution(
     type_params: &[TypeVarType],
     type_args: Option<&[P<Type>]>,
-) -> Rc<ConstraintSolution> {
+) -> ConstraintSolution {
     let solution = ConstraintSolution::new(None);
 
     let Some(type_args) = type_args else {
-        return Rc::new(solution);
+        return solution;
     };
 
     for (index, type_param) in type_params.iter().enumerate() {
@@ -2661,7 +2655,7 @@ pub fn build_solution(
         }
     }
 
-    Rc::new(solution)
+    solution
 }
 
 // analyzer/typeUtils.ts:2232
@@ -5658,7 +5652,7 @@ pub struct ApplySolvedTypeVarsTransformer {
     pub(crate) _pending_function_transformations: Vec<P<Type>>,
     pub(crate) _is_solving_default_type: bool,
     pub(crate) _active_constraint_set_index: Option<i32>,
-    pub(crate) _solution: Rc<ConstraintSolution>,
+    pub(crate) _solution: ConstraintSolution,
     pub(crate) _options: ApplyTypeVarOptions,
 }
 
@@ -5981,10 +5975,10 @@ impl TypeVarTransformer for ApplySolvedTypeVarsTransformer {
         &mut self,
         callback: &mut dyn FnMut(&mut Self) -> FunctionType,
     ) -> P<Type> {
-        let solution_sets = self._solution.get_solution_sets();
+        let solution_set_count = self._solution.solution_set_count();
 
         // Handle the common case where there are not multiple signature contexts.
-        if solution_sets.len() <= 1 {
+        if solution_set_count <= 1 {
             return callback(self).0;
         }
 
@@ -5997,7 +5991,7 @@ impl TypeVarTransformer for ApplySolvedTypeVarsTransformer {
         // Loop through all of the signature contexts in the type var context
         // to create an overload type.
         let mut overload_types: Vec<P<Type>> = Vec::new();
-        for index in 0..solution_sets.len() {
+        for index in 0..solution_set_count {
             self._active_constraint_set_index = Some(i32::try_from(index).unwrap());
             overload_types.push(callback(self).0);
         }
@@ -6028,7 +6022,7 @@ impl TypeVarTransformer for ApplySolvedTypeVarsTransformer {
 
 impl ApplySolvedTypeVarsTransformer {
     // analyzer/typeUtils.ts:4403
-    pub fn new(_solution: Rc<ConstraintSolution>, _options: ApplyTypeVarOptions) -> Self {
+    pub fn new(_solution: ConstraintSolution, _options: ApplyTypeVarOptions) -> Self {
         ApplySolvedTypeVarsTransformer {
             _pending_type_var_transformations: SmallJsSet::default(),
             _pending_function_transformations: Vec::new(),

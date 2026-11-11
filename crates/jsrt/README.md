@@ -19,6 +19,7 @@ Every helper is tested against Node 26 through fixtures in `fixtures/`. Regenera
 | JavaScript | Rust |
 |---|---|
 | `a.slice(start, end)` | `array::slice(&a, start, end)` (`None` is an omitted `end`; borrows, so `.to_vec()` for the copy) |
+| array that always holds at least one value and is replaced whole, never edited | `NonEmptyList` (the first value inline: one value needs no allocation) |
 
 ## strings
 

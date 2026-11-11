@@ -28,7 +28,6 @@ use crate::analyzer::types::{
 use crate::common::diagnostic::DiagnosticAddendum;
 use crate::localization::localize::LocAddendum;
 use jsrt::P;
-use std::rc::Rc;
 
 // analyzer/constraintSolver.ts:78
 pub(crate) const MAX_SUBTYPE_COUNT_FOR_TYPE_VAR_LOWER_BOUND: u32 = 64;
@@ -212,7 +211,7 @@ pub fn solve_constraints(
     evaluator: &TypeEvaluator,
     constraints: P<ConstraintTracker>,
     options: Option<&SolveConstraintsOptions>,
-) -> Rc<ConstraintSolution> {
+) -> ConstraintSolution {
     let mut solution_sets: Vec<P<ConstraintSolutionSet>> = Vec::new();
 
     constraints.do_for_each_constraint_set(&mut |constraint_set, _| {
@@ -220,7 +219,7 @@ pub fn solve_constraints(
         solution_sets.push(solution_set);
     });
 
-    Rc::new(ConstraintSolution::new(Some(&solution_sets)))
+    ConstraintSolution::new(Some(&solution_sets))
 }
 
 // analyzer/constraintSolver.ts:234
