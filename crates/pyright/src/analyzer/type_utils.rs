@@ -3756,7 +3756,7 @@ pub fn requires_type_args(class_type: ClassType) -> bool {
         ];
 
         // `classType.priv.aliasName || classType.shared.name`: an empty alias name falls back.
-        let name = match class_type.d().priv_.borrow().cold().alias_name.clone() {
+        let name = match class_type.d().priv_.borrow().alias_name.clone() {
             Some(alias_name) if !alias_name.is_empty() => alias_name,
             _ => class_type.d().shared.get().name.clone(),
         };

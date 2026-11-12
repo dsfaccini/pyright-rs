@@ -1107,6 +1107,9 @@ pub struct ClassDetailsPriv {
     pub include_subclasses: Option<bool>,
     pub include_promotions: Option<bool>,
     pub literal_value: Option<LiteralValue>,
+    // Set by few objects, but read on hot paths (`is_built_in`, `is_same_generic_class`).
+    pub alias_name: Option<Atom>,
+    pub is_typed_dict_partial: Option<bool>,
     // Fields few objects set ([cold] in tools/stubgen/typemap.toml): read with `cold()`, write with `cold_mut()`.
     pub cold: Option<Box<ClassDetailsPrivCold>>,
 }
@@ -1115,9 +1118,7 @@ pub struct ClassDetailsPriv {
 #[derive(Clone, Default)]
 #[derive(jsrt::Trace)]
 pub struct ClassDetailsPrivCold {
-    pub alias_name: Option<Atom>,
     pub typed_dict_narrowed_entries: Option<JsMap<String, TypedDictEntry>>,
-    pub is_typed_dict_partial: Option<bool>,
     pub is_asymmetric_descriptor: Option<bool>,
     pub is_asymmetric_attribute_accessor: Option<bool>,
     pub fget_info: Option<PropertyMethodInfo>,
@@ -1129,9 +1130,7 @@ pub struct ClassDetailsPrivCold {
 
 impl ClassDetailsPrivCold {
     const EMPTY: ClassDetailsPrivCold = ClassDetailsPrivCold {
-        alias_name: None,
         typed_dict_narrowed_entries: None,
-        is_typed_dict_partial: None,
         is_asymmetric_descriptor: None,
         is_asymmetric_attribute_accessor: None,
         fget_info: None,
@@ -1143,9 +1142,7 @@ impl ClassDetailsPrivCold {
 
     /// The `cold` field that holds these fields: unallocated while every one is unset.
     pub fn into_cold(self) -> Option<Box<ClassDetailsPrivCold>> {
-        let unset = self.alias_name.is_none()
-            && self.typed_dict_narrowed_entries.is_none()
-            && self.is_typed_dict_partial.is_none()
+        let unset = self.typed_dict_narrowed_entries.is_none()
             && self.is_asymmetric_descriptor.is_none()
             && self.is_asymmetric_attribute_accessor.is_none()
             && self.fget_info.is_none()
@@ -1429,7 +1426,7 @@ impl ClassType {
     // analyzer/types.ts:1001
     pub fn clone_for_typing_alias(class_type: ClassType, alias_name: String) -> ClassType {
         let new_class_type = ClassType(TypeBase::clone_type(class_type.0));
-        new_class_type.d().priv_.borrow_mut().cold_mut().alias_name = Some(Atom::new(&alias_name));
+        new_class_type.d().priv_.borrow_mut().alias_name = Some(Atom::new(&alias_name));
         new_class_type
     }
 
@@ -1450,7 +1447,7 @@ impl ClassType {
     // analyzer/types.ts:1016
     pub fn clone_for_partial_typed_dict(class_type: ClassType) -> ClassType {
         let new_class_type = ClassType(TypeBase::clone_type(class_type.0));
-        new_class_type.d().priv_.borrow_mut().cold_mut().is_typed_dict_partial = Some(true);
+        new_class_type.d().priv_.borrow_mut().is_typed_dict_partial = Some(true);
         new_class_type
     }
 
@@ -1611,7 +1608,7 @@ impl ClassType {
             .d()
             .priv_
             .borrow()
-            .cold().alias_name
+            .alias_name
             .as_deref()
             .is_some_and(|alias_name| !alias_name.is_empty());
         if !shared.flags.get().any(ClassTypeFlags::SpecialBuiltIn) && !has_alias_name {
@@ -1647,7 +1644,7 @@ impl ClassType {
             return true;
         }
         let priv_ = class_type.d().priv_.borrow();
-        let alias_name = priv_.cold().alias_name;
+        let alias_name = priv_.alias_name;
         alias_name.is_some_and(|alias_name| class_name.contains(&alias_name))
     }
 
@@ -2220,13 +2217,13 @@ impl ClassType {
             .d()
             .priv_
             .borrow()
-            .cold().is_typed_dict_partial
+            .is_typed_dict_partial
             .unwrap_or(false)
             != type2
                 .d()
                 .priv_
                 .borrow()
-                .cold().is_typed_dict_partial
+                .is_typed_dict_partial
                 .unwrap_or(false)
         {
             return false;
@@ -5459,8 +5456,8 @@ pub fn is_type_same(
                 return false;
             }
 
-            if priv1.cold().is_typed_dict_partial.unwrap_or(false)
-                != priv2.cold().is_typed_dict_partial.unwrap_or(false)
+            if priv1.is_typed_dict_partial.unwrap_or(false)
+                != priv2.is_typed_dict_partial.unwrap_or(false)
             {
                 return false;
             }

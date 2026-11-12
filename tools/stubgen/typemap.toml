@@ -350,10 +350,12 @@ interface = "analyzer/codeFlowEngine.ts:CodeFlowAnalyzer"
 [cold]
 # Each list holds the fields that fewer than 1% of objects set on the python-chess and samples
 # corpora (2026-11-10), plus overloadsUsedForCall (3% of results), and classType, which no live
-# result holds at the end of a pydantic-ai check (2026-11-11).
+# result holds at the end of a pydantic-ai check (2026-11-11). ClassDetailsPriv's aliasName and
+# isTypedDictPartial stay hot: `isBuiltIn` and `isSameGenericClass` read them on every call
+# (notes/temps.md, 2026-11-12).
 "analyzer/typeEvaluatorTypes.ts:TypeResult" = ["classType", "bindToSelfType", "unpackedType", "typeList", "inlinedTypeDict", "isEmptyTupleShorthand", "expectedTypeDiagAddendum", "narrowedTypeForSet", "overloadsUsedForCall", "memberAccessDeprecationInfo", "magicMethodDeprecationInfo"]
 "analyzer/types.ts:FunctionDetailsShared" = ["docString", "deprecatedMessage", "decoratorDataClassBehaviors", "inferredReturnType"]
-"analyzer/types.ts:ClassDetailsPriv" = ["aliasName", "typedDictNarrowedEntries", "isTypedDictPartial", "isAsymmetricDescriptor", "isAsymmetricAttributeAccessor", "fgetInfo", "fsetInfo", "fdelInfo", "deprecatedInstanceMessage", "partialCallType"]
+"analyzer/types.ts:ClassDetailsPriv" = ["typedDictNarrowedEntries", "isAsymmetricDescriptor", "isAsymmetricAttributeAccessor", "fgetInfo", "fsetInfo", "fdelInfo", "deprecatedInstanceMessage", "partialCallType"]
 
 [enums]
 # Enums to emit as flags newtypes, or as plain enums, against the detection rule.
