@@ -547,6 +547,10 @@ struct ThreadHeap {
     /// The last sweep left survivors marked (generational), so a major collection
     /// clears the marks first.
     sticky_marks: bool,
+    /// Another thread takes this thread's objects over ([`forbid_collected_allocation`]).
+    hands_over: bool,
+    /// Nesting depth of [`allow_temporaries`].
+    temporaries: u32,
 }
 
 /// The heap, and whether something is using it: allocation, root registration
@@ -573,6 +577,8 @@ thread_local! {
             major_live_bytes: 0,
             force_major: true,
             sticky_marks: false,
+            hands_over: false,
+            temporaries: 0,
         }),
     }));
     /// This thread's block owner id.
@@ -641,7 +647,24 @@ impl ThreadHeap {
                 return addr;
             }
         }
+        // A thread that hands its objects over creates no class that a collector
+        // traces, so such an allocation always comes here.
+        if self.hands_over && (eval || T::HOLDS_EVAL) {
+            return self.alloc_temporary::<T>();
+        }
         unsafe { self.alloc_slow(id, eval) }
+    }
+
+    /// A slot outside both heaps, never freed, for a temporary that
+    /// [`allow_temporaries`] allows: no collector marks or sweeps it.
+    #[cold]
+    fn alloc_temporary<T: Trace>(&self) -> *mut u8 {
+        assert!(
+            self.temporaries > 0,
+            "collector: a thread that hands its objects over allocated a {}, which only the collecting thread may",
+            std::any::type_name::<T>()
+        );
+        Box::into_raw(Box::<T>::new_uninit()).cast()
     }
 
     #[cold]
@@ -1233,6 +1256,34 @@ thread_local! {
     static EPOCH: Cell<u32> = const { Cell::new(0) };
 }
 
+/// Makes this thread one whose objects another thread takes over, such as a parse
+/// worker (`docs/porting.md`, "parse ahead"). Only the receiving thread's collector
+/// could free or scan them, and it scans only its own blocks, so from now on this
+/// thread panics on allocating an evaluator object or a program object that can
+/// hold an evaluator handle, outside [`allow_temporaries`]. Its other program
+/// objects go to its arena, or in check mode to its own typed blocks, which no
+/// collection frees.
+pub fn forbid_collected_allocation() {
+    with_heap(|heap| heap.hands_over = true);
+}
+
+/// Runs `f`, whose evaluator objects and program objects that can hold evaluator
+/// handles are all garbage once it returns, such as a diagnostic addendum the
+/// parser formats. On a thread that hands its objects over they go to the system
+/// allocator and are never freed, since no collector reaches them; elsewhere `f`
+/// allocates as usual. `f` must let no such object escape.
+pub fn allow_temporaries<R>(f: impl FnOnce() -> R) -> R {
+    struct Leave;
+    impl Drop for Leave {
+        fn drop(&mut self) {
+            with_heap(|heap| heap.temporaries -= 1);
+        }
+    }
+    with_heap(|heap| heap.temporaries += 1);
+    let _leave = Leave;
+    f()
+}
+
 /// The collections finished on this thread's heap. A logged container records the
 /// epoch of its writes, so a minor collection traces only the entries written since
 /// the last collection ([`Tracer::young_epoch`]).
@@ -1816,6 +1867,44 @@ mod tests {
 
     fn node(next: Option<P<Node>>, drops: &Rc<()>, id: u32) -> P<Node> {
         P::new_eval(Node { next: Cell::new(next), drops: drops.clone(), id })
+    }
+
+    #[test]
+    fn a_thread_that_hands_objects_over_allocates_nothing_a_collector_traces() {
+        let _serial = serial();
+        let eval = std::thread::spawn(|| {
+            forbid_collected_allocation();
+            let _ = P::new_eval(Node { next: Cell::new(None), drops: Rc::new(()), id: 1 });
+        })
+        .join();
+        assert!(eval.is_err(), "an evaluator object");
+        let holder = std::thread::spawn(|| {
+            forbid_collected_allocation();
+            let _ = P::new(Holder { node: Cell::new(None) });
+        })
+        .join();
+        assert!(holder.is_err(), "a program object that can hold an evaluator handle");
+        std::thread::spawn(|| {
+            forbid_collected_allocation();
+            assert_eq!(*P::new(7u64), 7);
+            let temporary = allow_temporaries(|| {
+                let drops = Rc::new(());
+                let temporary = node(None, &drops, 3);
+                // Off both heaps: no collector traces or frees it.
+                assert!(temporary.addr_for_test().wrapping_sub(ranges().eval.base.addr()) >= ranges().eval.len);
+                temporary.id
+            });
+            assert_eq!(temporary, 3);
+        })
+        .join()
+        .unwrap();
+        assert!(std::thread::spawn(|| {
+            forbid_collected_allocation();
+            allow_temporaries(|| ());
+            let _ = node(None, &Rc::new(()), 4);
+        })
+        .join()
+        .is_err());
     }
 
     #[test]

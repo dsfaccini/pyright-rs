@@ -62,6 +62,12 @@ pub trait ReadOnlyFileSystem {
             .unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into_owned()))
     }
     fn stat_sync(&self, uri: Uri) -> FsResult<Stats>;
+    /// Rust-only: the real file that both `stat_sync` and `read_file_sync` of `uri`
+    /// read, so a parse worker can read it without this object (`docs/porting.md`,
+    /// "parse ahead"); `None` when they read no such file.
+    fn real_file_path(&self, _uri: Uri) -> Option<String> {
+        None
+    }
     fn realpath_sync(&self, uri: Uri) -> Uri;
     fn get_module_path(&self) -> Uri;
     fn real_case_path(&self, uri: Uri) -> Uri;

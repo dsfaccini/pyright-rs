@@ -5,6 +5,7 @@ pub mod common;
 pub mod file_system_mapping;
 pub mod localization;
 pub mod oracle;
+pub mod parse_ahead;
 pub mod parser;
 pub mod partial_stub_service;
 pub mod pyright;

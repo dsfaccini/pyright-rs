@@ -10,7 +10,7 @@
 use jsrt::cell::{Cell, RefCell};
 use std::rc::Rc;
 
-use jsrt::{JsMap, JsSet, JsStr, JsString, P};
+use jsrt::{JsMap, JsSet, JsStr, JsString, P, SwitchMode};
 
 use crate::common::timing::{Duration, timing_stats};
 use crate::analyzer::analyzer_file_info::{AnalyzerFileInfo, ImportLookup};
@@ -42,6 +42,7 @@ use crate::common::text_range_collection::TextRangeCollection;
 use crate::common::uri::Uri;
 use crate::localization::localize::LocMessage;
 use crate::oracle::dumper::{oracle_dump_bind, oracle_dump_parse};
+use crate::parse_ahead;
 use crate::parser::parse_nodes::{ModuleNode, ParseNode};
 use crate::parser::parser::{ModuleImport, ParseFileResults, ParseOptions, Parser, ParserOutput};
 use crate::parser::tokenizer::{IgnoreComment, TokenizerOutput};
@@ -561,50 +562,33 @@ impl SourceFile {
             return false;
         }
 
-        let diag_sink = P::new(DiagnosticSink::new(None));
-        let mut file_contents = self.get_open_file_contents();
-        let mut content_hash = if file_contents.is_some() { self.data().last_file_content_hash } else { None };
-        if file_contents.is_none() {
-            let read = timing_stats().read_file_time.time_operation(|| {
-                // Read the file's contents.
-                let contents = content.map(str::to_string).or_else(|| self.get_file_content())?;
-
-                // Remember the length and fingerprint for comparison purposes.
-                let hash = get_string_fingerprint(&contents);
+        // Rust-only: a parse worker may have read and parsed the file already
+        // (`docs/porting.md`, "parse ahead").
+        let ahead = if content.is_none() && parse_ahead::active() {
+            let now = self.parse_ahead_request(config_options);
+            timing_stats().parse_file_time.time_operation(|| parse_ahead::take(self.uri.key(), now.as_ref()))
+        } else {
+            None
+        };
+        let (diag_sink, file_contents, parse_file_results) = match ahead {
+            Some(parsed) => {
+                if parse_ahead::mode() == SwitchMode::Check {
+                    let (diag_sink, contents, results) = self.read_and_parse(config_options, content);
+                    let data = self.data();
+                    let (content_length, content_hash) =
+                        (data.last_file_content_length.unwrap(), data.last_file_content_hash.unwrap());
+                    drop(data);
+                    let here = parse_ahead::Parsed { contents, content_hash, content_length, diag_sink, results };
+                    parse_ahead::check(self.uri.get_file_path(), &parsed, &here);
+                }
                 let mut data = self.data_mut();
-                data.last_file_content_length = Some(contents.js_len());
-                data.last_file_content_hash = Some(hash);
-                Some((contents, hash))
-            });
-            match read {
-                Some((contents, hash)) => {
-                    content_hash = Some(hash);
-                    file_contents = Some(contents);
-                }
-                None => {
-                    diag_sink.add_error("Source file could not be read".to_string(), get_empty_range());
-                    file_contents = Some(String::new());
-                    content_hash = Some(get_string_fingerprint(""));
-
-                    if !self.file_system.exists_sync(self.uri) {
-                        self.data_mut().is_file_deleted = true;
-                    }
-                }
+                data.last_file_content_length = Some(parsed.content_length);
+                data.last_file_content_hash = Some(parsed.content_hash);
+                drop(data);
+                (parsed.diag_sink, parsed.contents, parsed.results)
             }
-        }
-
-        let file_contents = file_contents.unwrap();
-        let content_hash = content_hash.unwrap_or_else(|| get_string_fingerprint(&file_contents));
-
-        // Parse the token stream, building the abstract syntax tree.
-        let parse_file_results = self.parse_file(
-            config_options,
-            self.uri,
-            &file_contents,
-            self.ipython_mode != IPythonMode::None,
-            diag_sink,
-            content_hash,
-        );
+            None => self.read_and_parse(config_options, content),
+        };
 
         oracle_dump_parse(self.uri, &parse_file_results);
         let ParseFileResults { text, content_hash: parsed_content_hash, parser_output, tokenizer_output } =
@@ -690,6 +674,76 @@ impl SourceFile {
         self.recompute_diagnostics(config_options);
 
         true
+    }
+
+    /// The part of `parse` that reads and parses the file, on this thread.
+    /// A check with parse workers numbers the file's nodes in one block.
+    // analyzer/sourceFile.ts:729
+    fn read_and_parse(
+        &self,
+        config_options: &ConfigOptions,
+        content: Option<&str>,
+    ) -> (P<DiagnosticSink>, String, ParseFileResults) {
+        let diag_sink = P::new(DiagnosticSink::new(None));
+        let mut file_contents = self.get_open_file_contents();
+        let mut content_hash = if file_contents.is_some() { self.data().last_file_content_hash } else { None };
+        if file_contents.is_none() {
+            let read = timing_stats().read_file_time.time_operation(|| {
+                // Read the file's contents.
+                let contents = content.map(str::to_string).or_else(|| self.get_file_content())?;
+
+                // Remember the length and fingerprint for comparison purposes.
+                let hash = get_string_fingerprint(&contents);
+                let mut data = self.data_mut();
+                data.last_file_content_length = Some(contents.js_len());
+                data.last_file_content_hash = Some(hash);
+                Some((contents, hash))
+            });
+            match read {
+                Some((contents, hash)) => {
+                    content_hash = Some(hash);
+                    file_contents = Some(contents);
+                }
+                None => {
+                    diag_sink.add_error("Source file could not be read".to_string(), get_empty_range());
+                    file_contents = Some(String::new());
+                    content_hash = Some(get_string_fingerprint(""));
+
+                    if !self.file_system.exists_sync(self.uri) {
+                        self.data_mut().is_file_deleted = true;
+                    }
+                }
+            }
+        }
+
+        let file_contents = file_contents.unwrap();
+        let content_hash = content_hash.unwrap_or_else(|| get_string_fingerprint(&file_contents));
+
+        // Parse the token stream, building the abstract syntax tree.
+        let parse = || {
+            self.parse_file(
+                config_options,
+                self.uri,
+                &file_contents,
+                self.ipython_mode != IPythonMode::None,
+                diag_sink,
+                content_hash,
+            )
+        };
+        let parse_file_results = if parse_ahead::active() { parse_ahead::parse_here(self.uri.key(), parse) } else { parse() };
+
+        (diag_sink, file_contents, parse_file_results)
+    }
+
+    /// Rust-only: how a parse worker reads and parses this file, when one can
+    /// (`docs/porting.md`, "parse ahead"): not for an open file, nor for a file
+    /// the file system maps to no single real file.
+    pub fn parse_ahead_request(&self, config_options: &ConfigOptions) -> Option<parse_ahead::Request> {
+        if !self.is_parse_required() || self.data().client_document_contents.is_some() {
+            return None;
+        }
+        let path = self.file_system.real_file_path(self.uri)?;
+        Some(parse_ahead::Request { path, options: self.parse_options(config_options) })
     }
 
     // analyzer/sourceFile.ts:905
@@ -1183,6 +1237,13 @@ impl SourceFile {
         diag_sink: P<DiagnosticSink>,
         content_hash: StringFingerprint,
     ) -> ParseFileResults {
+        let parse_options = SourceFile::make_parse_options(config_options, file_uri, use_notebook_mode);
+        self.parse_file_contents(file_contents, parse_options, diag_sink, content_hash)
+    }
+
+    /// The options `parse_file` parses `file_uri` with.
+    // analyzer/sourceFile.ts:1604
+    fn make_parse_options(config_options: &ConfigOptions, file_uri: Uri, use_notebook_mode: bool) -> ParseOptions {
         let exec_environment = config_options.find_exec_environment(file_uri);
 
         let mut parse_options = ParseOptions::new();
@@ -1192,8 +1253,12 @@ impl SourceFile {
         }
         parse_options.python_version = exec_environment.python_version;
         parse_options.skip_function_and_class_body = config_options.index_generation_mode.unwrap_or(false);
+        parse_options
+    }
 
-        self.parse_file_contents(file_contents, parse_options, diag_sink, content_hash)
+    /// The options `parse` parses this file with.
+    fn parse_options(&self, config_options: &ConfigOptions) -> ParseOptions {
+        SourceFile::make_parse_options(config_options, self.uri, self.ipython_mode != IPythonMode::None)
     }
 
     // analyzer/sourceFile.ts:1079
