@@ -348,7 +348,7 @@ impl Uri {
         }
         components
             .into_iter()
-            .map(|c| normalize_backslashes(&c))
+            .map(|c| if c.contains('\\') { c.replace('\\', "/") } else { c })
             .collect()
     }
 

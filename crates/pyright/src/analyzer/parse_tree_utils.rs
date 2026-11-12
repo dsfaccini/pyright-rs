@@ -1387,24 +1387,15 @@ pub fn get_type_annotation_node(node: P<ParseNode>) -> Option<TypeAnnotationNode
 // iterable is used after a keyword argument.
 // analyzer/parseTreeUtils.ts:1125
 pub fn get_args_by_runtime_order(node: CallNode) -> Vec<ArgumentNode> {
-    let args = node.d().args.borrow().clone();
-    let positional_args: Vec<ArgumentNode> = args
-        .iter()
-        .filter(|arg| {
-            arg.d().name.get().is_none()
-                && arg.d().arg_category.get() != ArgCategory::UnpackedDictionary
-        })
-        .copied()
-        .collect();
-    let keyword_args: Vec<ArgumentNode> = args
-        .iter()
-        .filter(|arg| {
-            arg.d().name.get().is_some()
-                || arg.d().arg_category.get() == ArgCategory::UnpackedDictionary
-        })
-        .copied()
-        .collect();
-    [positional_args, keyword_args].concat()
+    let args = node.d().args.borrow();
+    let is_keyword_arg = |arg: &&ArgumentNode| {
+        arg.d().name.get().is_some() || arg.d().arg_category.get() == ArgCategory::UnpackedDictionary
+    };
+    // `positionalArgs.concat(keywordArgs)`, built in one array.
+    let mut sorted_args = Vec::with_capacity(args.len());
+    sorted_args.extend(args.iter().filter(|arg| !is_keyword_arg(arg)).copied());
+    sorted_args.extend(args.iter().filter(is_keyword_arg).copied());
+    sorted_args
 }
 
 // PEP 591 spells out certain limited cases where an assignment target
@@ -1963,13 +1954,13 @@ pub fn get_doc_string(statements: &[StatementNode]) -> Option<JsString> {
 pub fn is_doc_string(statement_list: StatementListNode) -> bool {
     // If the first statement in the suite isn't a StringNode,
     // assume there is no docString.
-    let statements = statement_list.d().statements.borrow().clone();
+    let statements = statement_list.d().statements.borrow();
     if statements.len() == 0 || statements[0].node_type != ParseNodeType::StringList {
         return false;
     }
 
     // A docstring can consist of multiple joined strings in a single expression.
-    let strings = StringListNode(statements[0]).d().strings.borrow().clone();
+    let strings = StringListNode(statements[0]).d().strings.borrow();
     if strings.len() == 0 {
         return false;
     }
@@ -3244,20 +3235,22 @@ pub fn get_variable_doc_string_node(node: ExpressionNode) -> Option<StringListNo
             || suite_or_module.node_type == ParseNodeType::Suite
     })?;
 
-    let statements = match suite_or_module.d() {
-        ParseNodeDetails::Module(d) => d.statements.borrow().clone(),
-        ParseNodeDetails::Suite(d) => d.statements.borrow().clone(),
-        _ => unreachable!(),
-    };
-    let assignment_index = statements
-        .iter()
-        .position(|node| *node == parent_node)
-        .map_or(-1, |index| index as i32);
-    if assignment_index < 0 || assignment_index == statements.len() as i32 - 1 {
-        return None;
-    }
+    let next_statement = {
+        let statements = match suite_or_module.d() {
+            ParseNodeDetails::Module(d) => d.statements.borrow(),
+            ParseNodeDetails::Suite(d) => d.statements.borrow(),
+            _ => unreachable!(),
+        };
+        let assignment_index = statements
+            .iter()
+            .position(|node| *node == parent_node)
+            .map_or(-1, |index| index as i32);
+        if assignment_index < 0 || assignment_index == statements.len() as i32 - 1 {
+            return None;
+        }
 
-    let next_statement = statements[(assignment_index + 1) as usize];
+        statements[(assignment_index + 1) as usize]
+    };
 
     let next_statement = StatementListNode::cast(next_statement)
         .filter(|next_statement| is_doc_string(*next_statement))?;

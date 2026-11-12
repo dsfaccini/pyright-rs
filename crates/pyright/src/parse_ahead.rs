@@ -537,7 +537,7 @@ fn learn_modules(program: &Program, file: P<SourceFileInfo>) {
         {
             learned.push((name.clone(), path));
         }
-        for (submodule, implicit) in result.filtered_implicit_imports.iter().flatten() {
+        for (submodule, implicit) in result.filtered_implicit_imports.as_deref().into_iter().flatten() {
             if let Some(path) = path_of(program, implicit.uri) {
                 learned.push((format!("{name}.{submodule}"), path));
             }
