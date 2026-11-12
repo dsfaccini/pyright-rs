@@ -1,0 +1,96 @@
+# Check pydantic-ai with a pyright-rs release and with pyright on a GitHub runner,
+# installed and configured as pydantic-ai's own CI runs pyright, and compare the outputs.
+name: pydantic-ai
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: pydantic-ai commit, branch or tag
+        default: main
+      tag:
+        description: pyright-rs release tag
+        default: v1.1.414-1
+
+permissions:
+  contents: read
+
+jobs:
+  compare:
+    runs-on: ubuntu-latest
+    env:
+      TAG: ${{ inputs.tag }}
+      # pydantic-ai's CI sets these for its git dependencies.
+      GIT_CONFIG_COUNT: "1"
+      GIT_CONFIG_KEY_0: url.https://x-access-token:${{ github.token }}@github.com/.insteadOf
+      GIT_CONFIG_VALUE_0: https://github.com/
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: pydantic/pydantic-ai
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+        with:
+          python-version: "3.13"
+
+      - name: Install dependencies
+        run: uv sync --all-extras --no-extra mcp-tasks --all-packages --group lint
+
+      - name: Download pyright-rs
+        run: |
+          name=pyright-rs-$TAG-x86_64-unknown-linux-gnu
+          cd "$RUNNER_TEMP"
+          curl -fsSLO "https://github.com/dsfaccini/pyright-rs/releases/download/$TAG/$name.tar.gz"
+          curl -fsSLO "https://github.com/dsfaccini/pyright-rs/releases/download/$TAG/$name.tar.gz.sha256"
+          sha256sum -c "$name.tar.gz.sha256"
+          tar -xzf "$name.tar.gz"
+          echo "PYRIGHT_RS=$RUNNER_TEMP/$name/pyright-rs" >> "$GITHUB_ENV"
+
+      - name: Check with both
+        env:
+          UV_NO_SYNC: "1"
+          PYRIGHT_PYTHON_IGNORE_WARNINGS: "1"
+          # pydantic-ai's CI runs pyright with these.
+          NODE_OPTIONS: --max-old-space-size=6144
+        run: |
+          {
+            echo "pydantic-ai $(git rev-parse --short HEAD), pyright-rs $TAG, $(nproc) CPUs, $(free -g | awk '/^Mem/ {print $2}') GiB"
+            echo
+            echo '| run | exit | wall | peak RSS of one process |'
+            echo '|---|---|---|---|'
+          } >> "$GITHUB_STEP_SUMMARY"
+          # run NAME CMD...: CMD's stdout goes to NAME.json; one summary row per run.
+          run() {
+            python3 -I -c '
+          import resource, subprocess, sys, time
+          start = time.monotonic()
+          with open(sys.argv[1] + ".json", "w") as out:
+              code = subprocess.run(sys.argv[2:], stdout=out).returncode
+          wall = time.monotonic() - start
+          rss = resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss / 2**20
+          print(f"| {sys.argv[1]} | {code} | {wall:.1f} s | {rss:.2f} GiB |")
+          ' "$@" | tee -a "$GITHUB_STEP_SUMMARY"
+          }
+          run pyright-rs "$PYRIGHT_RS" --threads 3 --outputjson
+          run pyright-rs-scripts "$PYRIGHT_RS" -p .github/scripts --threads 3 --outputjson
+          run pyright uv run pyright --threads 3 --outputjson
+          run pyright-scripts uv run pyright -p .github/scripts --threads 3 --outputjson
+          python3 -I -c '
+          import json, sys
+          same = True
+          for project in ("", "-scripts"):
+              outputs = []
+              for checker in ("pyright", "pyright-rs"):
+                  with open(f"{checker}{project}.json") as f:
+                      output = json.load(f)
+                  output.pop("time")
+                  output["summary"].pop("timeInSec")
+                  outputs.append(output)
+              same &= outputs[0] == outputs[1]
+              verdict = "identical" if outputs[0] == outputs[1] else "different"
+              summary = outputs[0]["summary"]
+              print(f"pydantic-ai{project}: {verdict}, {summary}")
+          sys.exit(0 if same else 1)
+          ' | tee -a "$GITHUB_STEP_SUMMARY"
