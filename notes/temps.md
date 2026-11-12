@@ -45,3 +45,18 @@ pydantic-ai, release; instructions from single runs (they repeat within about 0.
 - 042ddfd against `main`, three pairs at load 3.4 to 4.4: median wall 29.14 to 28.27 s (-3.0%), cycles 146.95 to 141.34 G (-3.8%), pauses 2.08 to 1.57 s, peak RSS 5.69 to 5.52 GiB.
 - Cycle samples at 042ddfd: the sweep functions 1.46% of all cycles (2.79% before); `mi_free` 2.85 to 2.41%, `_mi_page_malloc_zero` 3.56 to 2.80%: the parts no longer come from malloc. IBS samples of ops that miss L3: 5,301 against 6,293.
 - samples, five runs each, interleaved: 7.548 G to 7.562 G instructions (+0.20%; samples never collects, so it pays the allocation of the parts and no sweep), peak RSS 0.451 to 0.446 GiB.
+
+## Allocation prefetch
+
+At 042ddfd `P<TypeResult>::new_eval` was still 1.64% of cycles, two thirds of it the first store into the reused slot. The cursor prefetched the first and last lines of the slot two allocations ahead; for a 24-byte slot that is 48 bytes ahead, mostly the line being written. Each variant below prefetches `here + N` on every allocation; pairs at load 4.6 to 6.4 (the Miri suites ran alongside).
+
+| variant | against | instructions | cycles | wall |
+|---|---|---|---|---|
+| also 256 bytes ahead | 042ddfd | +0.11 G | | -0.48, -0.23 s |
+| 512 against 128 bytes ahead | | +0.03 to +0.15 G | -2.5%, -3.4% | -0.82, -0.98 s |
+| 1024 against 512 bytes ahead | | +0.01 to +0.09 G | +1.8%, -2.1% | +0.56, -0.67 s: no better |
+| 512 bytes ahead | 042ddfd | +0.14 G | -4.4%, -1.0% | -1.24, -0.14 s |
+| 512 bytes ahead, without the slot-two-ahead prefetch (kept, 35293de) | 512 with it | -1.15 G (-0.54%) | -0.4%, -1.2% | -0.08, -0.31 s |
+
+- 35293de against 042ddfd: 212.79 G to 211.82 G instructions (-0.47%); six more pairs at load 9 to 14 (Miri runs alongside): wall -3.58, +0.29, -0.73, +0.13, -2.06, +1.66 s (median -0.3 s), cycles median -0.6%, pauses -0.06 to -0.16 s in the last three, peak RSS unchanged (5.52 GiB).
+- samples: 7.562 G to 7.537 G instructions (median of 6 interleaved), peak RSS 0.446 GiB on both; it never collects, so its allocations come from fresh pages, where neither prefetch matters much.
