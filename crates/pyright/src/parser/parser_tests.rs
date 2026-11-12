@@ -17,7 +17,8 @@ use crate::common::string_utils::{StringFingerprint, get_string_fingerprint};
 use crate::common::text_range::TextRange;
 use crate::localization::localize::LocMessage;
 use crate::parser::parse_nodes::{
-    AugmentedAssignmentNode, ImportFromNode, ImportNode, NameNode, ParseNode, ParseNodeType,
+    AugmentedAssignmentNode, ImportFromNode, ImportNode, NameNode, ParseNode, ParseNodeArray,
+    ParseNodeType,
     StatementListNode, StringListNode, get_parser_string_annotation,
     get_parser_string_annotation_info,
 };
@@ -89,7 +90,7 @@ fn find_node_by_offset(node: P<ParseNode>, offset: i32) -> Option<P<ParseNode>> 
         return None;
     }
 
-    for child in get_child_nodes(node, None).into_iter().flatten() {
+    for child in get_child_nodes::<ParseNodeArray>(node, None).into_iter().flatten() {
         if let Some(containing_child) = find_node_by_offset(child, offset) {
             // For augmented assignments, prefer the dest expression.
             if let Some(augmented) = AugmentedAssignmentNode::cast(node)
@@ -672,7 +673,7 @@ fn node_tokens_outlive_the_tokenizer_output() {
         if let Some(name) = crate::parser::parse_nodes::NameNode::cast(node) {
             names.push(name.d().value());
         }
-        stack.extend(get_child_nodes(node, None).into_iter().flatten());
+        stack.extend(get_child_nodes::<ParseNodeArray>(node, None).into_iter().flatten());
     }
     names.sort();
     assert_eq!(names, ["first", "second", "third"]);

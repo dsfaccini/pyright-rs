@@ -4,6 +4,7 @@
 
 use crate::common::core::{Comparison, compare_comparable_values_str};
 use jsrt::JsStr;
+use jsrt::string::{Utf8Segment, Utf8Segments};
 
 // common/stringUtils.ts:104
 /// Hashes the UTF-16 code units of `contents`, as JS `charCodeAt` sees them.
@@ -38,17 +39,38 @@ pub fn get_string_fingerprint(contents: &str) -> StringFingerprint {
     let mut primary: i32 = 0;
     let mut secondary: i32 = 0x811c9dc5_u32 as i32;
 
-    let mut add = |code_unit: u16| {
-        primary = (primary << 5)
-            .wrapping_sub(primary)
-            .wrapping_add(code_unit as i32);
-        secondary = (secondary ^ code_unit as i32).wrapping_mul(0x01000193);
+    let add = |primary: &mut i32, secondary: &mut i32, code_unit: i32| {
+        *primary = (*primary << 5).wrapping_sub(*primary).wrapping_add(code_unit);
+        *secondary = (*secondary ^ code_unit).wrapping_mul(0x01000193);
     };
     // In ASCII text each byte is one UTF-16 code unit.
-    if contents.is_ascii() {
-        contents.bytes().for_each(|byte| add(u16::from(byte)));
-    } else {
-        contents.encode_utf16().for_each(add);
+    for segment in Utf8Segments::new(contents) {
+        match segment {
+            Utf8Segment::Ascii(run) => {
+                let (quads, rest) = run.as_chunks::<4>();
+                for &[a, b, c, d] in quads {
+                    let [a, b, c, d] = [a, b, c, d].map(i32::from);
+                    // Four steps of `primary * 31 + unit` at once, wrapping as each step does.
+                    primary = primary
+                        .wrapping_mul(31 * 31 * 31 * 31)
+                        .wrapping_add(a.wrapping_mul(31 * 31 * 31))
+                        .wrapping_add(b.wrapping_mul(31 * 31))
+                        .wrapping_add(c.wrapping_mul(31))
+                        .wrapping_add(d);
+                    for unit in [a, b, c, d] {
+                        secondary = (secondary ^ unit).wrapping_mul(0x01000193);
+                    }
+                }
+                for &byte in rest {
+                    add(&mut primary, &mut secondary, i32::from(byte));
+                }
+            }
+            Utf8Segment::Other(c) => {
+                for &unit in c.encode_utf16(&mut [0; 2]).iter() {
+                    add(&mut primary, &mut secondary, i32::from(unit));
+                }
+            }
+        }
     }
 
     StringFingerprint { primary, secondary }
@@ -230,6 +252,33 @@ mod tests {
         assert_ne!(first.secondary, second.secondary);
         assert!(are_string_fingerprints_equal(&first, &first));
         assert!(!are_string_fingerprints_equal(&first, &second));
+    }
+
+    #[test]
+    fn string_fingerprint_matches_one_unit_at_a_time() {
+        let unit_by_unit = |text: &str| {
+            let (mut primary, mut secondary) = (0i32, 0x811c9dc5_u32 as i32);
+            for unit in text.encode_utf16() {
+                primary = (primary << 5).wrapping_sub(primary).wrapping_add(i32::from(unit));
+                secondary = (secondary ^ i32::from(unit)).wrapping_mul(0x01000193);
+            }
+            (primary, secondary)
+        };
+        let long = "def f(x):\n    return x * 31 + 7\n".repeat(40);
+        for value in [
+            "",
+            "a",
+            "abcd",
+            "abcde",
+            "\u{e9}",
+            "x\u{1F600}y",
+            "0123456789abcdef\u{e9}0123456789abcdef0",
+            &format!("{long}\u{2026}{long}"),
+            &format!("\u{10FFFF}{long}\u{80}"),
+        ] {
+            let fingerprint = get_string_fingerprint(value);
+            assert_eq!((fingerprint.primary, fingerprint.secondary), unit_by_unit(value), "{value:?}");
+        }
     }
 
     #[test]

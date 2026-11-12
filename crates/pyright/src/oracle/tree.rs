@@ -10,7 +10,8 @@ use super::format::{self, DumpWriter};
 use super::tokens::write_token;
 use crate::parser::parse_node_utils::parse_node_type_name_map;
 use crate::parser::parse_nodes::{
-    ParseNode, ParseNodeDetails, ParseNodeType, StringListNode, get_parser_string_annotation,
+    ParseNode, ParseNodeArray, ParseNodeDetails, ParseNodeType, StringListNode,
+    get_parser_string_annotation,
 };
 use crate::parser::parse_tree_utils::get_child_nodes;
 use crate::parser::parser::ParserOutput;
@@ -603,7 +604,7 @@ fn write_node(
     }
     w.field(depth, key, &header);
 
-    let children = get_child_nodes(node, None);
+    let children = get_child_nodes::<ParseNodeArray>(node, None);
     let mut node_fields = fields(node);
     node_fields.sort_by(|a, b| a.0.cmp(b.0));
     for (field_key, field) in &node_fields {
