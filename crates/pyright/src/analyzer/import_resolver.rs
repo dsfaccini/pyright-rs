@@ -15,7 +15,7 @@
 
 use jsrt::cell::{Cell, RefCell};
 
-use jsrt::{FxHashSet, JsMap, JsSet, JsStr, P};
+use jsrt::{FxHashMap, FxHashSet, JsMap, JsSet, JsStr, P};
 
 use crate::parser::tokenizer::Tokenizer;
 use crate::analyzer::import_logger::ImportLogger;
@@ -37,6 +37,7 @@ use crate::common::python_version::PythonVersion;
 use crate::common::service_provider::ServiceProvider;
 use crate::common::string_utils::equate_strings_case_insensitive;
 use crate::common::uri::Uri;
+use crate::common::uri::uri::UriData;
 use crate::common::uri::uri_utils::get_file_system_entries_from_dir_entries;
 use crate::partial_stub_service::SupportPartialStubs;
 
@@ -142,6 +143,8 @@ pub struct ImportResolver {
     pub service_provider: ServiceProvider,
     _config_options: Cell<P<ConfigOptions>>,
     pub host: &'static dyn Host,
+    /// `matchFileSpecs` of each importing file, by Uri object (`PYRIGHT_RS_USER_FILE_MEMO`).
+    _user_file_memo: RefCell<FxHashMap<P<UriData>, bool>>,
 }
 
 impl ImportResolver {
@@ -168,6 +171,7 @@ impl ImportResolver {
             service_provider,
             _config_options: Cell::new(config_options),
             host,
+            _user_file_memo: RefCell::new(FxHashMap::default()),
         }
     }
 
@@ -186,6 +190,7 @@ impl ImportResolver {
         *self._cached_import_results.borrow_mut() = JsMap::default();
         *self._cached_module_name_results.borrow_mut() = JsMap::default();
         self.cached_parent_import_results.reset();
+        self._user_file_memo.borrow_mut().clear();
 
         self._invalidate_file_system_cache();
 
@@ -916,6 +921,28 @@ impl ImportResolver {
         is_potential_match("__init__")
     }
 
+    /// `matchFileSpecs(this._configOptions, sourceFileUri)`, which every import of a
+    /// file asks again, remembered per Uri object until the cache is invalidated.
+    /// `PYRIGHT_RS_USER_FILE_MEMO`: `off` matches every time; `check` matches again on
+    /// every reuse and panics when the answer differs.
+    fn _match_file_specs_memo(&self, uri: Uri) -> bool {
+        let mode = jsrt::switch_mode!("PYRIGHT_RS_USER_FILE_MEMO");
+        if mode == jsrt::SwitchMode::Off {
+            return match_file_specs(&self._config_options.get(), uri, true);
+        }
+        let cached = self._user_file_memo.borrow().get(&uri.0).copied();
+        if let Some(cached) = cached {
+            if mode == jsrt::SwitchMode::Check {
+                let fresh = match_file_specs(&self._config_options.get(), uri, true);
+                assert!(cached == fresh, "PYRIGHT_RS_USER_FILE_MEMO: {uri:?} matched {fresh}, remembered {cached}");
+            }
+            return cached;
+        }
+        let from_user_file = match_file_specs(&self._config_options.get(), uri, true);
+        self._user_file_memo.borrow_mut().insert(uri.0, from_user_file);
+        from_user_file
+    }
+
     // analyzer/importResolver.ts:874
     fn _resolve_import_strict(
         &self,
@@ -925,7 +952,7 @@ impl ImportResolver {
         module_descriptor: &ImportedModuleDescriptor,
         import_logger: Option<&ImportLogger>,
     ) -> P<ImportResult> {
-        let from_user_file = match_file_specs(&self._config_options.get(), source_file_uri, true);
+        let from_user_file = self._match_file_specs_memo(source_file_uri);
         let not_found_result = ImportResult {
             import_name: import_name.to_string(),
             is_relative: false,
