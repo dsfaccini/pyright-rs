@@ -153,8 +153,10 @@ impl<'a> CharacterStream<'a> {
 
     // parser/characterStream.ts:138
     pub fn skip_to_eol(&mut self) {
-        while !self.is_end_of_stream() && !self.is_at_line_break() {
-            self.move_next();
+        // `move_next` until a line break or the end, in one step.
+        let run = self._text[self._position as usize..].iter().take_while(|&&c| !is_line_break(c)).count();
+        if run > 0 {
+            self.advance(run as i32);
         }
     }
 

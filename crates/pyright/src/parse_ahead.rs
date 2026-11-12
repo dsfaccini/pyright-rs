@@ -625,7 +625,8 @@ fn read(path: &str) -> Option<String> {
         return None;
     }
     let bytes = std::fs::read(path).ok()?;
-    Some(String::from_utf8_lossy(&bytes).into_owned())
+    // As `ReadOnlyFileSystem::read_file_text_sync` decodes.
+    Some(String::from_utf8(bytes).unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into_owned()))
 }
 
 /// `SourceFile.parse` from the read through the parse, for a file read from `path`,

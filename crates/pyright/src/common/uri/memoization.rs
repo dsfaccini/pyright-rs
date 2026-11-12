@@ -33,11 +33,12 @@ thread_local! {
 /// The wrapper `cacheStaticFunc` puts around a static method. `key` is
 /// `` `${functionName}+${args?.map((a) => a?.toString()).join(',')}` ``;
 /// `compute` is the original method.
-pub fn cache_static_func(key: String, compute: impl FnOnce() -> Uri) -> Uri {
+/// `key` is borrowed: a hit copies nothing.
+pub fn cache_static_func(key: &str, compute: impl FnOnce() -> Uri) -> Uri {
     let hit = STATIC_CACHE.with(|cache| {
         let mut cache = cache.borrow_mut();
         let next_use = cache.next_use;
-        let (value, last_use) = cache.entries.get_mut(&key).map(|entry| {
+        let (value, last_use) = cache.entries.get_mut(key).map(|entry| {
             let last_use = entry.1;
             entry.1 = next_use;
             (entry.0, last_use)
@@ -67,8 +68,8 @@ pub fn cache_static_func(key: String, compute: impl FnOnce() -> Uri) -> Uri {
 
         let next_use = cache.next_use;
         cache.next_use += 1;
-        cache.order.insert(next_use, key.clone());
-        cache.entries.insert(key, (result, next_use));
+        cache.order.insert(next_use, key.to_string());
+        cache.entries.insert(key.to_string(), (result, next_use));
     });
     result
 }

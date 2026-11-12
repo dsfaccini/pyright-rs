@@ -57,7 +57,9 @@ pub trait ReadOnlyFileSystem {
     fn read_file_sync(&self, uri: Uri) -> FsResult<Vec<u8>>;
     /// `readFileSync(uri, 'utf8')`: invalid UTF-8 decodes to U+FFFD, as Node does.
     fn read_file_text_sync(&self, uri: Uri) -> FsResult<String> {
-        Ok(String::from_utf8_lossy(&self.read_file_sync(uri)?).into_owned())
+        // Valid UTF-8, nearly every file, needs no copy.
+        Ok(String::from_utf8(self.read_file_sync(uri)?)
+            .unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into_owned()))
     }
     fn stat_sync(&self, uri: Uri) -> FsResult<Stats>;
     /// Rust-only: the real file that both `stat_sync` and `read_file_sync` of `uri`

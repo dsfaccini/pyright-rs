@@ -112,6 +112,8 @@ A new switch reads its mode with `jsrt::switch_mode!`: `check` runs pyright's pa
 | `PYRIGHT_RS_PARSE_AHEAD` | `on` (default), `off`, `check` | parse workers read, tokenize and parse the user files, their imports, and the modules whose names parsed files look up, before the checker reaches them ("parse ahead" above); `off` parses every file on the main thread; `check` also parses each file a worker parsed on the main thread and panics when the two results differ |
 | `PYRIGHT_RS_PARSE_AHEAD_THREADS` | a number; default 4 | parse workers; 0 starts none, as `off` |
 | `PYRIGHT_RS_PARSE_AHEAD_LOG` | `1` | prints what the parse workers did at the end of the check |
+| `PYRIGHT_RS_USER_FILE_MEMO` | `on` (default), `off`, `check` | `ImportResolver._resolveImportStrict` remembers `matchFileSpecs` of each importing file's Uri object until the resolver's cache is invalidated |
+| `PYRIGHT_RS_PARSER_CURRENT_TOKEN` | `on` (default), `off`, `check` | the parser keeps the token at `_tokenIndex`, refreshed on every write of the index, so `_peekToken()` reads it instead of indexing the token list; `check` looks the token up on every peek and panics when it differs |
 | `PYRIGHT_RS_TOKENS` | `free` (default), `keep`, `check` | `keep` puts every token on the program heap; `check` makes a freed tokenizer scratch region inaccessible, so a later use faults |
 | `PYRIGHT_RS_ALLOC_STATS` | `1`, or a number n | prints objects and bytes per type and heap at exit; with n, also each time the evaluator heap grows by another n GiB |
 

@@ -6,6 +6,7 @@
 use std::sync::OnceLock;
 
 use jsrt::number::{math_round, parse_bigint, parse_float, parse_int};
+use jsrt::string::string_from_utf16_lossy;
 use jsrt::{Atom, JsMap, JsStr, JsString, NumberValue, P};
 
 use super::character_stream::CharacterStream;
@@ -377,10 +378,23 @@ const _CAN_START_STRING: [bool; 128] = {
     table
 };
 
-// Create a detached copy of a source text range.
+// Create a detached copy of a source text range, as an atom, and whether the
+// text is ASCII. Short ASCII text, nearly every identifier, is narrowed on the
+// stack rather than into a `String`.
 // parser/tokenizer.ts:324
-fn detach_substring(text: &[u16], start: i32, end: i32) -> String {
-    String::from_utf16_lossy(&text[start as usize..end as usize])
+fn detach_substring(text: &[u16], start: i32, end: i32) -> (Atom, bool) {
+    let units = &text[start as usize..end as usize];
+    let ascii = units.iter().fold(0, |all, &unit| all | unit) < 0x80;
+    let mut bytes = [0u8; 64];
+    if ascii && units.len() <= bytes.len() {
+        for (byte, &unit) in bytes.iter_mut().zip(units) {
+            *byte = unit.to_le_bytes()[0];
+        }
+        if let Ok(text) = std::str::from_utf8(&bytes[..units.len()]) {
+            return (Atom::new(text), true);
+        }
+    }
+    (Atom::new(&string_from_utf16_lossy(units)), ascii)
 }
 
 // Strip underscore characters from a source text range without first creating
@@ -396,11 +410,11 @@ fn remove_underscores_from_range(text: &[u16], start: i32, end: i32) -> String {
     }
 
     if first_underscore_index < 0 {
-        return String::from_utf16_lossy(&text[start as usize..end as usize]);
+        return string_from_utf16_lossy(&text[start as usize..end as usize]);
     }
 
     let mut result =
-        String::from_utf16_lossy(&text[start as usize..first_underscore_index as usize]);
+        string_from_utf16_lossy(&text[start as usize..first_underscore_index as usize]);
     let mut i = first_underscore_index + 1;
     while i < end {
         if text[i as usize] != Char::Underscore {
@@ -774,7 +788,7 @@ pub struct Tokenizer<'a> {
     _use_notebook_mode: bool,
 
     // Direct-mapped identifier intern cache: the UTF-16 text and its string.
-    _identifier_cache: Vec<Option<(Box<[u16]>, Atom)>>,
+    _identifier_cache: Vec<Option<Atom>>,
 }
 
 impl Default for Tokenizer<'_> {
@@ -1475,10 +1489,13 @@ impl<'a> Tokenizer<'a> {
         while !self._cs.is_end_of_stream() {
             match self._cs.current_char() {
                 Char::Space => {
-                    tab1_spaces += 1;
-                    tab8_spaces += 1;
+                    // Each space of a run adds one to both counts, so the run is taken at once.
+                    let position = self._cs.position() as usize;
+                    let run = self._cs.get_text()[position..].iter().take_while(|&&c| c == Char::Space).count() as i32;
+                    tab1_spaces += run;
+                    tab8_spaces += run;
                     is_space_present = true;
-                    self._cs.move_next();
+                    self._cs.advance(run);
                 }
 
                 Char::Tab => {
@@ -1717,10 +1734,10 @@ impl<'a> Tokenizer<'a> {
                 self._tokens
                     .push(KeywordToken::create(start, length, keyword_type, comments).0);
             } else {
-                let value = self._intern_identifier(text, start, end, length);
+                let (value, ascii) = self._intern_identifier(text, start, end, length);
                 let comments = self._get_comments();
                 self._tokens
-                    .push(IdentifierToken::create(start, length, value, comments).0);
+                    .push(IdentifierToken::create_with_ascii(start, length, value, ascii, comments).0);
             }
             return true;
         }
@@ -1730,21 +1747,27 @@ impl<'a> Tokenizer<'a> {
     // Per-tokenize identifier intern cache. Direct-mapped, so collisions
     // simply replace the slot.
     // parser/tokenizer.ts:1397
-    fn _intern_identifier(&mut self, text: &[u16], start: i32, end: i32, length: i32) -> Atom {
+    /// Also returns whether the identifier is ASCII.
+    fn _intern_identifier(&mut self, text: &[u16], start: i32, end: i32, length: i32) -> (Atom, bool) {
         let first_char = text[start as usize] as i32;
         let last_char = text[(end - 1) as usize] as i32;
         // Hash mixes length, first and last char.
         let hash = ((first_char * 31 + last_char * 7 + length) & _IDENTIFIER_CACHE_MASK) as usize;
-        if let Some((cached_text, cached)) = &self._identifier_cache[hash]
-            && cached_text.len() as i32 == length
-            && text[start as usize..].starts_with(cached_text)
+        let units = &text[start as usize..end as usize];
+        // The cache holds ASCII atoms only, whose bytes are their UTF-16 units. A
+        // non-ASCII identifier always misses and interns its text again, which
+        // yields the same atom.
+        if let Some(cached) = self._identifier_cache[hash]
+            && cached.len() == units.len()
+            && cached.bytes().zip(units).fold(0, |diff, (byte, &unit)| diff | (u16::from(byte) ^ unit)) == 0
         {
-            return *cached;
+            return (cached, true);
         }
-        let value = Atom::new(&detach_substring(text, start, end));
-        self._identifier_cache[hash] =
-            Some((text[start as usize..end as usize].into(), value));
-        value
+        let (value, ascii) = detach_substring(text, start, end);
+        if ascii {
+            self._identifier_cache[hash] = Some(value);
+        }
+        (value, ascii)
     }
 
     // Generic identifier-continue loop that handles unicode + surrogate pairs.
@@ -2166,7 +2189,7 @@ impl<'a> Tokenizer<'a> {
         let source_text = self._cs.get_text();
         let end = start + length;
         let comment_value = &source_text[start as usize..end as usize];
-        let comment = Comment::create(start, length, String::from_utf16_lossy(comment_value), None);
+        let comment = Comment::create(start, length, string_from_utf16_lossy(comment_value), None);
 
         // Fast pre-filter: any ignore directive must contain the substring 'ignore'.
         // Search only the current comment so comment-heavy files remain linear in size.
@@ -2255,7 +2278,7 @@ impl<'a> Tokenizer<'a> {
                         start: current_offset,
                         length: end_trimmed.len() as i32,
                     },
-                    text: String::from_utf16_lossy(end_trimmed),
+                    text: string_from_utf16_lossy(end_trimmed),
                 });
             }
 
@@ -2538,8 +2561,28 @@ impl<'a> Tokenizer<'a> {
         let get_escaped_value = |cs: &CharacterStream<'_>, escaped_value_length: i32| {
             JsString::from(&cs.get_text()[start as usize..(start + escaped_value_length) as usize])
         };
+        // The chars a branch below handles: any other char only lengthens the value
+        // and moves on (the last branch), so a run of them is skipped at once.
+        let mut stops: u128 = (1 << Char::Backslash)
+            | (1 << Char::LineFeed)
+            | (1 << Char::CarriageReturn)
+            | (1 << quote_char);
+        if is_f_string {
+            stops |= (1 << Char::OpenBrace) | (1 << Char::CloseBrace);
+        }
 
         loop {
+            let stops = if is_in_named_unicode_escape { stops | (1 << Char::CloseBrace) } else { stops };
+            let position = self._cs.position() as usize;
+            let run = self._cs.get_text()[position..]
+                .iter()
+                .take_while(|&&c| c >= 128 || (stops >> c) & 1 == 0)
+                .count();
+            if run > 0 {
+                escaped_value_length += run as i32;
+                self._cs.advance(run as i32);
+            }
+
             if self._cs.is_end_of_stream() {
                 // Hit the end of file without a termination.
                 flags |= StringTokenFlags::Unterminated;
@@ -2725,7 +2768,7 @@ fn js_slice_lossy(text: &[u16], start: i32, end: i32) -> String {
     if start >= end {
         return String::new();
     }
-    String::from_utf16_lossy(&text[start..end])
+    string_from_utf16_lossy(&text[start..end])
 }
 
 #[cfg(test)]

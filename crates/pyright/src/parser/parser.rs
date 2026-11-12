@@ -173,12 +173,56 @@ fn format1(
     message.format(&[(key, value)])
 }
 
+/// `_maxChildDepthMap`, a `Map<number, number>` keyed by node id and read with
+/// `?? 0`. A parser numbers its nodes consecutively, so the ids from the first
+/// one stored on get a slot each; smaller ids, such as a placeholder's 0, go to
+/// a hash map.
+#[derive(Default)]
+struct DepthByNodeId {
+    base: u32,
+    dense: Vec<i32>,
+    sparse: FxHashMap<u32, i32>,
+}
+
+impl DepthByNodeId {
+    fn get(&self, id: u32) -> i32 {
+        if !self.dense.is_empty() && id >= self.base {
+            return self.dense.get((id - self.base) as usize).copied().unwrap_or(0);
+        }
+        self.sparse.get(&id).copied().unwrap_or(0)
+    }
+
+    fn set(&mut self, id: u32, depth: i32) {
+        // Until the first nonzero id, the hash map holds id 0 only.
+        if self.dense.is_empty() && id != 0 {
+            self.base = id;
+        }
+        if (self.dense.is_empty() && id == 0) || id < self.base {
+            self.sparse.insert(id, depth);
+            return;
+        }
+        let index = (id - self.base) as usize;
+        if index >= self.dense.len() {
+            self.dense.resize(index + 1, 0);
+        }
+        self.dense[index] = depth;
+    }
+}
+
 // parser/parser.ts:238
 pub struct Parser {
     _file_contents: Option<JsString>,
     _tokenizer_output: Option<TokenizerOutput>,
     _token_count: i32,
     _token_index: i32,
+    /// The token at `_token_index`, which every write of the index through
+    /// `_set_token_index` refreshes, so that `_peekToken()` is one read.
+    /// `PYRIGHT_RS_PARSER_CURRENT_TOKEN`: `off` leaves it `None`, so every
+    /// `_peekToken()` looks the token up; `check` keeps it in `_checked_token`
+    /// instead, and a lookup that differs panics.
+    _current_token: Option<P<Token>>,
+    _checked_token: Option<P<Token>>,
+    _current_token_mode: jsrt::SwitchMode,
     _are_errors_suppressed: bool,
     _parse_options: ParseOptions,
     _diag_sink: P<DiagnosticSink>,
@@ -196,7 +240,7 @@ pub struct Parser {
     _assignment_expressions_allowed: bool,
     _typing_import_aliases: Vec<String>,
     _typing_symbol_aliases: JsMap<String, String>,
-    _max_child_depth_map: FxHashMap<u32, i32>,
+    _max_child_depth_map: DepthByNodeId,
     _has_type_annotations: bool,
     _owner_key: Option<ParseTreeKey>,
     _created_owner_key: bool,
@@ -216,6 +260,9 @@ impl Parser {
             _tokenizer_output: None,
             _token_count: 0,
             _token_index: 0,
+            _current_token: None,
+            _checked_token: None,
+            _current_token_mode: jsrt::switch_mode!("PYRIGHT_RS_PARSER_CURRENT_TOKEN"),
             _are_errors_suppressed: false,
             _parse_options: ParseOptions::new(),
             _diag_sink: P::new(DiagnosticSink::new(None)),
@@ -233,7 +280,7 @@ impl Parser {
             _assignment_expressions_allowed: true,
             _typing_import_aliases: vec![],
             _typing_symbol_aliases: JsMap::default(),
-            _max_child_depth_map: FxHashMap::default(),
+            _max_child_depth_map: DepthByNodeId::default(),
             _has_type_annotations: false,
             _owner_key: None,
             _created_owner_key: false,
@@ -440,7 +487,7 @@ impl Parser {
         );
         self._token_count = tokenizer_output.tokens.count();
         self._tokenizer_output = Some(tokenizer_output);
-        self._token_index = 0;
+        self._set_token_index(0);
     }
 
     // stmt: simple_stmt | compound_stmt
@@ -758,7 +805,7 @@ impl Parser {
                 && this._peek_token(0).type_ == TokenType::Colon;
 
             // Set the token index back to the start.
-            this._token_index = cur_token_index;
+            this._set_token_index(cur_token_index);
         });
 
         if !smells_like_match_statement {
@@ -2934,7 +2981,7 @@ impl Parser {
                         with_item_list.len() != 1 || with_item_list[0].d().target.get().is_some();
                 }
 
-                this._token_index = open_paren_token_index;
+                this._set_token_index(open_paren_token_index);
                 with_item_list = vec![];
             });
         }
@@ -4601,10 +4648,7 @@ impl Parser {
                 self._is_parsing_type_annotation = was_parsing_type_annotation;
 
                 let max_depth = self
-                    ._max_child_depth_map
-                    .get(&atom_expression.id.get())
-                    .copied()
-                    .unwrap_or(0);
+                    ._max_child_depth_map.get(atom_expression.id.get());
                 if max_depth >= MAX_CHILD_NODE_DEPTH {
                     atom_expression = ErrorNode::create(
                         self._get_owner_key(),
@@ -4620,8 +4664,7 @@ impl Parser {
                     );
                 } else {
                     atom_expression = call_node.0;
-                    self._max_child_depth_map
-                        .insert(call_node.id.get(), max_depth + 1);
+                    self._max_child_depth_map.set(call_node.id.get(), max_depth + 1);
                 }
 
                 // If the argument list wasn't terminated, break out of the loop
@@ -4672,10 +4715,7 @@ impl Parser {
                 }
 
                 let max_depth = self
-                    ._max_child_depth_map
-                    .get(&atom_expression.id.get())
-                    .copied()
-                    .unwrap_or(0);
+                    ._max_child_depth_map.get(atom_expression.id.get());
                 if max_depth >= MAX_CHILD_NODE_DEPTH {
                     atom_expression = ErrorNode::create(
                         self._get_owner_key(),
@@ -4691,8 +4731,7 @@ impl Parser {
                     );
                 } else {
                     atom_expression = index_node.0;
-                    self._max_child_depth_map
-                        .insert(index_node.id.get(), max_depth + 1);
+                    self._max_child_depth_map.set(index_node.id.get(), max_depth + 1);
                 }
             } else if self._consume_token_if_type(TokenType::Dot) {
                 // Is it a member access?
@@ -4715,10 +4754,7 @@ impl Parser {
                 );
 
                 let max_depth = self
-                    ._max_child_depth_map
-                    .get(&atom_expression.id.get())
-                    .copied()
-                    .unwrap_or(0);
+                    ._max_child_depth_map.get(atom_expression.id.get());
                 if max_depth >= MAX_CHILD_NODE_DEPTH {
                     atom_expression = ErrorNode::create(
                         self._get_owner_key(),
@@ -4734,8 +4770,7 @@ impl Parser {
                     );
                 } else {
                     atom_expression = member_access_node.0;
-                    self._max_child_depth_map
-                        .insert(member_access_node.id.get(), max_depth + 1);
+                    self._max_child_depth_map.set(member_access_node.id.get(), max_depth + 1);
                 }
             } else {
                 break;
@@ -4788,7 +4823,7 @@ impl Parser {
                 } else if value_expr.node_type == ParseNodeType::Name
                     && self._peek_operator_type() == Some(OperatorType::Walrus)
                 {
-                    self._token_index = start_of_subscript_index;
+                    self._set_token_index(start_of_subscript_index);
                     value_expr =
                         self._parse_test_expression(/* allow_assignment_expression */ true);
 
@@ -6346,15 +6381,9 @@ impl Parser {
         // the subnode with an error node. Otherwise we risk crashing in the binder
         // or type evaluator.
         let left_max_depth = self
-            ._max_child_depth_map
-            .get(&left_expression.id.get())
-            .copied()
-            .unwrap_or(0);
+            ._max_child_depth_map.get(left_expression.id.get());
         let right_max_depth = self
-            ._max_child_depth_map
-            .get(&right_expression.id.get())
-            .copied()
-            .unwrap_or(0);
+            ._max_child_depth_map.get(right_expression.id.get());
 
         if left_max_depth >= MAX_CHILD_NODE_DEPTH || right_max_depth >= MAX_CHILD_NODE_DEPTH {
             self._add_syntax_error(LocMessage::max_parse_depth_exceeded(), &binary_node);
@@ -6368,7 +6397,7 @@ impl Parser {
             .0;
         }
 
-        self._max_child_depth_map.insert(
+        self._max_child_depth_map.set(
             binary_node.id.get(),
             left_max_depth.max(right_max_depth) + 1,
         );
@@ -6390,10 +6419,7 @@ impl Parser {
         // or type evaluator.
 
         let max_depth = self
-            ._max_child_depth_map
-            .get(&expression.id.get())
-            .copied()
-            .unwrap_or(0);
+            ._max_child_depth_map.get(expression.id.get());
         if max_depth >= MAX_CHILD_NODE_DEPTH {
             self._add_syntax_error(LocMessage::max_parse_depth_exceeded(), &unary_node);
             return ErrorNode::create(
@@ -6406,8 +6432,7 @@ impl Parser {
             .0;
         }
 
-        self._max_child_depth_map
-            .insert(unary_node.id.get(), max_depth + 1);
+        self._max_child_depth_map.set(unary_node.id.get(), max_depth + 1);
         unary_node.0
     }
 
@@ -6609,16 +6634,18 @@ impl Parser {
     }
 
     // parser/parser.ts:5533
+    #[inline(always)]
     fn _get_next_token(&mut self) -> P<Token> {
         let token = self._tokenizer_output.as_ref().unwrap().tokens.get_item_at(self._token_index);
         if !self._at_eof() {
-            self._token_index += 1;
+            self._set_token_index(self._token_index + 1);
         }
 
         token
     }
 
     // parser/parser.ts:5542
+    #[inline(always)]
     fn _at_eof(&self) -> bool {
         // Are we pointing at the last token in the stream (which is
         // assumed to be an end-of-stream token)?
@@ -6626,25 +6653,51 @@ impl Parser {
     }
 
     // parser/parser.ts:5548
+    #[inline(always)]
     fn _peek_token(&self, count: i32) -> P<Token> {
-        let target_index = self._token_index + count;
-        if target_index < 0 {
-            return self._tokenizer_output.as_ref().unwrap().tokens.get_item_at(0);
+        if count == 0
+            && let Some(token) = self._current_token
+        {
+            return token;
         }
-
-        if target_index >= self._token_count {
-            return self._tokenizer_output.as_ref().unwrap().tokens.get_item_at(self._token_count - 1);
+        let token = self._peek_token_at(count);
+        if count == 0
+            && let Some(checked) = self._checked_token
+        {
+            assert!(checked == token, "PYRIGHT_RS_PARSER_CURRENT_TOKEN: the current token differs");
         }
+        token
+    }
 
-        self._tokenizer_output.as_ref().unwrap().tokens.get_item_at(target_index)
+    /// Sets `_token_index`, and the current token as the switch says.
+    #[inline(always)]
+    fn _set_token_index(&mut self, index: i32) {
+        self._token_index = index;
+        match self._current_token_mode {
+            jsrt::SwitchMode::On => self._current_token = Some(self._peek_token_at(0)),
+            jsrt::SwitchMode::Off => {}
+            jsrt::SwitchMode::Check => self._checked_token = Some(self._peek_token_at(0)),
+        }
+    }
+
+    /// The body of `_peekToken`.
+    #[inline(always)]
+    fn _peek_token_at(&self, count: i32) -> P<Token> {
+        // `_token_count` is the token count, so the three cases of the
+        // TypeScript (first token, last token, `target_index`) are one clamp.
+        let tokens = self._tokenizer_output.as_ref().unwrap().tokens.items();
+        let target_index = (self._token_index + count).clamp(0, self._token_count - 1);
+        tokens[target_index as usize]
     }
 
     // parser/parser.ts:5561
+    #[inline(always)]
     fn _peek_token_type(&self) -> TokenType {
         self._peek_token(0).type_
     }
 
     // parser/parser.ts:5565
+    #[inline(always)]
     fn _peek_keyword_type(&self) -> Option<KeywordType> {
         let next_token = self._peek_token(0);
         if next_token.type_ != TokenType::Keyword {
@@ -6655,6 +6708,7 @@ impl Parser {
     }
 
     // parser/parser.ts:5574
+    #[inline(always)]
     fn _peek_operator_type(&self) -> Option<OperatorType> {
         let next_token = self._peek_token(0);
         if next_token.type_ != TokenType::Operator {
@@ -6726,6 +6780,7 @@ impl Parser {
     }
 
     // parser/parser.ts:5627
+    #[inline(always)]
     fn _get_token_if_type(&mut self, token_type: TokenType) -> Option<P<Token>> {
         if self._peek_token_type() == token_type {
             return Some(self._get_next_token());
@@ -6735,11 +6790,13 @@ impl Parser {
     }
 
     // parser/parser.ts:5635
+    #[inline(always)]
     fn _consume_token_if_type(&mut self, token_type: TokenType) -> bool {
         self._get_token_if_type(token_type).is_some()
     }
 
     // parser/parser.ts:5639
+    #[inline(always)]
     fn _consume_token_if_keyword(&mut self, keyword_type: KeywordType) -> bool {
         if self._peek_keyword_type() == Some(keyword_type) {
             self._get_next_token();
@@ -6750,6 +6807,7 @@ impl Parser {
     }
 
     // parser/parser.ts:5648
+    #[inline(always)]
     fn _consume_token_if_operator(&mut self, operator_type: OperatorType) -> bool {
         if self._peek_operator_type() == Some(operator_type) {
             self._get_next_token();
@@ -6801,3 +6859,21 @@ impl Parser {
 #[cfg(test)]
 #[path = "parser_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+mod depth_by_node_id_tests {
+    use super::DepthByNodeId;
+
+    #[test]
+    fn reads_what_was_set_and_zero_otherwise() {
+        let mut depths = DepthByNodeId::default();
+        assert_eq!(depths.get(7), 0);
+        depths.set(0, 4);
+        depths.set(10, 1);
+        depths.set(12, 2);
+        depths.set(3, 5);
+        depths.set(10, 6);
+        assert_eq!((depths.get(0), depths.get(3), depths.get(10), depths.get(11), depths.get(12)), (4, 5, 6, 0, 2));
+        assert_eq!((depths.get(2), depths.get(13), depths.get(1000)), (0, 0, 0));
+    }
+}

@@ -706,7 +706,7 @@ impl ThreadHeap {
                 if class.free != 0 {
                     class.live = unsafe { meta.bits.add(class.word as usize) };
                     self.since_gc += class.info.slot as usize;
-                    // `take` prefetches the slot after the next; the next is this word's second.
+                    // `take` prefetches `ALLOC_AHEAD` bytes on; the next slot is this word's second.
                     let second = class.free & (class.free - 1);
                     if second != 0 {
                         let slot = class.info.slot as usize;
@@ -742,16 +742,12 @@ impl Class {
         unsafe { *self.live |= 1 << j };
         let slot = self.info.slot as usize;
         let word = self.base.wrapping_add(self.word as usize * 64 * slot);
-        let after = self.free & self.free.wrapping_sub(1);
-        if after != 0 {
-            // A slot reused after a sweep is cold. Prefetch the one after the next,
-            // its first and last cache lines; the allocation before this one
-            // prefetched the next.
-            let ahead = word.wrapping_add(after.trailing_zeros() as usize * slot);
-            prefetch(ahead);
-            prefetch(ahead.wrapping_add(slot - 1));
-        }
-        word.wrapping_add(j as usize * slot)
+        let here = word.wrapping_add(j as usize * slot);
+        // A slot reused after a sweep is cold, and the cursor hands out slots in address
+        // order: prefetch the memory `ALLOC_AHEAD` bytes on, which the allocations after
+        // the next few take. It may lie past the block; a prefetch never faults.
+        prefetch(here.wrapping_add(ALLOC_AHEAD));
+        here
     }
 }
 
@@ -1364,6 +1360,9 @@ fn rss_in(range: &Range) -> usize {
 
 /// The sweep prefetches the buffers of the dead object this many after the one it drops.
 const SWEEP_AHEAD: usize = 4;
+
+/// Allocation prefetches the memory this many bytes past the slot it hands out.
+const ALLOC_AHEAD: usize = 512;
 
 /// Calls `f` once for every slot below `limit` that overlaps a marked card.
 fn for_card_slots(cards: &[u8], slot: usize, limit: usize, mut f: impl FnMut(usize)) {

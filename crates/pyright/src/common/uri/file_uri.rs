@@ -1,5 +1,7 @@
 //! Port of `packages/pyright-internal/src/common/uri/fileUri.ts`.
 
+use std::fmt::Write;
+
 use jsrt::JsStr;
 use jsrt::vscode_uri::URI;
 use jsrt::P;
@@ -31,14 +33,24 @@ pub fn create_file_uri(
     original_string: Option<&str>,
     is_case_sensitive: bool,
 ) -> Uri {
+    thread_local! {
+        /// The cache key's buffer, reused so that a cache hit allocates nothing.
+        static CACHE_KEY: std::cell::Cell<String> = const { std::cell::Cell::new(String::new()) };
+    }
     // `@cacheStaticFunc`: `undefined?.toString()` joins as an empty string.
-    let cache_key = format!(
+    let mut cache_key = CACHE_KEY.take();
+    cache_key.clear();
+    write!(
+        cache_key,
         "createFileUri+{file_path},{query},{fragment},{},{is_case_sensitive}",
         original_string.unwrap_or("")
-    );
-    cache_static_func(cache_key, || {
+    )
+    .unwrap();
+    let uri = cache_static_func(&cache_key, || {
         create_file_uri_uncached(file_path, query, fragment, original_string, is_case_sensitive)
-    })
+    });
+    CACHE_KEY.set(cache_key);
+    uri
 }
 
 /// The body of `createFileUri`, which `cacheStaticFunc` wraps.

@@ -2396,7 +2396,7 @@ impl ParseTreeVisitor<bool> for Binder {
                     }
 
                     for name in &wildcard_names {
-                        let local_symbol = self._bind_name_value_to_scope(self.cur_scope(), name, None);
+                        let local_symbol = self._bind_name_value_to_scope(self.cur_scope(), Atom::new(name), None);
 
                         if let Some(local_symbol) = local_symbol {
                             let imported_symbol = lookup_info.symbol_table.get(name);
@@ -3301,8 +3301,8 @@ impl Binder {
     // analyzer/binder.ts:2865
     fn _add_implicit_from_import(&mut self, node: ImportFromNode, import_info: Option<P<ImportResult>>) {
         let first_name_part = node.d().module.get().d().name_parts.borrow()[0];
-        let symbol_name = first_name_part.d().value().to_string();
-        let symbol = self._bind_name_value_to_scope(self.cur_scope(), &symbol_name, None);
+        let symbol_name = first_name_part.d().value_atom();
+        let symbol = self._bind_name_value_to_scope(self.cur_scope(), symbol_name, None);
         if let Some(symbol) = symbol {
             self._create_alias_declaration_for_multipart_import_name(
                 node.node(),
@@ -4136,8 +4136,8 @@ impl Binder {
     // analyzer/binder.ts:3643
     fn _create_flow_assignment(&mut self, node: CodeFlowReferenceExpressionNode, unbound: bool) {
         let mut target_symbol_id = INDETERMINATE_SYMBOL_ID;
-        if let Some(name) = name_value(node) {
-            let symbol_with_scope = self.cur_scope().look_up_symbol_recursive(name, None);
+        if let D::Name(name) = node.d() {
+            let symbol_with_scope = self.cur_scope().look_up_symbol_recursive(name.value_atom(), None);
             assert(symbol_with_scope.is_some(), None);
             target_symbol_id = symbol_with_scope.unwrap().symbol.id;
         }
@@ -4301,18 +4301,18 @@ impl Binder {
         node: NameNode,
         added_symbols: Option<&mut JsMap<String, P<Symbol>>>,
     ) -> Option<P<Symbol>> {
-        self._bind_name_value_to_scope(scope, node.d().value(), added_symbols)
+        self._bind_name_value_to_scope(scope, node.d().value_atom(), added_symbols)
     }
 
     // analyzer/binder.ts:3782
     fn _bind_name_value_to_scope(
         &mut self,
         scope: P<Scope>,
-        name: &str,
+        name: Atom,
         added_symbols: Option<&mut JsMap<String, P<Symbol>>>,
     ) -> Option<P<Symbol>> {
         // Is this name already bound to a scope other than the local one?
-        let binding_type = self.cur_scope().get_binding_type(name);
+        let binding_type = self.cur_scope().get_binding_type(&name);
 
         if let Some(binding_type) = binding_type {
             let scope_to_use = if binding_type == NameBindingType::Nonlocal {
@@ -4332,8 +4332,8 @@ impl Binder {
 
                 let current_type = self.cur_scope().type_;
                 if current_type == ScopeType::Module || current_type == ScopeType::Builtin {
-                    if is_private_or_protected_name(name) {
-                        if is_private_name(name) {
+                    if is_private_or_protected_name(&name) {
+                        if is_private_name(&name) {
                             // Private names within classes are mangled, so they are always externally hidden.
                             if scope.type_ == ScopeType::Class {
                                 new_symbol.set_is_externally_hidden();
@@ -4560,7 +4560,7 @@ impl Binder {
         match target.d() {
             D::Name(name_details) => {
                 let name = NameNode(target);
-                let symbol_with_scope = self.cur_scope().look_up_symbol_recursive(name_details.value(), None);
+                let symbol_with_scope = self.cur_scope().look_up_symbol_recursive(name_details.value_atom(), None);
                 if let Some(symbol_with_scope) = symbol_with_scope {
                     let details = VariableDeclarationDetails::default();
                     details.is_constant.set(Some(is_constant_name(name_details.value())));
@@ -4681,7 +4681,7 @@ impl Binder {
         match target.d() {
             D::Name(name_details) => {
                 let name = NameNode(target);
-                let symbol_with_scope = self.cur_scope().look_up_symbol_recursive(name_details.value(), None);
+                let symbol_with_scope = self.cur_scope().look_up_symbol_recursive(name_details.value_atom(), None);
                 if let Some(symbol_with_scope) = symbol_with_scope {
                     let final_info = self._is_annotation_final(Some(type_annotation));
 
