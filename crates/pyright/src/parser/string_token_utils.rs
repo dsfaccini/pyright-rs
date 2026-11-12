@@ -349,12 +349,20 @@ pub fn get_unescaped_string(string_token: P<Token>, elide_crlf: bool) -> Unescap
             str_offset += 1;
         } else {
             // There's nothing to unescape, so output the escaped character directly.
-            if is_bytes && cur_char >= 128 {
+            // So for the whole run of such characters, which this branch takes one
+            // at a time.
+            let run_start = str_offset as usize;
+            let run = escaped_string[run_start..]
+                .iter()
+                .take_while(|&&c| c != Char::Backslash && c != Char::LineFeed && c != Char::CarriageReturn)
+                .count();
+            let run = &escaped_string[run_start..run_start + run];
+            if is_bytes && run.iter().any(|&c| c >= 128) {
                 output.non_ascii_in_bytes = true;
             }
 
-            output.value_parts.push(cur_char);
-            str_offset += 1;
+            output.value_parts.extend_from_slice(run);
+            str_offset += run.len() as i32;
         }
     }
 }
