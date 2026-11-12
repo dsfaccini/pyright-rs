@@ -2558,8 +2558,28 @@ impl<'a> Tokenizer<'a> {
         let get_escaped_value = |cs: &CharacterStream<'_>, escaped_value_length: i32| {
             JsString::from(&cs.get_text()[start as usize..(start + escaped_value_length) as usize])
         };
+        // The chars a branch below handles: any other char only lengthens the value
+        // and moves on (the last branch), so a run of them is skipped at once.
+        let mut stops: u128 = (1 << Char::Backslash)
+            | (1 << Char::LineFeed)
+            | (1 << Char::CarriageReturn)
+            | (1 << quote_char);
+        if is_f_string {
+            stops |= (1 << Char::OpenBrace) | (1 << Char::CloseBrace);
+        }
 
         loop {
+            let stops = if is_in_named_unicode_escape { stops | (1 << Char::CloseBrace) } else { stops };
+            let position = self._cs.position() as usize;
+            let run = self._cs.get_text()[position..]
+                .iter()
+                .take_while(|&&c| c >= 128 || (stops >> c) & 1 == 0)
+                .count();
+            if run > 0 {
+                escaped_value_length += run as i32;
+                self._cs.advance(run as i32);
+            }
+
             if self._cs.is_end_of_stream() {
                 // Hit the end of file without a termination.
                 flags |= StringTokenFlags::Unterminated;
