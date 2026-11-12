@@ -1489,10 +1489,13 @@ impl<'a> Tokenizer<'a> {
         while !self._cs.is_end_of_stream() {
             match self._cs.current_char() {
                 Char::Space => {
-                    tab1_spaces += 1;
-                    tab8_spaces += 1;
+                    // Each space of a run adds one to both counts, so the run is taken at once.
+                    let position = self._cs.position() as usize;
+                    let run = self._cs.get_text()[position..].iter().take_while(|&&c| c == Char::Space).count() as i32;
+                    tab1_spaces += run;
+                    tab8_spaces += run;
                     is_space_present = true;
-                    self._cs.move_next();
+                    self._cs.advance(run);
                 }
 
                 Char::Tab => {
