@@ -110,7 +110,7 @@ pub struct TypeResult {
     pub is_not_required: Option<bool>,
     pub is_read_only: Option<bool>,
     // Fields few objects set ([cold] in tools/stubgen/typemap.toml): read with `cold()`, write with `cold_mut()`.
-    pub cold: jsrt::OptionRefCell<TypeResultCold>,
+    pub cold: jsrt::EvalOptionRefCell<TypeResultCold>,
 }
 // The evaluator creates millions; fields few results set live in the cold half (PLAN.md step 6).
 const _: () = assert!(size_of::<TypeResult>() <= 24);
@@ -151,7 +151,7 @@ impl TypeResultCold {
     };
 
     /// The `cold` field that holds these fields: unallocated while every one is unset.
-    pub fn into_cold(self) -> jsrt::OptionRefCell<TypeResultCold> {
+    pub fn into_cold(self) -> jsrt::EvalOptionRefCell<TypeResultCold> {
         let unset = self.class_type.is_none()
             && self.bind_to_self_type.is_none()
             && self.unpacked_type.is_none()
@@ -628,7 +628,7 @@ impl TypeResult {
             is_required: None,
             is_not_required: None,
             is_read_only: None,
-            cold: jsrt::OptionRefCell::new(),
+            cold: jsrt::EvalOptionRefCell::new(),
         }
     }
 }

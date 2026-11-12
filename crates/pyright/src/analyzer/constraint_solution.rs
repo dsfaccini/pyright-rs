@@ -3,47 +3,59 @@
 //! Evaluator code: allocate with `P::new_eval` (docs/porting.md, "memory").
 
 use crate::analyzer::types::{Type, TypeVarType};
-use jsrt::{Atom, LazyJsMap, NonEmptyList, P};
-use jsrt::cell::RefCell;
+use jsrt::{Atom, NonEmptyList, P, VecMap};
+use jsrt::cell::{OnceCell, RefCell};
 
 // analyzer/constraintSolution.ts:15
 #[derive(jsrt::Trace)]
 #[trace(eval)]
 pub struct ConstraintSolutionSet {
-    pub(crate) _type_var_map: RefCell<LazyJsMap<Atom, Option<P<Type>>>>,
+    // `_typeVarMap`, allocated on the first insert: most sets stay empty, and a dead set
+    // without a map is swept without reading its slot (docs/collector-design.md, "sweep").
+    pub(crate) _type_var_map: OnceCell<P<TypeVarSolutions>>,
 }
-// Most solution sets stay empty: the map is allocated on first insert (PLAN.md step 6).
-const _: () = assert!(size_of::<ConstraintSolutionSet>() <= 16);
+const _: () = assert!(size_of::<ConstraintSolutionSet>() <= 8);
+
+/// The entries of a [`ConstraintSolutionSet`].
+#[derive(Default)]
+#[derive(jsrt::Trace)]
+#[trace(eval)]
+pub(crate) struct TypeVarSolutions(RefCell<VecMap<Atom, Option<P<Type>>>>);
 
 impl ConstraintSolutionSet {
     // analyzer/constraintSolution.ts:19
     pub fn new() -> P<ConstraintSolutionSet> {
         P::new_eval(ConstraintSolutionSet {
-            _type_var_map: RefCell::new(LazyJsMap::default()),
+            _type_var_map: OnceCell::new(),
         })
+    }
+
+    fn map(&self) -> Option<jsrt::cell::Ref<'_, VecMap<Atom, Option<P<Type>>>>> {
+        self._type_var_map.get().map(|map| map.get().0.borrow())
     }
 
     // analyzer/constraintSolution.ts:23
     pub fn is_empty(&self) -> bool {
-        self._type_var_map.borrow().is_empty()
+        self.map().is_none_or(|map| map.is_empty())
     }
 
     // analyzer/constraintSolution.ts:29
     pub fn get_type(&self, type_var: TypeVarType) -> Option<P<Type>> {
         let key = TypeVarType::get_name_with_scope(type_var);
-        self._type_var_map.borrow().get(&key).copied().flatten()
+        self.map()?.get(&key).copied().flatten()
     }
 
     // analyzer/constraintSolution.ts:34
     pub fn set_type(&self, type_var: TypeVarType, type_: Option<P<Type>>) {
         let key = TypeVarType::get_name_with_scope(type_var);
-        self._type_var_map.borrow_mut().insert(key, type_);
+        let map = *self._type_var_map.get_or_init(|| P::new_eval(TypeVarSolutions::default()));
+        map.get().0.borrow_mut().insert(key, type_);
     }
 
     // analyzer/constraintSolution.ts:39
     pub fn has_type(&self, type_var: TypeVarType) -> bool {
         let key = TypeVarType::get_name_with_scope(type_var);
-        self._type_var_map.borrow().contains_key(&key)
+        self.map().is_some_and(|map| map.contains_key(&key))
     }
 
     // analyzer/constraintSolution.ts:44
@@ -52,7 +64,7 @@ impl ConstraintSolutionSet {
         // so the callback can reach back into this set.
         let mut index = 0;
         loop {
-            let (key, type_) = match self._type_var_map.borrow().get_index(index) {
+            let (key, type_) = match self.map().as_deref().and_then(|map| map.get_index(index)) {
                 Some((key, type_)) => (*key, *type_),
                 None => break,
             };

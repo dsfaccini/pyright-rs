@@ -302,7 +302,7 @@ export class FileEmitter {
         if (coldFields.length) {
             fields.push(`    // Fields few objects set ([cold] in tools/stubgen/typemap.toml): read with \`cold()\`, write with \`cold_mut()\`.`);
             if (mode === 'handle') {
-                fields.push(`    pub cold: jsrt::OptionRefCell<${name}Cold>,`);
+                fields.push(`    pub cold: jsrt::EvalOptionRefCell<${name}Cold>,`);
             } else {
                 fields.push(`    pub cold: Option<Box<${name}Cold>>,`);
             }
@@ -317,8 +317,8 @@ export class FileEmitter {
 
     // The cold half of a [cold] struct: allocated on the first write through `cold_mut()`, so an
     // object that never sets one of its fields pays one pointer. `cold()` reads an empty one. A
-    // handle's cold half sits in a `jsrt::OptionRefCell`, so its accessors borrow it: never hold
-    // one across a call that can reach the same object.
+    // handle's cold half sits in a `jsrt::EvalOptionRefCell`, its own evaluator object, so its
+    // accessors borrow it: never hold one across a call that can reach the same object.
     private coldStruct(decl: ts.InterfaceDeclaration | ts.ClassDeclaration, name: string, coldFields: string[], handle: boolean) {
         const cold = `${name}Cold`;
         if (!coldFields.every((f) => /^\s*pub(\(crate\))? \w+: Option</.test(f))) {
@@ -338,7 +338,7 @@ export class FileEmitter {
             '    };',
             '',
             '    /// The `cold` field that holds these fields: unallocated while every one is unset.',
-            handle ? `    pub fn into_cold(self) -> jsrt::OptionRefCell<${cold}> {` : `    pub fn into_cold(self) -> Option<Box<${cold}>> {`,
+            handle ? `    pub fn into_cold(self) -> jsrt::EvalOptionRefCell<${cold}> {` : `    pub fn into_cold(self) -> Option<Box<${cold}>> {`,
             `        let unset = ${coldFields.map((f) => f.replace(/^\s*pub(\(crate\))? (\w+): .*$/, 'self.$2.is_none()')).join(' && ')};`,
             handle ? '        (!unset).then_some(self).into()' : '        (!unset).then(|| Box::new(self))',
             '    }',
