@@ -33,7 +33,7 @@ use crate::oracle::tree::dump_parser_output;
 use crate::parser::parse_nodes::{
     FunctionNode, ImportAsNode, ImportFromAsNode, ImportFromNode, MemberAccessNode, NameNode, ParseNode, with_node_id_block,
 };
-use crate::parser::parser::{ParseFileResults, ParseOptions, Parser};
+use crate::parser::parser::{ModuleImport, ParseFileResults, ParseOptions, Parser};
 
 /// `PYRIGHT_RS_PARSE_AHEAD`: `on` (the default) parses on workers, `off` parses
 /// every file on the main thread as pyright does, `check` also parses each file a
@@ -115,9 +115,26 @@ struct Queue {
     later: VecDeque<Arc<Job>>,
 }
 
+/// What the main thread and the workers know about the files, by path.
+#[derive(Default)]
+struct Table {
+    /// Requested files, until the main thread parses them.
+    jobs: FxHashMap<String, Arc<Job>>,
+    /// Files the main thread parsed, which no worker requests again.
+    parsed: FxHashSet<String>,
+    /// The names of each module that the check will look up, as far as the import
+    /// statements of the files parsed so far tell (`after_parse`).
+    wanted: FxHashMap<String, Wanted>,
+    /// The file each absolute module name resolved to, in the main thread's resolutions.
+    modules: FxHashMap<String, String>,
+}
+
 struct Shared {
     queue: Mutex<Queue>,
     work: Condvar,
+    table: Mutex<Table>,
+    /// Requests workers made for the imports of files they parsed (`guess_imports`).
+    guessed: AtomicU64,
     /// Nanoseconds the workers spent reading and parsing.
     busy_ns: AtomicU64,
     /// Bytes of the workers' program arenas.
@@ -147,13 +164,8 @@ struct Stats {
 /// The main thread's side.
 struct Ahead {
     shared: Arc<Shared>,
-    /// Requested files by `Uri::key`, until the main thread parses them.
-    jobs: FxHashMap<&'static str, Arc<Job>>,
     /// Urgent requests `flush` has yet to queue.
     pending: Vec<Arc<Job>>,
-    /// The names of each module that the check will look up, as far as the import
-    /// statements of the files parsed so far tell (`after_parse`).
-    wanted: FxHashMap<&'static str, Wanted>,
     /// The module reads of the file `take` returned last.
     last_reads: Option<(&'static str, ModuleReads)>,
     stats: Stats,
@@ -176,6 +188,8 @@ pub fn start() {
     let shared = Arc::new(Shared {
         queue: Mutex::new(Queue::default()),
         work: Condvar::new(),
+        table: Mutex::new(Table::default()),
+        guessed: AtomicU64::new(0),
         busy_ns: AtomicU64::new(0),
         arena_bytes: AtomicUsize::new(0),
         taken: AtomicU64::new(0),
@@ -192,28 +206,36 @@ pub fn start() {
     AHEAD.with(|ahead| {
         *ahead.borrow_mut() = Some(Ahead {
             shared,
-            jobs: FxHashMap::default(),
             pending: Vec::new(),
-            wanted: FxHashMap::default(),
             last_reads: None,
             stats: Stats::default(),
         })
     });
 }
 
-/// Asks a worker to parse the file `key` names, after the files already waiting;
-/// an urgent request waits for `flush`, which puts it before them. Does nothing
-/// when no workers run, the file is already requested or is no Python file.
-pub fn request(key: &'static str, request: Request, urgent: bool) {
+/// A new job for `request`, unless the file is requested or parsed already, or is
+/// no Python file: an import can resolve to a native module, which pyright never parses.
+fn new_job(table: &mut Table, request: Request) -> Option<Arc<Job>> {
+    if !(request.path.ends_with(".py") || request.path.ends_with(".pyi"))
+        || table.jobs.contains_key(&request.path)
+        || table.parsed.contains(&request.path)
+    {
+        return None;
+    }
+    let path = request.path.clone();
+    let job = Arc::new(Job { request, state: Mutex::new(State::Queued), done: Condvar::new() });
+    table.jobs.insert(path, job.clone());
+    Some(job)
+}
+
+/// Asks a worker to parse a file, after the files already waiting; an urgent
+/// request waits for `flush`, which puts it before them. Does nothing when no
+/// workers run.
+fn request(request: Request, urgent: bool) {
     AHEAD.with(|ahead| {
         let mut ahead = ahead.borrow_mut();
         let Some(ahead) = ahead.as_mut() else { return };
-        // An import can resolve to a native module, which pyright never parses.
-        if ahead.jobs.contains_key(key) || !(request.path.ends_with(".py") || request.path.ends_with(".pyi")) {
-            return;
-        }
-        let job = Arc::new(Job { request, state: Mutex::new(State::Queued), done: Condvar::new() });
-        ahead.jobs.insert(key, job.clone());
+        let Some(job) = new_job(&mut lock(&ahead.shared.table), request) else { return };
         ahead.stats.requested += 1;
         if urgent {
             ahead.pending.push(job);
@@ -249,7 +271,12 @@ pub fn take(key: &'static str, now: Option<&Request>) -> Option<Parsed> {
     AHEAD.with(|ahead| {
         let mut ahead = ahead.borrow_mut();
         let ahead = ahead.as_mut()?;
-        let Some(job) = ahead.jobs.remove(key) else {
+        let job = now.and_then(|now| {
+            let mut table = lock(&ahead.shared.table);
+            table.parsed.insert(now.path.clone());
+            table.jobs.remove(&now.path)
+        });
+        let Some(job) = job else {
             ahead.stats.unrequested += 1;
             return None;
         };
@@ -318,15 +345,15 @@ pub fn after_parse(program: &Program, file: P<SourceFileInfo>) {
         return;
     }
     let key = file.uri().key();
-    let (names, reads) = AHEAD.with(|ahead| {
-        let mut ahead = ahead.borrow_mut();
-        let ahead = ahead.as_mut().unwrap();
+    let path = path_of(program, file.uri());
+    let (names, reads) = with_table(|table, ahead| {
         let reads = ahead.last_reads.take().filter(|(of, _)| *of == key).map(|(_, reads)| reads);
-        (ahead.wanted.get(key).cloned(), reads)
+        (path.as_ref().and_then(|path| table.wanted.get(path).cloned()), reads)
     });
+    learn_modules(program, file);
     let names = if is_user_code(Some(file)) {
         for import in file.imports() {
-            request_file(program, import.uri());
+            request_file(program, import.uri(), true);
         }
         Some(Wanted::All)
     } else {
@@ -451,11 +478,9 @@ fn want_reads(program: &Program, file: P<SourceFileInfo>, reads: &[Vec<Atom>]) {
             None => (1..read.len()).rev().find_map(|len| dotted.get(&read[..len]).map(|&target| (target, read[len]))),
         };
         let Some((target, name)) = hit else { continue };
-        request_file(program, target);
-        let new = AHEAD.with(|ahead| {
-            ahead.borrow_mut().as_mut().and_then(|ahead| {
-                want(&mut ahead.wanted, target.key(), Wanted::Names(std::iter::once(name.as_str().to_string()).collect()))
-            })
+        request_file(program, target, true);
+        let new = path_of(program, target).and_then(|path| {
+            with_table(|table, _| want(&mut table.wanted, path, Wanted::Names(std::iter::once(name.as_str().to_string()).collect())))
         });
         if let Some(new) = new
             && let Some(info) = program.get_source_file_info(target)
@@ -466,12 +491,57 @@ fn want_reads(program: &Program, file: P<SourceFileInfo>, reads: &[Vec<Atom>]) {
     }
 }
 
-fn request_file(program: &Program, uri: Uri) {
-    if let Some(info) = program.get_source_file_info(uri)
-        && let Some(request) = info.source_file.parse_ahead_request(&program.config_options())
-    {
-        self::request(uri.key(), request, true);
+/// Asks a worker to parse the file `uri` names, when a worker can. A user file
+/// wants every name.
+pub fn request_file(program: &Program, uri: Uri, urgent: bool) {
+    let Some(info) = program.get_source_file_info(uri) else { return };
+    let Some(request) = info.source_file.parse_ahead_request(&program.config_options()) else { return };
+    if is_user_code(Some(info)) {
+        let path = request.path.clone();
+        with_table(|table, _| want(&mut table.wanted, path, Wanted::All));
     }
+    self::request(request, urgent);
+}
+
+/// The path workers know the file `uri` names by.
+fn path_of(program: &Program, uri: Uri) -> Option<String> {
+    program.get_source_file_info(uri)?.source_file.file_system.real_file_path(uri)
+}
+
+fn with_table<R>(f: impl FnOnce(&mut Table, &mut Ahead) -> R) -> R {
+    AHEAD.with(|ahead| {
+        let mut ahead = ahead.borrow_mut();
+        let ahead = ahead.as_mut().expect("parse ahead is active");
+        let shared = ahead.shared.clone();
+        let mut table = lock(&shared.table);
+        f(&mut table, ahead)
+    })
+}
+
+/// Records where the absolute imports of `file`, parsed, resolved to, so a worker
+/// can guess the same imports in the files it parses (`guess_imports`).
+fn learn_modules(program: &Program, file: P<SourceFileInfo>) {
+    let Some(output) = file.source_file.get_parser_output() else { return };
+    let imports = file.source_file.get_imports();
+    let Some(implicit) = imports.len().checked_sub(output.imported_modules.len()) else { return };
+    let mut learned = Vec::new();
+    for (module, result) in output.imported_modules.iter().zip(&imports[implicit..]) {
+        if module.leading_dots != 0 || module.name_parts.is_empty() {
+            continue;
+        }
+        let name = module.name_parts.join(".");
+        if let Some(target) = result.resolved_uris.last().copied().filter(|uri| !uri.is_empty())
+            && let Some(path) = path_of(program, target)
+        {
+            learned.push((name.clone(), path));
+        }
+        for (submodule, implicit) in result.filtered_implicit_imports.iter().flatten() {
+            if let Some(path) = path_of(program, implicit.uri) {
+                learned.push((format!("{name}.{submodule}"), path));
+            }
+        }
+    }
+    with_table(|table, _| table.modules.extend(learned));
 }
 
 /// Requests what the import statements of `file`, parsed, bring in for `names`.
@@ -486,7 +556,7 @@ fn want_from(program: &Program, file: P<SourceFileInfo>, names: &Wanted) {
             // `import a.b`: which attributes the check reads is unknown.
             (None, Wanted::All) => {
                 if let Some(target) = target {
-                    request_file(program, target);
+                    request_file(program, target, true);
                 }
                 continue;
             }
@@ -503,17 +573,18 @@ fn want_from(program: &Program, file: P<SourceFileInfo>, names: &Wanted) {
             }
         };
         if let Some(target) = target {
-            request_file(program, target);
+            request_file(program, target, true);
         }
         if let (Wanted::Names(hit), Some(implicit_imports)) = (&hit, &result.filtered_implicit_imports) {
             for name in hit {
                 if let Some(submodule) = implicit_imports.get(name) {
-                    request_file(program, submodule.uri);
+                    request_file(program, submodule.uri, true);
                 }
             }
         }
         let Some(target) = target else { continue };
-        let new = AHEAD.with(|ahead| ahead.borrow_mut().as_mut().and_then(|ahead| want(&mut ahead.wanted, target.key(), hit)));
+        let Some(path) = path_of(program, target) else { continue };
+        let new = with_table(|table, _| want(&mut table.wanted, path, hit));
         // A module parsed already passes the new names on now; one not parsed yet
         // passes them on when it is.
         if let Some(new) = new
@@ -525,9 +596,9 @@ fn want_from(program: &Program, file: P<SourceFileInfo>, names: &Wanted) {
     }
 }
 
-/// Adds `names` to the names wanted from the module `key` names; returns those it lacked.
-fn want(wanted: &mut FxHashMap<&'static str, Wanted>, key: &'static str, names: Wanted) -> Option<Wanted> {
-    let entry = wanted.entry(key).or_insert_with(|| Wanted::Names(FxHashSet::default()));
+/// Adds `names` to the names wanted from the module at `path`; returns those it lacked.
+fn want(wanted: &mut FxHashMap<String, Wanted>, path: String, names: Wanted) -> Option<Wanted> {
+    let entry = wanted.entry(path).or_insert_with(|| Wanted::Names(FxHashSet::default()));
     match (entry, names) {
         (Wanted::All, _) => None,
         (entry, Wanted::All) => {
@@ -636,16 +707,150 @@ fn work(shared: &Shared) {
         let before = jsrt::arena::arena_allocated_bytes();
         // A parse that panics leaves the file to the main thread, which then
         // panics as it would have without workers.
+        let mut statements = Vec::new();
         let outcome = match std::panic::catch_unwind(|| read_and_parse(&job.request.path, &job.request.options)) {
-            Ok(Some((parsed, reads))) => Outcome::Parsed(Handoff(Box::new(parsed), reads)),
+            Ok(Some((parsed, reads))) => {
+                statements = parsed.results.parser_output.imported_modules.iter().map(Statement::of).collect();
+                Outcome::Parsed(Handoff(Box::new(parsed), reads))
+            }
             Ok(None) => Outcome::Unread,
             Err(_) => Outcome::Panicked,
         };
         shared.arena_bytes.fetch_add(jsrt::arena::arena_allocated_bytes() - before, Relaxed);
-        shared.busy_ns.fetch_add(start.elapsed().as_nanos() as u64, Relaxed);
         *lock(&job.state) = State::Done(outcome);
         job.done.notify_all();
+        guess_imports(shared, &job.request, &statements);
+        shared.busy_ns.fetch_add(start.elapsed().as_nanos() as u64, Relaxed);
     }
+}
+
+/// An import statement of a parsed file, as `guess_imports` reads it.
+struct Statement {
+    leading_dots: i32,
+    name_parts: Vec<String>,
+    imported_symbols: Option<Vec<String>>,
+}
+
+impl Statement {
+    fn of(module: &ModuleImport) -> Statement {
+        Statement {
+            leading_dots: module.leading_dots,
+            name_parts: module.name_parts.clone(),
+            imported_symbols: module.imported_symbols.as_ref().map(|symbols| symbols.iter().cloned().collect()),
+        }
+    }
+}
+
+/// The names that an import statement passes on from a file that wants `names`:
+/// `None` when it passes none on, `Some(None)` for `import a.b`, whose target is
+/// wanted but which passes no name on.
+fn passed_on(symbols: Option<&[String]>, names: &Wanted) -> Option<Option<Wanted>> {
+    match (symbols, names) {
+        // `import a.b`: which attributes the check reads is unknown.
+        (None, Wanted::All) => Some(None),
+        (None, Wanted::Names(_)) => None,
+        // `from a import *`
+        (Some([]), names) => Some(Some(names.clone())),
+        (Some(symbols), Wanted::All) => Some(Some(Wanted::Names(symbols.iter().cloned().collect()))),
+        (Some(symbols), Wanted::Names(names)) => {
+            let both: FxHashSet<String> = symbols.iter().filter(|s| names.contains(*s)).cloned().collect();
+            (!both.is_empty()).then_some(Some(Wanted::Names(both)))
+        }
+    }
+}
+
+/// The file a module at `base` is, as pyright looks within one directory: a stub
+/// first, then a source file, then a package.
+fn module_file(base: &std::path::Path) -> Option<String> {
+    let name = base.file_name()?.to_str()?;
+    let candidates = [
+        base.with_file_name(format!("{name}.pyi")),
+        base.with_file_name(format!("{name}.py")),
+        base.join("__init__.pyi"),
+        base.join("__init__.py"),
+    ];
+    candidates.into_iter().find(|path| path.is_file()).and_then(|path| path.to_str().map(str::to_string))
+}
+
+/// A worker's guess at what `from`, which it just parsed, makes the check parse
+/// next, before the main thread resolves its imports: the cascade of `want_from`
+/// for the names wanted from `from`, with relative imports looked up next to it
+/// and absolute ones in the main thread's earlier resolutions (`Table::modules`).
+/// A wrong guess costs a parse that no one takes.
+fn guess_imports(shared: &Shared, from: &Request, statements: &[Statement]) {
+    let Some(names) = lock(&shared.table).wanted.get(&from.path).cloned() else { return };
+    let here = std::path::Path::new(&from.path).parent();
+    // (the target's relative guess or absolute name, the names passed on, submodule guesses)
+    let mut targets: Vec<(Result<String, String>, Option<Wanted>, Vec<Result<String, String>>)> = Vec::new();
+    for statement in statements {
+        let Some(hit) = passed_on(statement.imported_symbols.as_deref(), &names) else { continue };
+        let target = if statement.leading_dots > 0 {
+            let Some(mut base) = here.map(std::path::Path::to_path_buf) else { continue };
+            for _ in 1..statement.leading_dots {
+                base.pop();
+            }
+            let package = statement.name_parts.is_empty();
+            base.extend(&statement.name_parts);
+            let found = if package { module_file(&base.join("__init__")).or_else(|| module_file(&base)) } else { module_file(&base) };
+            let Some(found) = found else { continue };
+            Ok(found)
+        } else {
+            Err(statement.name_parts.join("."))
+        };
+        // `from p import m` can import the submodule `m`.
+        let mut submodules = Vec::new();
+        if let Some(Wanted::Names(hit)) = &hit {
+            for name in hit {
+                match &target {
+                    Ok(path) if path.ends_with("__init__.py") || path.ends_with("__init__.pyi") => {
+                        if let Some(found) = std::path::Path::new(path).parent().and_then(|dir| module_file(&dir.join(name))) {
+                            submodules.push(Ok(found));
+                        }
+                    }
+                    Ok(_) => {}
+                    Err(module) => submodules.push(Err(format!("{module}.{name}"))),
+                }
+            }
+        }
+        targets.push((target, hit, submodules));
+    }
+    let options = |path: &str| ParseOptions { is_stub_file: path.ends_with("pyi"), ..from.options.clone() };
+    let mut jobs = Vec::new();
+    {
+        let mut table = lock(&shared.table);
+        let table = &mut *table;
+        let resolve = |target: Result<String, String>| target.or_else(|module| table.modules.get(&module).cloned().ok_or(()));
+        let mut found = Vec::new();
+        for (target, hit, submodules) in targets {
+            let target = resolve(target);
+            for submodule in submodules {
+                if let Ok(path) = resolve(submodule) {
+                    found.push((path, None));
+                }
+            }
+            if let Ok(path) = target {
+                found.push((path, hit));
+            }
+        }
+        for (path, hit) in found {
+            if let Some(job) = new_job(table, Request { options: options(&path), path: path.clone() }) {
+                jobs.push(job);
+            }
+            if let Some(hit) = hit {
+                want(&mut table.wanted, path, hit);
+            }
+        }
+    }
+    if jobs.is_empty() {
+        return;
+    }
+    shared.guessed.fetch_add(jobs.len() as u64, Relaxed);
+    let mut queue = lock(&shared.queue);
+    for job in jobs.into_iter().rev() {
+        queue.urgent.push_front(job);
+    }
+    drop(queue);
+    shared.work.notify_all();
 }
 
 /// `PYRIGHT_RS_PARSE_AHEAD_LOG=1`: prints what the workers did, to stderr.
@@ -676,7 +881,7 @@ pub fn log_end_of_check() {
         };
         let s = &ahead.stats;
         let mut untaken = [0u64; 3];
-        for job in ahead.jobs.values() {
+        for job in lock(&ahead.shared.table).jobs.values() {
             match *lock(&job.state) {
                 State::Queued => untaken[0] += 1,
                 State::Running => untaken[1] += 1,
@@ -685,12 +890,13 @@ pub fn log_end_of_check() {
             }
         }
         eprintln!(
-            "parse ahead: {} workers busy {:.3} s, arenas {} MiB; {} requested; taken {} ready, {} after waiting {:.3} s; \
+            "parse ahead: {} workers busy {:.3} s, arenas {} MiB; {} requested, {} more by workers; taken {} ready, {} after waiting {:.3} s; \
              parsed on the main thread {} queued, {} unrequested, {} unread, {} panicked, {} stale; untaken {} queued, {} running, {} done",
             thread_count(),
             ahead.shared.busy_ns.load(Relaxed) as f64 / 1e9,
             ahead.shared.arena_bytes.load(Relaxed) >> 20,
             s.requested,
+            ahead.shared.guessed.load(Relaxed),
             s.ready,
             s.waited,
             s.wait_ns as f64 / 1e9,

@@ -441,7 +441,7 @@ impl Program {
                         ahead_index += 1;
                         if is_user_code(Some(next)) {
                             requested += 1;
-                            self.request_parse_ahead(next, false);
+                            parse_ahead::request_file(self, next.uri(), false);
                         }
                     }
                 }
@@ -985,14 +985,6 @@ impl Program {
 
             // Invalidate the import resolver's cache as well.
             self.import_resolver.get().invalidate_cache();
-        }
-    }
-
-    /// Rust-only: asks a parse worker to read and parse `file`, when it needs a
-    /// parse a worker can make (`docs/porting.md`, "parse ahead").
-    fn request_parse_ahead(&self, file: P<SourceFileInfo>, urgent: bool) {
-        if let Some(request) = file.source_file.parse_ahead_request(&self.config_options.get()) {
-            parse_ahead::request(file.uri().key(), request, urgent);
         }
     }
 
