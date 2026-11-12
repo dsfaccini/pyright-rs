@@ -2531,7 +2531,7 @@ pub struct FunctionDetailsShared {
     pub type_var_scope_id: RefCell<Option<TypeVarScopeId>>,
     pub method_class: Cell<Option<ClassType>>,
     // Fields few objects set ([cold] in tools/stubgen/typemap.toml): read with `cold()`, write with `cold_mut()`.
-    pub cold: OptionRefCell<FunctionDetailsSharedCold>,
+    pub cold: jsrt::EvalOptionRefCell<FunctionDetailsSharedCold>,
 }
 // Copied by every FunctionType clone that changes it; rare fields live in the cold half (PLAN.md step 6).
 const _: () = assert!(size_of::<FunctionDetailsShared>() <= 120);
@@ -2556,7 +2556,7 @@ impl FunctionDetailsSharedCold {
     };
 
     /// The `cold` field that holds these fields: unallocated while every one is unset.
-    pub fn into_cold(self) -> OptionRefCell<FunctionDetailsSharedCold> {
+    pub fn into_cold(self) -> jsrt::EvalOptionRefCell<FunctionDetailsSharedCold> {
         let unset = self.doc_string.is_none()
             && self.deprecated_message.is_none()
             && self.decorator_data_class_behaviors.is_none()
