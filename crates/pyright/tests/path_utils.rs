@@ -147,7 +147,7 @@ fn get_wildcard_root_with_drive_letter() {
 // tests/pathUtils.test.ts:236
 #[test]
 fn reduce_path_components_empty() {
-    assert_eq!(path_utils::reduce_path_components(&[]).len(), 0);
+    assert_eq!(path_utils::reduce_path_components::<String>(&[]).len(), 0);
 }
 
 // tests/pathUtils.test.ts:240

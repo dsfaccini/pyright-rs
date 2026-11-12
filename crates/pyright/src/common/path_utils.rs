@@ -61,39 +61,37 @@ pub fn get_path_separator(_path_string: &str) -> &'static str {
 pub fn get_path_components(path_string: &str) -> Vec<String> {
     let normalized_path = normalize_slashes(path_string);
     let root_length = get_root_length(&normalized_path);
-    let root = normalized_path[..root_length].to_string();
-    let mut rest: Vec<String> = normalized_path[root_length..]
-        .split(SEP)
-        .map(str::to_string)
-        .collect();
+    let root = &normalized_path[..root_length];
+    let mut rest: Vec<&str> = normalized_path[root_length..].split(SEP).collect();
     if !rest.is_empty() && rest.last().unwrap().is_empty() {
         rest.pop();
     }
 
     let mut components = vec![root];
     components.extend(rest);
-    reduce_path_components(&components)
+    // Reduced as slices, so that only the components it keeps become strings.
+    reduce_path_components(&components).into_iter().map(str::to_string).collect()
 }
 
 // common/pathUtils.ts:118
-pub fn reduce_path_components(components: &[String]) -> Vec<String> {
+pub fn reduce_path_components<S: AsRef<str> + Clone>(components: &[S]) -> Vec<S> {
     if components.is_empty() {
         return Vec::new();
     }
 
     let mut reduced = vec![components[0].clone()];
     for component in &components[1..] {
-        if component.is_empty() || component == "." {
+        if component.as_ref().is_empty() || component.as_ref() == "." {
             continue;
         }
 
-        if component == ".." {
+        if component.as_ref() == ".." {
             if reduced.len() > 1 {
-                if reduced.last().unwrap() != ".." {
+                if reduced.last().unwrap().as_ref() != ".." {
                     reduced.pop();
                     continue;
                 }
-            } else if !reduced[0].is_empty() {
+            } else if !reduced[0].as_ref().is_empty() {
                 continue;
             }
         }
