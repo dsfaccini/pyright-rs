@@ -1387,24 +1387,15 @@ pub fn get_type_annotation_node(node: P<ParseNode>) -> Option<TypeAnnotationNode
 // iterable is used after a keyword argument.
 // analyzer/parseTreeUtils.ts:1125
 pub fn get_args_by_runtime_order(node: CallNode) -> Vec<ArgumentNode> {
-    let args = node.d().args.borrow().clone();
-    let positional_args: Vec<ArgumentNode> = args
-        .iter()
-        .filter(|arg| {
-            arg.d().name.get().is_none()
-                && arg.d().arg_category.get() != ArgCategory::UnpackedDictionary
-        })
-        .copied()
-        .collect();
-    let keyword_args: Vec<ArgumentNode> = args
-        .iter()
-        .filter(|arg| {
-            arg.d().name.get().is_some()
-                || arg.d().arg_category.get() == ArgCategory::UnpackedDictionary
-        })
-        .copied()
-        .collect();
-    [positional_args, keyword_args].concat()
+    let args = node.d().args.borrow();
+    let is_keyword_arg = |arg: &&ArgumentNode| {
+        arg.d().name.get().is_some() || arg.d().arg_category.get() == ArgCategory::UnpackedDictionary
+    };
+    // `positionalArgs.concat(keywordArgs)`, built in one array.
+    let mut sorted_args = Vec::with_capacity(args.len());
+    sorted_args.extend(args.iter().filter(|arg| !is_keyword_arg(arg)).copied());
+    sorted_args.extend(args.iter().filter(is_keyword_arg).copied());
+    sorted_args
 }
 
 // PEP 591 spells out certain limited cases where an assignment target
