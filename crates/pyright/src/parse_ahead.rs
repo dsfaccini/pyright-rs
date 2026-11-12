@@ -19,7 +19,7 @@ use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering::Relaxed};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
 use std::time::Instant;
 
-use jsrt::{FxHashMap, FxHashSet, JsStr, JsString, P, SwitchMode};
+use jsrt::{Atom, FxHashMap, FxHashSet, JsStr, JsString, P, SwitchMode};
 
 use crate::analyzer::program::Program;
 use crate::analyzer::source_file::MAX_SOURCE_FILE_SIZE;
@@ -30,7 +30,11 @@ use crate::common::string_utils::{StringFingerprint, get_string_fingerprint};
 use crate::oracle::bind::walk_tree;
 use crate::oracle::tokens::dump_tokenizer_output;
 use crate::oracle::tree::dump_parser_output;
-use crate::parser::parse_nodes::with_node_id_block;
+use crate::parser::parse_nodes::{
+    ImportAsNode, ImportFromAsNode, ImportFromNode, MemberAccessNode, ModuleNode, NameNode, get_parser_string_annotation,
+    with_node_id_block,
+};
+use crate::parser::parse_tree_utils::get_child_nodes;
 use crate::parser::parser::{ParseFileResults, ParseOptions, Parser};
 
 /// `PYRIGHT_RS_PARSE_AHEAD`: `on` (the default) parses on workers, `off` parses
@@ -68,8 +72,8 @@ pub struct Parsed {
     pub results: ParseFileResults,
 }
 
-/// A worker's `Parsed`, on its way to the main thread.
-struct Handoff(Box<Parsed>);
+/// A worker's `Parsed`, on its way to the main thread, with the file's module reads.
+struct Handoff(Box<Parsed>, ModuleReads);
 
 // SAFETY: a worker hands a `Parsed` over once and never touches it again. Its
 // handles point into the worker's program arena, which is never freed, or into
@@ -152,6 +156,8 @@ struct Ahead {
     /// The names of each module that the check will look up, as far as the import
     /// statements of the files parsed so far tell (`after_parse`).
     wanted: FxHashMap<&'static str, Wanted>,
+    /// The module reads of the file `take` returned last.
+    last_reads: Option<(&'static str, ModuleReads)>,
     stats: Stats,
 }
 
@@ -191,6 +197,7 @@ pub fn start() {
             jobs: FxHashMap::default(),
             pending: Vec::new(),
             wanted: FxHashMap::default(),
+            last_reads: None,
             stats: Stats::default(),
         })
     });
@@ -273,8 +280,9 @@ pub fn take(key: &'static str, now: Option<&Request>) -> Option<Parsed> {
             return None;
         }
         match done {
-            Outcome::Parsed(Handoff(parsed)) => {
+            Outcome::Parsed(Handoff(parsed, reads)) => {
                 ahead.shared.taken.fetch_add(1, Relaxed);
+                ahead.last_reads = Some((key, reads));
                 Some(*parsed)
             }
             Outcome::Unread => {
@@ -311,18 +319,137 @@ pub fn after_parse(program: &Program, file: P<SourceFileInfo>) {
     if !active() {
         return;
     }
+    let key = file.uri().key();
+    let (names, reads) = AHEAD.with(|ahead| {
+        let mut ahead = ahead.borrow_mut();
+        let ahead = ahead.as_mut().unwrap();
+        let reads = ahead.last_reads.take().filter(|(of, _)| *of == key).map(|(_, reads)| reads);
+        (ahead.wanted.get(key).cloned(), reads)
+    });
     let names = if is_user_code(Some(file)) {
         for import in file.imports() {
             request_file(program, import.uri());
         }
         Some(Wanted::All)
     } else {
-        AHEAD.with(|ahead| ahead.borrow().as_ref().and_then(|ahead| ahead.wanted.get(file.uri().key()).cloned()))
+        names
     };
     if let Some(names) = names {
         want_from(program, file, &names);
     }
+    let Some(output) = file.source_file.get_parser_output() else { return flush() };
+    let reads = reads.unwrap_or_else(|| module_reads(output.parse_tree));
+    want_reads(program, file, &reads);
     flush();
+}
+
+/// The dotted names a file reads from the names its import statements bind:
+/// `np.linalg.norm` as `[np, linalg, norm]`, at most five names long.
+type ModuleReads = Vec<Vec<Atom>>;
+
+/// The module reads of the tree `root` starts, in no particular order.
+fn module_reads(root: ModuleNode) -> ModuleReads {
+    let mut bound: FxHashSet<Atom> = FxHashSet::default();
+    let mut chains: Vec<Vec<Atom>> = Vec::new();
+    let mut stack = vec![root.0];
+    while let Some(node) = stack.pop() {
+        if let Some(import) = ImportAsNode::cast(node) {
+            match import.d().alias.get() {
+                Some(alias) => bound.insert(alias.d().value_atom()),
+                None => match import.d().module.get().d().name_parts.borrow().first() {
+                    Some(first) => bound.insert(first.d().value_atom()),
+                    None => false,
+                },
+            };
+        } else if let Some(import) = ImportFromAsNode::cast(node) {
+            bound.insert(import.d().alias.get().unwrap_or(import.d().name.get()).d().value_atom());
+        } else if let Some(access) = MemberAccessNode::cast(node)
+            && node.parent.get().and_then(MemberAccessNode::cast).is_none_or(|outer| outer.d().left_expr.get() != node)
+        {
+            // The outermost access of a chain; its prefixes are reads too.
+            let mut chain = vec![access.d().member.get().d().value_atom()];
+            let mut left = access.d().left_expr.get();
+            while let Some(inner) = MemberAccessNode::cast(left) {
+                chain.push(inner.d().member.get().d().value_atom());
+                left = inner.d().left_expr.get();
+            }
+            if let Some(base) = NameNode::cast(left) {
+                chain.push(base.d().value_atom());
+                chain.reverse();
+                chain.truncate(5);
+                chains.push(chain);
+            }
+        }
+        for child in get_child_nodes(node, Some(&get_parser_string_annotation)).into_iter().rev().flatten() {
+            stack.push(child);
+        }
+    }
+    let mut reads: FxHashSet<Vec<Atom>> = FxHashSet::default();
+    for chain in chains {
+        if bound.contains(&chain[0]) {
+            for len in 2..=chain.len() {
+                reads.insert(chain[..len].to_vec());
+            }
+        }
+    }
+    reads.into_iter().collect()
+}
+
+/// Requests the modules whose names `reads`, from `file`, look up: `m.x` wants `x`
+/// from the module `import m` binds, or `import p.m as m`, or `from p import m`.
+fn want_reads(program: &Program, file: P<SourceFileInfo>, reads: &ModuleReads) {
+    if reads.is_empty() {
+        return;
+    }
+    let Some(output) = file.source_file.get_parser_output() else { return };
+    let imports = file.source_file.get_imports();
+    let Some(implicit) = imports.len().checked_sub(output.imported_modules.len()) else { return };
+    // The module each name an import statement binds stands for, and the module
+    // of each dotted name `import a.b.c` binds.
+    let mut aliases: FxHashMap<Atom, Uri> = FxHashMap::default();
+    let mut dotted: FxHashMap<Vec<Atom>, Uri> = FxHashMap::default();
+    for (module, result) in output.imported_modules.iter().zip(&imports[implicit..]) {
+        let target = result.resolved_uris.last().copied().filter(|uri| !uri.is_empty());
+        let Some(statement) = module.name_node.parent.get() else { continue };
+        if let Some(import) = ImportAsNode::cast(statement) {
+            let Some(target) = target else { continue };
+            match import.d().alias.get() {
+                Some(alias) => {
+                    aliases.insert(alias.d().value_atom(), target);
+                }
+                None => {
+                    dotted.insert(module.name_parts.iter().map(|part| Atom::new(part)).collect(), target);
+                }
+            }
+        } else if let Some(import) = ImportFromNode::cast(statement)
+            && let Some(submodules) = &result.filtered_implicit_imports
+        {
+            for name in import.d().imports.borrow().iter() {
+                if let Some(submodule) = submodules.get(name.d().name.get().d().value()) {
+                    aliases.insert(name.d().alias.get().unwrap_or(name.d().name.get()).d().value_atom(), submodule.uri);
+                }
+            }
+        }
+    }
+    for read in reads {
+        let hit = match aliases.get(&read[0]) {
+            Some(&target) => Some((target, read[1])),
+            None => (1..read.len()).rev().find_map(|len| dotted.get(&read[..len]).map(|&target| (target, read[len]))),
+        };
+        let Some((target, name)) = hit else { continue };
+        request_file(program, target);
+        let new = AHEAD.with(|ahead| {
+            ahead.borrow_mut().as_mut().and_then(|ahead| {
+                want(&mut ahead.wanted, target.key(), Wanted::Names(std::iter::once(name.as_str().to_string()).collect()))
+            })
+        });
+        if let Some(new) = new
+            && let Some(info) = program.get_source_file_info(target)
+            && !info.source_file.is_parse_required()
+        {
+            want_from(program, info, &new);
+        }
+    }
 }
 
 fn request_file(program: &Program, uri: Uri) {
@@ -480,8 +607,13 @@ fn work(shared: &Shared) {
         let before = jsrt::arena::arena_chunk_bytes();
         // A parse that panics leaves the file to the main thread, which then
         // panics as it would have without workers.
-        let outcome = match std::panic::catch_unwind(|| read_and_parse(&job.request.path, &job.request.options, true)) {
-            Ok(Some(parsed)) => Outcome::Parsed(Handoff(Box::new(parsed))),
+        let outcome = match std::panic::catch_unwind(|| {
+            read_and_parse(&job.request.path, &job.request.options, true).map(|parsed| {
+                let reads = module_reads(parsed.results.parser_output.parse_tree);
+                (parsed, reads)
+            })
+        }) {
+            Ok(Some((parsed, reads))) => Outcome::Parsed(Handoff(Box::new(parsed), reads)),
             Ok(None) => Outcome::Unread,
             Err(_) => Outcome::Panicked,
         };
@@ -589,9 +721,9 @@ mod tests {
 
     fn parse_on_a_worker(path: &str) -> Parsed {
         let path = path.to_string();
-        let Handoff(parsed) = std::thread::spawn(move || {
+        let Handoff(parsed, _) = std::thread::spawn(move || {
             jsrt::heap::forbid_collected_allocation();
-            Handoff(Box::new(read_and_parse(&path, &ParseOptions::new(), true).unwrap()))
+            Handoff(Box::new(read_and_parse(&path, &ParseOptions::new(), true).unwrap()), Vec::new())
         })
         .join()
         .unwrap();
