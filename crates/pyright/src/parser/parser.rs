@@ -179,6 +179,14 @@ pub struct Parser {
     _tokenizer_output: Option<TokenizerOutput>,
     _token_count: i32,
     _token_index: i32,
+    /// The token at `_token_index`, which every write of the index through
+    /// `_set_token_index` refreshes, so that `_peekToken()` is one read.
+    /// `PYRIGHT_RS_PARSER_CURRENT_TOKEN`: `off` leaves it `None`, so every
+    /// `_peekToken()` looks the token up; `check` keeps it in `_checked_token`
+    /// instead, and a lookup that differs panics.
+    _current_token: Option<P<Token>>,
+    _checked_token: Option<P<Token>>,
+    _current_token_mode: jsrt::SwitchMode,
     _are_errors_suppressed: bool,
     _parse_options: ParseOptions,
     _diag_sink: P<DiagnosticSink>,
@@ -216,6 +224,9 @@ impl Parser {
             _tokenizer_output: None,
             _token_count: 0,
             _token_index: 0,
+            _current_token: None,
+            _checked_token: None,
+            _current_token_mode: jsrt::switch_mode!("PYRIGHT_RS_PARSER_CURRENT_TOKEN"),
             _are_errors_suppressed: false,
             _parse_options: ParseOptions::new(),
             _diag_sink: P::new(DiagnosticSink::new(None)),
@@ -440,7 +451,7 @@ impl Parser {
         );
         self._token_count = tokenizer_output.tokens.count();
         self._tokenizer_output = Some(tokenizer_output);
-        self._token_index = 0;
+        self._set_token_index(0);
     }
 
     // stmt: simple_stmt | compound_stmt
@@ -758,7 +769,7 @@ impl Parser {
                 && this._peek_token(0).type_ == TokenType::Colon;
 
             // Set the token index back to the start.
-            this._token_index = cur_token_index;
+            this._set_token_index(cur_token_index);
         });
 
         if !smells_like_match_statement {
@@ -2936,7 +2947,7 @@ impl Parser {
                         with_item_list.len() != 1 || with_item_list[0].d().target.get().is_some();
                 }
 
-                this._token_index = open_paren_token_index;
+                this._set_token_index(open_paren_token_index);
                 with_item_list = vec![];
             });
         }
@@ -4790,7 +4801,7 @@ impl Parser {
                 } else if value_expr.node_type == ParseNodeType::Name
                     && self._peek_operator_type() == Some(OperatorType::Walrus)
                 {
-                    self._token_index = start_of_subscript_index;
+                    self._set_token_index(start_of_subscript_index);
                     value_expr =
                         self._parse_test_expression(/* allow_assignment_expression */ true);
 
@@ -6615,7 +6626,7 @@ impl Parser {
     fn _get_next_token(&mut self) -> P<Token> {
         let token = self._tokenizer_output.as_ref().unwrap().tokens.get_item_at(self._token_index);
         if !self._at_eof() {
-            self._token_index += 1;
+            self._set_token_index(self._token_index + 1);
         }
 
         token
@@ -6632,6 +6643,34 @@ impl Parser {
     // parser/parser.ts:5548
     #[inline(always)]
     fn _peek_token(&self, count: i32) -> P<Token> {
+        if count == 0
+            && let Some(token) = self._current_token
+        {
+            return token;
+        }
+        let token = self._peek_token_at(count);
+        if count == 0
+            && let Some(checked) = self._checked_token
+        {
+            assert!(checked == token, "PYRIGHT_RS_PARSER_CURRENT_TOKEN: the current token differs");
+        }
+        token
+    }
+
+    /// Sets `_token_index`, and the current token as the switch says.
+    #[inline(always)]
+    fn _set_token_index(&mut self, index: i32) {
+        self._token_index = index;
+        match self._current_token_mode {
+            jsrt::SwitchMode::On => self._current_token = Some(self._peek_token_at(0)),
+            jsrt::SwitchMode::Off => {}
+            jsrt::SwitchMode::Check => self._checked_token = Some(self._peek_token_at(0)),
+        }
+    }
+
+    /// The body of `_peekToken`.
+    #[inline(always)]
+    fn _peek_token_at(&self, count: i32) -> P<Token> {
         // `_token_count` is the token count, so the three cases of the
         // TypeScript (first token, last token, `target_index`) are one clamp.
         let tokens = self._tokenizer_output.as_ref().unwrap().tokens.items();
