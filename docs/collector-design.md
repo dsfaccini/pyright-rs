@@ -124,11 +124,15 @@ Tried and not landed, each paired against the build before it:
 - **16 marking threads** instead of 8: marking -5% to -12%, about 70 ms.
 - **Stamped type-cache entries** (instructions, not wall). A `TypeCacheEntry` records the collections finished when it was made, and a minor collection skips entries made before the last one, whose targets are old: -0.29 G instructions (0.11%), for a change to the evaluator's type.
 
+Landed:
+
+- **Temporaries without drop glue** (2026-11-12, `notes/temps.md`). `ConstraintSolutionSet`, `TypeResult`, `DiagnosticAddendum` and `ConstraintSet` held a part most of their objects never set in a box, which gave the type drop glue, so the sweep read every dead object's slot to drop it. Each such part is now its own evaluator object, behind a `jsrt::cell::OnceCell<P<..>>` or in a `jsrt::EvalOptionRefCell` (`docs/porting.md`, "memory"); a dead object that never set one is freed from the bitmaps alone. pydantic-ai, paired: the sweep functions 2.79% to 1.46% of all cycles, pauses 2.08 to 1.57 s, one collection more (11), since the parts now count toward the trigger, wall -3.0%.
+
 What would cut the pause further, none tried:
 
 1. **Parallel drops during the pause.** A derived step moves each dead object's `Rc` fields into a list the collecting thread drops after helper threads free the rest. It is a new derive over every evaluator type; every helper free is a cross-thread mimalloc free, about 4 times a local one, whose list the owning thread walks later; a field moved and then dropped again is a double drop that check mode would have to catch.
 2. **Atomic counts** (`Arc`) for the `Rc` kinds dead and live objects share, then a sweeper thread concurrent with the mutator. Every clone and drop in the mutator pays an atomic operation.
-3. **Fewer dead objects that need a drop.** `ConstraintSolutionSet`, `TypeResult`, `DiagnosticAddendum` and `ConstraintSet` are 5.5 M of the 9.1 M dead objects of a minor collection. Allocating such evaluator temporaries outside the collected heap is an evaluator change.
+3. **Fewer dead objects that need a drop.** After the change above, the largest drops are types (`ClassType` 0.47% of cycles: its type arguments are an `Rc`, its literal value and cold half own buffers) and addendum contents (0.29%: messages and their strings).
 
 ## trigger
 
