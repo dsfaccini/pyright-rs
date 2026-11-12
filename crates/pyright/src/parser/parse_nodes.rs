@@ -235,18 +235,54 @@ impl HasTextRange for ParseNode {
     }
 }
 
+// parser/parseNodes.ts:184
+/// Process-wide, so parse workers (`crate::parse_ahead`) and the main thread
+/// draw from one sequence.
+static _NEXT_NODE_ID: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(1);
+
+// Rust-only. A node id block numbers the nodes of one file parse from 1, then moves
+// them to ids taken from `_NEXT_NODE_ID` in one block when the parse ends: a file's
+// nodes keep consecutive ids while parse workers allocate nodes at the same time
+// (`docs/porting.md`, "parse ahead"). No output depends on an id's value; ids only
+// key maps, which stay dense (`AnalyzerNodeInfoStore`, `jsrt::IdMap`).
 thread_local! {
-    // parser/parseNodes.ts:184
-    static _NEXT_NODE_ID: Cell<u32> = const { Cell::new(1) };
+    /// The next id of the open block, or 0 when none is open.
+    static BLOCK_NEXT: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+    /// Every node allocated since the block opened, the ones with id 0 included.
+    static BLOCK_NODES: std::cell::RefCell<Vec<P<ParseNode>>> = const { std::cell::RefCell::new(Vec::new()) };
 }
 
 // parser/parseNodes.ts:185
 pub fn get_next_node_id() -> u32 {
-    _NEXT_NODE_ID.with(|n| {
-        let id = n.get();
-        n.set(id + 1);
-        id
-    })
+    let next = BLOCK_NEXT.with(std::cell::Cell::get);
+    if next != 0 {
+        BLOCK_NEXT.with(|block| block.set(next + 1));
+        return next;
+    }
+    _NEXT_NODE_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+}
+
+/// Runs `parse` with this thread's new nodes numbered in one block (`BLOCK_NEXT`).
+pub fn with_node_id_block<R>(parse: impl FnOnce() -> R) -> R {
+    /// Closes the block, also when `parse` unwinds.
+    struct Close;
+    impl Drop for Close {
+        fn drop(&mut self) {
+            let count = BLOCK_NEXT.with(|block| block.replace(0)) - 1;
+            let base = _NEXT_NODE_ID.fetch_add(count, std::sync::atomic::Ordering::Relaxed) - 1;
+            BLOCK_NODES.with(|nodes| {
+                for node in nodes.borrow_mut().drain(..) {
+                    let id = node.id.get();
+                    if id != 0 {
+                        node.id.set(base + id);
+                    }
+                }
+            });
+        }
+    }
+    assert!(BLOCK_NEXT.with(|block| block.replace(1)) == 0, "node id blocks do not nest");
+    let _close = Close;
+    parse()
 }
 
 // parser/parseNodes.ts:189
@@ -311,7 +347,11 @@ fn alloc_node<D: NodeDetails>(start: i32, length: i32, id: u32, a: ParseTreeKey,
         a,
         _details: (),
     };
-    P::new(NodeAlloc { node, d }).header(|alloc| &alloc.node)
+    let node = P::new(NodeAlloc { node, d }).header(|alloc| &alloc.node);
+    if BLOCK_NEXT.with(std::cell::Cell::get) != 0 {
+        BLOCK_NODES.with(|nodes| nodes.borrow_mut().push(node));
+    }
+    node
 }
 
 /// The object-literal part of every `create`: a new node with the next id.

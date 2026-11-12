@@ -105,6 +105,10 @@ impl ReadOnlyFileSystem for RealFileSystem {
         })
     }
 
+    fn real_file_path(&self, uri: Uri) -> Option<String> {
+        uri.file_data().is_some().then(|| uri.get_file_path().to_string())
+    }
+
     // common/realFileSystem.ts:351
     fn realpath_sync(&self, uri: Uri) -> Uri {
         match std::fs::canonicalize(uri.get_file_path()) {

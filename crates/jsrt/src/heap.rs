@@ -652,8 +652,15 @@ impl ThreadHeap {
         if classes.len() <= id {
             classes.resize_with(id + 1, || None);
         }
-        let class = classes[id].get_or_insert_with(|| Class {
-            info: type_info(id as u32),
+        let class = classes[id].get_or_insert_with(|| {
+            let info = type_info(id as u32);
+            assert!(
+                !(eval || info.holds_eval) || !NO_COLLECTED_ALLOCATION.with(Cell::get),
+                "collector: a thread that hands its objects over allocated a {}, which only the collecting thread may",
+                info.name
+            );
+            Class {
+            info,
             current: NONE,
             word: 0,
             free: 0,
@@ -661,6 +668,7 @@ impl ThreadHeap {
             base: ptr::null_mut(),
             blocks: Vec::new(),
             partial: Vec::new(),
+        }
         });
         if !eval {
             loop {
@@ -1231,10 +1239,22 @@ pub fn collect(check: bool) {
 }
 
 thread_local! {
+    /// Set by [`forbid_collected_allocation`].
+    static NO_COLLECTED_ALLOCATION: Cell<bool> = const { Cell::new(false) };
     /// Bytes this thread allocated through [`CountingAlloc`] less the bytes it freed.
     static MALLOC_BYTES: Cell<isize> = const { Cell::new(0) };
     /// Collections finished on this thread's heap.
     static EPOCH: Cell<u32> = const { Cell::new(0) };
+}
+
+/// Makes this thread one whose objects another thread takes over, such as a parse
+/// worker (`docs/porting.md`, "parse ahead"). Only the receiving thread's collector
+/// could free or scan them, and it scans only its own blocks, so from now on this
+/// thread panics on allocating an evaluator object or a program object that can
+/// hold an evaluator handle. Its other program objects go to its arena, or in check
+/// mode to its own typed blocks, which no collection frees.
+pub fn forbid_collected_allocation() {
+    NO_COLLECTED_ALLOCATION.with(|forbid| forbid.set(true));
 }
 
 /// The collections finished on this thread's heap. A logged container records the
@@ -1817,6 +1837,29 @@ mod tests {
 
     fn node(next: Option<P<Node>>, drops: &Rc<()>, id: u32) -> P<Node> {
         P::new_eval(Node { next: Cell::new(next), drops: drops.clone(), id })
+    }
+
+    #[test]
+    fn a_thread_that_hands_objects_over_allocates_nothing_a_collector_traces() {
+        let _serial = serial();
+        let eval = std::thread::spawn(|| {
+            forbid_collected_allocation();
+            let _ = P::new_eval(Node { next: Cell::new(None), drops: Rc::new(()), id: 1 });
+        })
+        .join();
+        assert!(eval.is_err(), "an evaluator object");
+        let holder = std::thread::spawn(|| {
+            forbid_collected_allocation();
+            let _ = P::new(Holder { node: Cell::new(None) });
+        })
+        .join();
+        assert!(holder.is_err(), "a program object that can hold an evaluator handle");
+        std::thread::spawn(|| {
+            forbid_collected_allocation();
+            assert_eq!(*P::new(7u64), 7);
+        })
+        .join()
+        .unwrap();
     }
 
     #[test]

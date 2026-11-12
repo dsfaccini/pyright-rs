@@ -30,6 +30,7 @@ use crate::analyzer::import_resolver::{ImportResolver, ImportedModuleDescriptor,
 use crate::analyzer::import_result::{ImportResult, ImportType};
 use crate::analyzer::source_file::{IPythonMode, SourceFile};
 use crate::analyzer::source_file_info::{OptionalArguments, SourceFileInfo, is_user_code};
+use crate::parse_ahead;
 use crate::analyzer::type_evaluator::{EvaluatorOptions, TypeEvaluator, create_type_evaluator};
 use crate::analyzer::type_printer::get_print_type_flags;
 use crate::common::config_options::{ConfigOptions, DiagnosticLevel, match_file_specs};
@@ -43,6 +44,10 @@ use crate::common::uri::Uri;
 
 // analyzer/program.ts:56
 const MAX_IMPORT_DEPTH: i32 = 256;
+
+/// Rust-only: how many user files past the one the check loop is at have been
+/// requested from the parse workers (`docs/porting.md`, "parse ahead").
+const PARSE_AHEAD_USER_FILES: usize = 16;
 
 // analyzer/program.ts:60
 fn is_tagged_hint_diagnostic(diag: &Diagnostic) -> bool {
@@ -415,6 +420,9 @@ impl Program {
             // The collector's trigger tapers with the share of the check left.
             let user_files = self.source_file_list.borrow().iter().filter(|f| is_user_code(Some(**f))).count();
             let mut checked = 0usize;
+            // Rust-only: parse workers read and parse the next user files (`docs/porting.md`, "parse ahead").
+            parse_ahead::start();
+            let (mut ahead_index, mut requested) = (0, 0usize);
             loop {
                 let Some(source_file_info) = self.source_file_list.borrow().get(index).copied() else {
                     break;
@@ -423,6 +431,19 @@ impl Program {
 
                 if !is_user_code(Some(source_file_info)) {
                     continue;
+                }
+
+                if parse_ahead::active() {
+                    while requested <= checked + PARSE_AHEAD_USER_FILES {
+                        let Some(next) = self.source_file_list.borrow().get(ahead_index).copied() else {
+                            break;
+                        };
+                        ahead_index += 1;
+                        if is_user_code(Some(next)) {
+                            requested += 1;
+                            self.request_parse_ahead(next, false);
+                        }
+                    }
                 }
 
                 // No evaluator frame is live between files (`docs/collector-design.md`).
@@ -435,6 +456,7 @@ impl Program {
             }
             // The resident set peaks about here (`docs/collector-design.md`, "census").
             jsrt::heap::census_end_of_check();
+            parse_ahead::log_end_of_check();
         }
 
         false
@@ -948,6 +970,14 @@ impl Program {
         if file_to_parse.source_file.parse(&config_options, &self.import_resolver.get(), content) {
             self.parsed_file_count.set(self.parsed_file_count.get() + 1);
             self.update_source_file_imports(file_to_parse, &config_options);
+
+            // Rust-only: checking a user file resolves each of its imports, so
+            // parse workers can start on them now; the first one goes first.
+            if parse_ahead::active() && is_user_code(Some(file_to_parse)) {
+                for import in file_to_parse.imports().into_iter().rev() {
+                    self.request_parse_ahead(import, true);
+                }
+            }
         }
 
         if file_to_parse.source_file.is_file_deleted() {
@@ -960,6 +990,14 @@ impl Program {
 
             // Invalidate the import resolver's cache as well.
             self.import_resolver.get().invalidate_cache();
+        }
+    }
+
+    /// Rust-only: asks a parse worker to read and parse `file`, when it needs a
+    /// parse a worker can make (`docs/porting.md`, "parse ahead").
+    fn request_parse_ahead(&self, file: P<SourceFileInfo>, urgent: bool) {
+        if let Some(request) = file.source_file.parse_ahead_request(&self.config_options.get()) {
+            parse_ahead::request(file.uri().key(), request, urgent);
         }
     }
 

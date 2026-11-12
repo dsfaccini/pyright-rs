@@ -189,6 +189,14 @@ impl FileSystemMappingImpl {
             .stat_sync(self._get_internal_original_uri(uri))
     }
 
+    /// Rust-only: the file `stat_sync` and `read_file_sync` read (`ReadOnlyFileSystem::real_file_path`).
+    pub fn real_file_path(&self, uri: Uri) -> Option<String> {
+        if self._is_original_path(uri) {
+            return None;
+        }
+        self._real_fs.real_file_path(self._get_internal_original_uri(uri))
+    }
+
     // fileSystemMapping.ts:138
     pub fn realpath_sync(&self, uri: Uri) -> Uri {
         if self._data.entry_map.borrow().contains_key(&uri) {

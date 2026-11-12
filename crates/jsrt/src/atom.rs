@@ -1,18 +1,20 @@
-//! Interned strings. An `Atom` is a handle to text its thread interned once:
-//! two atoms of one thread are equal exactly when their texts are, so hashing
-//! and comparing one is integer work (`docs/porting.md`, "strings").
+//! Interned strings. An `Atom` is a handle to text the process interned once:
+//! two atoms are equal exactly when their texts are, so hashing and comparing
+//! one is integer work (`docs/porting.md`, "strings").
 //!
-//! Each thread keeps its own table, so an atom is neither `Send` nor `Sync`,
-//! like `P`. The text is never freed.
+//! One table serves every thread, so a tree a parse worker builds holds the
+//! atoms the main thread would have made (`docs/porting.md`, "parse ahead").
+//! Each thread keeps the atoms it used in a table of its own in front of it, so
+//! a repeated text takes no lock. The text is never freed.
 
 use std::borrow::Borrow;
 use std::cell::RefCell;
 use std::collections::HashSet;
 use std::fmt;
-use std::hash::{Hash, Hasher};
-use std::marker::PhantomData;
+use std::hash::{BuildHasher, Hash, Hasher};
 use std::ops::Deref;
 use std::ptr::NonNull;
+use std::sync::{Mutex, PoisonError};
 
 use rustc_hash::FxBuildHasher;
 
@@ -28,18 +30,34 @@ struct Header {
 /// An interned string. Equality and hashing use its identity; order and
 /// printing use its text ([`Atom::as_str`]).
 #[derive(Clone, Copy)]
-pub struct Atom(NonNull<Header>, PhantomData<*const ()>);
+pub struct Atom(NonNull<Header>);
+
+// SAFETY: an atom points to immutable text in chunks that are never freed, and the
+// table is process-wide, so an atom means the same text on every thread.
+unsafe impl Send for Atom {}
+// SAFETY: as above; nothing writes through an atom.
+unsafe impl Sync for Atom {}
 
 impl Atom {
     /// The atom of `text`, interning it on first use.
     pub fn new(text: &str) -> Atom {
-        INTERNER.with(|interner| interner.borrow_mut().intern(text))
+        if let Some(atom) = SEEN.with(|seen| seen.borrow().get(text).map(|entry| entry.0)) {
+            return atom;
+        }
+        let atom = shard(text).intern(text);
+        SEEN.with(|seen| seen.borrow_mut().insert(ByText(atom)));
+        atom
     }
 
-    /// The atom of `text` if this thread interned it: a key no atom has
+    /// The atom of `text` if the process interned it: a key no atom has
     /// cannot be in a table keyed by atoms.
     pub fn lookup(text: &str) -> Option<Atom> {
-        INTERNER.with(|interner| interner.borrow().set.get(text).map(|entry| entry.0))
+        if let Some(atom) = SEEN.with(|seen| seen.borrow().get(text).map(|entry| entry.0)) {
+            return Some(atom);
+        }
+        let atom = shard(text).set.get(text).map(|entry| entry.0)?;
+        SEEN.with(|seen| seen.borrow_mut().insert(ByText(atom)));
+        Some(atom)
     }
 
     #[inline]
@@ -175,7 +193,7 @@ unsafe impl Trace for Atom {
     fn trace(&self, _: &mut Tracer) {}
 }
 
-/// A key for a table keyed by atoms: an atom, or text. Text that this thread
+/// A key for a table keyed by atoms: an atom, or text. Text that the process
 /// never interned is no table's key, so a lookup needs no interning.
 pub trait AtomKey: Copy {
     /// The key's atom, if its text is interned.
@@ -252,7 +270,7 @@ impl AtomKey for &String {
     }
 }
 
-/// The atom of a string literal, interned once per call site and thread.
+/// The atom of a string literal, looked up once per call site and thread.
 #[macro_export]
 macro_rules! atom {
     ($text:literal) => {{
@@ -296,14 +314,19 @@ impl Borrow<str> for ByText {
 
 const CHUNK_SIZE: usize = 64 * 1024;
 
-struct Interner {
+/// One part of the process-wide table; a text's hash picks its shard, so threads
+/// that intern different texts rarely wait for each other.
+struct Shard {
     set: HashSet<ByText, FxBuildHasher>,
     /// The free part of the current chunk.
     next: *mut u8,
     end: *mut u8,
 }
 
-impl Interner {
+// SAFETY: `next` and `end` point into chunks only this shard writes, under its lock.
+unsafe impl Send for Shard {}
+
+impl Shard {
     fn intern(&mut self, text: &str) -> Atom {
         if let Some(entry) = self.set.get(text) {
             return entry.0;
@@ -324,24 +347,32 @@ impl Interner {
         }
         let header = self.next.cast::<Header>();
         // SAFETY: `size` bytes from `next` are free and aligned for `Header`; the
-        // chunk is leaked, so the text lives as long as the thread's atoms.
+        // chunk is leaked, so the text lives as long as the process.
         unsafe {
             header.write(Header { len });
             std::ptr::copy_nonoverlapping(text.as_ptr(), self.next.add(size_of::<Header>()), text.len());
             self.next = self.next.add(size);
-            Atom(NonNull::new_unchecked(header), PhantomData)
+            Atom(NonNull::new_unchecked(header))
         }
     }
 }
 
+const SHARDS: usize = 64;
+
+static TABLE: [Mutex<Shard>; SHARDS] = [const {
+    Mutex::new(Shard { set: HashSet::with_hasher(FxBuildHasher), next: std::ptr::null_mut(), end: std::ptr::null_mut() })
+}; SHARDS];
+
+/// The locked shard that holds `text`, if any thread interned it.
+fn shard(text: &str) -> std::sync::MutexGuard<'static, Shard> {
+    let hash = FxBuildHasher.hash_one(text);
+    // A panic never leaves a shard half-written: `intern` inserts only a finished atom.
+    TABLE[(hash >> 58) as usize % SHARDS].lock().unwrap_or_else(PoisonError::into_inner)
+}
+
 thread_local! {
-    static INTERNER: RefCell<Interner> = const {
-        RefCell::new(Interner {
-            set: HashSet::with_hasher(FxBuildHasher),
-            next: std::ptr::null_mut(),
-            end: std::ptr::null_mut(),
-        })
-    };
+    /// The atoms this thread made or looked up, so a repeated text takes no lock.
+    static SEEN: RefCell<HashSet<ByText, FxBuildHasher>> = const { RefCell::new(HashSet::with_hasher(FxBuildHasher)) };
 }
 
 #[cfg(test)]
@@ -376,9 +407,12 @@ mod tests {
     }
 
     #[test]
-    fn threads_have_their_own_tables() {
-        let here = Atom::new("shared text").as_str().as_ptr() as usize;
-        let there = std::thread::spawn(|| Atom::new("shared text").as_str().as_ptr() as usize).join().unwrap();
-        assert_ne!(here, there);
+    fn threads_share_one_table() {
+        let here = Atom::new("shared text");
+        let there = std::thread::spawn(|| (Atom::new("shared text"), Atom::new("made there"))).join().unwrap();
+        assert_eq!(here, there.0);
+        assert_eq!(Atom::lookup("made there"), Some(there.1));
+        assert_eq!(Atom::new("made there"), there.1);
+        assert_eq!(Atom::lookup("made nowhere"), None);
     }
 }

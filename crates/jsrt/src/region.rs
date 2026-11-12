@@ -1,20 +1,30 @@
 //! `Region`: bump allocation into memory that is released all at once.
 //!
-//! A dropped region's chunks go to a per-thread pool for the next region. A
-//! region made with `protect_on_drop` instead unmaps its pages' contents and
-//! makes them inaccessible (`PROT_NONE`), never to be reused, so any later
-//! access through a stale pointer faults.
+//! A dropped region's chunks go to a process-wide pool for the next region, so a
+//! region a parse worker fills and the main thread drops recycles its chunks
+//! without unmapping them. A region made with `protect_on_drop` instead unmaps
+//! its pages' contents and makes them inaccessible (`PROT_NONE`), never to be
+//! reused, so any later access through a stale pointer faults.
 
 use std::cell::{Cell, RefCell};
 use std::ptr;
+use std::sync::{Mutex, PoisonError};
 
 use crate::vm;
 
 const CHUNK: usize = 256 << 10;
 const POOL_MAX: usize = 64;
 
-thread_local! {
-    static POOL: RefCell<Vec<*mut u8>> = const { RefCell::new(Vec::new()) };
+/// A chunk no region holds.
+struct Free(*mut u8);
+
+// SAFETY: a pooled chunk belongs to no region and no thread until one takes it.
+unsafe impl Send for Free {}
+
+static POOL: Mutex<Vec<Free>> = Mutex::new(Vec::new());
+
+fn pool() -> std::sync::MutexGuard<'static, Vec<Free>> {
+    POOL.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
 /// Every pointer into a chunk derives from the pointer `vm::map` returned for it,
@@ -55,7 +65,8 @@ impl Region {
         if let Some(last) = chunks.last_mut() {
             last.1 = self.next.get();
         }
-        let base = POOL.with(|pool| pool.borrow_mut().pop()).unwrap_or_else(map_chunk);
+        let pooled = pool().pop();
+        let base = pooled.map_or_else(map_chunk, |free| free.0);
         chunks.push((base, base));
         self.end.set(base.wrapping_add(CHUNK));
         base
@@ -77,9 +88,13 @@ impl Drop for Region {
                 // SAFETY: the chunk is a mapping of `CHUNK` bytes this region owns,
                 // and nothing may use its contents any more.
                 unsafe { vm::retire(base, CHUNK) };
-            } else if POOL.with(|pool| pool.borrow().len()) < POOL_MAX {
-                POOL.with(|pool| pool.borrow_mut().push(base));
+                continue;
+            }
+            let mut pool = pool();
+            if pool.len() < POOL_MAX {
+                pool.push(Free(base));
             } else {
+                drop(pool);
                 // SAFETY: as above; the mapping goes back to the kernel.
                 unsafe { vm::unmap(base, CHUNK) };
             }
@@ -107,8 +122,12 @@ mod tests {
         assert_eq!(used, 20_000);
     }
 
+    /// Serializes the tests that read the process-wide pool.
+    static SERIAL: Mutex<()> = Mutex::new(());
+
     #[test]
     fn dropped_chunks_are_reused() {
+        let _serial = SERIAL.lock().unwrap_or_else(PoisonError::into_inner);
         let first = Region::new(false);
         let a = first.alloc(1u64) as usize;
         drop(first);
@@ -117,9 +136,26 @@ mod tests {
     }
 
     #[test]
+    fn a_region_dropped_on_another_thread_recycles_its_chunk() {
+        let _serial = SERIAL.lock().unwrap_or_else(PoisonError::into_inner);
+        struct Moved(Region);
+        // SAFETY: the test moves the region to one other thread and touches it there only.
+        unsafe impl Send for Moved {}
+        let region = Moved(Region::new(false));
+        let a = region.0.alloc(7u64);
+        // SAFETY: `a` is a live value of the region.
+        assert_eq!(unsafe { *a }, 7);
+        let a = a as usize;
+        std::thread::spawn(move || drop(region)).join().unwrap();
+        let next = Region::new(false);
+        assert_eq!(next.alloc(8u64) as usize, a);
+    }
+
+    #[test]
     // Under Miri, `vm::retire` deallocates the chunk, and Miri may hand its address out again.
     #[cfg_attr(miri, ignore = "vm::retire deallocates under Miri")]
     fn protected_chunks_are_not_reused() {
+        let _serial = SERIAL.lock().unwrap_or_else(PoisonError::into_inner);
         let first = Region::new(true);
         let a = first.alloc(1u64) as usize;
         drop(first);

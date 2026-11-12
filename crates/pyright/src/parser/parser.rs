@@ -54,7 +54,7 @@ struct SubscriptListResult {
 }
 
 // parser/parser.ts:171
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct ParseOptions {
     pub is_stub_file: bool,
     pub python_version: PythonVersion,
@@ -1246,7 +1246,9 @@ impl Parser {
                     .iter()
                     .filter(|name| !local_name_set.contains(*name))
                     .collect();
-                let diag = DiagnosticAddendum::new();
+                // On the stack, not the evaluator heap: a parse worker allocates
+                // nothing a collector traces (`crate::parse_ahead`).
+                let diag = DiagnosticAddendum::default();
                 diag.add_message(format1(
                     LocAddendum::or_pattern_missing_name(),
                     "name",
