@@ -1,5 +1,6 @@
 //! Port of `packages/pyright-internal/src/analyzer/importResult.ts`.
 
+use std::rc::Rc;
 use jsrt::{JsMap, P};
 
 use crate::analyzer::py_typed_utils::PyTypedInfo;
@@ -48,8 +49,10 @@ pub struct ImportResult {
     pub is_stdlib_typeshed_file: Option<bool>,
     pub is_third_party_typeshed_file: Option<bool>,
     pub is_local_typings_file: Option<bool>,
-    pub implicit_imports: Option<JsMap<String, ImplicitImport>>,
-    pub filtered_implicit_imports: Option<JsMap<String, ImplicitImport>>,
+    /// Shared with the copies `filterImplicitImports` makes, as `Object.assign` shares it;
+    /// nothing changes either map once the result is built.
+    pub implicit_imports: Option<Rc<JsMap<String, ImplicitImport>>>,
+    pub filtered_implicit_imports: Option<Rc<JsMap<String, ImplicitImport>>>,
     pub non_stub_import_result: Option<P<ImportResult>>,
     pub py_typed_info: Option<PyTypedInfo>,
     pub package_directory: Option<Uri>,

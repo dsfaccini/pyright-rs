@@ -218,10 +218,10 @@ impl Harness {
             is_stdlib_typeshed_file: opt_flag("isStdlibTypeshedFile"),
             is_third_party_typeshed_file: opt_flag("isThirdPartyTypeshedFile"),
             is_local_typings_file: opt_flag("isLocalTypingsFile"),
-            implicit_imports: node.child("implicitImports").map(|n| self.implicit_imports(n)),
+            implicit_imports: node.child("implicitImports").map(|n| Rc::new(self.implicit_imports(n))),
             filtered_implicit_imports: node
                 .child("filteredImplicitImports")
-                .map(|n| self.implicit_imports(n)),
+                .map(|n| Rc::new(self.implicit_imports(n))),
             non_stub_import_result: node
                 .child("nonStubImportResult")
                 .map(|n| P::new(self.import_result(n))),

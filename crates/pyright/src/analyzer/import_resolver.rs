@@ -13,6 +13,8 @@
 //! (`TempFile`), and `isStdlibModule`, `_buildStdlibCache`,
 //! `getTypeshedThirdPartyPath` and `getNativeModuleName`, which nothing calls.
 
+use std::rc::Rc;
+
 use jsrt::cell::{Cell, RefCell};
 
 use jsrt::{FxHashMap, FxHashSet, JsMap, JsSet, JsStr, P};
@@ -779,7 +781,7 @@ impl ImportResolver {
         }
 
         let mut new_import_result = (*import_result).clone();
-        new_import_result.filtered_implicit_imports = Some(filtered_implicit_imports);
+        new_import_result.filtered_implicit_imports = Some(Rc::new(filtered_implicit_imports));
         P::new(new_import_result)
     }
 
@@ -1032,7 +1034,7 @@ impl ImportResolver {
                     && cached_results.is_namespace_package
                     && !self._is_namespace_package_resolved(
                         module_descriptor,
-                        cached_results.implicit_imports.as_ref(),
+                        cached_results.implicit_imports.as_deref(),
                     );
 
                 if !is_unresolved_namespace {
@@ -1586,6 +1588,7 @@ impl ImportResolver {
             resolved_paths.len() >= module_descriptor.name_parts.len()
         };
 
+        let implicit_imports = implicit_imports.map(Rc::new);
         ImportResult {
             import_name: import_name.to_string(),
             is_relative: false,
@@ -1754,7 +1757,7 @@ impl ImportResolver {
                 {
                     if self._is_namespace_package_resolved(
                         module_descriptor,
-                        typings_import.implicit_imports.as_ref(),
+                        typings_import.implicit_imports.as_deref(),
                     ) {
                         return with_final_logs(Some(typings_import));
                     }
@@ -2006,11 +2009,11 @@ impl ImportResolver {
                     if module_descriptor.imported_symbols.is_some() {
                         if !self._is_namespace_package_resolved(
                             module_descriptor,
-                            best_import_so_far.implicit_imports.as_ref(),
+                            best_import_so_far.implicit_imports.as_deref(),
                         ) {
                             if self._is_namespace_package_resolved(
                                 module_descriptor,
-                                new_import.implicit_imports.as_ref(),
+                                new_import.implicit_imports.as_deref(),
                             ) {
                                 return true;
                             }

@@ -209,9 +209,9 @@ pub fn import_result_value(result: &ImportResult) -> Value {
     Value::Object(vec![
         (
             "filteredImplicitImports",
-            opt(result.filtered_implicit_imports.as_ref(), implicit_imports_value),
+            opt(result.filtered_implicit_imports.as_deref(), implicit_imports_value),
         ),
-        ("implicitImports", opt(result.implicit_imports.as_ref(), implicit_imports_value)),
+        ("implicitImports", opt(result.implicit_imports.as_deref(), implicit_imports_value)),
         ("importName", Some(Value::str(&result.import_name))),
         ("importType", Some(Value::number(result.import_type as i32 as f64))),
         ("isImportFound", Some(Value::bool(result.is_import_found))),
