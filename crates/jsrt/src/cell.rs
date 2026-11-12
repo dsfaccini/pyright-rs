@@ -242,8 +242,14 @@ impl<T> From<T> for RefCell<T> {
 
 /// `std::cell::OnceCell` with the write barrier on initialization.
 #[repr(transparent)]
-#[derive(Default, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct OnceCell<T>(std::cell::OnceCell<T>);
+
+impl<T> Default for OnceCell<T> {
+    fn default() -> Self {
+        OnceCell::new()
+    }
+}
 
 impl<T> OnceCell<T> {
     #[inline]
