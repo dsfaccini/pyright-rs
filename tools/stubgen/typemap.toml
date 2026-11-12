@@ -233,9 +233,10 @@ interface = "analyzer/codeFlowEngine.ts:CodeFlowAnalyzer"
 "analyzer/typeEvaluator.ts:createTypeEvaluator.updateUsageVariancesRecursive.usageVariances" = "jsrt::P<jsrt::cell::RefCell<Vec<crate::analyzer::types::Variance>>>"
 # Records and maps pyright creates on first write (`undefined` until then): boxed, so a type that
 # never sets one pays a pointer, not the record (PLAN.md step 6, exact-size variants).
-# A type's own records: one pointer until the first write ([mutable] keeps them out of a RefCell).
-"analyzer/types.ts:Type.props" = "jsrt::OptionRefCell<crate::analyzer::types::TypeBaseProps>"
-"analyzer/types.ts:Type.cached" = "jsrt::OptionRefCell<crate::analyzer::types::CachedTypeInfo>"
+# A type's own records: one pointer until the first write ([mutable] keeps them out of a RefCell),
+# and their own evaluator objects, so a dead class type needs no drop (notes/temps.md).
+"analyzer/types.ts:Type.props" = "jsrt::EvalOptionRefCell<crate::analyzer::types::TypeBaseProps>"
+"analyzer/types.ts:Type.cached" = "jsrt::EvalOptionRefCell<crate::analyzer::types::CachedTypeInfo>"
 "analyzer/types.ts:LiteralTypes.literalStrMap" = "Option<Box<jsrt::JsMap<jsrt::JsString, crate::analyzer::types::UnionableType>>>"
 "analyzer/types.ts:LiteralTypes.literalIntMap" = "Option<Box<jsrt::JsMap<jsrt::NumberValue, crate::analyzer::types::UnionableType>>>"
 "analyzer/types.ts:LiteralTypes.literalEnumMap" = "Option<Box<jsrt::JsMap<String, crate::analyzer::types::UnionableType>>>"
@@ -262,10 +263,10 @@ interface = "analyzer/codeFlowEngine.ts:CodeFlowAnalyzer"
 "analyzer/types.ts:FunctionDetailsShared.moduleName" = "jsrt::Atom"
 # docs/porting.md "strings": a Python string literal's value can hold a lone surrogate, which
 # printLiteralValue keeps (`JSON.stringify` escapes it). Strings and big integers are shared
-# behind an `Rc`, as JS values are references, so a literal value is 16 bytes and a class type's
-# details 72.
-"analyzer/types.ts:LiteralValue#1" = "std::rc::Rc<jsrt::JsBigInt>"
-"analyzer/types.ts:LiteralValue#3" = "std::rc::Rc<jsrt::JsString>"
+# behind a `jsrt::EvalShared`, as JS values are references, so a literal value is 16 bytes and a
+# dead class type needs no drop.
+"analyzer/types.ts:LiteralValue#1" = "jsrt::EvalShared<crate::analyzer::types::LiteralBigInt>"
+"analyzer/types.ts:LiteralValue#3" = "jsrt::EvalShared<crate::analyzer::types::LiteralString>"
 "analyzer/typePrinterUtils.ts:printStringLiteral.value" = "&[u16]"
 "analyzer/typePrinterUtils.ts:printBytesLiteral.value" = "&[u16]"
 # Copied into every parameter list a function clone or specialization builds, and into each
@@ -340,13 +341,13 @@ interface = "analyzer/codeFlowEngine.ts:CodeFlowAnalyzer"
 "analyzer/codeFlowEngine.ts:CodeFlowTypeCache.cache" = false
 # `OverloadedType.addOverload` pushes onto `priv._overloads` after the type exists (types.ts:2462).
 "analyzer/types.ts:OverloadedType.priv" = true
-# jsrt::OptionRefCell ([sites]) is its own interior mutability.
+# jsrt::EvalOptionRefCell ([sites]) is its own interior mutability.
 "analyzer/types.ts:Type.props" = false
 "analyzer/types.ts:Type.cached" = false
 
-# Fields few objects set, moved out of a hot struct into `<Struct>Cold`, which a value struct holds as
-# `cold: Option<Box<..>>` and a handle struct as `cold: jsrt::EvalOptionRefCell<..>`, allocated on
-# first write ("cold fields" in docs/evaluator-design.md).
+# Fields few objects set, moved out of a hot struct into `<Struct>Cold`, which the struct holds as
+# `cold: jsrt::EvalOptionRefCell<..>`, allocated on first write ("cold fields" in
+# docs/evaluator-design.md).
 [cold]
 # Each list holds the fields that fewer than 1% of objects set on the python-chess and samples
 # corpora (2026-11-10), plus overloadsUsedForCall (3% of results), and classType, which no live
