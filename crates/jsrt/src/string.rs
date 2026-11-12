@@ -707,9 +707,13 @@ fn units_in(s: &str) -> usize {
     if s.is_ascii() {
         return s.len();
     }
-    // One unit per char, and a second for each char past U+FFFF: those start
-    // with a byte of 0xF0 or more.
-    s.chars().count() + s.bytes().filter(|&b| b >= 0xF0).count()
+    // A unit per ASCII byte, 16 at a time, and one or two per other char.
+    Utf8Segments::new(s)
+        .map(|segment| match segment {
+            Utf8Segment::Ascii(run) => run.len(),
+            Utf8Segment::Other(c) => c.len_utf16(),
+        })
+        .sum()
 }
 
 /// Byte offset of the char holding UTF-16 unit `index`, and whether `index` is
