@@ -653,6 +653,21 @@ pub fn log_end_of_check() {
     if std::env::var_os("PYRIGHT_RS_PARSE_AHEAD_LOG").is_none() {
         return;
     }
+    // User and system CPU seconds of a thread, from its `stat` file.
+    let cpu = |stat: &str| -> f64 {
+        let fields: Vec<&str> = stat.rsplit_once(')').map_or("", |(_, rest)| rest).split_whitespace().collect();
+        let ticks: f64 = fields.get(11..13).map_or(0.0, |t| t.iter().filter_map(|n| n.parse::<f64>().ok()).sum());
+        ticks / 100.0
+    };
+    let this = std::fs::read_to_string("/proc/thread-self/stat").map_or(0.0, |stat| cpu(&stat));
+    let mut workers = 0.0;
+    for task in std::fs::read_dir("/proc/self/task").into_iter().flatten().flatten() {
+        let comm = std::fs::read_to_string(task.path().join("comm")).unwrap_or_default();
+        if comm.starts_with("parse-ahead-") {
+            workers += std::fs::read_to_string(task.path().join("stat")).map_or(0.0, |stat| cpu(&stat));
+        }
+    }
+    eprintln!("parse ahead: CPU {this:.2} s on this thread, {workers:.2} s on the workers");
     AHEAD.with(|ahead| {
         let ahead = ahead.borrow();
         let Some(ahead) = ahead.as_ref() else {
