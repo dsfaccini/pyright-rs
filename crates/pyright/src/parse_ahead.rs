@@ -19,9 +19,12 @@ use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering::Relaxed};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
 use std::time::Instant;
 
-use jsrt::{FxHashMap, JsStr, JsString, P, SwitchMode};
+use jsrt::{FxHashMap, FxHashSet, JsStr, JsString, P, SwitchMode};
 
+use crate::analyzer::program::Program;
 use crate::analyzer::source_file::MAX_SOURCE_FILE_SIZE;
+use crate::analyzer::source_file_info::{SourceFileInfo, is_user_code};
+use crate::common::uri::Uri;
 use crate::common::diagnostic_sink::DiagnosticSink;
 use crate::common::string_utils::{StringFingerprint, get_string_fingerprint};
 use crate::oracle::bind::walk_tree;
@@ -144,6 +147,11 @@ struct Ahead {
     shared: Arc<Shared>,
     /// Requested files by `Uri::key`, until the main thread parses them.
     jobs: FxHashMap<&'static str, Arc<Job>>,
+    /// Urgent requests `flush` has yet to queue.
+    pending: Vec<Arc<Job>>,
+    /// The names of each module that the check will look up, as far as the import
+    /// statements of the files parsed so far tell (`after_parse`).
+    wanted: FxHashMap<&'static str, Wanted>,
     stats: Stats,
 }
 
@@ -177,29 +185,55 @@ pub fn start() {
             .spawn(move || work(&shared))
             .expect("spawn a parse-ahead worker");
     }
-    AHEAD.with(|ahead| *ahead.borrow_mut() = Some(Ahead { shared, jobs: FxHashMap::default(), stats: Stats::default() }));
+    AHEAD.with(|ahead| {
+        *ahead.borrow_mut() = Some(Ahead {
+            shared,
+            jobs: FxHashMap::default(),
+            pending: Vec::new(),
+            wanted: FxHashMap::default(),
+            stats: Stats::default(),
+        })
+    });
 }
 
-/// Asks a worker to parse the file `key` names. An urgent request goes before every
-/// waiting one. Does nothing when no workers run or the file is already requested.
+/// Asks a worker to parse the file `key` names, after the files already waiting;
+/// an urgent request waits for `flush`, which puts it before them. Does nothing
+/// when no workers run, the file is already requested or is no Python file.
 pub fn request(key: &'static str, request: Request, urgent: bool) {
     AHEAD.with(|ahead| {
         let mut ahead = ahead.borrow_mut();
         let Some(ahead) = ahead.as_mut() else { return };
-        if ahead.jobs.contains_key(key) {
+        // An import can resolve to a native module, which pyright never parses.
+        if ahead.jobs.contains_key(key) || !(request.path.ends_with(".py") || request.path.ends_with(".pyi")) {
             return;
         }
         let job = Arc::new(Job { request, state: Mutex::new(State::Queued), done: Condvar::new() });
         ahead.jobs.insert(key, job.clone());
         ahead.stats.requested += 1;
-        let mut queue = lock(&ahead.shared.queue);
         if urgent {
+            ahead.pending.push(job);
+            return;
+        }
+        lock(&ahead.shared.queue).later.push_back(job);
+        ahead.shared.work.notify_one();
+    });
+}
+
+/// Puts the urgent requests made since the last flush before every waiting job,
+/// in the order they were made.
+pub fn flush() {
+    AHEAD.with(|ahead| {
+        let mut ahead = ahead.borrow_mut();
+        let Some(ahead) = ahead.as_mut() else { return };
+        if ahead.pending.is_empty() {
+            return;
+        }
+        let mut queue = lock(&ahead.shared.queue);
+        for job in ahead.pending.drain(..).rev() {
             queue.urgent.push_front(job);
-        } else {
-            queue.later.push_back(job);
         }
         drop(queue);
-        ahead.shared.work.notify_one();
+        ahead.shared.work.notify_all();
     });
 }
 
@@ -254,6 +288,120 @@ pub fn take(key: &'static str, now: Option<&Request>) -> Option<Parsed> {
             }
         }
     })
+}
+
+/// Names of a module that the check will look up.
+#[derive(Clone)]
+enum Wanted {
+    All,
+    Names(FxHashSet<String>),
+}
+
+/// Requests the files the check will parse soon because of `file`, which the main
+/// thread just parsed and whose imports it resolved (`Program._parseFile`).
+///
+/// Checking a user file resolves each of its imports, and each name it imports
+/// from a module, and a name that module imports from another module in turn.
+/// So a user file wants every name, a module wants the names some wanted import
+/// statement imports from it, and a module is requested once some file imports a
+/// wanted name from it, or a user file imports it. A name that a later file wants
+/// from a module parsed already requests what that module imports it from.
+/// Evaluation needs more files than this finds, which the main thread parses itself.
+pub fn after_parse(program: &Program, file: P<SourceFileInfo>) {
+    if !active() {
+        return;
+    }
+    let names = if is_user_code(Some(file)) {
+        for import in file.imports() {
+            request_file(program, import.uri());
+        }
+        Some(Wanted::All)
+    } else {
+        AHEAD.with(|ahead| ahead.borrow().as_ref().and_then(|ahead| ahead.wanted.get(file.uri().key()).cloned()))
+    };
+    if let Some(names) = names {
+        want_from(program, file, &names);
+    }
+    flush();
+}
+
+fn request_file(program: &Program, uri: Uri) {
+    if let Some(info) = program.get_source_file_info(uri)
+        && let Some(request) = info.source_file.parse_ahead_request(&program.config_options())
+    {
+        self::request(uri.key(), request, true);
+    }
+}
+
+/// Requests what the import statements of `file`, parsed, bring in for `names`.
+fn want_from(program: &Program, file: P<SourceFileInfo>, names: &Wanted) {
+    let Some(output) = file.source_file.get_parser_output() else { return };
+    let imports = file.source_file.get_imports();
+    // The import results start with the implicit ones, such as builtins.
+    let Some(implicit) = imports.len().checked_sub(output.imported_modules.len()) else { return };
+    for (module, result) in output.imported_modules.iter().zip(&imports[implicit..]) {
+        let target = result.resolved_uris.last().copied().filter(|uri| !uri.is_empty());
+        let hit = match (&module.imported_symbols, names) {
+            // `import a.b`: which attributes the check reads is unknown.
+            (None, Wanted::All) => {
+                if let Some(target) = target {
+                    request_file(program, target);
+                }
+                continue;
+            }
+            (None, Wanted::Names(_)) => continue,
+            // `from a import *`
+            (Some(symbols), names) if symbols.is_empty() => names.clone(),
+            (Some(symbols), Wanted::All) => Wanted::Names(symbols.iter().cloned().collect()),
+            (Some(symbols), Wanted::Names(names)) => {
+                let both: FxHashSet<String> = symbols.iter().filter(|s| names.contains(*s)).cloned().collect();
+                if both.is_empty() {
+                    continue;
+                }
+                Wanted::Names(both)
+            }
+        };
+        if let Some(target) = target {
+            request_file(program, target);
+        }
+        if let (Wanted::Names(hit), Some(implicit_imports)) = (&hit, &result.filtered_implicit_imports) {
+            for name in hit {
+                if let Some(submodule) = implicit_imports.get(name) {
+                    request_file(program, submodule.uri);
+                }
+            }
+        }
+        let Some(target) = target else { continue };
+        let new = AHEAD.with(|ahead| ahead.borrow_mut().as_mut().and_then(|ahead| want(&mut ahead.wanted, target.key(), hit)));
+        // A module parsed already passes the new names on now; one not parsed yet
+        // passes them on when it is.
+        if let Some(new) = new
+            && let Some(info) = program.get_source_file_info(target)
+            && !info.source_file.is_parse_required()
+        {
+            want_from(program, info, &new);
+        }
+    }
+}
+
+/// Adds `names` to the names wanted from the module `key` names; returns those it lacked.
+fn want(wanted: &mut FxHashMap<&'static str, Wanted>, key: &'static str, names: Wanted) -> Option<Wanted> {
+    let entry = wanted.entry(key).or_insert_with(|| Wanted::Names(FxHashSet::default()));
+    match (entry, names) {
+        (Wanted::All, _) => None,
+        (entry, Wanted::All) => {
+            *entry = Wanted::All;
+            Some(Wanted::All)
+        }
+        (Wanted::Names(have), Wanted::Names(names)) => {
+            let new: FxHashSet<String> = names.into_iter().filter(|name| !have.contains(name)).collect();
+            if new.is_empty() {
+                return None;
+            }
+            have.extend(new.iter().cloned());
+            Some(Wanted::Names(new))
+        }
+    }
 }
 
 /// Reads the file at `path` as `SourceFile.getFileContent` reads it: `None` when

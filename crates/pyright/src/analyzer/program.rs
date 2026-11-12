@@ -971,13 +971,8 @@ impl Program {
             self.parsed_file_count.set(self.parsed_file_count.get() + 1);
             self.update_source_file_imports(file_to_parse, &config_options);
 
-            // Rust-only: checking a user file resolves each of its imports, so
-            // parse workers can start on them now; the first one goes first.
-            if parse_ahead::active() && is_user_code(Some(file_to_parse)) {
-                for import in file_to_parse.imports().into_iter().rev() {
-                    self.request_parse_ahead(import, true);
-                }
-            }
+            // Rust-only: parse workers start on the files this one brings in.
+            parse_ahead::after_parse(self, file_to_parse);
         }
 
         if file_to_parse.source_file.is_file_deleted() {
