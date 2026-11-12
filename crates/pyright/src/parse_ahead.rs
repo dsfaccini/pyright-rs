@@ -31,10 +31,8 @@ use crate::oracle::bind::walk_tree;
 use crate::oracle::tokens::dump_tokenizer_output;
 use crate::oracle::tree::dump_parser_output;
 use crate::parser::parse_nodes::{
-    FunctionNode, ImportAsNode, ImportFromAsNode, ImportFromNode, MemberAccessNode, ModuleNode, NameNode, get_parser_string_annotation,
-    with_node_id_block,
+    FunctionNode, ImportAsNode, ImportFromAsNode, ImportFromNode, MemberAccessNode, NameNode, ParseNode, with_node_id_block,
 };
-use crate::parser::parse_tree_utils::get_child_nodes;
 use crate::parser::parser::{ParseFileResults, ParseOptions, Parser};
 
 /// `PYRIGHT_RS_PARSE_AHEAD`: `on` (the default) parses on workers, `off` parses
@@ -337,10 +335,10 @@ pub fn after_parse(program: &Program, file: P<SourceFileInfo>) {
     if let Some(names) = names {
         want_from(program, file, &names);
     }
-    let Some(output) = file.source_file.get_parser_output() else { return flush() };
-    let reads = reads.unwrap_or_else(|| module_reads(output.parse_tree));
-    let reads = if is_user_code(Some(file)) { &reads.reads[..] } else { &reads.reads[..reads.outside] };
-    want_reads(program, file, reads);
+    if let Some(reads) = reads {
+        let reads = if is_user_code(Some(file)) { &reads.reads[..] } else { &reads.reads[..reads.outside] };
+        want_reads(program, file, reads);
+    }
     flush();
 }
 
@@ -353,12 +351,11 @@ struct ModuleReads {
     outside: usize,
 }
 
-/// The module reads of the tree `root` starts, in no particular order.
-fn module_reads(root: ModuleNode) -> ModuleReads {
+/// The module reads among `nodes`, all the nodes of one parse, in no particular order.
+fn module_reads(nodes: &[P<ParseNode>]) -> ModuleReads {
     let mut bound: FxHashSet<Atom> = FxHashSet::default();
-    let mut chains: Vec<(Vec<Atom>, bool)> = Vec::new();
-    let mut stack = vec![(root.0, false)];
-    while let Some((node, in_body)) = stack.pop() {
+    let mut chains: Vec<(Vec<Atom>, P<ParseNode>)> = Vec::new();
+    for &node in nodes {
         if let Some(import) = ImportAsNode::cast(node) {
             match import.d().alias.get() {
                 Some(alias) => bound.insert(alias.d().value_atom()),
@@ -383,19 +380,25 @@ fn module_reads(root: ModuleNode) -> ModuleReads {
                 chain.push(base.d().value_atom());
                 chain.reverse();
                 chain.truncate(5);
-                chains.push((chain, in_body));
+                chains.push((chain, node));
             }
         }
-        let suite = FunctionNode::cast(node).map(|function| function.d().suite.get().0);
-        for child in get_child_nodes(node, Some(&get_parser_string_annotation)).into_iter().rev().flatten() {
-            stack.push((child, in_body || Some(child) == suite));
-        }
     }
+    let in_body = |mut node: P<ParseNode>| {
+        while let Some(parent) = node.parent.get() {
+            if FunctionNode::cast(parent).is_some_and(|function| function.d().suite.get().0 == node) {
+                return true;
+            }
+            node = parent;
+        }
+        false
+    };
     let (mut outside, mut inside): (FxHashSet<Vec<Atom>>, FxHashSet<Vec<Atom>>) = Default::default();
-    for (chain, in_body) in chains {
+    for (chain, node) in chains {
         if bound.contains(&chain[0]) {
+            let reads = if in_body(node) { &mut inside } else { &mut outside };
             for len in 2..=chain.len() {
-                if in_body { &mut inside } else { &mut outside }.insert(chain[..len].to_vec());
+                reads.insert(chain[..len].to_vec());
             }
         }
     }
@@ -554,18 +557,33 @@ fn read(path: &str) -> Option<String> {
     Some(String::from_utf8_lossy(&bytes).into_owned())
 }
 
-/// `SourceFile.parse` from the read through the parse, for a file read from `path`.
-/// Numbers the file's nodes in one block when `block` (a check with workers).
-pub fn read_and_parse(path: &str, options: &ParseOptions, block: bool) -> Option<Parsed> {
+/// `SourceFile.parse` from the read through the parse, for a file read from `path`,
+/// on a worker: the file's nodes get one block of ids.
+fn read_and_parse(path: &str, options: &ParseOptions) -> Option<(Parsed, ModuleReads)> {
     let diag_sink = P::new(DiagnosticSink::new(None));
     let contents = read(path)?;
     let content_hash = get_string_fingerprint(&contents);
     let content_length = contents.js_len();
-    let parse = || {
-        Parser::new().parse_source_file(JsString::from(contents.as_str()), options.clone(), diag_sink, Some(content_hash))
-    };
-    let results = if block { with_node_id_block(parse) } else { parse() };
-    Some(Parsed { contents, content_hash, content_length, diag_sink, results })
+    let mut nodes = Vec::new();
+    let results = with_node_id_block(
+        || Parser::new().parse_source_file(JsString::from(contents.as_str()), options.clone(), diag_sink, Some(content_hash)),
+        &mut nodes,
+    );
+    Some((Parsed { contents, content_hash, content_length, diag_sink, results }, module_reads(&nodes)))
+}
+
+/// A file parse on the main thread while workers run: its nodes get one block of
+/// ids, and `after_parse` learns its module reads.
+pub fn parse_here<R>(key: &'static str, parse: impl FnOnce() -> R) -> R {
+    let mut nodes = Vec::new();
+    let results = with_node_id_block(parse, &mut nodes);
+    let reads = module_reads(&nodes);
+    AHEAD.with(|ahead| {
+        if let Some(ahead) = ahead.borrow_mut().as_mut() {
+            ahead.last_reads = Some((key, reads));
+        }
+    });
+    results
 }
 
 /// How often an idle worker checks whether the main thread freed memory it allocated.
@@ -618,12 +636,7 @@ fn work(shared: &Shared) {
         let before = jsrt::arena::arena_allocated_bytes();
         // A parse that panics leaves the file to the main thread, which then
         // panics as it would have without workers.
-        let outcome = match std::panic::catch_unwind(|| {
-            read_and_parse(&job.request.path, &job.request.options, true).map(|parsed| {
-                let reads = module_reads(parsed.results.parser_output.parse_tree);
-                (parsed, reads)
-            })
-        }) {
+        let outcome = match std::panic::catch_unwind(|| read_and_parse(&job.request.path, &job.request.options)) {
             Ok(Some((parsed, reads))) => Outcome::Parsed(Handoff(Box::new(parsed), reads)),
             Ok(None) => Outcome::Unread,
             Err(_) => Outcome::Panicked,
@@ -734,7 +747,8 @@ mod tests {
         let path = path.to_string();
         let Handoff(parsed, _) = std::thread::spawn(move || {
             jsrt::heap::forbid_collected_allocation();
-            Handoff(Box::new(read_and_parse(&path, &ParseOptions::new(), true).unwrap()), ModuleReads { reads: Vec::new(), outside: 0 })
+            let (parsed, reads) = read_and_parse(&path, &ParseOptions::new()).unwrap();
+            Handoff(Box::new(parsed), reads)
         })
         .join()
         .unwrap();
@@ -745,7 +759,7 @@ mod tests {
     fn a_worker_parses_as_the_main_thread_does() {
         let path = write("same", SOURCE);
         let worker = parse_on_a_worker(&path);
-        let main = read_and_parse(&path, &ParseOptions::new(), true).unwrap();
+        let main = read_and_parse(&path, &ParseOptions::new()).unwrap().0;
         check(&path, &worker, &main);
         assert!(!worker.diag_sink.peek().is_empty());
         // Each parse holds one block of ids, which the other's does not overlap.
@@ -763,7 +777,7 @@ mod tests {
     fn check_panics_on_a_different_parse() {
         let (one, other) = (write("one", SOURCE), write("other", &SOURCE.replace("x += 2", "x -= 2")));
         let worker = parse_on_a_worker(&one);
-        let main = read_and_parse(&other, &ParseOptions::new(), true).unwrap();
+        let main = read_and_parse(&other, &ParseOptions::new()).unwrap().0;
         assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| check(&one, &worker, &main))).is_err());
         std::fs::remove_file(one).unwrap();
         std::fs::remove_file(other).unwrap();
@@ -771,6 +785,6 @@ mod tests {
 
     #[test]
     fn an_unreadable_file_is_left_to_the_main_thread() {
-        assert!(read_and_parse("/nonexistent/pyright-rs-parse-ahead.py", &ParseOptions::new(), true).is_none());
+        assert!(read_and_parse("/nonexistent/pyright-rs-parse-ahead.py", &ParseOptions::new()).is_none());
     }
 }

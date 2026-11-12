@@ -262,11 +262,12 @@ pub fn get_next_node_id() -> u32 {
     _NEXT_NODE_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
 }
 
-/// Runs `parse` with this thread's new nodes numbered in one block (`BLOCK_NEXT`).
-pub fn with_node_id_block<R>(parse: impl FnOnce() -> R) -> R {
+/// Runs `parse` with this thread's new nodes numbered in one block (`BLOCK_NEXT`),
+/// and appends every node it allocated to `nodes`, in allocation order.
+pub fn with_node_id_block<R>(parse: impl FnOnce() -> R, nodes: &mut Vec<P<ParseNode>>) -> R {
     /// Closes the block, also when `parse` unwinds.
-    struct Close;
-    impl Drop for Close {
+    struct Close<'a>(&'a mut Vec<P<ParseNode>>);
+    impl Drop for Close<'_> {
         fn drop(&mut self) {
             let count = BLOCK_NEXT.with(|block| block.replace(0)) - 1;
             let base = _NEXT_NODE_ID.fetch_add(count, std::sync::atomic::Ordering::Relaxed) - 1;
@@ -276,12 +277,13 @@ pub fn with_node_id_block<R>(parse: impl FnOnce() -> R) -> R {
                     if id != 0 {
                         node.id.set(base + id);
                     }
+                    self.0.push(node);
                 }
             });
         }
     }
     assert!(BLOCK_NEXT.with(|block| block.replace(1)) == 0, "node id blocks do not nest");
-    let _close = Close;
+    let _close = Close(nodes);
     parse()
 }
 

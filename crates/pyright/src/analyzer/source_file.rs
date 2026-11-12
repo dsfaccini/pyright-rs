@@ -43,7 +43,7 @@ use crate::common::uri::Uri;
 use crate::localization::localize::LocMessage;
 use crate::oracle::dumper::{oracle_dump_bind, oracle_dump_parse};
 use crate::parse_ahead;
-use crate::parser::parse_nodes::{ModuleNode, ParseNode, with_node_id_block};
+use crate::parser::parse_nodes::{ModuleNode, ParseNode};
 use crate::parser::parser::{ModuleImport, ParseFileResults, ParseOptions, Parser, ParserOutput};
 use crate::parser::tokenizer::{IgnoreComment, TokenizerOutput};
 
@@ -730,7 +730,7 @@ impl SourceFile {
                 content_hash,
             )
         };
-        let parse_file_results = if parse_ahead::active() { with_node_id_block(parse) } else { parse() };
+        let parse_file_results = if parse_ahead::active() { parse_ahead::parse_here(self.uri.key(), parse) } else { parse() };
 
         (diag_sink, file_contents, parse_file_results)
     }

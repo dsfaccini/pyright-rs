@@ -1246,26 +1246,22 @@ impl Parser {
                     .iter()
                     .filter(|name| !local_name_set.contains(*name))
                     .collect();
-                // On the stack, not the evaluator heap: a parse worker allocates
-                // nothing a collector traces (`crate::parse_ahead`).
-                let diag = DiagnosticAddendum::default();
-                diag.add_message(format1(
-                    LocAddendum::or_pattern_missing_name(),
-                    "name",
-                    &missing_names
-                        .iter()
-                        .map(|name| format!("\"{name}\""))
-                        .collect::<Vec<_>>()
-                        .join(", "),
-                ));
-                self._add_syntax_error(
+                // A parse worker allocates the addendum as a temporary (`crate::parse_ahead`).
+                let message = jsrt::heap::allow_temporaries(|| {
+                    let diag = DiagnosticAddendum::new();
+                    diag.add_message(format1(
+                        LocAddendum::or_pattern_missing_name(),
+                        "name",
+                        &missing_names
+                            .iter()
+                            .map(|name| format!("\"{name}\""))
+                            .collect::<Vec<_>>()
+                            .join(", "),
+                    ));
                     LocMessage::or_pattern_missing_name()
-                        + &diag.get_string(
-                            DEFAULT_MAX_DIAGNOSTIC_DEPTH,
-                            DEFAULT_MAX_DIAGNOSTIC_LINE_COUNT,
-                        ),
-                    &or_pattern,
-                );
+                        + &diag.get_string(DEFAULT_MAX_DIAGNOSTIC_DEPTH, DEFAULT_MAX_DIAGNOSTIC_LINE_COUNT)
+                });
+                self._add_syntax_error(message, &or_pattern);
             }
         }
 
