@@ -6632,26 +6632,21 @@ impl Parser {
     // parser/parser.ts:5548
     #[inline(always)]
     fn _peek_token(&self, count: i32) -> P<Token> {
-        let target_index = self._token_index + count;
-        if target_index < 0 {
-            return self._tokenizer_output.as_ref().unwrap().tokens.get_item_at(0);
-        }
-
-        if target_index >= self._token_count {
-            return self._tokenizer_output.as_ref().unwrap().tokens.get_item_at(self._token_count - 1);
-        }
-
-        self._tokenizer_output.as_ref().unwrap().tokens.get_item_at(target_index)
+        // `_token_count` is the token count, so the three cases of the
+        // TypeScript (first token, last token, `target_index`) are one clamp.
+        let tokens = self._tokenizer_output.as_ref().unwrap().tokens.items();
+        let target_index = (self._token_index + count).clamp(0, self._token_count - 1);
+        tokens[target_index as usize]
     }
 
     // parser/parser.ts:5561
-    #[inline]
+    #[inline(always)]
     fn _peek_token_type(&self) -> TokenType {
         self._peek_token(0).type_
     }
 
     // parser/parser.ts:5565
-    #[inline]
+    #[inline(always)]
     fn _peek_keyword_type(&self) -> Option<KeywordType> {
         let next_token = self._peek_token(0);
         if next_token.type_ != TokenType::Keyword {
@@ -6662,7 +6657,7 @@ impl Parser {
     }
 
     // parser/parser.ts:5574
-    #[inline]
+    #[inline(always)]
     fn _peek_operator_type(&self) -> Option<OperatorType> {
         let next_token = self._peek_token(0);
         if next_token.type_ != TokenType::Operator {
@@ -6734,7 +6729,7 @@ impl Parser {
     }
 
     // parser/parser.ts:5627
-    #[inline]
+    #[inline(always)]
     fn _get_token_if_type(&mut self, token_type: TokenType) -> Option<P<Token>> {
         if self._peek_token_type() == token_type {
             return Some(self._get_next_token());
@@ -6744,13 +6739,13 @@ impl Parser {
     }
 
     // parser/parser.ts:5635
-    #[inline]
+    #[inline(always)]
     fn _consume_token_if_type(&mut self, token_type: TokenType) -> bool {
         self._get_token_if_type(token_type).is_some()
     }
 
     // parser/parser.ts:5639
-    #[inline]
+    #[inline(always)]
     fn _consume_token_if_keyword(&mut self, keyword_type: KeywordType) -> bool {
         if self._peek_keyword_type() == Some(keyword_type) {
             self._get_next_token();
@@ -6761,7 +6756,7 @@ impl Parser {
     }
 
     // parser/parser.ts:5648
-    #[inline]
+    #[inline(always)]
     fn _consume_token_if_operator(&mut self, operator_type: OperatorType) -> bool {
         if self._peek_operator_type() == Some(operator_type) {
             self._get_next_token();
