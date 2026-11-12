@@ -24,7 +24,8 @@ use crate::parser::parse_nodes::{
     ComprehensionIfNode, DecoratorNode, DictionaryKeyEntryNode, EvaluationScopeNode,
     ExecutionScopeNode, ExpressionNode, FunctionNode, ImportAsNode, ImportFromAsNode,
     ImportFromNode, IndexNode, LambdaNode, MemberAccessNode, ModuleNameNode, ModuleNode, NameNode,
-    NumberNode, ParamCategory, ParameterNode, ParseNode, ParseNodeDetails, ParseNodeType,
+    NumberNode, ParamCategory, ParameterNode, ParseNode, ParseNodeArray, ParseNodeDetails,
+    ParseNodeType,
     StatementListNode, StatementNode, StringListNode, StringNode, SuiteNode, TypeAnnotationNode,
     TypeParameterScopeNode, UnaryOperationNode, get_parser_string_annotation, is_expression_node,
 };
@@ -148,7 +149,7 @@ pub fn find_node_by_offset(
 
     // The range is found within this node. See if we can localize it
     // further by checking its children.
-    let mut children = get_child_nodes(
+    let mut children = get_child_nodes::<ParseNodeArray>(
         node,
         get_string_annotation
             .as_ref()
@@ -2564,7 +2565,7 @@ pub fn get_matching_descendants(
     match_: &dyn Fn(P<ParseNode>) -> bool,
 ) -> Vec<P<ParseNode>> {
     let mut matches: Vec<P<ParseNode>> = vec![];
-    let children = get_child_nodes(node, None);
+    let children = get_child_nodes::<ParseNodeArray>(node, None);
     for child in children {
         if let Some(child) = child {
             if match_(child) {

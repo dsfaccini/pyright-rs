@@ -16,7 +16,7 @@ use crate::analyzer::symbol::Symbol;
 use crate::common::text_range::Range;
 use crate::common::uri::Uri;
 use crate::oracle::format::{self, DumpWriter};
-use crate::parser::parse_nodes::{ParseNode, get_parser_string_annotation};
+use crate::parser::parse_nodes::{ParseNode, ParseNodeArray, get_parser_string_annotation};
 use crate::parser::parse_tree_utils::get_child_nodes;
 
 /// A printable value: the shapes `Printer.emit` distinguishes.
@@ -129,7 +129,7 @@ pub fn walk_tree(root: P<ParseNode>) -> Vec<P<ParseNode>> {
     let mut stack = vec![root];
     while let Some(node) = stack.pop() {
         result.push(node);
-        let children = get_child_nodes(node, Some(&get_parser_string_annotation));
+        let children = get_child_nodes::<ParseNodeArray>(node, Some(&get_parser_string_annotation));
         for child in children.iter().rev().flatten() {
             stack.push(*child);
         }

@@ -8,7 +8,7 @@ use crate::analyzer::type_printer::{FunctionReturnTypeCallback, print_type};
 use crate::analyzer::types::{FunctionType, Type, UnknownType};
 use crate::oracle::bind::node_ref;
 use crate::oracle::format;
-use crate::parser::parse_nodes::{ModuleNode, ParseNode};
+use crate::parser::parse_nodes::{ModuleNode, ParseNode, ParseNodeArray};
 use crate::parser::parse_tree_utils::get_child_nodes;
 
 /// The fork's return type callback, `(functionType) => FunctionType.getEffectiveReturnType(functionType)
@@ -80,7 +80,7 @@ fn walk_tree(
     let mut stack = vec![root];
     while let Some(node) = stack.pop() {
         result.push(node);
-        let children = get_child_nodes(node, Some(get_string_annotation));
+        let children = get_child_nodes::<ParseNodeArray>(node, Some(get_string_annotation));
         for child in children.iter().rev().flatten() {
             stack.push(*child);
         }

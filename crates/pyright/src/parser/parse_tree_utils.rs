@@ -24,13 +24,66 @@ fn all<T: Into<P<ParseNode>> + Copy>(
     nodes.iter().map(|&n| Some(n.into()))
 }
 
+/// A list `get_child_nodes` can return: a `ParseNodeArray`, or the `ChildNodes`
+/// that `ParseTreeWalker::walk` keeps on the stack.
+pub trait ChildNodeList: Default + Extend<Option<P<ParseNode>>> {
+    fn push(&mut self, node: Option<P<ParseNode>>);
+}
+
+impl ChildNodeList for ParseNodeArray {
+    fn push(&mut self, node: Option<P<ParseNode>>) {
+        Vec::push(self, node);
+    }
+}
+
+/// Child nodes, the first eight inline: most nodes have no more, so a walk
+/// needs no heap array per node.
+#[derive(Default)]
+pub struct ChildNodes {
+    len: usize,
+    inline: [Option<P<ParseNode>>; 8],
+    /// Every child, once there are more than eight.
+    spilled: ParseNodeArray,
+}
+
+impl ChildNodeList for ChildNodes {
+    fn push(&mut self, node: Option<P<ParseNode>>) {
+        if self.spilled.is_empty() {
+            if let Some(slot) = self.inline.get_mut(self.len) {
+                *slot = node;
+                self.len += 1;
+                return;
+            }
+            self.spilled.reserve(2 * self.inline.len());
+            self.spilled.extend_from_slice(&self.inline);
+        }
+        self.spilled.push(node);
+    }
+}
+
+impl Extend<Option<P<ParseNode>>> for ChildNodes {
+    fn extend<I: IntoIterator<Item = Option<P<ParseNode>>>>(&mut self, nodes: I) {
+        for node in nodes {
+            self.push(node);
+        }
+    }
+}
+
+impl std::ops::Deref for ChildNodes {
+    type Target = [Option<P<ParseNode>>];
+
+    fn deref(&self) -> &Self::Target {
+        if self.spilled.is_empty() { &self.inline[..self.len] } else { &self.spilled }
+    }
+}
+
 /// `None` for `get_string_annotation` is the default, `getParserStringAnnotation`.
 // parser/parseTreeUtils.ts:6
-pub fn get_child_nodes(
+pub fn get_child_nodes<L: ChildNodeList>(
     node: P<ParseNode>,
     get_string_annotation: Option<StringAnnotationProvider<'_>>,
-) -> ParseNodeArray {
-    let mut v: ParseNodeArray = vec![];
+) -> L {
+    let mut v = L::default();
     match node.d() {
         ParseNodeDetails::Error(d) => {
             if let Some(decorators) = &d.decorators {
