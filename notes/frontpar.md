@@ -20,6 +20,9 @@ What the main thread requests (`after_parse`, after `Program._parseFile` resolve
 2. Every import of a parsed user file.
 3. Wanted names: a user file wants every name, a module wants the names some wanted `from m import ...` imports from it. A module is requested once a file imports a wanted name from it; a name wanted from a module parsed already passes on at once.
 4. Module reads: `m.x` in a parsed file wants `x` from the module `import m`, `import p.m as m` or `from p import m` binds, and requests that module. Outside the user files only reads outside function bodies count: the check evaluates such a body only to infer a return type.
+5. Guessed imports: a worker that finishes a module the check wants names from requests what the module imports those names from, before the main thread resolves the module's imports. It looks a relative import up next to the module (a stub, a source file, then a package) and an absolute one in the main thread's earlier resolutions (`Table::modules`). Without this step the main thread waited for 1,047 files, 0.69 s; with it, for 178 files, 0.10 s.
+
+The main thread and the workers share one table by path: the jobs, the files the main thread parsed, the wanted names and the learned module paths.
 
 ## measurements
 
@@ -38,7 +41,12 @@ Share of parsed source bytes requested before the main thread parses the file (s
 
 Distance from request to take, in files taken, at the last row: median 20, 90th percentile 978, 99th 3,909. Evicting untaken results after a few hundred takes would drop many hits.
 
-Peak memory at the end of the check (`PYRIGHT_RS_GC_CENSUS=1`, pydantic-ai, 817db95): 5,671 MiB without workers; 5,807 with one, 5,852 with two, 5,874 with four. Of that, the 285 untaken results hold about 4.2 MB of source, its UTF-16 copy, 481 K tokens and their trees; the rest is malloc held per worker thread.
+Resident set at the end of the check (`PYRIGHT_RS_GC_CENSUS=1`, pydantic-ai, cb3aeb6): 5,667 MiB without workers, 5,860 MiB with two, 5,904 MiB with four (0b1cbde).
+- Workers that never parse (every job withdrawn): 5,684 MiB, so the mechanism itself costs about 17 MiB.
+- Dropping the 320 untaken results just before the census frees 61 MiB; their trees, about 35 MiB, stay in the worker arenas.
+- About 100 MiB more stays in the workers' malloc heaps. `MIMALLOC_PURGE_DELAY=0` does not release it, nor does capping the source held by untaken results (`PYRIGHT_RS_PARSE_AHEAD_WAITING_MIB`, tried at 8, 16 and 32 MiB, not landed: the peak moved by under 20 MiB and the main thread parsed 380 files itself instead of 67). The untaken results peak at 38.9 MB of source.
+
+Two workers wait as little as four: 156 waits, 0.079 s, against 176 waits, 0.101 s.
 
 ## Signature changes
 
