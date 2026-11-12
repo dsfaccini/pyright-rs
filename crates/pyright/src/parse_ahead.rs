@@ -117,6 +117,9 @@ struct Shared {
     busy_ns: AtomicU64,
     /// Bytes of the workers' program arenas.
     arena_bytes: AtomicUsize,
+    /// Results the main thread took. It frees their file texts and scratch buffers,
+    /// which go back to the worker that allocated them only once that worker collects.
+    taken: AtomicU64,
 }
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -163,6 +166,7 @@ pub fn start() {
         work: Condvar::new(),
         busy_ns: AtomicU64::new(0),
         arena_bytes: AtomicUsize::new(0),
+        taken: AtomicU64::new(0),
     });
     for i in 0..thread_count() {
         let shared = shared.clone();
@@ -235,7 +239,10 @@ pub fn take(key: &'static str, now: Option<&Request>) -> Option<Parsed> {
             return None;
         }
         match done {
-            Outcome::Parsed(Handoff(parsed)) => Some(*parsed),
+            Outcome::Parsed(Handoff(parsed)) => {
+                ahead.shared.taken.fetch_add(1, Relaxed);
+                Some(*parsed)
+            }
             Outcome::Unread => {
                 ahead.stats.unread += 1;
                 None
@@ -275,8 +282,27 @@ pub fn read_and_parse(path: &str, options: &ParseOptions, block: bool) -> Option
     Some(Parsed { contents, content_hash, content_length, diag_sink, results })
 }
 
+/// How often an idle worker checks whether the main thread freed memory it allocated.
+const IDLE_COLLECT: std::time::Duration = std::time::Duration::from_millis(50);
+
+/// Returns the memory other threads freed into this thread's malloc heap to the OS.
+/// mimalloc reclaims a block another thread freed only when the thread that allocated
+/// it allocates or collects, so an idle worker would hold the file texts and token
+/// buffers of every result the main thread took.
+fn collect_freed_memory() {
+    #[cfg(not(miri))]
+    {
+        unsafe extern "C" {
+            fn mi_collect(force: bool);
+        }
+        // SAFETY: `mi_collect` only walks this thread's own mimalloc heap.
+        unsafe { mi_collect(true) };
+    }
+}
+
 fn work(shared: &Shared) {
     jsrt::heap::forbid_collected_allocation();
+    let mut collected = 0;
     loop {
         let job = {
             let mut queue = lock(&shared.queue);
@@ -284,7 +310,15 @@ fn work(shared: &Shared) {
                 if let Some(job) = queue.urgent.pop_front().or_else(|| queue.later.pop_front()) {
                     break job;
                 }
-                queue = shared.work.wait(queue).unwrap_or_else(PoisonError::into_inner);
+                let taken = shared.taken.load(Relaxed);
+                if taken != collected {
+                    collected = taken;
+                    drop(queue);
+                    collect_freed_memory();
+                    queue = lock(&shared.queue);
+                    continue;
+                }
+                queue = shared.work.wait_timeout(queue, IDLE_COLLECT).unwrap_or_else(PoisonError::into_inner).0;
             }
         };
         {
