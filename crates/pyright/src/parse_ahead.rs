@@ -42,12 +42,14 @@ pub fn mode() -> SwitchMode {
     jsrt::switch_mode!("PYRIGHT_RS_PARSE_AHEAD")
 }
 
-/// `PYRIGHT_RS_PARSE_AHEAD_THREADS`: the number of workers, default 4; 0 starts
-/// none, so every file parses on the main thread, as with the switch off.
+/// `PYRIGHT_RS_PARSE_AHEAD_THREADS`: the number of workers, default 2; 0 starts
+/// none, so every file parses on the main thread, as with the switch off. On
+/// pydantic-ai two workers keep the main thread's waits as short as four do, and
+/// each worker's malloc heap adds to the peak.
 fn thread_count() -> usize {
     static COUNT: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
     *COUNT.get_or_init(|| match std::env::var("PYRIGHT_RS_PARSE_AHEAD_THREADS") {
-        Err(_) => 4,
+        Err(_) => 2,
         Ok(v) => v.parse().unwrap_or_else(|_| panic!("PYRIGHT_RS_PARSE_AHEAD_THREADS must be a number, not {v:?}")),
     })
 }
