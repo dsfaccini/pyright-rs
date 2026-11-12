@@ -48,6 +48,28 @@ Resident set at the end of the check (`PYRIGHT_RS_GC_CENSUS=1`, pydantic-ai, cb3
 
 Two workers wait as little as four: 156 waits, 0.079 s, against 176 waits, 0.101 s.
 
+## result
+
+f13afd7 against main 13a4fa8, three interleaved runs each; `dist` from `bench/build-dist.sh`:
+
+| corpus, build | instructions | peak RSS |
+|---|---|---|
+| pydantic-ai, release | 197.6 G → 200.3 G (+1.35%) | 5.45 → 5.67 GiB (+0.22) |
+| pydantic-ai, release, switch off | 198.1 G (+0.23%) | 5.49 GiB (+0.04) |
+| pydantic-ai, dist | 162.2 G → 164.4 G (+1.38%) | 5.48 → 5.69 GiB (+0.21) |
+| samples, release | 7.11 G → 7.24 G (+1.8%) | 0.44 → 0.48 GiB |
+| samples, dist | 5.71 G → 5.81 G (+1.75%) | 0.45 → 0.48 GiB |
+
+Wall time: other lanes held the load average between 2 and 20, and the medians follow the load more than the branch. A main run against the branch run right after it, both under load 5: release −1.05, −0.65 and +0.07 s. The dist runs ran under load 15–20, too high for a pair; at d3c6308 under load 5–8 the dist median dropped 0.12 s. At 1229e5e (user files and their imports, four workers, load 3–4) the median dropped 1.08 s. samples moves less than its run-to-run spread.
+
+CPU time: in the same pairs user plus system time rose 0.9 to 1.8 s. The workers spend 2.6 s of CPU on 5,650 parses (`PYRIGHT_RS_PARSE_AHEAD_LOG`, load 8.8), about twice what the main thread spends per file.
+
+Where the gain goes: the main thread's front end (`--stats`: Read Source Files, Tokenize, Parse) drops from about 1.6 s to 0.3 s, Bind from 1.46 s to 1.27 s; the wall drops by 0.65 s, the median of the quiet pairs. Main-thread cycle samples under load 4–7 did not separate contention from the workers' SMT siblings from the load: 59.3k against 72.2k, 58.7k against 67.1k, 66.4k against 61.9k.
+
+The remaining serial front end: 1,272 files no rule requests, which the main thread parses itself, and 0.1 s of waits.
+
+The switch off costs 0.23% instructions and 20 to 45 MiB of peak against main. Not measured further; the changes that run with the switch off are the atom table, the region pool and the node id counter.
+
 ## Signature changes
 
 - `jsrt::Atom` is `Send` and `Sync`; `Atom::lookup` finds text any thread interned.
