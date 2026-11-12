@@ -173,6 +173,42 @@ fn format1(
     message.format(&[(key, value)])
 }
 
+/// `_maxChildDepthMap`, a `Map<number, number>` keyed by node id and read with
+/// `?? 0`. A parser numbers its nodes consecutively, so the ids from the first
+/// one stored on get a slot each; smaller ids, such as a placeholder's 0, go to
+/// a hash map.
+#[derive(Default)]
+struct DepthByNodeId {
+    base: u32,
+    dense: Vec<i32>,
+    sparse: FxHashMap<u32, i32>,
+}
+
+impl DepthByNodeId {
+    fn get(&self, id: u32) -> i32 {
+        if !self.dense.is_empty() && id >= self.base {
+            return self.dense.get((id - self.base) as usize).copied().unwrap_or(0);
+        }
+        self.sparse.get(&id).copied().unwrap_or(0)
+    }
+
+    fn set(&mut self, id: u32, depth: i32) {
+        // Until the first nonzero id, the hash map holds id 0 only.
+        if self.dense.is_empty() && id != 0 {
+            self.base = id;
+        }
+        if (self.dense.is_empty() && id == 0) || id < self.base {
+            self.sparse.insert(id, depth);
+            return;
+        }
+        let index = (id - self.base) as usize;
+        if index >= self.dense.len() {
+            self.dense.resize(index + 1, 0);
+        }
+        self.dense[index] = depth;
+    }
+}
+
 // parser/parser.ts:238
 pub struct Parser {
     _file_contents: Option<JsString>,
@@ -204,7 +240,7 @@ pub struct Parser {
     _assignment_expressions_allowed: bool,
     _typing_import_aliases: Vec<String>,
     _typing_symbol_aliases: JsMap<String, String>,
-    _max_child_depth_map: FxHashMap<u32, i32>,
+    _max_child_depth_map: DepthByNodeId,
     _has_type_annotations: bool,
     _owner_key: Option<ParseTreeKey>,
     _created_owner_key: bool,
@@ -244,7 +280,7 @@ impl Parser {
             _assignment_expressions_allowed: true,
             _typing_import_aliases: vec![],
             _typing_symbol_aliases: JsMap::default(),
-            _max_child_depth_map: FxHashMap::default(),
+            _max_child_depth_map: DepthByNodeId::default(),
             _has_type_annotations: false,
             _owner_key: None,
             _created_owner_key: false,
@@ -4614,10 +4650,7 @@ impl Parser {
                 self._is_parsing_type_annotation = was_parsing_type_annotation;
 
                 let max_depth = self
-                    ._max_child_depth_map
-                    .get(&atom_expression.id.get())
-                    .copied()
-                    .unwrap_or(0);
+                    ._max_child_depth_map.get(atom_expression.id.get());
                 if max_depth >= MAX_CHILD_NODE_DEPTH {
                     atom_expression = ErrorNode::create(
                         self._get_owner_key(),
@@ -4633,8 +4666,7 @@ impl Parser {
                     );
                 } else {
                     atom_expression = call_node.0;
-                    self._max_child_depth_map
-                        .insert(call_node.id.get(), max_depth + 1);
+                    self._max_child_depth_map.set(call_node.id.get(), max_depth + 1);
                 }
 
                 // If the argument list wasn't terminated, break out of the loop
@@ -4685,10 +4717,7 @@ impl Parser {
                 }
 
                 let max_depth = self
-                    ._max_child_depth_map
-                    .get(&atom_expression.id.get())
-                    .copied()
-                    .unwrap_or(0);
+                    ._max_child_depth_map.get(atom_expression.id.get());
                 if max_depth >= MAX_CHILD_NODE_DEPTH {
                     atom_expression = ErrorNode::create(
                         self._get_owner_key(),
@@ -4704,8 +4733,7 @@ impl Parser {
                     );
                 } else {
                     atom_expression = index_node.0;
-                    self._max_child_depth_map
-                        .insert(index_node.id.get(), max_depth + 1);
+                    self._max_child_depth_map.set(index_node.id.get(), max_depth + 1);
                 }
             } else if self._consume_token_if_type(TokenType::Dot) {
                 // Is it a member access?
@@ -4728,10 +4756,7 @@ impl Parser {
                 );
 
                 let max_depth = self
-                    ._max_child_depth_map
-                    .get(&atom_expression.id.get())
-                    .copied()
-                    .unwrap_or(0);
+                    ._max_child_depth_map.get(atom_expression.id.get());
                 if max_depth >= MAX_CHILD_NODE_DEPTH {
                     atom_expression = ErrorNode::create(
                         self._get_owner_key(),
@@ -4747,8 +4772,7 @@ impl Parser {
                     );
                 } else {
                     atom_expression = member_access_node.0;
-                    self._max_child_depth_map
-                        .insert(member_access_node.id.get(), max_depth + 1);
+                    self._max_child_depth_map.set(member_access_node.id.get(), max_depth + 1);
                 }
             } else {
                 break;
@@ -6359,15 +6383,9 @@ impl Parser {
         // the subnode with an error node. Otherwise we risk crashing in the binder
         // or type evaluator.
         let left_max_depth = self
-            ._max_child_depth_map
-            .get(&left_expression.id.get())
-            .copied()
-            .unwrap_or(0);
+            ._max_child_depth_map.get(left_expression.id.get());
         let right_max_depth = self
-            ._max_child_depth_map
-            .get(&right_expression.id.get())
-            .copied()
-            .unwrap_or(0);
+            ._max_child_depth_map.get(right_expression.id.get());
 
         if left_max_depth >= MAX_CHILD_NODE_DEPTH || right_max_depth >= MAX_CHILD_NODE_DEPTH {
             self._add_syntax_error(LocMessage::max_parse_depth_exceeded(), &binary_node);
@@ -6381,7 +6399,7 @@ impl Parser {
             .0;
         }
 
-        self._max_child_depth_map.insert(
+        self._max_child_depth_map.set(
             binary_node.id.get(),
             left_max_depth.max(right_max_depth) + 1,
         );
@@ -6403,10 +6421,7 @@ impl Parser {
         // or type evaluator.
 
         let max_depth = self
-            ._max_child_depth_map
-            .get(&expression.id.get())
-            .copied()
-            .unwrap_or(0);
+            ._max_child_depth_map.get(expression.id.get());
         if max_depth >= MAX_CHILD_NODE_DEPTH {
             self._add_syntax_error(LocMessage::max_parse_depth_exceeded(), &unary_node);
             return ErrorNode::create(
@@ -6419,8 +6434,7 @@ impl Parser {
             .0;
         }
 
-        self._max_child_depth_map
-            .insert(unary_node.id.get(), max_depth + 1);
+        self._max_child_depth_map.set(unary_node.id.get(), max_depth + 1);
         unary_node.0
     }
 
@@ -6847,3 +6861,21 @@ impl Parser {
 #[cfg(test)]
 #[path = "parser_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+mod depth_by_node_id_tests {
+    use super::DepthByNodeId;
+
+    #[test]
+    fn reads_what_was_set_and_zero_otherwise() {
+        let mut depths = DepthByNodeId::default();
+        assert_eq!(depths.get(7), 0);
+        depths.set(0, 4);
+        depths.set(10, 1);
+        depths.set(12, 2);
+        depths.set(3, 5);
+        depths.set(10, 6);
+        assert_eq!((depths.get(0), depths.get(3), depths.get(10), depths.get(11), depths.get(12)), (4, 5, 6, 0, 2));
+        assert_eq!((depths.get(2), depths.get(13), depths.get(1000)), (0, 0, 0));
+    }
+}
