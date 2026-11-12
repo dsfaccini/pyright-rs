@@ -27,11 +27,11 @@ pub mod vscode_uri;
 
 pub use arena::{Header, P};
 pub use atom::{Atom, AtomKey};
-pub use cell::OptionRefCell;
+pub use cell::{EvalOptionRefCell, OptionRefCell};
 pub use heap::{ClassSlot, GcMode, Tracer};
 pub use jsrt_derive::Trace;
 pub use trace::Trace;
-pub use collections::{FxHashMap, FxHashSet, IdMap, JsMap, JsSet, LazyJsMap, LogKeyed, LoggedMap, NonEmptyList, SmallJsSet};
+pub use collections::{FxHashMap, FxHashSet, IdMap, JsMap, JsSet, LazyJsMap, LogKeyed, LoggedMap, NonEmptyList, SmallJsSet, VecMap};
 pub use number::{JsBigInt, NumberValue};
 pub use string::{JsStr, JsString, NormalizationForm};
 pub use switch::SwitchMode;

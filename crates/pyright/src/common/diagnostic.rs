@@ -3,7 +3,7 @@
 //! JSON (de)serialization (`toJsonObj`, `fromJsonObj`) serves the language
 //! server's background threads and is not ported.
 
-use jsrt::cell::RefCell;
+use jsrt::cell::{OnceCell, Ref, RefCell};
 
 use jsrt::P;
 
@@ -203,12 +203,19 @@ pub fn compare_diagnostics(d1: &Diagnostic, d2: &Diagnostic) -> i32 {
 #[trace(eval)]
 pub struct DiagnosticAddendum {
     // `_messages`, `_childAddenda` and `_range`, allocated on the first write: about half of all
-    // addenda stay empty (python-chess and samples corpora, 2026-11-10).
-    content: RefCell<Option<Box<AddendumContent>>>,
+    // addenda stay empty (python-chess and samples corpora, 2026-11-10). A separate evaluator
+    // object, so a dead addendum without one is swept without reading its slot
+    // (docs/collector-design.md, "sweep").
+    content: OnceCell<P<AddendumContentPart>>,
     nest_level: jsrt::cell::Cell<Option<i32>>,
 }
 // The evaluator creates millions of addenda (PLAN.md step 6).
-const _: () = assert!(size_of::<DiagnosticAddendum>() <= 24);
+const _: () = assert!(size_of::<DiagnosticAddendum>() <= 16);
+
+#[derive(Default)]
+#[derive(jsrt::Trace)]
+#[trace(eval)]
+struct AddendumContentPart(RefCell<AddendumContent>);
 
 #[derive(Default)]
 #[derive(jsrt::Trace)]
@@ -254,10 +261,12 @@ impl DiagnosticAddendum {
         P::new_eval(DiagnosticAddendum::default())
     }
 
+    fn content(&self) -> Option<Ref<'_, AddendumContent>> {
+        self.content.get().map(|content| content.get().0.borrow())
+    }
+
     fn content_mut(&self) -> jsrt::cell::RefMut<'_, AddendumContent> {
-        jsrt::cell::RefMut::map(self.content.borrow_mut(), |content| {
-            &mut **content.get_or_insert_with(Default::default)
-        })
+        self.content.get_or_init(|| P::new_eval(AddendumContentPart::default())).get().0.borrow_mut()
     }
 
     // common/diagnostic.ts:205
@@ -337,18 +346,12 @@ impl DiagnosticAddendum {
 
     // common/diagnostic.ts:251
     pub fn get_children(&self) -> Vec<P<DiagnosticAddendum>> {
-        self.content
-            .borrow()
-            .as_ref()
-            .map_or_else(Vec::new, |content| content.child_addenda.clone())
+        self.content().map_or_else(Vec::new, |content| content.child_addenda.clone())
     }
 
     // common/diagnostic.ts:255
     pub fn get_messages(&self) -> Vec<String> {
-        self.content
-            .borrow()
-            .as_ref()
-            .map_or_else(Vec::new, |content| content.messages.iter().map(AddendumMessage::text).collect())
+        self.content().map_or_else(Vec::new, |content| content.messages.iter().map(AddendumMessage::text).collect())
     }
 
     // common/diagnostic.ts:259
@@ -391,7 +394,7 @@ impl DiagnosticAddendum {
             return Some(child_ranges[0]);
         }
 
-        self.content.borrow().as_ref().and_then(|content| content.range)
+        self.content().and_then(|content| content.range)
     }
 
     // common/diagnostic.ts:303
@@ -400,11 +403,7 @@ impl DiagnosticAddendum {
             return 0;
         }
 
-        let mut message_count = self
-            .content
-            .borrow()
-            .as_ref()
-            .map_or(0, |content| content.messages.len());
+        let mut message_count = self.content().map_or(0, |content| content.messages.len());
 
         for diag in self.get_children() {
             message_count += diag.get_message_count(recursion_count + 1);

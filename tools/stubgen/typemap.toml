@@ -344,8 +344,9 @@ interface = "analyzer/codeFlowEngine.ts:CodeFlowAnalyzer"
 "analyzer/types.ts:Type.props" = false
 "analyzer/types.ts:Type.cached" = false
 
-# Fields few objects set, moved out of a hot struct into `<Struct>Cold`, which the struct holds as
-# `cold: Option<Box<..>>` and allocates on first write ("cold fields" in docs/evaluator-design.md).
+# Fields few objects set, moved out of a hot struct into `<Struct>Cold`, which a value struct holds as
+# `cold: Option<Box<..>>` and a handle struct as `cold: jsrt::EvalOptionRefCell<..>`, allocated on
+# first write ("cold fields" in docs/evaluator-design.md).
 [cold]
 # Each list holds the fields that fewer than 1% of objects set on the python-chess and samples
 # corpora (2026-11-10), plus overloadsUsedForCall (3% of results), and classType, which no live
