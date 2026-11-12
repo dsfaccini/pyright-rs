@@ -142,3 +142,53 @@ From the first round's baseline (308f470: 388.7 G, 52.3 s, 11.8 GiB on pydantic-
 The `trigger` agent (765231c, `notes/trigger.md`): minor collections trace only the cache entries written since the last collection, the card scan tests eight cards at a time, and the sweep skips bitmap words with nothing dead. pydantic-ai, `release`, 3 runs: 213.36 G → 212.99 G instructions at the default, peak 5.68 GiB either way; with `PYRIGHT_RS_GC_MIN_MIB=64`, 225.53 G → 218.28 G at 5.07 GiB.
 
 `PYRIGHT_RS_GC_TAPER=1` shrinks the trigger's floor as the check nears its end: pydantic-ai peaks at 5.19 GiB for 0.24% more instructions than f02fe2a, but 2 to 3% more wall time in paired runs. It stays off by default: speed comes first, and the default already peaks 43% below pyright. A trigger that also counts the buffers garbage holds left the peak unchanged, since the peak comes from the last interval's size.
+
+## third optimization round progress
+
+`bench/measure.sh`, `release`, as each agent measured it (instructions repeat to within 0.1%; wall times are from a loaded devbox):
+
+| `main` | change | pydantic-ai | samples |
+|---|---|---|---|
+| 04ac81d | start of the round | 212.99 G instructions, 5.69 GiB | 7.55 G, 0.45 GiB |
+| 3920e3e | constraint sets, `TypeResult`'s cold half and addendum content as evaluator objects, so dead ones need no drop (`temps`) | 212.79 G, 5.52 GiB; pauses 2.08 → 1.57 s | 7.56 G, 0.45 GiB |
+| fa2471f | allocation prefetch 512 bytes ahead (`temps`) | 211.82 G (−0.47%) | 7.54 G |
+| 00fc773 | tokenizer, parser, binder and import resolution hot paths (`bind`) | −5.3% against 3920e3e | −4.5% |
+| 13a4fa8 | dead class types need no drop (`temps`) | 200.45 → 197.62 G (−1.4%), 5.47 GiB | −1.3% |
+| 3a9a365 | parse workers read, tokenize and parse files ahead of the main thread (`frontpar`, `PYRIGHT_RS_PARSE_AHEAD`) | +1.35%, +0.22 GiB | +1.8%, +0.04 GiB |
+| 393676b | second front-end batch (`bind`) | 200.34 → 198.76 G (−0.8%), 5.56 GiB | 7.21 G |
+
+At 3a9a365 the seven corpora match with 1 and 8 parse workers and with `PYRIGHT_RS_PARSE_AHEAD=check`; the pydantic-ai gate passes with 8 workers; `tools/miri.sh` passes all four suites under both models. At 393676b the `dist` build passes the seven corpora and the pydantic-ai gate.
+
+## after the third optimization round
+
+`main` 393676b on a quiet devbox (load average 1.2 to 1.9, other workspaces idle but for light jobs). `bench/compare.py target/release/pyright-rs,target/dist/pyright-rs <corpora>`, as above.
+
+| corpus | pyright | release | dist | wall speedup |
+|---|---|---|---|---|
+| pydantic-ai | 135.90 s, 179.07 s CPU, 9.95 GiB | 23.29 s, 26.75 s CPU, 5.53 GiB | 19.65 s, 22.88 s CPU, 5.53 GiB | 5.8x, 6.9x |
+| samples | 5.53 s, 9.57 s CPU, 0.63 GiB | 0.79 s, 0.87 s CPU, 0.47 GiB | 0.61 s, 0.67 s CPU, 0.48 GiB | 7.0x, 9.1x |
+| typeshed | 3.30 s, 5.70 s CPU, 0.62 GiB | 0.55 s, 0.61 s CPU, 0.39 GiB | 0.44 s, 0.49 s CPU, 0.39 GiB | 6.0x, 7.5x |
+| primer-attrs | 1.35 s, 2.59 s CPU, 0.28 GiB | 0.16 s, 0.16 s CPU, 0.15 GiB | 0.13 s, 0.14 s CPU, 0.16 GiB | 8.4x, 10.4x |
+| primer-bidict | 0.60 s, 1.00 s CPU, 0.20 GiB | 0.06 s, 0.06 s CPU, 0.09 GiB | 0.05 s, 0.05 s CPU, 0.09 GiB | 10.0x, 12.0x |
+| primer-more-itertools | 1.39 s, 2.66 s CPU, 0.28 GiB | 0.18 s, 0.19 s CPU, 0.16 GiB | 0.15 s, 0.15 s CPU, 0.17 GiB | 7.7x, 9.3x |
+| primer-packaging | 1.49 s, 2.81 s CPU, 0.29 GiB | 0.18 s, 0.19 s CPU, 0.17 GiB | 0.14 s, 0.15 s CPU, 0.18 GiB | 8.3x, 10.6x |
+| primer-python-chess | 1.90 s, 3.42 s CPU, 0.32 GiB | 0.24 s, 0.25 s CPU, 0.21 GiB | 0.19 s, 0.20 s CPU, 0.22 GiB | 7.9x, 10.0x |
+
+`bench/measure.sh`, one run each, instructions:
+
+| build | pydantic-ai | samples |
+|---|---|---|
+| `release` | 198.69 G | 7.22 G |
+| `dist` | 162.72 G | 5.79 G |
+
+Parse workers, `dist`, `PYRIGHT_RS_PARSE_AHEAD=on` against `off` in interleaved runs on the same quiet devbox:
+
+| corpus | runs | wall, on → off | CPU, on → off | peak RSS, on → off |
+|---|---|---|---|---|
+| pydantic-ai | 6 pairs | 19.17 → 19.42 s (on is faster in every pair, by 0.11 to 0.34 s) | 22.4 → 21.3 s | 5.54 → 5.35 GiB |
+| samples | 7 pairs | 0.61 → 0.61 s | 0.68 → 0.60 s | 0.48 → 0.45 GiB |
+| typeshed | 7 pairs | 0.43 → 0.42 s | 0.48 → 0.42 s | 0.39 → 0.36 GiB |
+
+The workers stay on by default: speed comes first, as for the trigger's taper. They cost the small corpora 0.03 GiB of peak and no wall time, and the higher small-corpus peaks in the table above are theirs.
+
+From the last quiet measurement (232d44d, `dist`: 175.09 G, 20.53 s, 5.70 GiB on pydantic-ai), `dist` runs 7.1% fewer instructions, 4.3% less wall time and peaks 3% lower. From the first round's baseline (308f470: 388.7 G, 52.3 s, 11.8 GiB), 58% fewer instructions, 62% less wall time and a 53% lower peak.
