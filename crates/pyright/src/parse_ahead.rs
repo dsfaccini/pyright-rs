@@ -31,7 +31,7 @@ use crate::oracle::bind::walk_tree;
 use crate::oracle::tokens::dump_tokenizer_output;
 use crate::oracle::tree::dump_parser_output;
 use crate::parser::parse_nodes::{
-    ImportAsNode, ImportFromAsNode, ImportFromNode, MemberAccessNode, ModuleNode, NameNode, get_parser_string_annotation,
+    FunctionNode, ImportAsNode, ImportFromAsNode, ImportFromNode, MemberAccessNode, ModuleNode, NameNode, get_parser_string_annotation,
     with_node_id_block,
 };
 use crate::parser::parse_tree_utils::get_child_nodes;
@@ -339,20 +339,26 @@ pub fn after_parse(program: &Program, file: P<SourceFileInfo>) {
     }
     let Some(output) = file.source_file.get_parser_output() else { return flush() };
     let reads = reads.unwrap_or_else(|| module_reads(output.parse_tree));
-    want_reads(program, file, &reads);
+    let reads = if is_user_code(Some(file)) { &reads.reads[..] } else { &reads.reads[..reads.outside] };
+    want_reads(program, file, reads);
     flush();
 }
 
 /// The dotted names a file reads from the names its import statements bind:
-/// `np.linalg.norm` as `[np, linalg, norm]`, at most five names long.
-type ModuleReads = Vec<Vec<Atom>>;
+/// `np.linalg.norm` as `[np, linalg, norm]`, at most five names long. Those
+/// outside function bodies come first, up to `outside`: the check evaluates the
+/// body of a function outside the user files only to infer what it returns.
+struct ModuleReads {
+    reads: Vec<Vec<Atom>>,
+    outside: usize,
+}
 
 /// The module reads of the tree `root` starts, in no particular order.
 fn module_reads(root: ModuleNode) -> ModuleReads {
     let mut bound: FxHashSet<Atom> = FxHashSet::default();
-    let mut chains: Vec<Vec<Atom>> = Vec::new();
-    let mut stack = vec![root.0];
-    while let Some(node) = stack.pop() {
+    let mut chains: Vec<(Vec<Atom>, bool)> = Vec::new();
+    let mut stack = vec![(root.0, false)];
+    while let Some((node, in_body)) = stack.pop() {
         if let Some(import) = ImportAsNode::cast(node) {
             match import.d().alias.get() {
                 Some(alias) => bound.insert(alias.d().value_atom()),
@@ -377,27 +383,32 @@ fn module_reads(root: ModuleNode) -> ModuleReads {
                 chain.push(base.d().value_atom());
                 chain.reverse();
                 chain.truncate(5);
-                chains.push(chain);
+                chains.push((chain, in_body));
             }
         }
+        let suite = FunctionNode::cast(node).map(|function| function.d().suite.get().0);
         for child in get_child_nodes(node, Some(&get_parser_string_annotation)).into_iter().rev().flatten() {
-            stack.push(child);
+            stack.push((child, in_body || Some(child) == suite));
         }
     }
-    let mut reads: FxHashSet<Vec<Atom>> = FxHashSet::default();
-    for chain in chains {
+    let (mut outside, mut inside): (FxHashSet<Vec<Atom>>, FxHashSet<Vec<Atom>>) = Default::default();
+    for (chain, in_body) in chains {
         if bound.contains(&chain[0]) {
             for len in 2..=chain.len() {
-                reads.insert(chain[..len].to_vec());
+                if in_body { &mut inside } else { &mut outside }.insert(chain[..len].to_vec());
             }
         }
     }
-    reads.into_iter().collect()
+    let inside: Vec<Vec<Atom>> = inside.into_iter().filter(|read| !outside.contains(read)).collect();
+    let mut reads: Vec<Vec<Atom>> = outside.into_iter().collect();
+    let outside = reads.len();
+    reads.extend(inside);
+    ModuleReads { reads, outside }
 }
 
 /// Requests the modules whose names `reads`, from `file`, look up: `m.x` wants `x`
 /// from the module `import m` binds, or `import p.m as m`, or `from p import m`.
-fn want_reads(program: &Program, file: P<SourceFileInfo>, reads: &ModuleReads) {
+fn want_reads(program: &Program, file: P<SourceFileInfo>, reads: &[Vec<Atom>]) {
     if reads.is_empty() {
         return;
     }
@@ -604,7 +615,7 @@ fn work(shared: &Shared) {
             *state = State::Running;
         }
         let start = Instant::now();
-        let before = jsrt::arena::arena_chunk_bytes();
+        let before = jsrt::arena::arena_allocated_bytes();
         // A parse that panics leaves the file to the main thread, which then
         // panics as it would have without workers.
         let outcome = match std::panic::catch_unwind(|| {
@@ -617,7 +628,7 @@ fn work(shared: &Shared) {
             Ok(None) => Outcome::Unread,
             Err(_) => Outcome::Panicked,
         };
-        shared.arena_bytes.fetch_add(jsrt::arena::arena_chunk_bytes() - before, Relaxed);
+        shared.arena_bytes.fetch_add(jsrt::arena::arena_allocated_bytes() - before, Relaxed);
         shared.busy_ns.fetch_add(start.elapsed().as_nanos() as u64, Relaxed);
         *lock(&job.state) = State::Done(outcome);
         job.done.notify_all();
@@ -723,7 +734,7 @@ mod tests {
         let path = path.to_string();
         let Handoff(parsed, _) = std::thread::spawn(move || {
             jsrt::heap::forbid_collected_allocation();
-            Handoff(Box::new(read_and_parse(&path, &ParseOptions::new(), true).unwrap()), Vec::new())
+            Handoff(Box::new(read_and_parse(&path, &ParseOptions::new(), true).unwrap()), ModuleReads { reads: Vec::new(), outside: 0 })
         })
         .join()
         .unwrap();
