@@ -10,9 +10,9 @@ use jsrt::P;
 use super::analyzer_node_info::{self, AnalyzerNodeInfoReader};
 use crate::parser::parse_nodes::{
     ArgumentNode, AssertNode, AssignmentExpressionNode, AssignmentNode, AugmentedAssignmentNode, AwaitNode, BinaryOperationNode, BreakNode, CallNode, CaseNode, ClassNode, ComprehensionForNode, ComprehensionIfNode, ComprehensionNode, ConstantNode, ContinueNode, DecoratorNode, DelNode, DictionaryExpandEntryNode, DictionaryKeyEntryNode, DictionaryNode, EllipsisNode, ErrorNode, ExceptNode, ForNode, FormatStringNode, FunctionAnnotationNode, FunctionNode, GlobalNode, IfNode, ImportAsNode, ImportFromAsNode, ImportFromNode, ImportNode, IndexNode, LambdaNode, ListNode, MatchNode, MemberAccessNode, ModuleNameNode, ModuleNode, NameNode, NonlocalNode, NumberNode, ParameterNode, PassNode, PatternAsNode, PatternCaptureNode, PatternClassArgumentNode, PatternClassNode, PatternLiteralNode, PatternMappingExpandEntryNode, PatternMappingKeyEntryNode, PatternMappingNode, PatternSequenceNode, PatternValueNode, RaiseNode, ReturnNode, SetNode, SliceNode, StatementListNode, StringListNode, StringNode, SuiteNode, TernaryNode, TryNode, TupleNode, TypeAliasNode, TypeAnnotationNode, TypeParameterListNode, TypeParameterNode, UnaryOperationNode, UnpackNode, WhileNode, WithItemNode, WithNode, YieldFromNode, YieldNode,
-    ExpressionNode, ParseNode, ParseNodeArray, ParseNodeType, get_parser_string_annotation,
+    ExpressionNode, ParseNode, ParseNodeType, get_parser_string_annotation,
 };
-pub use crate::parser::parse_tree_utils::get_child_nodes;
+pub use crate::parser::parse_tree_utils::{ChildNodes, get_child_nodes};
 
 // analyzer/parseTreeWalker.ts:102
 // To use this class, create a subclass and override the
@@ -603,11 +603,11 @@ pub trait ParseTreeWalker: ParseTreeVisitor<bool> {
     // If this.visit(node) returns true, all child nodes for the node are returned.
     // If the method returns false, we assume that the handler has already handled the
     // child nodes, so an empty list is returned.
-    fn visit_node(&mut self, node: P<ParseNode>) -> ParseNodeArray {
+    fn visit_node(&mut self, node: P<ParseNode>) -> ChildNodes {
         if self.visit(node) {
             get_child_nodes(node, Some(&|n| self.get_string_annotation(n)))
         } else {
-            Vec::new()
+            ChildNodes::default()
         }
     }
 
