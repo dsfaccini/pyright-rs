@@ -1640,7 +1640,7 @@ pub(crate) fn narrow_type_based_on_class_pattern(
                                     })
                             {
                                 let result_type_args =
-                                    ClassType(result_type).d().priv_.borrow().type_args.clone();
+                                    ClassType(result_type).d().priv_.borrow().type_args;
                                 result_type = specialize_bounded_match_type_params(
                                     evaluator,
                                     ClassType(unexpanded_subtype),
@@ -2057,7 +2057,7 @@ pub(crate) fn get_mapping_pattern_info(
                     );
                     let type_args =
                         ClassType::cast(specialized_mapping).and_then(|specialized_mapping| {
-                            specialized_mapping.d().priv_.borrow().type_args.clone()
+                            specialized_mapping.d().priv_.borrow().type_args
                         });
 
                     if let Some(type_args) = type_args.filter(|type_args| type_args.len() >= 2) {
@@ -2416,7 +2416,7 @@ pub(crate) fn get_sequence_pattern_info(
                             }
                         }
                     } else {
-                        let type_args = specialized_sequence.d().priv_.borrow().type_args.clone();
+                        let type_args = specialized_sequence.d().priv_.borrow().type_args;
                         sequence_info.push(new_info(
                             subtype,
                             vec![
@@ -2463,7 +2463,7 @@ pub(crate) fn get_sequence_pattern_info(
                         );
                         let type_args = ClassType::cast(specialized_sequence).and_then(
                             |specialized_sequence| {
-                                specialized_sequence.d().priv_.borrow().type_args.clone()
+                                specialized_sequence.d().priv_.borrow().type_args
                             },
                         );
 
@@ -2500,7 +2500,7 @@ pub(crate) fn get_sequence_pattern_info(
                         );
                         let type_args = ClassType::cast(specialized_sequence).and_then(
                             |specialized_sequence| {
-                                specialized_sequence.d().priv_.borrow().type_args.clone()
+                                specialized_sequence.d().priv_.borrow().type_args
                             },
                         );
 

@@ -570,7 +570,7 @@ pub fn is_param_spec_kwargs(param_spec: TypeVarType, arg_type: P<Type>) -> bool 
             if is_class_instance(arg_subtype)
                 && ClassType::is_built_in(ClassType(arg_subtype), Some(&[jsrt::atom!("dict")]))
             {
-                let type_args = ClassType(arg_subtype).d().priv_.borrow().type_args.clone();
+                let type_args = ClassType(arg_subtype).d().priv_.borrow().type_args;
                 if let Some(type_args) = type_args {
                     if type_args.len() == 2
                         && is_class_instance(type_args[0])

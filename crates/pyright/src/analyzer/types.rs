@@ -151,6 +151,27 @@ impl LiteralValue {
     }
 }
 
+/// `typeArgs` of a class type: never changed in place, so clones share it, as their JS arrays.
+pub type TypeArgs = jsrt::EvalShared<TypeArgList>;
+
+#[derive(jsrt::Trace)]
+#[trace(eval)]
+pub struct TypeArgList(Box<[P<Type>]>);
+
+impl std::ops::Deref for TypeArgList {
+    type Target = [P<Type>];
+
+    fn deref(&self) -> &[P<Type>] {
+        &self.0
+    }
+}
+
+impl TypeArgList {
+    pub fn new(type_args: &[P<Type>]) -> TypeArgs {
+        jsrt::EvalShared::new(TypeArgList(type_args.into()))
+    }
+}
+
 // analyzer/types.ts:110
 pub type TypeSourceId = i32;
 
@@ -1078,7 +1099,7 @@ pub struct PropertyMethodInfo {
 #[derive(Clone, Default)]
 #[derive(jsrt::Trace)]
 pub struct ClassDetailsPriv {
-    pub type_args: Option<Rc<[P<Type>]>>,
+    pub type_args: Option<TypeArgs>,
     pub is_empty_container: Option<bool>,
     pub tuple_type_args: Option<P<RefCell<Vec<TupleTypeArg>>>>,
     pub is_unpacked: Option<bool>,
@@ -1328,7 +1349,7 @@ impl ClassType {
 
         priv_.type_args = match type_args {
             Some([]) => None,
-            Some(type_args) => Some(Rc::from(type_args)),
+            Some(type_args) => Some(TypeArgList::new(type_args)),
             None => None,
         };
 

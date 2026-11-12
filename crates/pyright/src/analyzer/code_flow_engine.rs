@@ -1243,7 +1243,7 @@ impl CodeFlowEngine {
                     return_class,
                     Some(&[jsrt::atom!("Coroutine"), jsrt::atom!("CoroutineType")]),
                 ) {
-                    let type_args = return_class.d().priv_.borrow().type_args.clone();
+                    let type_args = return_class.d().priv_.borrow().type_args;
                     if let Some(type_args) = type_args.filter(|type_args| type_args.len() >= 3) {
                         if is_never(type_args[2]) && is_call_awaited {
                             return true;
@@ -1395,7 +1395,7 @@ impl CodeFlowEngine {
                             return_class,
                             Some(&[jsrt::atom!("Coroutine"), jsrt::atom!("CoroutineType")]),
                         ) {
-                            let type_args = return_class.d().priv_.borrow().type_args.clone();
+                            let type_args = return_class.d().priv_.borrow().type_args;
                             if let Some(type_args) =
                                 type_args.filter(|type_args| type_args.len() >= 3)
                             {
@@ -1409,7 +1409,7 @@ impl CodeFlowEngine {
                 // that isn't necessarily the first type parameter. Specialize the declared
                 // return type using the context manager instance's type arguments.
                 let type_params = cm_class.d().shared.get().type_params.borrow().clone();
-                let type_args = cm_class.d().priv_.borrow().type_args.clone();
+                let type_args = cm_class.d().priv_.borrow().type_args;
                 if !type_params.is_empty() {
                     if let Some(type_args) = type_args {
                         return_type = apply_solved_type_vars(

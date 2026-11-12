@@ -183,7 +183,7 @@ pub trait TypeWalker {
                     Some(tuple_type_args) => {
                         Some(tuple_type_args.borrow().iter().map(|t| t.type_).collect::<Vec<_>>())
                     }
-                    None => priv_.type_args.clone().map(|a| a.to_vec()),
+                    None => priv_.type_args.map(|a| a.to_vec()),
                 }
             };
             if let Some(type_args) = type_args {

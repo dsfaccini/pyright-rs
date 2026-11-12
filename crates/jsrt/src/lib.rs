@@ -25,7 +25,7 @@ pub mod trace;
 mod vm;
 pub mod vscode_uri;
 
-pub use arena::{Header, P};
+pub use arena::{EvalShared, Header, P};
 pub use atom::{Atom, AtomKey};
 pub use cell::{EvalOptionRefCell, OptionRefCell};
 pub use heap::{ClassSlot, GcMode, Tracer};
