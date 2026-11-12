@@ -58,6 +58,7 @@ pub unsafe trait Trace {
 - **Stored closures** are opaque (`#[trace(skip)]`). Each may capture program handles only: `ImportLookup` captures the `Program`, `ImportLookupResult.doc_string` a module node, the `getModuleName` callback of each `SourceFile` the `Program`; file-system filters and cleanups capture no heap handle; `Scope.chained_module_level_scope_lookup` is set only for notebook cells. Type-narrowing callbacks capture evaluator handles but are only passed and returned, never stored.
 - **Trait objects.** `P<dyn AnalyzerNodeInfoReader>` is a program handle (`EVAL = false`); `P<dyn FunctionReturnTypeCallback>` can be the evaluator (`EVAL = true`).
 - **Other threads.** `P` is neither `Send` nor `Sync`: a block belongs to one thread, and only that thread's collector frees it.
+- **Parse workers.** A parse worker hands its parse output to the main thread (`docs/porting.md`, "parse ahead"). The worker allocates nothing a collector traces, so the output needs no root: it lives in the worker's arena, which is never freed.
 
 ## parallel marking
 
