@@ -685,7 +685,7 @@ pub fn transform_type_for_enum_member(
             let assigned_class = ClassType(assigned_type);
             let full_name = &assigned_class.d().shared.get().full_name;
             if full_name == "enum.nonmember" {
-                let type_args = assigned_class.d().priv_.borrow().type_args.clone();
+                let type_args = assigned_class.d().priv_.borrow().type_args;
                 let non_member_type = match &type_args {
                     Some(type_args) if !type_args.is_empty() => type_args[0],
                     _ => UnknownType::create(false).0,
@@ -710,7 +710,7 @@ pub fn transform_type_for_enum_member(
             }
 
             if full_name == "enum.member" {
-                let type_args = assigned_class.d().priv_.borrow().type_args.clone();
+                let type_args = assigned_class.d().priv_.borrow().type_args;
                 value_type = match &type_args {
                     Some(type_args) if !type_args.is_empty() => type_args[0],
                     _ => UnknownType::create(false).0,

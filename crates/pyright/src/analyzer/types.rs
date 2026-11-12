@@ -22,7 +22,6 @@ use jsrt::{Atom, JsBigInt, JsMap, JsSet, NumberValue, P, flag_ops};
 use jsrt::cell::{Cell, RefCell, RefMut};
 use std::ops::Deref;
 use std::rc::Rc;
-use jsrt::OptionRefCell;
 use jsrt::JsString;
 
 // analyzer/types.ts:17
@@ -130,24 +129,71 @@ impl SentinelLiteral {
 // analyzer/types.ts:108
 #[derive(Clone)]
 #[derive(jsrt::Trace)]
-/// 16 bytes: the string and big integer cases are shared behind an `Rc`, as their JS values are
-/// references, so a class type's details stay 72 bytes.
+/// 16 bytes: the string and big integer cases are shared behind a `jsrt::EvalShared`, as their JS
+/// values are references, and give the class type that holds them no drop glue.
 pub enum LiteralValue {
     Number(f64),
-    Bigint(Rc<JsBigInt>),
+    Bigint(jsrt::EvalShared<LiteralBigInt>),
     Boolean(bool),
-    String(Rc<JsString>),
+    String(jsrt::EvalShared<LiteralString>),
     EnumLiteral(P<EnumLiteral>),
     SentinelLiteral(P<SentinelLiteral>),
 }
 
 impl LiteralValue {
     pub fn string(value: impl Into<JsString>) -> LiteralValue {
-        LiteralValue::String(Rc::new(value.into()))
+        LiteralValue::String(jsrt::EvalShared::new(LiteralString(value.into())))
     }
 
     pub fn bigint(value: JsBigInt) -> LiteralValue {
-        LiteralValue::Bigint(Rc::new(value))
+        LiteralValue::Bigint(jsrt::EvalShared::new(LiteralBigInt(value)))
+    }
+}
+
+/// The value of a string literal type, shared by the types that hold it.
+#[derive(jsrt::Trace)]
+#[trace(eval)]
+pub struct LiteralString(JsString);
+
+impl std::ops::Deref for LiteralString {
+    type Target = JsString;
+
+    fn deref(&self) -> &JsString {
+        &self.0
+    }
+}
+
+/// The value of a big integer literal type, shared by the types that hold it.
+#[derive(jsrt::Trace)]
+#[trace(eval)]
+pub struct LiteralBigInt(JsBigInt);
+
+impl std::ops::Deref for LiteralBigInt {
+    type Target = JsBigInt;
+
+    fn deref(&self) -> &JsBigInt {
+        &self.0
+    }
+}
+
+/// `typeArgs` of a class type: never changed in place, so clones share it, as their JS arrays.
+pub type TypeArgs = jsrt::EvalShared<TypeArgList>;
+
+#[derive(jsrt::Trace)]
+#[trace(eval)]
+pub struct TypeArgList(Box<[P<Type>]>);
+
+impl std::ops::Deref for TypeArgList {
+    type Target = [P<Type>];
+
+    fn deref(&self) -> &[P<Type>] {
+        &self.0
+    }
+}
+
+impl TypeArgList {
+    pub fn new(type_args: &[P<Type>]) -> TypeArgs {
+        jsrt::EvalShared::new(TypeArgList(type_args.into()))
     }
 }
 
@@ -240,8 +286,8 @@ pub struct Type {
     /// constructor and `clone_type` reset it, as they reset `cached`.
     pub cached_requires_specialization: Cell<Option<bool>>,
     pub flags: Cell<TypeFlags>,
-    pub props: OptionRefCell<TypeBaseProps>,
-    pub cached: OptionRefCell<CachedTypeInfo>,
+    pub props: jsrt::EvalOptionRefCell<TypeBaseProps>,
+    pub cached: jsrt::EvalOptionRefCell<CachedTypeInfo>,
     /// Private, so only `Type::alloc` makes a header, always followed by its details.
     _details: (),
 }
@@ -256,6 +302,8 @@ struct TypeAlloc<D> {
     d: D,
 }
 const _: () = assert!(size_of::<TypeAlloc<ClassTypeDetails>>() <= 96);
+// A dead class type is freed from the sweep's bitmaps alone (docs/collector-design.md, "sweep").
+const _: () = assert!(!std::mem::needs_drop::<TypeAlloc<ClassTypeDetails>>());
 const _: () = assert!(size_of::<LiteralValue>() <= 16);
 const _: () = assert!(size_of::<TypeAlloc<FunctionTypeDetails>>() <= 104);
 
@@ -264,8 +312,8 @@ const _: () = assert!(size_of::<TypeAlloc<FunctionTypeDetails>>() <= 104);
 struct TypeInit {
     category: TypeCategory,
     flags: Cell<TypeFlags>,
-    props: OptionRefCell<TypeBaseProps>,
-    cached: OptionRefCell<CachedTypeInfo>,
+    props: jsrt::EvalOptionRefCell<TypeBaseProps>,
+    cached: jsrt::EvalOptionRefCell<CachedTypeInfo>,
     cached_requires_specialization: Cell<Option<bool>>,
     d: TypeDetails,
 }
@@ -406,7 +454,7 @@ impl TypeBase {
         // `{ ...type.props }`; a copy of an empty props object reads as none (`set_prop`).
         let props = match type_.props.borrow().as_ref() {
             Some(props) if !props.is_empty() => Some(props.clone()).into(),
-            _ => OptionRefCell::new(),
+            _ => jsrt::EvalOptionRefCell::new(),
         };
         TypeBase::clone_type_with(type_, props)
     }
@@ -416,11 +464,11 @@ impl TypeBase {
     fn clone_type_with_props(type_: P<Type>, edit: impl FnOnce(&mut TypeBaseProps)) -> P<Type> {
         let mut props = type_.props.borrow().as_ref().cloned().unwrap_or_default();
         edit(&mut props);
-        TypeBase::clone_type_with(type_, if props.is_empty() { OptionRefCell::new() } else { Some(props).into() })
+        TypeBase::clone_type_with(type_, if props.is_empty() { jsrt::EvalOptionRefCell::new() } else { Some(props).into() })
     }
 
     /// `cloneType` with `props` as the clone's.
-    fn clone_type_with(type_: P<Type>, props: OptionRefCell<TypeBaseProps>) -> P<Type> {
+    fn clone_type_with(type_: P<Type>, props: jsrt::EvalOptionRefCell<TypeBaseProps>) -> P<Type> {
         // `{ ...type }` with copies of `props` and `priv`: `shared` stays shared.
         let d = match type_.category {
             TypeCategory::Unbound => TypeDetails::Unbound(UnboundTypeDetails {}),
@@ -486,7 +534,7 @@ impl TypeBase {
             category: type_.category,
             flags: type_.flags.clone(),
             props,
-            cached: OptionRefCell::new(),
+            cached: jsrt::EvalOptionRefCell::new(),
             cached_requires_specialization: Cell::new(None),
             d,
         })
@@ -688,8 +736,8 @@ pub mod unbound_type {
         pub(crate) static INSTANCE: UnboundType = UnboundType(Type::alloc_program(TypeInit {
             category: TypeCategory::Unbound,
             flags: Cell::new(TypeFlags::Instantiable | TypeFlags::Instance),
-            props: OptionRefCell::new(),
-            cached: OptionRefCell::new(),
+            props: jsrt::EvalOptionRefCell::new(),
+            cached: jsrt::EvalOptionRefCell::new(),
             cached_requires_specialization: Cell::new(None),
             d: TypeDetails::Unbound(UnboundTypeDetails {}),
         }));
@@ -752,8 +800,8 @@ impl UnknownType {
         UnknownType(Type::alloc_eval(TypeInit {
             category: TypeCategory::Unknown,
             flags: Cell::new(TypeFlags::Instantiable | TypeFlags::Instance),
-            props: OptionRefCell::new(),
-            cached: OptionRefCell::new(),
+            props: jsrt::EvalOptionRefCell::new(),
+            cached: jsrt::EvalOptionRefCell::new(),
             cached_requires_specialization: Cell::new(None),
             d: TypeDetails::Unknown(UnknownTypeDetails {
                 priv_: UnknownDetailsPriv {
@@ -790,8 +838,8 @@ pub mod unknown_type {
         pub(crate) static INSTANCE: UnknownType = UnknownType(Type::alloc_program(TypeInit {
             category: TypeCategory::Unknown,
             flags: Cell::new(TypeFlags::Instantiable | TypeFlags::Instance),
-            props: OptionRefCell::new(),
-            cached: OptionRefCell::new(),
+            props: jsrt::EvalOptionRefCell::new(),
+            cached: jsrt::EvalOptionRefCell::new(),
             cached_requires_specialization: Cell::new(None),
             d: TypeDetails::Unknown(UnknownTypeDetails {
                 priv_: UnknownDetailsPriv {
@@ -808,8 +856,8 @@ pub mod unknown_type {
         pub(crate) static INCOMPLETE_INSTANCE: UnknownType = UnknownType(Type::alloc_program(TypeInit {
             category: TypeCategory::Unknown,
             flags: Cell::new(TypeFlags::Instantiable | TypeFlags::Instance),
-            props: OptionRefCell::new(),
-            cached: OptionRefCell::new(),
+            props: jsrt::EvalOptionRefCell::new(),
+            cached: jsrt::EvalOptionRefCell::new(),
             cached_requires_specialization: Cell::new(None),
             d: TypeDetails::Unknown(UnknownTypeDetails {
                 priv_: UnknownDetailsPriv {
@@ -877,8 +925,8 @@ impl ModuleType {
         ModuleType(Type::alloc_eval(TypeInit {
             category: TypeCategory::Module,
             flags: Cell::new(TypeFlags::Instantiable),
-            props: OptionRefCell::new(),
-            cached: OptionRefCell::new(),
+            props: jsrt::EvalOptionRefCell::new(),
+            cached: jsrt::EvalOptionRefCell::new(),
             cached_requires_specialization: Cell::new(None),
             d: TypeDetails::Module(ModuleTypeDetails {
                 priv_: RefCell::new(ModuleDetailsPriv {
@@ -1078,7 +1126,7 @@ pub struct PropertyMethodInfo {
 #[derive(Clone, Default)]
 #[derive(jsrt::Trace)]
 pub struct ClassDetailsPriv {
-    pub type_args: Option<Rc<[P<Type>]>>,
+    pub type_args: Option<TypeArgs>,
     pub is_empty_container: Option<bool>,
     pub tuple_type_args: Option<P<RefCell<Vec<TupleTypeArg>>>>,
     pub is_unpacked: Option<bool>,
@@ -1086,17 +1134,18 @@ pub struct ClassDetailsPriv {
     pub include_subclasses: Option<bool>,
     pub include_promotions: Option<bool>,
     pub literal_value: Option<LiteralValue>,
+    // Set by few objects, but read on hot paths (`is_built_in`, `is_same_generic_class`).
+    pub alias_name: Option<Atom>,
+    pub is_typed_dict_partial: Option<bool>,
     // Fields few objects set ([cold] in tools/stubgen/typemap.toml): read with `cold()`, write with `cold_mut()`.
-    pub cold: Option<Box<ClassDetailsPrivCold>>,
+    pub cold: jsrt::EvalOptionRefCell<ClassDetailsPrivCold>,
 }
 
 // analyzer/types.ts:780
 #[derive(Clone, Default)]
 #[derive(jsrt::Trace)]
 pub struct ClassDetailsPrivCold {
-    pub alias_name: Option<Atom>,
     pub typed_dict_narrowed_entries: Option<JsMap<String, TypedDictEntry>>,
-    pub is_typed_dict_partial: Option<bool>,
     pub is_asymmetric_descriptor: Option<bool>,
     pub is_asymmetric_attribute_accessor: Option<bool>,
     pub fget_info: Option<PropertyMethodInfo>,
@@ -1108,9 +1157,7 @@ pub struct ClassDetailsPrivCold {
 
 impl ClassDetailsPrivCold {
     const EMPTY: ClassDetailsPrivCold = ClassDetailsPrivCold {
-        alias_name: None,
         typed_dict_narrowed_entries: None,
-        is_typed_dict_partial: None,
         is_asymmetric_descriptor: None,
         is_asymmetric_attribute_accessor: None,
         fget_info: None,
@@ -1121,10 +1168,8 @@ impl ClassDetailsPrivCold {
     };
 
     /// The `cold` field that holds these fields: unallocated while every one is unset.
-    pub fn into_cold(self) -> Option<Box<ClassDetailsPrivCold>> {
-        let unset = self.alias_name.is_none()
-            && self.typed_dict_narrowed_entries.is_none()
-            && self.is_typed_dict_partial.is_none()
+    pub fn into_cold(self) -> jsrt::EvalOptionRefCell<ClassDetailsPrivCold> {
+        let unset = self.typed_dict_narrowed_entries.is_none()
             && self.is_asymmetric_descriptor.is_none()
             && self.is_asymmetric_attribute_accessor.is_none()
             && self.fget_info.is_none()
@@ -1132,17 +1177,17 @@ impl ClassDetailsPrivCold {
             && self.fdel_info.is_none()
             && self.deprecated_instance_message.is_none()
             && self.partial_call_type.is_none();
-        (!unset).then(|| Box::new(self))
+        (!unset).then_some(self).into()
     }
 }
 
 impl ClassDetailsPriv {
-    pub fn cold(&self) -> &ClassDetailsPrivCold {
-        self.cold.as_deref().unwrap_or(&ClassDetailsPrivCold::EMPTY)
+    pub fn cold(&self) -> jsrt::cell::OptionRefOr<'_, ClassDetailsPrivCold> {
+        self.cold.borrow_or(&ClassDetailsPrivCold::EMPTY)
     }
 
-    pub fn cold_mut(&mut self) -> &mut ClassDetailsPrivCold {
-        self.cold.get_or_insert_with(Default::default)
+    pub fn cold_mut(&mut self) -> jsrt::cell::RefMut<'_, ClassDetailsPrivCold> {
+        self.cold.borrow_mut_or_default()
     }
 
     /// `field = value`, without allocating the cold half to hold a `None`.
@@ -1151,8 +1196,8 @@ impl ClassDetailsPriv {
         field: fn(&mut ClassDetailsPrivCold) -> &mut Option<T>,
         value: Option<T>,
     ) {
-        if value.is_some() || self.cold.is_some() {
-            *field(self.cold_mut()) = value;
+        if value.is_some() || self.cold.borrow().is_some() {
+            *field(&mut self.cold_mut()) = value;
         }
     }
 }
@@ -1208,8 +1253,8 @@ impl ClassType {
         ClassType(Type::alloc_eval(TypeInit {
             category: TypeCategory::Class,
             flags: Cell::new(TypeFlags::Instantiable),
-            props: OptionRefCell::new(),
-            cached: OptionRefCell::new(),
+            props: jsrt::EvalOptionRefCell::new(),
+            cached: jsrt::EvalOptionRefCell::new(),
             cached_requires_specialization: Cell::new(None),
             d: TypeDetails::Class(ClassTypeDetails {
                 shared: Cell::new(P::new_eval(ClassDetailsShared {
@@ -1328,7 +1373,7 @@ impl ClassType {
 
         priv_.type_args = match type_args {
             Some([]) => None,
-            Some(type_args) => Some(Rc::from(type_args)),
+            Some(type_args) => Some(TypeArgList::new(type_args)),
             None => None,
         };
 
@@ -1408,7 +1453,7 @@ impl ClassType {
     // analyzer/types.ts:1001
     pub fn clone_for_typing_alias(class_type: ClassType, alias_name: String) -> ClassType {
         let new_class_type = ClassType(TypeBase::clone_type(class_type.0));
-        new_class_type.d().priv_.borrow_mut().cold_mut().alias_name = Some(Atom::new(&alias_name));
+        new_class_type.d().priv_.borrow_mut().alias_name = Some(Atom::new(&alias_name));
         new_class_type
     }
 
@@ -1429,7 +1474,7 @@ impl ClassType {
     // analyzer/types.ts:1016
     pub fn clone_for_partial_typed_dict(class_type: ClassType) -> ClassType {
         let new_class_type = ClassType(TypeBase::clone_type(class_type.0));
-        new_class_type.d().priv_.borrow_mut().cold_mut().is_typed_dict_partial = Some(true);
+        new_class_type.d().priv_.borrow_mut().is_typed_dict_partial = Some(true);
         new_class_type
     }
 
@@ -1563,7 +1608,8 @@ impl ClassType {
 
         let priv1 = type1.d().priv_.borrow();
         let empty = JsMap::default();
-        let td_entries1 = priv1.cold().typed_dict_narrowed_entries.as_ref().unwrap_or(&empty);
+        let cold1 = priv1.cold();
+        let td_entries1 = cold1.typed_dict_narrowed_entries.as_ref().unwrap_or(&empty);
 
         for (key, entry2) in td_entries2 {
             if entry2.is_provided {
@@ -1590,7 +1636,7 @@ impl ClassType {
             .d()
             .priv_
             .borrow()
-            .cold().alias_name
+            .alias_name
             .as_deref()
             .is_some_and(|alias_name| !alias_name.is_empty());
         if !shared.flags.get().any(ClassTypeFlags::SpecialBuiltIn) && !has_alias_name {
@@ -1626,7 +1672,7 @@ impl ClassType {
             return true;
         }
         let priv_ = class_type.d().priv_.borrow();
-        let alias_name = priv_.cold().alias_name;
+        let alias_name = priv_.alias_name;
         alias_name.is_some_and(|alias_name| class_name.contains(&alias_name))
     }
 
@@ -2199,13 +2245,13 @@ impl ClassType {
             .d()
             .priv_
             .borrow()
-            .cold().is_typed_dict_partial
+            .is_typed_dict_partial
             .unwrap_or(false)
             != type2
                 .d()
                 .priv_
                 .borrow()
-                .cold().is_typed_dict_partial
+                .is_typed_dict_partial
                 .unwrap_or(false)
         {
             return false;
@@ -2722,8 +2768,8 @@ impl FunctionType {
         FunctionType(Type::alloc_eval(TypeInit {
             category: TypeCategory::Function,
             flags: Cell::new(type_flags),
-            props: OptionRefCell::new(),
-            cached: OptionRefCell::new(),
+            props: jsrt::EvalOptionRefCell::new(),
+            cached: jsrt::EvalOptionRefCell::new(),
             cached_requires_specialization: Cell::new(None),
             d: TypeDetails::Function(FunctionTypeDetails {
                 shared: Cell::new(P::new_eval(FunctionDetailsShared {
@@ -3771,8 +3817,8 @@ impl OverloadedType {
         let new_type = OverloadedType(Type::alloc_eval(TypeInit {
             category: TypeCategory::Overloaded,
             flags: Cell::new(TypeFlags::Instance),
-            props: OptionRefCell::new(),
-            cached: OptionRefCell::new(),
+            props: jsrt::EvalOptionRefCell::new(),
+            cached: jsrt::EvalOptionRefCell::new(),
             cached_requires_specialization: Cell::new(None),
             d: TypeDetails::Overloaded(OverloadedTypeDetails {
                 priv_: RefCell::new(OverloadedDetailsPriv {
@@ -3890,8 +3936,8 @@ pub mod never_type {
         pub(crate) static NEVER_INSTANCE: NeverType = NeverType(Type::alloc_program(TypeInit {
             category: TypeCategory::Never,
             flags: Cell::new(TypeFlags::Instance | TypeFlags::Instantiable),
-            props: OptionRefCell::new(),
-            cached: OptionRefCell::new(),
+            props: jsrt::EvalOptionRefCell::new(),
+            cached: jsrt::EvalOptionRefCell::new(),
             cached_requires_specialization: Cell::new(None),
             d: TypeDetails::Never(NeverTypeDetails {
                 priv_: NeverDetailsPriv { is_no_return: false },
@@ -3905,8 +3951,8 @@ pub mod never_type {
         pub(crate) static NO_RETURN_INSTANCE: NeverType = NeverType(Type::alloc_program(TypeInit {
             category: TypeCategory::Never,
             flags: Cell::new(TypeFlags::Instance | TypeFlags::Instantiable),
-            props: OptionRefCell::new(),
-            cached: OptionRefCell::new(),
+            props: jsrt::EvalOptionRefCell::new(),
+            cached: jsrt::EvalOptionRefCell::new(),
             cached_requires_specialization: Cell::new(None),
             d: TypeDetails::Never(NeverTypeDetails {
                 priv_: NeverDetailsPriv { is_no_return: true },
@@ -3981,8 +4027,8 @@ pub mod any_type {
         pub(crate) static ANY_INSTANCE_SPECIAL_FORM: AnyType = AnyType(Type::alloc_program(TypeInit {
             category: TypeCategory::Any,
             flags: Cell::new(TypeFlags::Instance | TypeFlags::Instantiable),
-            props: OptionRefCell::new(),
-            cached: OptionRefCell::new(),
+            props: jsrt::EvalOptionRefCell::new(),
+            cached: jsrt::EvalOptionRefCell::new(),
             cached_requires_specialization: Cell::new(None),
             d: TypeDetails::Any(AnyTypeDetails {
                 priv_: AnyDetailsPriv { is_ellipsis: false },
@@ -3996,8 +4042,8 @@ pub mod any_type {
         pub(crate) static ANY_INSTANCE: AnyType = AnyType(Type::alloc_program(TypeInit {
             category: TypeCategory::Any,
             flags: Cell::new(TypeFlags::Instance | TypeFlags::Instantiable),
-            props: OptionRefCell::new(),
-            cached: OptionRefCell::new(),
+            props: jsrt::EvalOptionRefCell::new(),
+            cached: jsrt::EvalOptionRefCell::new(),
             cached_requires_specialization: Cell::new(None),
             d: TypeDetails::Any(AnyTypeDetails {
                 priv_: AnyDetailsPriv { is_ellipsis: false },
@@ -4011,8 +4057,8 @@ pub mod any_type {
         pub(crate) static ELLIPSIS_INSTANCE: AnyType = AnyType(Type::alloc_program(TypeInit {
             category: TypeCategory::Any,
             flags: Cell::new(TypeFlags::Instance | TypeFlags::Instantiable),
-            props: OptionRefCell::new(),
-            cached: OptionRefCell::new(),
+            props: jsrt::EvalOptionRefCell::new(),
+            cached: jsrt::EvalOptionRefCell::new(),
             cached_requires_specialization: Cell::new(None),
             d: TypeDetails::Any(AnyTypeDetails {
                 priv_: AnyDetailsPriv { is_ellipsis: true },
@@ -4211,8 +4257,8 @@ impl UnionType {
         UnionType(Type::alloc_eval(TypeInit {
             category: TypeCategory::Union,
             flags: Cell::new(TypeFlags::Instance | TypeFlags::Instantiable),
-            props: OptionRefCell::new(),
-            cached: OptionRefCell::new(),
+            props: jsrt::EvalOptionRefCell::new(),
+            cached: jsrt::EvalOptionRefCell::new(),
             cached_requires_specialization: Cell::new(None),
             d: TypeDetails::Union(UnionTypeDetails {
                 priv_: RefCell::new(UnionDetailsPriv {
@@ -4945,8 +4991,8 @@ impl TypeVarType {
         TypeVarType(Type::alloc_eval(TypeInit {
             category: TypeCategory::TypeVar,
             flags: Cell::new(type_flags),
-            props: OptionRefCell::new(),
-            cached: OptionRefCell::new(),
+            props: jsrt::EvalOptionRefCell::new(),
+            cached: jsrt::EvalOptionRefCell::new(),
             cached_requires_specialization: Cell::new(None),
             d: TypeDetails::TypeVar(TypeVarTypeDetails {
                 shared: Cell::new(P::new_eval(TypeVarDetailsShared {
@@ -5438,8 +5484,8 @@ pub fn is_type_same(
                 return false;
             }
 
-            if priv1.cold().is_typed_dict_partial.unwrap_or(false)
-                != priv2.cold().is_typed_dict_partial.unwrap_or(false)
+            if priv1.is_typed_dict_partial.unwrap_or(false)
+                != priv2.is_typed_dict_partial.unwrap_or(false)
             {
                 return false;
             }

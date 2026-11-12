@@ -8060,7 +8060,7 @@ impl TypeEvaluator {
                 {
                     let (has_type_args, is_type_arg_explicit, alias_name) = {
                         let priv_ = class_type.d().priv_.borrow();
-                        (priv_.type_args.is_some(), priv_.is_type_arg_explicit.unwrap_or(false), priv_.cold().alias_name.clone())
+                        (priv_.type_args.is_some(), priv_.is_type_arg_explicit.unwrap_or(false), priv_.alias_name.clone())
                     };
                     if !has_type_args || !is_type_arg_explicit {
                         let name = match alias_name {
@@ -10435,7 +10435,7 @@ impl TypeEvaluator {
                         .d()
                         .priv_
                         .borrow()
-                        .cold().alias_name
+                        .alias_name
                         .as_ref()
                         .is_none_or(|alias_name| alias_name.is_empty())
                 {
@@ -10453,7 +10453,7 @@ impl TypeEvaluator {
                                 .d()
                                 .priv_
                                 .borrow()
-                                .cold().alias_name
+                                .alias_name
                                 .clone()
                                 .filter(|alias_name| !alias_name.is_empty());
                             let name = match alias_name {
@@ -11955,9 +11955,8 @@ impl TypeEvaluator {
                             .d()
                             .priv_
                             .borrow()
-                            .type_args
-                            .clone()
-                            .unwrap_or_default();
+                            .type_args;
+                        let type_args: &[P<Type>] = type_args.as_deref().unwrap_or(&[]);
                         for (class_param_index, type_arg) in type_args.iter().copied().enumerate() {
                             if analyzer::type_utils::is_tuple_class(class_type) {
                                 update_usage_variance_for_type(
@@ -16907,7 +16906,7 @@ impl TypeEvaluator {
         }
 
         if ClassType::is_built_in(expanded_call_type, None) {
-            let alias_name = expanded_call_type.d().priv_.borrow().cold().alias_name.clone();
+            let alias_name = expanded_call_type.d().priv_.borrow().alias_name.clone();
             let class_name =
                 alias_name.unwrap_or_else(|| expanded_call_type.d().shared.get().name.clone());
 
@@ -25988,7 +25987,7 @@ impl TypeEvaluator {
                 .d()
                 .priv_
                 .borrow()
-                .cold().alias_name
+                .alias_name
                 .clone()
                 .filter(|n| !n.is_empty())
                 .unwrap_or_else(|| class_type.d().shared.get().name.clone())
@@ -26816,7 +26815,7 @@ impl TypeEvaluator {
                         .d()
                         .priv_
                         .borrow()
-                        .cold().alias_name
+                        .alias_name
                         .clone()
                         .filter(|n| !n.is_empty())
                         .unwrap_or_else(|| class_type.d().shared.get().name.clone());
@@ -29072,7 +29071,8 @@ impl TypeEvaluator {
     // analyzer/typeEvaluator.ts:19633
     pub(crate) fn build_type_params_from_type_args(&self, class_type: ClassType) -> Vec<TypeVarType> {
         let mut type_params: Vec<TypeVarType> = Vec::new();
-        let type_args = class_type.d().priv_.borrow().type_args.clone().unwrap_or_default();
+        let type_args = class_type.d().priv_.borrow().type_args;
+        let type_args: &[P<Type>] = type_args.as_deref().unwrap_or(&[]);
 
         for (index, type_arg) in type_args.iter().copied().enumerate() {
             if analyzer::types::is_type_var(type_arg) {
@@ -32538,7 +32538,7 @@ impl TypeEvaluator {
                 .d()
                 .priv_
                 .borrow()
-                .cold().alias_name
+                .alias_name
                 .clone()
                 .filter(|name| !name.is_empty())
                 .unwrap_or_else(|| class_type.d().shared.get().name.clone())
@@ -36543,13 +36543,13 @@ impl TypeEvaluator {
             let specialized_src_type = analyzer::type_utils::specialize_with_default_type_args(src_type);
             let specialized_type_args: Option<Vec<P<Type>>> = {
                 let specialized_priv = specialized_src_type.d().priv_.borrow();
-                specialized_priv.type_args.clone().or_else(|| {
+                specialized_priv.type_args.as_deref().map(<[P<Type>]>::to_vec).or_else(|| {
                     specialized_priv
                         .tuple_type_args
                         .map(|tuple_type_args| tuple_type_args.get().borrow())
                         .as_deref()
                         .map(|tuple_type_args| tuple_type_args.iter().map(|tuple_type_arg| tuple_type_arg.type_).collect())
-                }).map(|a| a.to_vec())
+                })
             };
             let has_gradual_type_arg = specialized_type_args.as_ref().map(|specialized_type_args| {
                 specialized_type_args.iter().any(|&type_arg| {
@@ -37231,7 +37231,7 @@ impl TypeEvaluator {
         {
             let src_class = ClassType::cast(src_type).unwrap();
             // Read out first: no `RefCell` borrow may live across `classGetItemReturnsGenericAlias`.
-            let src_alias_name_is_falsy = src_class.d().priv_.borrow().cold().alias_name.as_ref().is_none_or(|n| n.is_empty());
+            let src_alias_name_is_falsy = src_class.d().priv_.borrow().alias_name.as_ref().is_none_or(|n| n.is_empty());
             let src_has_type_args = src_class.d().priv_.borrow().type_args.is_some();
             let src_has_type_form = src_type.props.borrow().as_ref().and_then(|p| p.type_form).is_some();
             if !ClassType::is_special_built_in(src_class, None)
@@ -38290,7 +38290,7 @@ impl TypeEvaluator {
     pub(crate) fn is_type_form_class(&self, type_: ClassType) -> bool {
         let shared = type_.d().shared.get();
         let priv_ = type_.d().priv_.borrow();
-        let alias_name = priv_.cold().alias_name;
+        let alias_name = priv_.alias_name;
         let type_form = jsrt::atom!("TypeForm");
         let name_matches = shared.name == type_form;
         let alias_matches = alias_name == Some(type_form);

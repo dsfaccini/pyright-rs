@@ -2436,7 +2436,7 @@ impl Checker {
         }
         let (include_subclasses, alias_name) = {
             let priv_ = left_class.d().priv_.borrow();
-            (priv_.include_subclasses.unwrap_or(false), priv_.cold().alias_name)
+            (priv_.include_subclasses.unwrap_or(false), priv_.alias_name)
         };
         if include_subclasses {
             return;
