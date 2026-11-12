@@ -3417,10 +3417,12 @@ pub fn is_partly_unknown(type_: P<Type>, recursion_count: u32) -> bool {
         if !ClassType::is_pseudo_generic_class(class_type) {
             // `tupleTypeArgs?.map(..) || typeArgs`: an empty mapped array is truthy. `typeArgs`
             // is read in place, through the shared slice.
-            let type_args: Option<std::rc::Rc<[P<Type>]>> = {
+            let type_args: Option<crate::analyzer::types::TypeArgs> = {
                 let priv_ = class_type.d().priv_.borrow();
                 match &priv_.tuple_type_args {
-                    Some(tuple_type_args) => Some(tuple_type_args.borrow().iter().map(|t| t.type_).collect()),
+                    Some(tuple_type_args) => Some(crate::analyzer::types::TypeArgList::new(
+                        &tuple_type_args.borrow().iter().map(|t| t.type_).collect::<Vec<_>>(),
+                    )),
                     None => priv_.type_args.clone(),
                 }
             };
@@ -3754,7 +3756,7 @@ pub fn requires_type_args(class_type: ClassType) -> bool {
         ];
 
         // `classType.priv.aliasName || classType.shared.name`: an empty alias name falls back.
-        let name = match class_type.d().priv_.borrow().cold().alias_name.clone() {
+        let name = match class_type.d().priv_.borrow().alias_name.clone() {
             Some(alias_name) if !alias_name.is_empty() => alias_name,
             _ => class_type.d().shared.get().name.clone(),
         };
@@ -4657,7 +4659,7 @@ pub(crate) fn transform_type_pair_recursive(
             let transformed_type = crate::analyzer::types::TypeBase::clone_type(source_type);
             {
                 let mut priv_ = ClassType(transformed_type).d().priv_.borrow_mut();
-                priv_.type_args = type_args.map(Rc::from);
+                priv_.type_args = type_args.map(|type_args| crate::analyzer::types::TypeArgList::new(&type_args));
                 priv_.tuple_type_args = tuple_type_args
                     .map(|tuple_type_args| P::new_eval(RefCell::new(tuple_type_args)));
             }

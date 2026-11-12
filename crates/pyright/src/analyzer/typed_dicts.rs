@@ -1330,7 +1330,7 @@ pub fn get_typed_dict_members_for_class(
 
         // If the class is "Partial", make all entries optional and convert all
         // read-only entries to Never.
-        let is_typed_dict_partial = class_type.d().priv_.borrow().cold().is_typed_dict_partial;
+        let is_typed_dict_partial = class_type.d().priv_.borrow().is_typed_dict_partial;
         if is_typed_dict_partial == Some(true) {
             td_entry.is_required = false;
 

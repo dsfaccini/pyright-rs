@@ -301,11 +301,7 @@ export class FileEmitter {
         }
         if (coldFields.length) {
             fields.push(`    // Fields few objects set ([cold] in tools/stubgen/typemap.toml): read with \`cold()\`, write with \`cold_mut()\`.`);
-            if (mode === 'handle') {
-                fields.push(`    pub cold: jsrt::EvalOptionRefCell<${name}Cold>,`);
-            } else {
-                fields.push(`    pub cold: Option<Box<${name}Cold>>,`);
-            }
+            fields.push(`    pub cold: jsrt::EvalOptionRefCell<${name}Cold>,`);
         }
         // A value is copied where the TypeScript spreads it or reads it out of a container.
         const derive = mode === 'value' ? [valueDerive(fields)] : [];
@@ -316,9 +312,9 @@ export class FileEmitter {
     }
 
     // The cold half of a [cold] struct: allocated on the first write through `cold_mut()`, so an
-    // object that never sets one of its fields pays one pointer. `cold()` reads an empty one. A
-    // handle's cold half sits in a `jsrt::EvalOptionRefCell`, its own evaluator object, so its
-    // accessors borrow it: never hold one across a call that can reach the same object.
+    // object that never sets one of its fields pays one pointer. `cold()` reads an empty one. The
+    // cold half sits in a `jsrt::EvalOptionRefCell`, its own evaluator object, so its accessors
+    // borrow it: never hold one across a call that can reach the same object.
     private coldStruct(decl: ts.InterfaceDeclaration | ts.ClassDeclaration, name: string, coldFields: string[], handle: boolean) {
         const cold = `${name}Cold`;
         if (!coldFields.every((f) => /^\s*pub(\(crate\))? \w+: Option</.test(f))) {
@@ -338,9 +334,9 @@ export class FileEmitter {
             '    };',
             '',
             '    /// The `cold` field that holds these fields: unallocated while every one is unset.',
-            handle ? `    pub fn into_cold(self) -> jsrt::EvalOptionRefCell<${cold}> {` : `    pub fn into_cold(self) -> Option<Box<${cold}>> {`,
+            `    pub fn into_cold(self) -> jsrt::EvalOptionRefCell<${cold}> {`,
             `        let unset = ${coldFields.map((f) => f.replace(/^\s*pub(\(crate\))? (\w+): .*$/, 'self.$2.is_none()')).join(' && ')};`,
-            handle ? '        (!unset).then_some(self).into()' : '        (!unset).then(|| Box::new(self))',
+            '        (!unset).then_some(self).into()',
             '    }',
             '}',
             '',
@@ -363,18 +359,18 @@ export class FileEmitter {
                       '    }',
                   ]
                 : [
-                      `    pub fn cold(&self) -> &${cold} {`,
-                      `        self.cold.as_deref().unwrap_or(&${cold}::EMPTY)`,
+                      `    pub fn cold(&self) -> jsrt::cell::OptionRefOr<'_, ${cold}> {`,
+                      `        self.cold.borrow_or(&${cold}::EMPTY)`,
                       '    }',
                       '',
-                      `    pub fn cold_mut(&mut self) -> &mut ${cold} {`,
-                      '        self.cold.get_or_insert_with(Default::default)',
+                      `    pub fn cold_mut(&mut self) -> jsrt::cell::RefMut<'_, ${cold}> {`,
+                      '        self.cold.borrow_mut_or_default()',
                       '    }',
                       '',
                       '    /// `field = value`, without allocating the cold half to hold a `None`.',
                       `    pub fn set_cold<T>(&mut self, field: fn(&mut ${cold}) -> &mut Option<T>, value: Option<T>) {`,
-                      '        if value.is_some() || self.cold.is_some() {',
-                      '            *field(self.cold_mut()) = value;',
+                      '        if value.is_some() || self.cold.borrow().is_some() {',
+                      '            *field(&mut self.cold_mut()) = value;',
                       '        }',
                       '    }',
                   ]),
