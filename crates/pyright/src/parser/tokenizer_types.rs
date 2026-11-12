@@ -1124,6 +1124,27 @@ impl IdentifierToken {
         IdentifierToken::create_with_shared_comments(start, length, value, alloc_comments(comments))
     }
 
+    /// `IdentifierToken.create` for a value the caller knows to be ASCII or not.
+    /// NFKC normalization leaves ASCII text as it is, so an ASCII value skips the scan.
+    pub fn create_with_ascii(
+        start: i32,
+        length: i32,
+        value: Atom,
+        ascii: bool,
+        comments: Option<Vec<Comment>>,
+    ) -> IdentifierToken {
+        if !ascii {
+            return IdentifierToken::create(start, length, value, comments);
+        }
+        IdentifierToken(alloc_token(
+            TokenType::Identifier,
+            start,
+            length,
+            alloc_comments(comments),
+            IdentifierTokenDetails { value },
+        ))
+    }
+
     /// `IdentifierToken.create` with a comment list that another token already holds.
     pub fn create_with_shared_comments(
         start: i32,

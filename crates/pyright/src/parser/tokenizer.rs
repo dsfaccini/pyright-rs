@@ -378,23 +378,23 @@ const _CAN_START_STRING: [bool; 128] = {
     table
 };
 
-// Create a detached copy of a source text range, as an atom. Short ASCII text,
-// nearly every identifier, is narrowed on the stack rather than into a `String`.
+// Create a detached copy of a source text range, as an atom, and whether the
+// text is ASCII. Short ASCII text, nearly every identifier, is narrowed on the
+// stack rather than into a `String`.
 // parser/tokenizer.ts:324
-fn detach_substring(text: &[u16], start: i32, end: i32) -> Atom {
+fn detach_substring(text: &[u16], start: i32, end: i32) -> (Atom, bool) {
     let units = &text[start as usize..end as usize];
+    let ascii = units.iter().fold(0, |all, &unit| all | unit) < 0x80;
     let mut bytes = [0u8; 64];
-    if units.len() <= bytes.len() {
-        let mut ascii = true;
+    if ascii && units.len() <= bytes.len() {
         for (byte, &unit) in bytes.iter_mut().zip(units) {
-            ascii &= unit < 0x80;
             *byte = unit.to_le_bytes()[0];
         }
-        if ascii && let Ok(text) = std::str::from_utf8(&bytes[..units.len()]) {
-            return Atom::new(text);
+        if let Ok(text) = std::str::from_utf8(&bytes[..units.len()]) {
+            return (Atom::new(text), true);
         }
     }
-    Atom::new(&String::from_utf16_lossy(units))
+    (Atom::new(&string_from_utf16_lossy(units)), ascii)
 }
 
 // Strip underscore characters from a source text range without first creating
@@ -1731,10 +1731,10 @@ impl<'a> Tokenizer<'a> {
                 self._tokens
                     .push(KeywordToken::create(start, length, keyword_type, comments).0);
             } else {
-                let value = self._intern_identifier(text, start, end, length);
+                let (value, ascii) = self._intern_identifier(text, start, end, length);
                 let comments = self._get_comments();
                 self._tokens
-                    .push(IdentifierToken::create(start, length, value, comments).0);
+                    .push(IdentifierToken::create_with_ascii(start, length, value, ascii, comments).0);
             }
             return true;
         }
@@ -1744,23 +1744,27 @@ impl<'a> Tokenizer<'a> {
     // Per-tokenize identifier intern cache. Direct-mapped, so collisions
     // simply replace the slot.
     // parser/tokenizer.ts:1397
-    fn _intern_identifier(&mut self, text: &[u16], start: i32, end: i32, length: i32) -> Atom {
+    /// Also returns whether the identifier is ASCII.
+    fn _intern_identifier(&mut self, text: &[u16], start: i32, end: i32, length: i32) -> (Atom, bool) {
         let first_char = text[start as usize] as i32;
         let last_char = text[(end - 1) as usize] as i32;
         // Hash mixes length, first and last char.
         let hash = ((first_char * 31 + last_char * 7 + length) & _IDENTIFIER_CACHE_MASK) as usize;
         let units = &text[start as usize..end as usize];
-        // An ASCII atom's bytes are its UTF-16 units. A non-ASCII identifier
-        // misses and interns its text again, which yields the same atom.
+        // The cache holds ASCII atoms only, whose bytes are their UTF-16 units. A
+        // non-ASCII identifier always misses and interns its text again, which
+        // yields the same atom.
         if let Some(cached) = self._identifier_cache[hash]
             && cached.len() == units.len()
-            && cached.bytes().zip(units).all(|(byte, &unit)| unit < 0x80 && u16::from(byte) == unit)
+            && cached.bytes().zip(units).fold(0, |diff, (byte, &unit)| diff | (u16::from(byte) ^ unit)) == 0
         {
-            return cached;
+            return (cached, true);
         }
-        let value = detach_substring(text, start, end);
-        self._identifier_cache[hash] = Some(value);
-        value
+        let (value, ascii) = detach_substring(text, start, end);
+        if ascii {
+            self._identifier_cache[hash] = Some(value);
+        }
+        (value, ascii)
     }
 
     // Generic identifier-continue loop that handles unicode + surrogate pairs.
