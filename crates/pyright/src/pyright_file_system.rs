@@ -61,6 +61,10 @@ impl ReadOnlyFileSystem for PyrightFileSystem {
         self.base.stat_sync(uri)
     }
 
+    fn real_file_path(&self, uri: Uri) -> Option<String> {
+        self.base.real_file_path(uri)
+    }
+
     fn realpath_sync(&self, uri: Uri) -> Uri {
         self.base.realpath_sync(uri)
     }

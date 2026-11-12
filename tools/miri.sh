@@ -8,7 +8,7 @@
 #   Suites (default: all four):
 #     jsrt      jsrt's unit tests: the collector, P, the cells, regions.
 #     pyright   the pyright unit tests that tokenize, parse, and build flow nodes and
-#               evaluator types.
+#               evaluator types, and parse a file on a parse worker.
 #     check     pyright-rs checks tools/miri/project against the stub typeshed in
 #               tools/miri, collecting before every file, and must print what the
 #               native build prints.
@@ -30,7 +30,7 @@ common="-Zmiri-strict-provenance -Zmiri-ignore-leaks"
 pyright_tests=(
   parser:: analyzer::code_flow_utils analyzer::parse_tree_utils analyzer::analyzer_node_info
   analyzer::types_tests analyzer::type_printer_tests analyzer::type_utils_tests
-  analyzer::type_cache_utils_tests analyzer::static_expressions analyzer::source_mapper_utils_tests
+  analyzer::type_cache_utils_tests analyzer::static_expressions analyzer::source_mapper_utils_tests parse_ahead::
 )
 export PYRIGHT_RS_TOKENS=check
 # The check suites' environment and features, for both the Miri and the native run.

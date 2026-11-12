@@ -382,7 +382,7 @@ pub fn add_constraints_for_expected_type(
     let expected_class = ClassType(expected_type);
 
     // If the expected type is generic (but not specialized), we can't proceed.
-    let expected_type_args = expected_class.d().priv_.borrow().type_args.clone();
+    let expected_type_args = expected_class.d().priv_.borrow().type_args;
     let Some(expected_type_args) = expected_type_args else {
         return evaluator.assign_type(
             type_.0,
@@ -722,7 +722,7 @@ pub(crate) fn assign_bound_type_var(
     if is_class_instance(src_type)
         && ClassType::is_built_in(ClassType(src_type), Some(&[jsrt::atom!("type")]))
     {
-        let type_args = ClassType(src_type).d().priv_.borrow().type_args.clone();
+        let type_args = ClassType(src_type).d().priv_.borrow().type_args;
         let is_type_any = match &type_args {
             None => true,
             Some(type_args) => type_args.is_empty() || is_any_or_unknown(type_args[0]),

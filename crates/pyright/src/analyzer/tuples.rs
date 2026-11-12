@@ -269,7 +269,7 @@ pub fn get_type_of_tuple_with_context(
             None,
             None,
         ));
-        let type_args = specialized_tuple.and_then(|t| t.d().priv_.borrow().type_args.clone());
+        let type_args = specialized_tuple.and_then(|t| t.d().priv_.borrow().type_args);
         let type_args = type_args.filter(|type_args| type_args.len() == 1)?;
 
         let homogenous_type =

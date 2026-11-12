@@ -248,6 +248,64 @@ unsafe impl<T: ?Sized + Trace + 'static> Trace for P<T> {
     }
 }
 
+/// A shared, immutable value on the evaluator heap behind a `Copy` handle: what an `Rc` of an
+/// immutable value is, without the count. `S` is the evaluator type that holds the value and
+/// derefs to it. An object holding an `EvalShared` instead of an `Rc` has no drop glue for it,
+/// and copying the handle touches no count; the value is dropped when the sweep finds that no
+/// handle reaches it. Compares, hashes and prints by content, as `Rc` does.
+pub struct EvalShared<S: 'static>(P<S>);
+
+impl<S: Trace + 'static> EvalShared<S> {
+    pub fn new(value: S) -> Self {
+        EvalShared(P::new_eval(value))
+    }
+}
+
+impl<S> Clone for EvalShared<S> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<S> Copy for EvalShared<S> {}
+
+impl<S: Deref + 'static> Deref for EvalShared<S> {
+    type Target = S::Target;
+
+    fn deref(&self) -> &S::Target {
+        self.0.get()
+    }
+}
+
+impl<S: Deref<Target: PartialEq> + 'static> PartialEq for EvalShared<S> {
+    fn eq(&self, other: &Self) -> bool {
+        **self == **other
+    }
+}
+
+impl<S: Deref<Target: Eq> + 'static> Eq for EvalShared<S> {}
+
+impl<S: Deref<Target: Hash> + 'static> Hash for EvalShared<S> {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        (**self).hash(state)
+    }
+}
+
+impl<S: Deref<Target: fmt::Debug> + 'static> fmt::Debug for EvalShared<S> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        (**self).fmt(f)
+    }
+}
+
+// SAFETY: traces its one handle.
+unsafe impl<S: Trace + 'static> Trace for EvalShared<S> {
+    const HOLDS_EVAL: bool = true;
+    #[inline]
+    fn trace(&self, t: &mut heap::Tracer) {
+        self.0.trace(t);
+    }
+}
+
 /// Bytes moved into the current thread's program heap so far.
 pub fn arena_allocated_bytes() -> usize {
     ALLOCATED.with(Cell::get)
@@ -356,6 +414,31 @@ mod tests {
         assert_eq!(a, a);
         assert_eq!(*a, *b);
         assert_eq!(size_of::<Option<P<u64>>>(), size_of::<usize>());
+    }
+
+    #[derive(jsrt::Trace)]
+    #[trace(eval)]
+    struct Values(Box<[u32]>);
+
+    impl Deref for Values {
+        type Target = [u32];
+
+        fn deref(&self) -> &[u32] {
+            &self.0
+        }
+    }
+
+    #[test]
+    fn eval_shared_copies_and_compares_by_content() {
+        assert!(!std::mem::needs_drop::<EvalShared<Values>>());
+        assert_eq!(size_of::<Option<EvalShared<Values>>>(), size_of::<usize>());
+        let a = EvalShared::new(Values(Box::new([1, 2])));
+        let copy = a;
+        let b = EvalShared::new(Values(Box::new([1, 2])));
+        assert!(P::ptr_eq(copy.0, a.0) && !P::ptr_eq(a.0, b.0));
+        assert_eq!(a, b);
+        assert_ne!(a, EvalShared::new(Values(Box::new([1]))));
+        assert_eq!(&*copy, &[1, 2]);
     }
 
     trait Named {

@@ -44,6 +44,12 @@ impl DiagnosticSink {
         prev_diagnostics
     }
 
+    /// Rust-only: what `fetch_and_clear` would return, left in place, for
+    /// `PYRIGHT_RS_PARSE_AHEAD=check`.
+    pub fn peek(&self) -> Vec<P<Diagnostic>> {
+        self.diagnostic_list.borrow().clone()
+    }
+
     // common/diagnosticSink.ts:61
     pub fn add_error(&self, message: String, range: Range) -> P<Diagnostic> {
         self.add_diagnostic(Diagnostic::new(DiagnosticCategory::Error, message, range))

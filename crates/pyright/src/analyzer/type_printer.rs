@@ -1173,7 +1173,7 @@ pub(crate) fn print_object_type_for_class_internal(
         .d()
         .priv_
         .borrow()
-        .cold().alias_name
+        .alias_name
         .filter(|name| !name.is_empty())
     {
         Some(alias_name) => alias_name.to_string(),
@@ -1366,7 +1366,7 @@ pub(crate) fn print_object_type_for_class_internal(
         .d()
         .priv_
         .borrow()
-        .cold().is_typed_dict_partial
+        .is_typed_dict_partial
         .unwrap_or(false)
         && !print_type_flags.any(PrintTypeFlags::PythonSyntax)
     {
@@ -1815,7 +1815,7 @@ impl UniqueNameMap {
                     let priv_ = class_type.d().priv_.borrow();
                     (
                         priv_.literal_value.is_some(),
-                        priv_.cold().alias_name.clone(),
+                        priv_.alias_name.clone(),
                         priv_.tuple_type_args.map(|tuple_type_args| tuple_type_args.borrow().clone()),
                         priv_.type_args.clone(),
                     )

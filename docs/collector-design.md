@@ -58,6 +58,7 @@ pub unsafe trait Trace {
 - **Stored closures** are opaque (`#[trace(skip)]`). Each may capture program handles only: `ImportLookup` captures the `Program`, `ImportLookupResult.doc_string` a module node, the `getModuleName` callback of each `SourceFile` the `Program`; file-system filters and cleanups capture no heap handle; `Scope.chained_module_level_scope_lookup` is set only for notebook cells. Type-narrowing callbacks capture evaluator handles but are only passed and returned, never stored.
 - **Trait objects.** `P<dyn AnalyzerNodeInfoReader>` is a program handle (`EVAL = false`); `P<dyn FunctionReturnTypeCallback>` can be the evaluator (`EVAL = true`).
 - **Other threads.** `P` is neither `Send` nor `Sync`: a block belongs to one thread, and only that thread's collector frees it.
+- **Parse workers.** A parse worker hands its parse output to the main thread (`docs/porting.md`, "parse ahead"). The worker allocates nothing a collector traces, so the output needs no root: it lives in the worker's arena, which is never freed.
 
 ## parallel marking
 
@@ -127,12 +128,13 @@ Tried and not landed, each paired against the build before it:
 Landed:
 
 - **Temporaries without drop glue** (2026-11-12, `notes/temps.md`). `ConstraintSolutionSet`, `TypeResult`, `DiagnosticAddendum` and `ConstraintSet` held a part most of their objects never set in a box, which gave the type drop glue, so the sweep read every dead object's slot to drop it. Each such part is now its own evaluator object, behind a `jsrt::cell::OnceCell<P<..>>` or in a `jsrt::EvalOptionRefCell` (`docs/porting.md`, "memory"); a dead object that never set one is freed from the bitmaps alone. pydantic-ai, paired: the sweep functions 2.79% to 1.46% of all cycles, pauses 2.08 to 1.57 s, one collection more (11), since the parts now count toward the trigger, wall -3.0%.
+- **Class types without drop glue** (2026-11-12, `notes/temps.md`). A class type's type arguments and literal values are `jsrt::EvalShared` handles instead of `Rc`s, and its header's `props` and `cached` and its cold half are `jsrt::EvalOptionRefCell`s, so a dead class type (10.2 M of the 105.8 M objects collections free on pydantic-ai, fourth after `TypeResult`, `ConstraintSet` and `DiagnosticAddendum`) is freed from the bitmaps alone. pydantic-ai, paired: pauses -0.19 to -0.24 s with one collection more (12).
 
 What would cut the pause further, none tried:
 
 1. **Parallel drops during the pause.** A derived step moves each dead object's `Rc` fields into a list the collecting thread drops after helper threads free the rest. It is a new derive over every evaluator type; every helper free is a cross-thread mimalloc free, about 4 times a local one, whose list the owning thread walks later; a field moved and then dropped again is a double drop that check mode would have to catch.
 2. **Atomic counts** (`Arc`) for the `Rc` kinds dead and live objects share, then a sweeper thread concurrent with the mutator. Every clone and drop in the mutator pays an atomic operation.
-3. **Fewer dead objects that need a drop.** After the change above, the largest drops are types (`ClassType` 0.47% of cycles: its type arguments are an `Rc`, its literal value and cold half own buffers) and addendum contents (0.29%: messages and their strings).
+3. **Fewer dead objects that need a drop.** After the changes above the sweep functions are 0.99% of pydantic-ai's cycles (2.79% before them); the largest are addendum contents (0.27%: messages and their strings), `RefCell<Vec<P<Type>>>` (0.16%) and unions (0.09%).
 
 ## trigger
 

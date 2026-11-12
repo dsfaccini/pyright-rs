@@ -61,6 +61,10 @@ impl ReadOnlyFileSystem for ReadOnlyAugmentedFileSystem {
         self._mapping.stat_sync(uri)
     }
 
+    fn real_file_path(&self, uri: Uri) -> Option<String> {
+        self._mapping.real_file_path(uri)
+    }
+
     // readonlyAugmentedFileSystem.ts:70
     fn realpath_sync(&self, uri: Uri) -> Uri {
         self._mapping.realpath_sync(uri)
